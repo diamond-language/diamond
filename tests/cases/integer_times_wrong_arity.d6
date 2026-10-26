@@ -1,6 +1,5 @@
-# A zero-param block passed where `Callable[1]` is required is a
-# structural-type mismatch, same as any other Callable[1] consumer
-# (.select, .map, ...) -- see block_wrong_arity.d6.
-3.times() do
+# Int#times passes one value: a two-parameter block is a mismatch, same as
+# any other Callable[1] consumer -- see block_wrong_arity.d6.
+3.times() do |index, extra|
   1
 end

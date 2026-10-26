@@ -1364,6 +1364,15 @@ static inline uint8_t diamond_function_self_offset(const DiamondFunction *fn) {
     return (fn->owner_class!=DIAMOND_OWNER_NONE&&fn->owner_class!=DIAMOND_OWNER_CAPTURED_SELF)?1:0;
 }
 
+/* A `do ... end` block declared with no parameters ignores whatever it is
+ * called with: `3.times() do ... end`. Any other parameter count must match
+ * exactly, so a block that drops some of its values is still an error. */
+static inline bool diamond_block_ignores_arguments(const DiamondClosure *closure,
+        const DiamondFunction *fn) {
+    return closure!=nullptr&&closure->is_block&&!fn->has_variadic&&
+        fn->arity==diamond_function_self_offset(fn);
+}
+
 struct DiamondChunk {
     const char *name;
     const uint8_t *code;

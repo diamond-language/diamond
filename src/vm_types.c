@@ -517,15 +517,18 @@ static bool value_matches_member(const DiamondChunk *chunk,DiamondValue value,
          * comment, src/vm.h) -- a *value* satisfying Callable[N] only ever
          * supplies N real, self-less arguments, so that offset must come
          * out here before comparing against member->callable_arity. */
+        /* A zero-parameter block has no parameters to check: it ignores
+         * whatever it is called with (diamond_block_ignores_arguments). */
+        const bool ignores_arguments=diamond_block_ignores_arguments(closure,function);
         const uint8_t self_offset=diamond_function_self_offset(function);
         const uint8_t declared_arity=(uint8_t)(function->arity-self_offset);
         const uint8_t declared_required_arity=
             (uint8_t)(function->required_arity-self_offset);
-        if(member->callable_arity!=UINT8_MAX&&
+        if(!ignores_arguments&&member->callable_arity!=UINT8_MAX&&
            (member->callable_arity<declared_required_arity||
             (member->callable_arity>declared_arity&&!function->has_variadic)))
             return false;
-        if(member->callable_parameters_typed)
+        if(!ignores_arguments&&member->callable_parameters_typed)
             for(size_t parameter=0;parameter<member->callable_arity;parameter++) {
                 const uint16_t actual=function->parameter_type_sets[parameter];
                 if(actual!=DIAMOND_NO_TYPE_SET&&
