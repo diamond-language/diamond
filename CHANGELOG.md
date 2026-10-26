@@ -20,6 +20,9 @@ authoritative fine-grained record.
 
 ### Fixed
 
+- `ProgramBuilder` accepted a declared arity up to 255, but every per-parameter table holds 32
+  entries, so `set_parameter_type` on parameter 32 or later wrote past the end of one. The
+  `declare_*` methods now reject an arity over 32, the same limit the compiler enforces.
 - A union or an object pattern can name a class declared later in the file:
   `def f(x: Later | Nil)` failed with "duplicate type in union", and `when Later{n: n}`
   with "expected newline before block body".

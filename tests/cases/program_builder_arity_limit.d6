@@ -1,0 +1,5 @@
+# ProgramBuilder caps declared arity at 32, the size of every per-parameter
+# table; a larger arity let set_parameter_type write past the end of one.
+builder = ProgramBuilder.new()
+puts(builder.declare_function("ok", 32, 0))
+builder.declare_function("big", 33, 0)
