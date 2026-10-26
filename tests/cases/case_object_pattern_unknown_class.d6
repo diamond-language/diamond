@@ -1,0 +1,4 @@
+case 1
+when Missing{x: 1} then 1
+else 2
+end

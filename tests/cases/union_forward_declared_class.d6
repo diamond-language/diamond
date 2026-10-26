@@ -1,0 +1,7 @@
+def describe(x: Later | Nil) -> String = x == nil ? "none" : "later"
+
+class Later
+end
+
+puts(describe(nil))
+puts(describe(Later.new()))

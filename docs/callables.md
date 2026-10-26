@@ -144,7 +144,9 @@ some other call: it can only end the call it was written for.
 
 Block parameters are bare identifiers only — no `: Type` annotations, no
 `= default`. `do |x, y| ... end`, or `do ... end` with no parameters at
-all for a zero-arity block. A block captures every local visible at the
+all for a zero-arity block. A block takes exactly as many parameters as the
+method passes it: `3.times() do ... end` fails with `expected Callable[1], got
+Callable[0]`, so write `do |_|` to ignore a value. A block captures every local visible at the
 point it's written, the same eager, unconditional capture nested `def`s
 use — not just the ones its body actually references.
 

@@ -4,6 +4,21 @@ Diamond is currently pre-release. This file records user-visible capability
 milestones rather than every implementation step; the Git history remains the
 authoritative fine-grained record.
 
+## Unreleased
+
+### Fixed
+
+- A union or an object pattern can name a class declared later in the file:
+  `def f(x: Later | Nil)` failed with "duplicate type in union", and `when Later{n: n}`
+  with "expected newline before block body".
+
+### Changed
+
+- An object pattern naming an unknown class says so: `unknown class 'Missing' in object
+  pattern`.
+- A block with the wrong number of parameters reports the block's arity:
+  `expected Callable[1], got Callable[0]`.
+
 ## 0.20.1 — 2026-10-25
 
 `facet add <cut>` needs no flags, and errors say more about what went wrong:

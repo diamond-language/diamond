@@ -361,7 +361,7 @@ if "$diamond" -e $'def run()\n def wrong()\n  42\n end\n array_map([], wrong)\ne
     rm -f "$error_file"
     exit 1
 fi
-grep -q 'expected Callable\[1\], got Callable' "$error_file"
+grep -q 'expected Callable\[1\], got Callable\[0\]' "$error_file"
 rm -f "$error_file"
 
 actual="$("$diamond" --dump-bytecode -e '42')"

@@ -1,0 +1,2 @@
+def f(x: Missing | Nil) = 1
+f(nil)

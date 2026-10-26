@@ -250,11 +250,23 @@ static void append_element_types(char *buffer,size_t capacity,
 
 /* diamond_format_value_type, plus the element types a non-empty Array or
  * Hash actually holds -- "Array[String]" rather than just "Array" -- so a
- * failed `values: Array[Int]` check says what was in the Array. */
+ * failed `values: Array[Int]` check says what was in the Array, and a
+ * closure's arity, so `3.times() do ... end` says "got Callable[0]". */
 void format_value_type_detailed(char *buffer,size_t capacity,
-        DiamondValue value) {
+        const DiamondChunk *chunk,DiamondValue value) {
     diamond_format_value_type(buffer,capacity,value);
     if(value.kind!=DIAMOND_VALUE_OBJECT)return;
+    if(value.as.object->kind==DIAMOND_OBJECT_CLOSURE) {
+        const DiamondClosure *closure=(const DiamondClosure *)value.as.object;
+        if(closure->foreign_chunk!=nullptr||
+           closure->function_index>=chunk->function_count)return;
+        const DiamondFunction *function=chunk->functions[closure->function_index];
+        if(function->has_variadic)return;
+        /* The same self-less count value_matches_set compares. */
+        snprintf(buffer,capacity,"Callable[%u]",
+            (unsigned)(function->arity-diamond_function_self_offset(function)));
+        return;
+    }
     if(value.as.object->kind==DIAMOND_OBJECT_ARRAY) {
         const DiamondArray *array=(const DiamondArray *)value.as.object;
         if(array->count==0)return;
