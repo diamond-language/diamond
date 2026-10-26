@@ -176,7 +176,7 @@ static DiamondVmStatus program_builder_declare_function(DiamondVm *vm, DiamondPr
     const int64_t arity_value=registers[(size_t)base+1].as.integer;
     const int64_t required_value=registers[(size_t)base+2].as.integer;
     if(fname->length==0||fname->length>=DIAMOND_MAX_FUNCTION_NAME||
-       arity_value<0||arity_value>UINT8_MAX||
+       arity_value<0||arity_value>DIAMOND_MAX_DECLARED_PARAMETERS||
        required_value<0||required_value>arity_value) {
         snprintf(vm->error,sizeof vm->error,
             "ProgramBuilder#declare_function has an invalid name or arity");
@@ -635,7 +635,7 @@ static DiamondVmStatus program_builder_declare_method(DiamondVm *vm, DiamondProg
     if(class==nullptr||mname->length==0||
        mname->length>=DIAMOND_MAX_FUNCTION_NAME||
        target_function<0||(uint64_t)target_function>=built->function_count||
-       arity_value<0||arity_value>UINT8_MAX||
+       arity_value<0||arity_value>DIAMOND_MAX_DECLARED_PARAMETERS||
        required_value<0||required_value>arity_value) {
         snprintf(vm->error,sizeof vm->error,"ProgramBuilder#%s",
             "declare_method has invalid arguments");
@@ -697,7 +697,7 @@ static DiamondVmStatus program_builder_declare_module_method(DiamondVm *vm, Diam
     if(module_index<0||(uint64_t)module_index>=built->module_count||
        name->length==0||name->length>=DIAMOND_MAX_FUNCTION_NAME||
        function_index<0||(uint64_t)function_index>=built->function_count||
-       arity<0||arity>UINT8_MAX||required<0||required>arity)
+       arity<0||arity>DIAMOND_MAX_DECLARED_PARAMETERS||required<0||required>arity)
         return DIAMOND_VM_TYPE_ERROR;
     DiamondModule *module=&built->modules[(size_t)module_index];
     for(size_t index=0;index<module->method_count;index++)
@@ -759,7 +759,7 @@ static DiamondVmStatus program_builder_declare_class_singleton_method(DiamondVm 
     if(class==nullptr||mname->length==0||
        mname->length>=DIAMOND_MAX_FUNCTION_NAME||
        target_function<0||(uint64_t)target_function>=built->function_count||
-       arity_value<0||arity_value>UINT8_MAX||
+       arity_value<0||arity_value>DIAMOND_MAX_DECLARED_PARAMETERS||
        required_value<0||required_value>arity_value) {
         snprintf(vm->error,sizeof vm->error,"ProgramBuilder#%s",
             "declare_class_singleton_method has invalid arguments");
@@ -818,7 +818,7 @@ static DiamondVmStatus program_builder_declare_module_singleton_method(DiamondVm
     if(module_index<0||(uint64_t)module_index>=built->module_count||
        mname->length==0||mname->length>=DIAMOND_MAX_FUNCTION_NAME||
        target_function<0||(uint64_t)target_function>=built->function_count||
-       arity_value<0||arity_value>UINT8_MAX||
+       arity_value<0||arity_value>DIAMOND_MAX_DECLARED_PARAMETERS||
        required_value<0||required_value>arity_value) {
         snprintf(vm->error,sizeof vm->error,"ProgramBuilder#%s",
             "declare_module_singleton_method has invalid arguments");
