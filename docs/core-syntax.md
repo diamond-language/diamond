@@ -512,7 +512,7 @@ All final writer calls remain delayed until validation succeeds.
 x = 3
 y = 2.5
 x + y        # => 5.5, Int auto-promotes to Float
-x == 5       # => true
+x == 3.0     # => true, Int and Float compare by value
 -y           # => -2.5
 to_f(x)      # => 3.0
 to_i(y)      # => 2

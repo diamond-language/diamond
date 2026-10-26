@@ -139,7 +139,10 @@ rescue final
 end
 ```
 
-`raise value` accepts any value, not only `Exception` instances. `rescue
+`raise value` accepts any value, not only `Exception` instances. Unlike Ruby,
+`raise "boom"` raises the String itself, not a `RuntimeError`, so `rescue error:
+StandardError` does not catch it; raise `RuntimeError.new("boom")` when callers
+should be able to rescue by class. `rescue
 name` binds the raised value unconditionally; `rescue error: Type1 | Type2`
 matches nominally (up to eight types, with subclass matching) before
 binding. `ensure` provides cleanup that runs on normal completion,

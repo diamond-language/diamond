@@ -780,8 +780,8 @@ class Vector
   def y() = @y
 end
 
-Vector.new(1, 2) + Vector.new(3, 4)  # => Vector(4, 6)
--Vector.new(1, 2)                    # => Vector(-1, -2)
+Vector.new(1, 2) + Vector.new(3, 4)  # => #<Vector x=4, y=6>
+-Vector.new(1, 2)                    # => #<Vector x=-1, y=-2>
 ```
 
 A class can define `+`, `-`, `*`, `/`, `%`, `==`, `<`, `<=`, `>`, `>=` as

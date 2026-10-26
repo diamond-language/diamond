@@ -101,7 +101,10 @@ conversion), and
 `.reverse()` (byte-level, not UTF-8-grapheme-aware — consistent with
 the rest of the language having no other Unicode awareness), and
 `.strip()` (trims leading/trailing ASCII whitespace; `.lstrip()`/`.rstrip()`
-trim only one side), and `.empty?()`
+trim only one side), `.chomp()` (removes one trailing `"\n"`, `"\r\n"` or
+`"\r"`; it takes no argument), `.capitalize()` (first ASCII letter upper, the
+rest lower), `.chars()` (an `Array` of one-byte strings, so a multi-byte UTF-8
+character becomes several), and `.empty?()`
 (zero length, like Array's and Hash's own `empty?`). `.split(separator)`
 returns an `Array` of every piece around non-overlapping occurrences of
 `separator` (an empty `separator` splits into one-character strings);

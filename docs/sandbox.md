@@ -178,7 +178,7 @@ begin
 rescue error: ResourceLimitError
   nil                           # up to 1,000,000 more instructions are allowed here
 end
-50_000_000.times() do           # stopped: "instruction budget exhausted"
+50_000_000.times() do |_|       # stopped: "instruction budget exhausted"
 end
 ```
 
