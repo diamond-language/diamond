@@ -1,0 +1,9 @@
+def nope() = raise "no"
+def check(x) = raise "neg" if x < 0
+begin
+  nope()
+rescue error
+  puts("caught #{error}")
+end
+puts(check(1).inspect())
+0

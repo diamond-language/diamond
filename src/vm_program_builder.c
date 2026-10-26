@@ -1435,6 +1435,35 @@ static DiamondVmStatus program_builder_set_parameter_type(DiamondVm *vm, Diamond
     *result=DIAMOND_NIL;return DIAMOND_VM_OK;
 }
 
+/* Records a parameter's name, which keyword calls (CALL_CLOSURE_KEYWORDS, INVOKE_KEYWORDS) match
+ * against; truncated to fit, as the native compiler's record_parameter_name does. */
+static DiamondVmStatus program_builder_set_parameter_name(DiamondVm *vm, DiamondProgram *built,
+        DiamondValue *registers, uint16_t base, uint8_t argc, DiamondValue *result) {
+    if(argc!=3)return DIAMOND_VM_ARITY_ERROR;
+    if(registers[base].kind!=DIAMOND_VALUE_INT||
+       registers[(size_t)base+1].kind!=DIAMOND_VALUE_INT||
+       registers[(size_t)base+2].kind!=DIAMOND_VALUE_OBJECT||
+       registers[(size_t)base+2].as.object->kind!=DIAMOND_OBJECT_STRING) {
+        snprintf(vm->error,sizeof vm->error,"ProgramBuilder#%s",
+            "set_parameter_name arguments must be (Int, Int, String)");
+        return DIAMOND_VM_TYPE_ERROR;
+    }
+    DiamondFunction *target=
+        program_builder_target(built,registers[base].as.integer);
+    const int64_t parameter=registers[(size_t)base+1].as.integer;
+    if(target==nullptr||parameter<0||parameter>=target->arity) {
+        snprintf(vm->error,sizeof vm->error,
+            "ProgramBuilder#set_parameter_name has an invalid index");
+        return DIAMOND_VM_TYPE_ERROR;
+    }
+    const DiamondString *name=(const DiamondString *)registers[(size_t)base+2].as.object;
+    size_t length=name->length;
+    if(length>=DIAMOND_MAX_FUNCTION_NAME)length=DIAMOND_MAX_FUNCTION_NAME-1;
+    memcpy(target->parameter_names[(size_t)parameter],name->chars,length);
+    target->parameter_names[(size_t)parameter][length]='\0';
+    *result=DIAMOND_NIL;return DIAMOND_VM_OK;
+}
+
 static DiamondVmStatus program_builder_set_return_type(DiamondVm *vm, DiamondProgram *built,
         DiamondValue *registers, uint16_t base, uint8_t argc, DiamondValue *result) {
     if(argc!=2)return DIAMOND_VM_ARITY_ERROR;
@@ -1716,6 +1745,10 @@ DiamondVmStatus program_builder_invoke_helper(DiamondVm *vm,
        memcmp(method_name->chars,"set_parameter_type",
            sizeof("set_parameter_type")-1)==0)
         return program_builder_set_parameter_type(vm,built,registers,base,argc,result);
+    if(method_name->length==sizeof("set_parameter_name")-1&&
+       memcmp(method_name->chars,"set_parameter_name",
+           sizeof("set_parameter_name")-1)==0)
+        return program_builder_set_parameter_name(vm,built,registers,base,argc,result);
     if(method_name->length==sizeof("set_return_type")-1&&
        memcmp(method_name->chars,"set_return_type",
            sizeof("set_return_type")-1)==0)
