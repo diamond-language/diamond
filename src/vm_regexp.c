@@ -55,6 +55,40 @@ DiamondVmStatus regexp_new_helper(DiamondVm *vm, const DiamondString *pattern,
     return DIAMOND_VM_OK;
 }
 
+/* A Regexp matching `text` literally, for String#sub/gsub/scan given a
+ * String pattern: every regex metacharacter is escaped, so `"a.b"` matches
+ * only "a.b". Going through a Regexp keeps the replacement's `\0`/`\1`
+ * and block forms identical to a Regexp pattern's. The caller roots
+ * *result before allocating anything else. */
+DiamondVmStatus regexp_literal_helper(DiamondVm *vm, const DiamondString *text,
+        DiamondValue *result) {
+    char *escaped=malloc(text->length*2+1);
+    if(escaped==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
+    size_t length=0;
+    for(size_t index=0;index<text->length;index++) {
+        if(strchr("\\^$.|?*+()[]{}/",text->chars[index])!=nullptr&&text->chars[index]!='\0')
+            escaped[length++]='\\';
+        escaped[length++]=text->chars[index];
+    }
+    reginold_regex *compiled=nullptr;
+    reginold_error compile_error={0};
+    const reginold_status compile_status=reginold_compile(escaped,length,0,&compiled,&compile_error);
+    if(compile_status!=REGINOLD_OK) {
+        free(escaped);
+        snprintf(vm->error,sizeof vm->error,"%.*s",
+            (int)compile_error.message_len,compile_error.message);
+        return DIAMOND_VM_REGEXP_ERROR;
+    }
+    DiamondRegexp *regexp=allocate_regexp_handle(vm,compiled,escaped,length,0);
+    free(escaped);
+    if(regexp==nullptr) {
+        reginold_regex_free(compiled);
+        return DIAMOND_VM_OUT_OF_MEMORY;
+    }
+    *result=DIAMOND_OBJECT(regexp);
+    return DIAMOND_VM_OK;
+}
+
 /* Regexp#match/#match? real body -- same stack-frame-isolation reasoning
  * as regexp_new_helper above (reginold_match's own fields would otherwise
  * land directly in run_chunk's frame too).

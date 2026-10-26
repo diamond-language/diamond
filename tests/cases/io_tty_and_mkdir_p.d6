@@ -1,0 +1,27 @@
+# The test harness captures stdout, so it is never a terminal here.
+p(IO.tty?(:stdout))
+begin
+  IO.tty?(:nope)
+rescue e
+  p(e.message())
+end
+base = Process.run(["mktemp", "-d"]).stdout().strip()
+begin
+  p(Dir.mkdir_p("#{base}/a/b//c/") == "#{base}/a/b//c/")
+  p(File.directory?("#{base}/a/b/c"))
+  # An existing directory is fine.
+  p(Dir.mkdir_p("#{base}/a/b") == "#{base}/a/b")
+  File.write("#{base}/file", "x")
+  begin
+    Dir.mkdir_p("#{base}/file/sub")
+  rescue e: IOError
+    p(e.message().include?("Not a directory"))
+  end
+  begin
+    Dir.mkdir_p("#{base}/file")
+  rescue e: IOError
+    p(e.message().include?("Not a directory"))
+  end
+ensure
+  Process.run(["rm", "-rf", base])
+end

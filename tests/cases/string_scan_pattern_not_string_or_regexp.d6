@@ -1,5 +1,5 @@
 begin
-  "abc".scan("not a regexp")
+  "abc".scan(42)
 rescue error: TypeError
   42
 end

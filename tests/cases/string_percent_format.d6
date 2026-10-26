@@ -1,0 +1,9 @@
+p("%05d" % 42)
+p("%s-%s" % ["a", "b"])
+p("%.2f" % 3.14159)
+p(7 % 3)
+begin
+  "%d" % "x"
+rescue e
+  p(e.message())
+end

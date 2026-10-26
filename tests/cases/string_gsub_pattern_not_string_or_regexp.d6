@@ -1,5 +1,5 @@
 begin
-  "abc".gsub("not a regexp", "x")
+  "abc".gsub(42, "x")
 rescue error: TypeError
   42
 end

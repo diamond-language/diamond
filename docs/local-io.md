@@ -86,6 +86,18 @@ somewhere else. It compiles to the same `DIAMOND_OP_PRINT` instruction with
 the stderr flag set, and like `print`/`puts` a local or user-defined function
 named `warn` takes precedence over the built-in.
 
+## Terminals: `IO.tty?`
+
+```ruby
+color = IO.tty?(:stdout) && ENV["NO_COLOR"] == nil
+puts(color ? "\e[32mok\e[0m" : "ok")
+```
+
+`IO.tty?(stream)` is true when `:stdin`, `:stdout` or `:stderr` is a
+terminal (`isatty`), and false when it is a file or a pipe -- the usual
+test before printing colour or prompting for input. Any other name raises
+`TypeError`.
+
 ## Debug printing: `p`
 
 ```ruby
@@ -287,6 +299,9 @@ Dir.delete("backup")               # rmdir: an empty directory only
 - `Dir.mkdir(path, mode = 0o777)` creates one directory (the mode is subject to
   the umask). An existing path, or a missing parent, raises `IOError`; nothing
   is created recursively.
+- `Dir.mkdir_p(path, mode = 0o777)` creates the directory and any missing
+  parents, like `mkdir -p`, and returns the path. A directory that already
+  exists is fine; a file in the way raises `IOError`.
 - `File.copy(from, to)` creates `to` exclusively with the source's permission
   bits (subject to the umask) and copies the bytes. An existing destination is
   never replaced (`IOError`), and a failed copy removes the partial file. The

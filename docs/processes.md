@@ -132,7 +132,11 @@ waiting for exit:
   EOF, or raises `WouldBlockError` when nothing's ready — exactly
   `Socket#read`'s own contract (see the non-blocking-sockets section
   above), and for the same reason: it *is* that contract, on a pipe fd
-  instead of a network one. `.close()` is idempotent. No `.write()` —
+  instead of a network one. `.gets()` returns the next line without its
+  line ending (`\n` or `\r\n`), or `nil` at end of output; it waits for the
+  line to arrive. It reads a byte at a time, so it never takes anything
+  past the newline: a `.read(n)` afterwards starts right after it.
+  `.close()` is idempotent. No `.write()` —
   this end is read-only (the child's stdin end is a separate stream, below).
   Poll it directly: `IO.poll([handle.stdout(), handle.stderr()], [], timeout_ms)`
   accepts a `Process::Stream` exactly like a `Socket`.

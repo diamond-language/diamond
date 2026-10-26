@@ -125,14 +125,15 @@ one-character `String`. A code outside `0..255` raises a rescuable
 `RangeError`.
 
 `.format(values)` is a `sprintf`-style formatter — `values` is either a
-single value or an `Array` of them (matching Ruby's `String#%`, without
-needing variadic/splat call support Diamond doesn't have):
+single value or an `Array` of them. `format % values` is the same thing,
+spelled as in Ruby:
 
 ```ruby
 "Name: %s, Age: %d".format(["Alice", 30])  # => "Name: Alice, Age: 30"
 "%05d".format(42)                          # => "00042"
 "%-10s|".format("hi")                      # => "hi        |"
-"%.2f".format(3.14159)                     # => "3.14"
+"%.2f" % 3.14159                           # => "3.14"
+"%s=%d" % ["hits", 3]                      # => "hits=3"
 ```
 
 Directives: `%d`/`%i` (`Int` or `Float`, truncated), `%f` (`Float` or
@@ -163,8 +164,9 @@ rejected outright with a `TypeError` (strings are immutable).
 repeated `n` times (`n == 0` → `""`); a negative `n` raises a rescuable
 `RangeError`.
 
-`.start_with?(prefix)`/`.end_with?(suffix)` are plain literal String
-checks (no `Regexp` support). `.ljust(width, padding)`/`.rjust(width,
+`.start_with?(prefix, ...)`/`.end_with?(suffix, ...)` are plain literal
+String checks (no `Regexp` support); given several candidates, they are
+true when any one matches. `.ljust(width, padding)`/`.rjust(width,
 padding)` pad the receiver on the right/left with `padding` (repeated
 and truncated as needed) until it reaches `width`, or return the
 receiver unchanged if it's already at least `width` long; a negative
@@ -181,6 +183,7 @@ Ruby), or deleted outright when `to` is `""`. An empty `from` raises
 
 ```ruby
 "hello".start_with?("he")          # => true
+"main.d6".end_with?(".rb", ".d6")  # => true
 "abc".ljust(6, "-")                # => "abc---"
 "abc".rjust(6, "-")                # => "---abc"
 "hello".tr("el", "ip")             # => "hippo"
@@ -205,15 +208,15 @@ interpolate (`#{}` is a compile error; build the pattern with `Regexp.new`), and
 literal compiles each time it is evaluated, so hoist one out of a hot loop.
 
 `.sub(pattern, replacement)`/`.gsub(pattern, replacement)` replace the
-first/every match of `pattern` (a `Regexp` -- a `String` pattern raises
-`TypeError`, there's no implicit `Regexp.new` coercion) with
+first/every match of `pattern` (a `Regexp`, or a `String` matched
+literally, as in Ruby: `"a.b".gsub(".", "-")` is `"a-b"`) with
 `replacement`, which may contain Ruby-style backreferences (`\0` the
 whole match, `\1`.. a capture group; a literal backslash is `\\`).
 Given a block instead of a replacement String, they pass each matched
 String to the block and substitute what it returns (converted with
 `to_s`): `"a1 b22".gsub(Regexp.new("[0-9]+")) do |n| n.to_i() * 2 end`
 gives `"a2 b44"`.
-`.scan(pattern)` (`Regexp` only, same `TypeError` on a `String`) returns
+`.scan(pattern)` (a `Regexp` or a literal `String`) returns
 an `Array` of every match: the matched `String` itself when `pattern`
 has no capture groups, or an `Array` of that match's captures when it
 does -- never a mix of both across one call, since a given `Regexp`

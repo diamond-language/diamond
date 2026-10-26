@@ -41,6 +41,8 @@ static const char *file_path_function_name(uint8_t id) {
         case DIAMOND_FILE_PATH_EXIST: return "exist?";
         case DIAMOND_FILE_PATH_READ: return "read";
         case DIAMOND_FILE_PATH_WRITE: return "write";
+        case DIAMOND_FILE_PATH_MKDIR_P: return "mkdir_p";
+        case DIAMOND_FILE_PATH_TTY: return "tty?";
         default: return "<invalid file path function>";
     }
 }

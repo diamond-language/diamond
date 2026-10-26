@@ -670,6 +670,12 @@ typedef enum {
     DIAMOND_FILE_PATH_MODE,
     /* File.sha256(path): lowercase hex SHA-256 of the file, streamed in chunks. */
     DIAMOND_FILE_PATH_SHA256,
+    /* Dir.mkdir_p(path, mode = 0o777): creates path and any missing parents;
+     * an existing directory is not an error. Same Int second operand as MKDIR. */
+    DIAMOND_FILE_PATH_MKDIR_P,
+    /* IO.tty?(stream): whether :stdin, :stdout or :stderr is a terminal. The
+     * first operand is that Symbol (or the same name as a String), not a path. */
+    DIAMOND_FILE_PATH_TTY,
 } DiamondFilePathFunction;
 
 typedef enum DiamondMathFunction : uint8_t {
