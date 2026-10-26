@@ -6,6 +6,11 @@ authoritative fine-grained record.
 
 ## Unreleased
 
+### Added
+
+- A `def` or `do` block body can end in `rescue`/`else`/`ensure` clauses without a `begin`,
+  as in Ruby: `def load(path) ... rescue error: IOError ... end`.
+
 ### Fixed
 
 - A union or an object pattern can name a class declared later in the file:

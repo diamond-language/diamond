@@ -1,0 +1,59 @@
+def risky(n: Int) -> String
+  raise ArgumentError.new("bad #{n}") if n < 0
+  "ok #{n}"
+rescue error: ArgumentError
+  "rescued: #{error.message()}"
+else
+  "never seen"
+ensure
+  puts("ensure ran for #{n}")
+end
+puts(risky(1))
+puts(risky(-1))
+
+def counted(log: Array)
+  log.push("body")
+  return "early"
+ensure
+  log.push("ensure")
+end
+log = []
+puts(counted(log))
+p(log)
+
+attempts = 0
+def flaky(attempts_box: Array) -> Int
+  attempts_box[0] += 1
+  raise RuntimeError.new("again") if attempts_box[0] < 3
+  attempts_box[0]
+rescue error: RuntimeError
+  retry
+end
+p(flaky([0]))
+
+results = [1, 0, 2].map() do |n|
+  10 / n
+rescue error: ZeroDivisionError
+  0
+end
+p(results)
+
+class Box
+  def open(&block)
+    yield()
+  rescue e
+    "box caught #{e}"
+  end
+end
+p(Box.new().open() do raise "oops" end)
+
+def unhandled()
+  raise ArgumentError.new("not caught")
+rescue error: TypeError
+  "wrong"
+end
+begin
+  unhandled()
+rescue e: ArgumentError
+  puts("propagated: #{e.message()}")
+end

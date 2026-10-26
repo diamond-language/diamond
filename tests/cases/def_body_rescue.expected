@@ -1,0 +1,11 @@
+ensure ran for 1
+never seen
+ensure ran for -1
+rescued: bad -1
+early
+["body", "ensure"]
+3
+[10, 0, 5]
+"box caught oops"
+propagated: not caught
+nil

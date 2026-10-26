@@ -25,6 +25,17 @@ typedef struct ToolingDependencies {
     size_t count;
 } ToolingDependencies;
 
+/* The def and do-block bodies with a `rescue` or `ensure` of their own
+ * (`def f ... rescue ... end`), by the source offset of the body's first
+ * token. The discovery pass finds them; the real pass then opens the
+ * handler before compiling such a body, as `begin` does, so a body
+ * without one costs nothing. */
+typedef struct ImplicitBegins {
+    size_t *offsets;
+    size_t count;
+    size_t capacity;
+} ImplicitBegins;
+
 typedef enum Precedence {
     PREC_NONE,
     /* Looser than every other binary operator (including ||/&&), matching
@@ -323,6 +334,7 @@ typedef struct Compiler {
      * facts for forward callees, never its bytecode or checked contracts. */
     const DiamondProgram *tooling_returns;
     ToolingDependencies *tooling_forward_calls;
+    ImplicitBegins *implicit_begins;
     bool return_flow_seen;
     uint16_t return_flow_type;
     int32_t return_flow_set;
@@ -890,6 +902,7 @@ DIAMOND_INTERNAL void record_scope_locals(Compiler *compiler,size_t start_index,
 DIAMOND_INTERNAL void record_scope_type_fact(Compiler *compiler,uint16_t reg,
         size_t effective_start);
 DIAMOND_INTERNAL uint16_t compile_begin(Compiler *compiler);
+DIAMOND_INTERNAL uint16_t compile_body(Compiler *compiler,bool *wrapped);
 DIAMOND_INTERNAL uint16_t compile_retry(Compiler *compiler);
 DIAMOND_INTERNAL uint16_t compile_loop_control(Compiler *compiler);
 DIAMOND_INTERNAL uint16_t compile_block(Compiler *compiler);

@@ -154,6 +154,33 @@ subclass): `RuntimeError`, `TypeError`, `ArgumentError`, `IndexError`,
 native database drivers' `SQLite3Error`, `PostgreSQLError`, and
 `MySQLError`.
 
+A `def` or `do` block body can take the same `rescue`/`else`/`ensure` clauses
+without a `begin`, as in Ruby. The clauses cover the whole body, and `retry`
+reruns it:
+
+```ruby
+def parse_port(text: String) -> Int
+  port = text.to_i()
+  raise ArgumentError.new("not a port: #{text}") unless port > 0 && port < 65536
+  port
+rescue error: ArgumentError
+  warn(error.message())
+  7000
+end
+
+parse_port("8080")   # => 8080
+
+ratios = [1, 0, 2].map() do |n|
+  10 / n
+rescue error: ZeroDivisionError
+  0
+end
+ratios               # => [10, 0, 5]
+```
+
+A body without such clauses compiles exactly as before; the handler is only
+installed for one that has them.
+
 `Exception.new(message, cause)` takes up to two positional arguments
 (both optional), readable back via `.message()`/`.cause()`. A subclass
 that overrides `initialize` to take its own extra arguments reaches the
