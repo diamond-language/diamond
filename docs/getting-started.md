@@ -18,10 +18,10 @@ and install it:
 
 ```sh
 # Ubuntu 26.04
-sudo apt install ~/Downloads/diamond-lang_0.20.0-1_amd64.deb
+sudo apt install ~/Downloads/diamond-lang_0.20.1-1_amd64.deb
 
 # Fedora 44
-sudo dnf install ~/Downloads/diamond-lang-0.20.0-1.fc44.x86_64.rpm
+sudo dnf install ~/Downloads/diamond-lang-0.20.1-1.fc44.x86_64.rpm
 ```
 
 The package puts `diamond`, `facet`, `diamond-lsp` and `diamond-dap` in
@@ -64,7 +64,7 @@ This puts `diamond`, `facet`, `diamond-lsp` and `diamond-dap` in
 Either way, check it:
 
 ```sh
-diamond --version     # diamond 0.20.0
+diamond --version     # diamond 0.20.1
 ```
 
 The [asdf-diamond](https://github.com/diamond-language/asdf-diamond) plugin

@@ -4,7 +4,10 @@ Diamond is currently pre-release. This file records user-visible capability
 milestones rather than every implementation step; the Git history remains the
 authoritative fine-grained record.
 
-## Unreleased
+## 0.20.1 — 2026-10-25
+
+`facet add <cut>` needs no flags, and errors say more about what went wrong:
+a close method name, or a block passed to a method without `&block`.
 
 ### Changed
 
