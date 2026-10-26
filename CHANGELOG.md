@@ -26,6 +26,9 @@ authoritative fine-grained record.
 
 - `yield()` with empty parentheses in a body without `&block` yields `nil` to the
   running fiber, like `yield` and `Fiber.yield()`. It was a parse error.
+- Cut READMEs install with `facet add <cut>` and `facet install` instead of pinning an
+  older release series. Each published cut gets a patch release carrying the new README.
+- minitest 0.1.1 says "1 test" and "1 error" instead of "1 tests" and "1 errors".
 
 ## 0.20.0 — 2026-10-25
 
