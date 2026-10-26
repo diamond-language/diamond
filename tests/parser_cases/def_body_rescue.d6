@@ -1,0 +1,21 @@
+def parse(text)
+  raise "bad" if text == "x"
+  text.to_i()
+rescue error
+  -1
+end
+puts(parse("12"))
+puts(parse("x"))
+def tidy()
+  puts("body")
+ensure
+  puts("ensure")
+end
+tidy()
+[1, 2].each() do |x|
+  raise "boom" if x == 2
+  puts(x)
+rescue error
+  puts("rescued #{error}")
+end
+0

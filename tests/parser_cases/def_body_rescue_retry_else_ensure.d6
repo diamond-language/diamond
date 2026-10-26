@@ -1,0 +1,33 @@
+def flaky(counter)
+  counter.push(1)
+  raise "again" if counter.length() < 3
+  "ok after #{counter.length()}"
+rescue error
+  retry
+end
+puts(flaky([]))
+def with_else()
+  1
+rescue error
+  2
+else
+  3
+ensure
+  puts("ensure ran")
+end
+puts(with_else())
+def returns_early()
+  return "early"
+ensure
+  puts("ensure on return")
+end
+puts(returns_early())
+def typed(x: Int) -> String
+  raise "bad" if x < 0
+  "fine"
+rescue error
+  "rescued"
+end
+puts(typed(1))
+puts(typed(-1))
+0

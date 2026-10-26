@@ -1,0 +1,17 @@
+class AbstractError < StandardError
+end
+class Shape
+  def area() -> Float = raise AbstractError.new("area")
+end
+def must(x: Int) -> Int = raise ArgumentError.new("neg")
+begin
+  Shape.new().area()
+rescue error: AbstractError
+  puts("caught #{error.message()}")
+end
+begin
+  must(1)
+rescue error: ArgumentError
+  puts("caught #{error.message()}")
+end
+0

@@ -1,0 +1,10 @@
+def f(a, b = 2, c = 3) = a + b + c
+def g(a, b = 10, c = 20, d = 30) -> Int = a * 1000 + b * 100 + c * 10 + d
+def h(x = 1, y = 2) = [x, y]
+puts(f(1, c: 5))
+puts(g(1, d: 4))
+puts(g(1, c: 2, d: 3))
+puts(g(a: 9, d: 1))
+puts(h(y: 7).inspect())
+total = g(1, d: 4) + 1
+total

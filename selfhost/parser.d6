@@ -55,6 +55,8 @@ module Opcode
   JUMP_IF_FALSE = 28
   CLOSURE = 31
   CALL_CLOSURE = 32
+  # DIAMOND_OP_CALL_CLOSURE_KEYWORDS: a direct call that skips a defaulted parameter; keep in step with src/vm.h.
+  CALL_CLOSURE_KEYWORDS = 152
   GET_CAPTURE_CELL = 34
   BOX_LOCAL = 36
   GET_CELL = 37
@@ -537,6 +539,9 @@ class Parser
     while index < parameter_names.length()
       register = parameter_base + index
       @locals.push([parameter_names[index], register, false])
+      # Keyword calls (CALL_CLOSURE_KEYWORDS) match these names. Indexed by
+      # declared position, like parameter_type_sets below.
+      @builder.set_parameter_name(function_index, index, parameter_names[index]) unless @failed
       # The default-value fallback must run *before* the type check: an
       # omitted argument's register holds whatever the VM's ordinary
       # zero-init leaves it as (Nil), not the type the annotation
@@ -990,7 +995,7 @@ class Parser
       index = index + 1
     end
 
-    body_result = self.compile_sequence()
+    body_result = self.compile_body()
     self.emit_instruction1(Opcode::RETURN, body_result)
     if @current.kind() != :end
       self.fail("expected 'end' after block body")
@@ -1855,7 +1860,16 @@ class Parser
       postfix_result = self.allocate_register() if has_postfix
       condition_jump = self.emit_jump(Opcode::JUMP, 0) if has_postfix
       body_start = @code_count
-      body_result = self.parse_expression()
+      # `raise` is a statement, not an expression, but `def f() = raise E`
+      # is the natural way to write a method that only raises; without a
+      # postfix condition the body never returns, so the declared return
+      # type isn't checked against the raised value.
+      raises = @current.kind() == :raise
+      body_result = if raises
+        self.compile_raise()
+      else
+        self.parse_expression()
+      end
       if has_postfix
         if @current.kind() != postfix
           self.fail("expected postfix condition")
@@ -1883,7 +1897,7 @@ class Parser
       end
       self.emit_instruction1(Opcode::RETURN, body_result)
     elsif self.consume_block_start()
-      body_result = self.compile_sequence()
+      body_result = self.compile_body()
       if return_type != nil
         set_index = self.emit_type_check(body_result, return_type)
         @builder.set_return_type(function_index, set_index) unless @failed
@@ -2735,7 +2749,16 @@ class Parser
       postfix_result = self.allocate_register() if has_postfix
       condition_jump = self.emit_jump(Opcode::JUMP, 0) if has_postfix
       body_start = @code_count
-      body_result = self.parse_expression()
+      # `raise` is a statement, not an expression, but `def f() = raise E`
+      # is the natural way to write a method that only raises; without a
+      # postfix condition the body never returns, so the declared return
+      # type isn't checked against the raised value.
+      raises = @current.kind() == :raise
+      body_result = if raises
+        self.compile_raise()
+      else
+        self.parse_expression()
+      end
       if has_postfix
         if @current.kind() != postfix
           self.fail("expected postfix condition")
@@ -2763,7 +2786,7 @@ class Parser
       end
       self.emit_instruction1(Opcode::RETURN, body_result)
     elsif self.consume_block_start()
-      body_result = self.compile_sequence()
+      body_result = self.compile_body()
       if return_type != nil
         set_index = self.emit_type_check(body_result, return_type)
         @builder.set_return_type(function_index, set_index) unless @failed
@@ -3045,6 +3068,17 @@ class Parser
     return 0 if parsed_arguments == nil
     slot_values = parsed_arguments[0]
     argument_count = parsed_arguments[1]
+    if parsed_arguments[2] != nil
+      if type_arguments.length() > 0
+        # CALL_CLOSURE_KEYWORDS can't carry explicit type arguments.
+        self.fail_at(name_token.start(), name_token.line(), name_token.column(),
+          "missing argument")
+        return 0
+      end
+      destination = self.emit_sparse_keyword_call(function_entry, slot_values,
+        parsed_arguments[2], argument_count)
+      return self.publish_call_return(function_entry, destination)
+    end
     argument_base = self.allocate_register()
     i = 1
     while i < argument_count
@@ -3074,6 +3108,11 @@ class Parser
         i = i + 1
       end
     end
+    self.publish_call_return(function_entry, destination)
+  end
+
+  # Records a direct call's declared return type on its destination.
+  def publish_call_return(function_entry, destination)
     return_fact = if function_entry[4] == 0
       self.annotation_single_type(function_entry[5])
     else
@@ -3082,6 +3121,65 @@ class Parser
     self.set_type_fact(destination, return_fact) if return_fact != nil
     if function_entry[4] == 0 && function_entry[5] != nil
       @declared_types.push([destination, function_entry[5]])
+    end
+    destination
+  end
+
+  # A direct call whose keyword arguments leave a defaulted parameter unfilled
+  # (`f(1, c: 5)` against `def f(a, b = 2, c = 3)`). CALL's arguments are
+  # contiguous, so this goes through CALL_CLOSURE_KEYWORDS instead: the slots
+  # before the first gap are positional and every later filled slot is passed
+  # by name. The VM leaves each gap undefined, so its default runs. Mirrors
+  # compiler.c's emit_sparse_keyword_call; a trailing block here is just
+  # another filled slot, passed by name.
+  def emit_sparse_keyword_call(function_entry, slot_values, slot_filled, argument_count)
+    parameter_names = function_entry[3]
+    first_gap = 0
+    while first_gap < argument_count && slot_filled[first_gap]
+      first_gap = first_gap + 1
+    end
+    callable = self.allocate_register()
+    self.emit_byte(Opcode::CLOSURE)
+    self.emit_register(callable)
+    self.emit_function_index(function_entry[1])
+    self.emit_byte(0)
+    positional = self.allocate_register()
+    base = positional
+    if first_gap > 0
+      base = self.allocate_register()
+      i = 1
+      while i < first_gap
+        self.allocate_register()
+        i = i + 1
+      end
+      i = 0
+      while i < first_gap
+        self.emit_instruction2(Opcode::MOVE, base + i, slot_values[i])
+        i = i + 1
+      end
+    end
+    self.emit_instruction3(Opcode::ARRAY, positional, base, first_gap)
+    names = []
+    registers = []
+    slot = first_gap
+    while slot < argument_count
+      if slot_filled[slot]
+        names.push(self.add_string(parameter_names[slot]))
+        registers.push(slot_values[slot])
+      end
+      slot = slot + 1
+    end
+    destination = self.allocate_register()
+    self.emit_byte(Opcode::CALL_CLOSURE_KEYWORDS)
+    self.emit_register(destination)
+    self.emit_register(callable)
+    self.emit_register(positional)
+    self.emit_byte(names.length())
+    i = 0
+    while i < names.length()
+      self.emit_register(names[i])
+      self.emit_register(registers[i])
+      i = i + 1
     end
     destination
   end
@@ -3205,21 +3303,34 @@ class Parser
       slot_filled[argument_count] = true
       argument_count = argument_count + 1
     end
+    # A slot below the highest filled one may stay empty only when its
+    # parameter has a default (index >= required arity); compile_call then
+    # passes the later slots by name. A required parameter left empty is an
+    # error -- mirrors compiler.c's gaps_are_defaulted.
+    has_gap = false
     index = 0
     while index < argument_count
       if !slot_filled[index]
-        self.fail_at(name_token.start(), name_token.line(), name_token.column(),
-          "missing argument")
-        return nil
+        if index < function_entry[6]
+          self.fail_at(name_token.start(), name_token.line(), name_token.column(),
+            "missing argument")
+          return nil
+        end
+        has_gap = true
       end
       index = index + 1
     end
-    if argument_count < function_entry[6] || argument_count > arity
+    if (!has_gap && argument_count < function_entry[6]) || argument_count > arity
       self.fail_at(name_token.start(), name_token.line(), name_token.column(),
         "wrong number of arguments")
       return nil
     end
-    [slot_values, argument_count]
+    gaps = if has_gap
+      slot_filled
+    else
+      nil
+    end
+    [slot_values, argument_count, gaps]
   end
 
   # Calling a closure-valued local (see compile_definition's nested-`def`
@@ -3851,6 +3962,21 @@ class Parser
   def compile_begin()
     return 0 unless self.consume_block_start()
     original_facts = self.copy_type_facts()
+    frame = self.open_begin_frame()
+    body = self.compile_sequence()
+    destination = self.close_begin_frame(frame, body, original_facts, 0, 0)
+    return destination if @failed
+    if @current.kind() != :end
+      self.fail("expected 'end' after begin body")
+      return destination
+    end
+    self.advance_token()
+    destination
+  end
+
+  # Opens a protected region: PUSH_ENSURE, then the rescue handler.
+  # Returns [ensure_operand, exception, retry_target, handler].
+  def open_begin_frame()
     ensure_operand = @code_count + 1
     self.emit_byte(Opcode::PUSH_ENSURE)
     self.emit_byte(0)
@@ -3858,13 +3984,50 @@ class Parser
     exception = self.allocate_register()
     retry_target = @code_count
     handler = self.emit_rescue_handler(exception)
+    [ensure_operand, exception, retry_target, handler]
+  end
+
+  # Compiles a def or block body that may end in rescue/else/ensure clauses
+  # without a `begin`, stopping before its `end`. Whether clauses follow is
+  # only known after the body, so the body starts with a jump: to the body
+  # itself when there are none, or to the frame setup that close_begin_frame
+  # emits after the body, which then jumps back to it. Handlers are pushed at
+  # run time, so the setup's position doesn't matter. compiler.c gets the
+  # same answer from its discovery pass instead.
+  def compile_body()
+    original_facts = self.copy_type_facts()
+    skip = self.emit_jump(Opcode::JUMP, 0)
+    body_start = @code_count
     body = self.compile_sequence()
+    if @current.kind() != :rescue && @current.kind() != :ensure
+      self.patch_jump(skip, body_start)
+      return body
+    end
+    self.close_begin_frame(nil, body, original_facts, skip, body_start)
+  end
+
+  # Compiles the clauses after a protected body, up to but not past `end`,
+  # and returns the region's result register. frame is open_begin_frame's
+  # result, or nil for compile_body's deferred setup (patched in at skip,
+  # jumping back to body_start).
+  def close_begin_frame(frame, body, original_facts, skip, body_start)
     body_fact = self.type_fact(body)
     body_declaration = self.declared_type(body)
     destination = self.allocate_register()
     self.emit_instruction2(Opcode::MOVE, destination, body)
     self.emit_byte(Opcode::POP_RESCUE)
     finished = self.emit_jump(Opcode::JUMP, 0)
+    if frame == nil
+      self.patch_jump(skip, @code_count)
+      frame = self.open_begin_frame()
+      self.emit_byte(Opcode::JUMP)
+      self.emit_byte(body_start / 256)
+      self.emit_byte(mod(body_start, 256))
+    end
+    ensure_operand = frame[0]
+    exception = frame[1]
+    retry_target = frame[2]
+    handler = frame[3]
     self.patch_jump(handler, @code_count)
     rescued_fact = body_fact
     rescued_declaration = body_declaration
@@ -3918,11 +4081,6 @@ class Parser
       self.compile_sequence()
     end
     self.emit_byte(Opcode::END_ENSURE)
-    if @current.kind() != :end
-      self.fail("expected 'end' after begin body")
-      return destination
-    end
-    self.advance_token()
     self.patch_jump(continuation_operand, @code_count)
     @type_facts = original_facts
     if body_fact != nil && body_fact == rescued_fact
