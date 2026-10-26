@@ -1,0 +1,4 @@
+def twice()
+  yield
+end
+twice() do puts("hi") end

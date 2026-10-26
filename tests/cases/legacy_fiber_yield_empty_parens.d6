@@ -1,0 +1,11 @@
+def body()
+  a = yield()
+  b = yield( 7 )
+  c = yield
+  [a, b, c]
+end
+f = Fiber.new(body)
+puts(f.resume(0).inspect())
+puts(f.resume(1).inspect())
+puts(f.resume(2).inspect())
+puts(f.resume(3).inspect())

@@ -1,0 +1,1 @@
+'each' on Box does not take a block; add a &block parameter to accept one
