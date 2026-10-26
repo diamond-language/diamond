@@ -52,8 +52,8 @@ Assertions are class methods on `Minitest`. Each returns `true` or raises
 - `assert_includes(array, item)`, `refute_includes(array, item)`
 - `assert_empty(collection)`, `refute_empty(collection)`
 - `assert_in_delta(expected, actual, delta = 0.001)`
-- `assert_raises[ErrorClass](callable)`: passes when calling `callable` raises
-  `ErrorClass` or a subclass
+- `assert_raises[ErrorClass](callable)`, or `assert_raises[ErrorClass]() do ... end`:
+  passes when calling `callable` (or the block) raises `ErrorClass` or a subclass
 - `skip(reason)`: marks the running test skipped
 
 A suite (`Minitest.new()`) registers tests with `test(name, callable)` and hooks

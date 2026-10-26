@@ -26,6 +26,10 @@ authoritative fine-grained record.
 
 - `sub`, `gsub` and `scan` accept a String pattern and match it literally, as in Ruby; it
   used to raise `TypeError`.
+- A `do` block passed where the method's last parameter can't hold a Callable
+  (`def check(action: Callable[0], message: String = "")`) is a compile error naming
+  that parameter, instead of a runtime "missing argument".
+- minitest 0.1.2: `assert_raises[E]() do ... end` takes the action as a block.
 - A `do ... end` block with no parameters ignores the arguments it is called with, so
   `3.times() do ... end` and `hash.each() do ... end` work as in Ruby. Any other parameter
   count must still match exactly.

@@ -29,16 +29,20 @@ def run_tests()
     raise ArgumentError.new("x")
   end
   def test_raises() = Minitest.assert_raises[ArgumentError](raise_argument_error)
+  def test_raises_block()
+    Minitest.assert_raises[ArgumentError]() do raise ArgumentError.new("y") end
+  end
   def test_skip() = Minitest.skip("later")
   suite = Minitest.new()
   suite.test("equal", test_equal)
   suite.test("raises", test_raises)
+  suite.test("raises with a block", test_raises_block)
   suite.test("skip", test_skip)
   exit(suite.run() ? 0 : 1)
 end
 run_tests()')"
 [[ "$actual" == *"SKIP: skip"* ]]
-[[ "$actual" == *"3 tests, 2 passed, 0 failed, 0 errors, 1 skipped" ]]
+[[ "$actual" == *"4 tests, 3 passed, 0 failed, 0 errors, 1 skipped" ]]
 
 # A failure and an error are reported separately, and the suite exits 1.
 if actual="$(run_suite '

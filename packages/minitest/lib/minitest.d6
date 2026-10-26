@@ -200,9 +200,17 @@ class Minitest
   # unrelated exception type isn't caught here at all -- it propagates
   # past assert_raises the same way an unmatched `rescue error: E`
   # always does, surfacing as an error rather than a clean failure.
-  def self.assert_raises[E](action: Callable[0], message: String = "expected an exception to be raised") -> Bool
+  # The action can also be a block: `assert_raises[E]() do ... end`.
+  def self.assert_raises[E](action: Callable[0] | Nil = nil,
+      message: String = "expected an exception to be raised", &block) -> Bool
     raised = begin
-      action()
+      if action != nil
+        action()
+      elsif block_given?()
+        yield()
+      else
+        raise ArgumentError.new("assert_raises needs a callable or a block")
+      end
       false
     rescue error: AssertionError
       raise

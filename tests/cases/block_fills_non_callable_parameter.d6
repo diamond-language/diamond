@@ -1,0 +1,4 @@
+class M
+  def self.gen2(action: Callable[0], message: String = "x") = action()
+end
+p(M.gen2() do 2 end)
