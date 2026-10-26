@@ -4,7 +4,12 @@ Diamond is currently pre-release. This file records user-visible capability
 milestones rather than every implementation step; the Git history remains the
 authoritative fine-grained record.
 
-## Unreleased
+## 0.20.2 — 2026-10-26
+
+Shaped by writing two command-line and TCP example apps: `def` bodies take `rescue` without
+`begin`, new conveniences for command-line tools (`IO.tty?`, `Dir.mkdir_p`,
+`Process::Stream#gets`, `%` formatting), and clearer compile errors for blocks and class
+names. Every code example in the docs is now checked in CI.
 
 ### Added
 
