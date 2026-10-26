@@ -296,7 +296,11 @@ class Minitest
       puts(@failures[index])
       index += 1
     end
-    puts("#{@names.length()} tests, #{@passed} passed, #{@failed} failed, #{@errored} errors, #{@skipped} skipped")
+    puts("#{Minitest.count(@names.length(), "test")}, #{@passed} passed, #{@failed} failed, #{Minitest.count(@errored, "error")}, #{@skipped} skipped")
+  end
+
+  def self.count(number: Int, noun: String) -> String
+    number == 1 ? "1 #{noun}" : "#{number} #{noun}s"
   end
 
   # Same as `run`, but raises if anything failed or errored -- lets a
@@ -306,7 +310,7 @@ class Minitest
     if self.run()
       true
     else
-      raise RuntimeError.new("#{@failed + @errored} of #{@names.length()} test(s) did not pass")
+      raise RuntimeError.new("#{@failed + @errored} of #{Minitest.count(@names.length(), "test")} did not pass")
     end
   end
 end

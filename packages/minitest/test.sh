@@ -66,7 +66,7 @@ run_tests()')"; then
 fi
 [[ "$actual" == *"FAIL: fails"* ]]
 [[ "$actual" == *"ERROR: errors (RuntimeError)"* ]]
-[[ "$actual" == *"2 tests, 0 passed, 1 failed, 1 errors, 0 skipped"* ]]
+[[ "$actual" == *"2 tests, 0 passed, 1 failed, 1 error, 0 skipped"* ]]
 [[ "$actual" == *"teardowns: 2"* ]]
 
 echo "minitest package tests passed"

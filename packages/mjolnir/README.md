@@ -8,8 +8,8 @@ From your project directory (see the [package guide](https://github.com/diamond-
 
 ```sh
 facet init myapp          # once, if the project has no diamond.cut yet
-facet add mjolnir --registry https://cuts.dilang.tech --version "^0.2.1"
-facet update
+facet add mjolnir
+facet install
 ```
 
 This installs the cut into `cuts/mjolnir/`; load it with `require_cut "mjolnir"`.

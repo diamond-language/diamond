@@ -13,8 +13,8 @@ From your project directory (see the [package guide](https://github.com/diamond-
 
 ```sh
 facet init myapp          # once, if the project has no diamond.cut yet
-facet add registry --registry https://cuts.dilang.tech --version "^0.1.2"
-facet update
+facet add registry
+facet install
 ```
 
 This installs the cut into `cuts/registry/` along with `active_record` and `arel`; load it with `require_cut "registry"`. To run a registry service rather than embed these primitives, see `applications/registry` in the Diamond repository.
