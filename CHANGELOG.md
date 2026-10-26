@@ -15,6 +15,8 @@ authoritative fine-grained record.
 - `Process::Stream#gets` reads one line of a spawned process's output.
 - `format % values` formats like `format.format(values)`, as in Ruby.
 - `start_with?`/`end_with?` take several candidates and match any of them.
+- An endless method body can be a `raise`: `def area() -> Float = raise NotDone.new()`,
+  optionally with a postfix `if`/`unless`.
 
 ### Fixed
 
