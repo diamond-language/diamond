@@ -1692,6 +1692,31 @@ uint16_t parse_literal(Compiler *compiler) {
     return destination;
 }
 
+/* A bare name that is no local, capture or function. A capitalized one is
+ * most likely a class or module written as a value, as in Ruby's
+ * `assert_raises(RuntimeError)`; Diamond's classes are not values, so say
+ * that rather than calling it a local variable. */
+static void fail_undefined_name(Compiler *compiler,DiamondSpan name) {
+    const char first=compiler->source[name.start];
+    if(first<'A'||first>'Z') {
+        fail(compiler,name,"undefined local variable");
+        return;
+    }
+    char message[DIAMOND_MAX_FUNCTION_NAME*2+200];
+    const int length=name.length>DIAMOND_MAX_FUNCTION_NAME?DIAMOND_MAX_FUNCTION_NAME:(int)name.length;
+    const char *text=compiler->source+name.start;
+    if(find_class(compiler,name)>=0)
+        snprintf(message,sizeof message,"'%.*s' is a class, and a class is not a value: "
+            "call %.*s.new(...) or a class method, or pass it as a type argument, as in "
+            "f[%.*s](...)",length,text,length,text,length,text);
+    else if(find_module(compiler,name)>=0)
+        snprintf(message,sizeof message,"'%.*s' is a module, and a module is not a value: "
+            "call its methods, as in %.*s.name(...)",length,text,length,text);
+    else
+        snprintf(message,sizeof message,"undefined constant '%.*s'",length,text);
+    fail(compiler,name,message);
+}
+
 uint16_t parse_identifier(Compiler *compiler) {
     const int local = find_local(compiler, compiler->previous.span);
     if (local < 0) {
@@ -1742,7 +1767,7 @@ uint16_t parse_identifier(Compiler *compiler) {
             emit_instruction(compiler,DIAMOND_OP_NIL,destination,0,0,1);
             return destination;
         }
-        fail(compiler, compiler->previous.span, "undefined local variable"); return 0;
+        fail_undefined_name(compiler,compiler->previous.span); return 0;
     }
     if(!compiler->locals[(size_t)local].captured)
         return compiler->locals[(size_t)local].reg;
