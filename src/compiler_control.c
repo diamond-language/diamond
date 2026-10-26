@@ -270,26 +270,45 @@ void record_scope_type_fact(Compiler *compiler,uint16_t reg,
         .tooling_type_set=compiler->tooling_type_sets[reg]};
 }
 
-uint16_t compile_begin(Compiler *compiler) {
-    if(!consume_block_start(compiler))return 0;
+/* The handlers a begin block installs before its body: the operands its
+ * rescue/else/ensure clauses patch once they are compiled. */
+typedef struct BeginFrame {
+    size_t ensure_operand;
+    size_t handler_type_operand;
+    size_t handler_operand;
+    size_t retry_target;
+    uint16_t exception;
+} BeginFrame;
+
+static void open_begin_frame(Compiler *compiler,BeginFrame *frame) {
     compiler->begin_depth++;
-    const size_t ensure_operand=compiler->function->code_count+1;
+    frame->ensure_operand=compiler->function->code_count+1;
     emit_opcode(compiler,DIAMOND_OP_PUSH_ENSURE);
     emit_byte(compiler,0);emit_byte(compiler,0);
-    const uint16_t exception=allocate_register(compiler);
-    const size_t retry_target=compiler->function->code_count;
+    frame->exception=allocate_register(compiler);
+    frame->retry_target=compiler->function->code_count;
     /* Byte layout after PUSH_RESCUE's opcode: exception (2-byte register,
      * emit_register below), then this 1-byte catch-all flag, then 8
      * 1-byte rescue-type-id slots, then a 2-byte jump-target placeholder
      * -- opcode(+0) + exception(+1,+2) puts the flag at +3 and the jump
      * placeholder at +3+1+8=+12. */
-    const size_t handler_type_operand=compiler->function->code_count+3;
-    const size_t handler_operand=compiler->function->code_count+12;
+    frame->handler_type_operand=compiler->function->code_count+3;
+    frame->handler_operand=compiler->function->code_count+12;
     emit_opcode(compiler,DIAMOND_OP_PUSH_RESCUE);
-    emit_register(compiler,exception);emit_byte(compiler,0x80);
+    emit_register(compiler,frame->exception);emit_byte(compiler,0x80);
     for(size_t i=0;i<8;i++)emit_byte(compiler,0);
     emit_byte(compiler,0);emit_byte(compiler,0);
-    const uint16_t body=compile_sequence(compiler);
+}
+
+/* Compiles the rescue/else/ensure clauses after `body`, up to but not
+ * including the closing `end`, and returns the register holding the
+ * block's value. */
+static uint16_t close_begin_frame(Compiler *compiler,const BeginFrame *frame,uint16_t body) {
+    const size_t ensure_operand=frame->ensure_operand;
+    const size_t handler_type_operand=frame->handler_type_operand;
+    const size_t handler_operand=frame->handler_operand;
+    const size_t retry_target=frame->retry_target;
+    const uint16_t exception=frame->exception;
     const uint16_t destination=allocate_register(compiler);
     emit_instruction(compiler,DIAMOND_OP_MOVE,destination,body,0,2);
     emit_instruction(compiler,DIAMOND_OP_POP_RESCUE,0,0,0,0);
@@ -422,14 +441,75 @@ uint16_t compile_begin(Compiler *compiler) {
         (void)compile_sequence(compiler);
     }
     emit_instruction(compiler,DIAMOND_OP_END_ENSURE,0,0,0,0);
+    patch_jump(compiler,continuation_operand,compiler->function->code_count);
+    compiler->begin_depth--;
+    return destination;
+}
+
+uint16_t compile_begin(Compiler *compiler) {
+    if(!consume_block_start(compiler))return 0;
+    BeginFrame frame;
+    open_begin_frame(compiler,&frame);
+    const uint16_t body=compile_sequence(compiler);
+    const uint16_t destination=close_begin_frame(compiler,&frame,body);
+    if(compiler->failed)return destination;
     if(compiler->current.kind!=DIAMOND_TOKEN_END) {
         fail(compiler,compiler->current.span,"expected 'end' after begin body");
         return destination;
     }
     advance_token(compiler);
-    patch_jump(compiler,continuation_operand,compiler->function->code_count);
-    compiler->begin_depth--;
     return destination;
+}
+
+static bool implicit_begin_recorded(const Compiler *compiler,size_t offset) {
+    const ImplicitBegins *set=compiler->implicit_begins;
+    if(set==nullptr)return false;
+    for(size_t index=0;index<set->count;index++)
+        if(set->offsets[index]==offset)return true;
+    return false;
+}
+
+static void record_implicit_begin(Compiler *compiler,size_t offset) {
+    ImplicitBegins *set=compiler->implicit_begins;
+    if(set==nullptr)return;
+    if(set->count==set->capacity) {
+        const size_t capacity=set->capacity==0?8:set->capacity*2;
+        size_t *grown=realloc(set->offsets,capacity*sizeof *grown);
+        if(grown==nullptr) {
+            fail(compiler,compiler->current.span,"out of memory");return;
+        }
+        set->offsets=grown;set->capacity=capacity;
+    }
+    set->offsets[set->count++]=offset;
+}
+
+/* A def or do-block body, which may end in rescue/else/ensure clauses of
+ * its own the way a begin block does: `def f ... rescue ... end`. Stops
+ * at the closing `end` without consuming it. *wrapped says whether the
+ * body had handlers, so the caller knows its value may come from one. */
+uint16_t compile_body(Compiler *compiler,bool *wrapped) {
+    const size_t offset=compiler->current.span.start;
+    BeginFrame frame;
+    *wrapped=!compiler->discovery_pass&&implicit_begin_recorded(compiler,offset);
+    if(*wrapped)open_begin_frame(compiler,&frame);
+    uint16_t body=compile_sequence(compiler);
+    const bool has_handlers=compiler->current.kind==DIAMOND_TOKEN_RESCUE||
+        compiler->current.kind==DIAMOND_TOKEN_ENSURE;
+    if(compiler->failed||(!*wrapped&&!has_handlers))return body;
+    if(!*wrapped) {
+        if(!compiler->discovery_pass) {
+            fail(compiler,compiler->current.span,
+                 "internal error: body handlers were not found by the discovery pass");
+            return body;
+        }
+        /* The discovery pass's bytecode is thrown away, so the handlers
+         * only need to parse here; the real pass opens them before the
+         * body. */
+        record_implicit_begin(compiler,offset);
+        open_begin_frame(compiler,&frame);
+        *wrapped=true;
+    }
+    return close_begin_frame(compiler,&frame,body);
 }
 
 uint16_t compile_retry(Compiler *compiler) {

@@ -640,7 +640,8 @@ uint16_t compile_block(Compiler *compiler) {
 
     compiler->in_function=true;
     compiler->in_block=true;
-    const uint16_t body_result=compiler->failed?0:compile_sequence(compiler);
+    bool wrapped=false;
+    const uint16_t body_result=compiler->failed?0:compile_body(compiler,&wrapped);
     if(!compiler->failed&&declared_return_set==DIAMOND_NO_TYPE_SET&&
        compiler->return_flow_seen) {
         /* An early `return`/`next` can hand back a different type than the
@@ -1419,8 +1420,11 @@ static bool compile_definition_body(Compiler *compiler,int return_type,uint16_t 
         }
     } else {
         if(!compiler->failed)(void)consume_block_start(compiler);
-        *body_result=compiler->failed?0:compile_sequence(compiler);
-        *body_diverges=!compiler->failed&&compiler->sequence_diverges;
+        bool wrapped=false;
+        *body_result=compiler->failed?0:compile_body(compiler,&wrapped);
+        /* A rescue clause can produce the value even when the body itself
+         * always raises. */
+        *body_diverges=!compiler->failed&&!wrapped&&compiler->sequence_diverges;
     }
     return endless;
 }

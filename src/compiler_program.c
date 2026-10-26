@@ -563,7 +563,8 @@ static bool run_compile_pass(const char *source, DiamondProgram *program,
                              DiamondDiagnostic *diagnostic, bool discovery_pass,
                              size_t function_claim_start, bool debug_mode,
                              const DiamondProgram *tooling_returns,
-                             ToolingDependencies *tooling_forward_calls) {
+                             ToolingDependencies *tooling_forward_calls,
+                             ImplicitBegins *implicit_begins) {
     *diagnostic = (DiamondDiagnostic){};
     Compiler compiler = {
         .source = source,
@@ -583,6 +584,7 @@ static bool run_compile_pass(const char *source, DiamondProgram *program,
         .next_function_claim = function_claim_start,
         .tooling_returns=tooling_returns,
         .tooling_forward_calls=tooling_forward_calls,
+        .implicit_begins=implicit_begins,
         /* Never set for the discovery pass -- see the field's own
          * comment in the Compiler struct. */
         .debug_mode = discovery_pass?false:debug_mode,
@@ -850,14 +852,16 @@ bool diamond_compile_impl(const char *source, DiamondProgram *program,
         return false;
     }
     DiamondDiagnostic discovery_diagnostic = {0};
+    ImplicitBegins implicit_begins={};
     const bool discovered = run_compile_pass(
         source, discovery, &discovery_diagnostic, /*discovery_pass=*/true,
-        function_claim_start, false,nullptr,nullptr);
+        function_claim_start, false,nullptr,nullptr,&implicit_begins);
     if(trace_compile)clock_gettime(CLOCK_MONOTONIC,&trace_discovery_done);
 
     diamond_program_init(program);
     program->allow_top_level_redefinition = allow_top_level_redefinition;
     if (!discovered) {
+        free(implicit_begins.offsets);
         *diagnostic = discovery_diagnostic;
         diamond_program_free(discovery);
         free(discovery);
@@ -865,6 +869,7 @@ bool diamond_compile_impl(const char *source, DiamondProgram *program,
     }
     if(template!=nullptr&&!seed_program_from_template(program,template)) {
         diamond_program_free(discovery);free(discovery);
+        free(implicit_begins.offsets);
         *diagnostic=(DiamondDiagnostic){.message="out of memory"};
         return false;
     }
@@ -886,11 +891,13 @@ bool diamond_compile_impl(const char *source, DiamondProgram *program,
             DiamondFunction *reserved=diamond_program_add_function(program);
             if(reserved==nullptr) {
                 diamond_program_free(discovery);free(discovery);
+                free(implicit_begins.offsets);
                 *diagnostic=(DiamondDiagnostic){.message="out of memory"};
                 return false;
             }
             if(!diamond_function_copy(reserved,discovered_function)) {
                 diamond_program_free(discovery);free(discovery);
+                free(implicit_begins.offsets);
                 *diagnostic=(DiamondDiagnostic){.message="out of memory"};
                 return false;
             }
@@ -905,7 +912,8 @@ bool diamond_compile_impl(const char *source, DiamondProgram *program,
 
     const bool compiled=run_compile_pass(
         source,program,diagnostic,/*discovery_pass=*/false,function_claim_start,
-        debug_mode,tooling_returns,tooling_forward_calls);
+        debug_mode,tooling_returns,tooling_forward_calls,&implicit_begins);
+    free(implicit_begins.offsets);
     if(compiled)
         for(size_t index=0;index<program->interface_count;index++)
             program->interfaces[index].type_sets=program->entry.type_sets;
