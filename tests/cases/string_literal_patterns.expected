@@ -1,0 +1,10 @@
+"axc"
+"a-b-c"
+"a[.]b[.]c"
+["1+1", "1+1"]
+"<(x)>"
+true
+false
+true
+"String#sub pattern must be a Regexp or a String"
+String#sub pattern must be a Regexp or a String

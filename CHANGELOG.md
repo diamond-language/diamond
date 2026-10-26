@@ -10,6 +10,11 @@ authoritative fine-grained record.
 
 - A `def` or `do` block body can end in `rescue`/`else`/`ensure` clauses without a `begin`,
   as in Ruby: `def load(path) ... rescue error: IOError ... end`.
+- `IO.tty?(:stdout)` (or `:stdin`/`:stderr`) says whether the stream is a terminal.
+- `Dir.mkdir_p(path)` creates a directory and its missing parents.
+- `Process::Stream#gets` reads one line of a spawned process's output.
+- `format % values` formats like `format.format(values)`, as in Ruby.
+- `start_with?`/`end_with?` take several candidates and match any of them.
 
 ### Fixed
 
@@ -19,6 +24,8 @@ authoritative fine-grained record.
 
 ### Changed
 
+- `sub`, `gsub` and `scan` accept a String pattern and match it literally, as in Ruby; it
+  used to raise `TypeError`.
 - A `do ... end` block with no parameters ignores the arguments it is called with, so
   `3.times() do ... end` and `hash.each() do ... end` work as in Ruby. Any other parameter
   count must still match exactly.

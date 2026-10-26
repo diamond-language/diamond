@@ -524,6 +524,37 @@ DiamondVmStatus outlined_mysql_open(DiamondVm *vm,const DiamondChunk *chunk,Diam
     HELPER_DONE;
 }
 
+/* Dir.mkdir_p: mkdir each prefix of path in turn, as `mkdir -p` does. A
+ * prefix that already exists is fine as long as the whole path ends up a
+ * directory. */
+static DiamondVmStatus dir_mkdir_p_helper(DiamondVm *vm,const DiamondString *path,mode_t mode) {
+    if(path->length==0) {
+        snprintf(vm->error,sizeof vm->error,"Dir.mkdir_p path must not be empty");
+        return DIAMOND_VM_IO_ERROR;
+    }
+    char *prefix=malloc(path->length+1);
+    if(prefix==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
+    memcpy(prefix,path->chars,path->length);prefix[path->length]='\0';
+    int failure=0;
+    for(size_t end=1;end<=path->length&&failure==0;end++) {
+        if(end<path->length&&prefix[end]!='/')continue;
+        if(prefix[end-1]=='/')continue;
+        const char saved=prefix[end];prefix[end]='\0';
+        if(mkdir(prefix,mode)!=0&&errno!=EEXIST)failure=errno;
+        prefix[end]=saved;
+    }
+    struct stat made;
+    if(failure==0&&(stat(prefix,&made)!=0||!S_ISDIR(made.st_mode)))
+        failure=errno!=0&&stat(prefix,&made)!=0?errno:ENOTDIR;
+    free(prefix);
+    if(failure!=0) {
+        snprintf(vm->error,sizeof vm->error,"cannot create directory '%.*s': %s",
+            (int)path->length,path->chars,strerror(failure));
+        return DIAMOND_VM_IO_ERROR;
+    }
+    return DIAMOND_VM_OK;
+}
+
 /* DIAMOND_OP_FILE_PATH, moved out of run_chunk's switch (see HELPER_DONE below): the case body is
  * unchanged apart from its macros, so it keeps the operand decoding, sandbox check and error
  * returns it had. The caller applies VM_PROPAGATE to the status. */
@@ -533,6 +564,28 @@ DiamondVmStatus outlined_file_path(DiamondVm *vm,const DiamondChunk *chunk,Diamo
     size_t ip=*ip_ref;
     uint16_t dest=0,arg1=0,arg2=0;uint8_t selector=0;
     READ_SHORT(dest);READ_SHORT(arg1);READ_SHORT(arg2);READ_BYTE(selector);
+    if(selector==DIAMOND_FILE_PATH_TTY) {
+        /* A Symbol and a String share their layout (length, then chars). */
+        const DiamondValue stream=registers[arg1];
+        if(stream.kind!=DIAMOND_VALUE_OBJECT||(stream.as.object->kind!=DIAMOND_OBJECT_SYMBOL&&
+           stream.as.object->kind!=DIAMOND_OBJECT_STRING)) {
+            snprintf(vm->error,sizeof vm->error,"IO.tty? takes :stdin, :stdout or :stderr");
+            VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+        }
+        const DiamondString *name=(const DiamondString *)stream.as.object;
+        int descriptor=-1;
+        if(name->length==5&&memcmp(name->chars,"stdin",5)==0)descriptor=STDIN_FILENO;
+        else if(name->length==6&&memcmp(name->chars,"stdout",6)==0)descriptor=STDOUT_FILENO;
+        else if(name->length==6&&memcmp(name->chars,"stderr",6)==0)descriptor=STDERR_FILENO;
+        if(descriptor<0) {
+            snprintf(vm->error,sizeof vm->error,
+                "IO.tty? takes :stdin, :stdout or :stderr, not :%.*s",
+                (int)(name->length>40?40:name->length),name->chars);
+            VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+        }
+        registers[dest]=DIAMOND_BOOL(isatty(descriptor)!=0);
+        HELPER_DONE;
+    }
     if(registers[arg1].kind!=DIAMOND_VALUE_OBJECT||
        registers[arg1].as.object->kind!=DIAMOND_OBJECT_STRING) {
         snprintf(vm->error,sizeof vm->error,"File path argument must be a String");
@@ -542,7 +595,8 @@ DiamondVmStatus outlined_file_path(DiamondVm *vm,const DiamondChunk *chunk,Diamo
     const bool has_second=registers[arg2].kind!=DIAMOND_VALUE_NIL;
     /* Dir.mkdir's second operand is the mode, an Int; every other selector
      * takes a String there. */
-    const bool second_is_mode=selector==DIAMOND_FILE_PATH_MKDIR;
+    const bool second_is_mode=selector==DIAMOND_FILE_PATH_MKDIR||
+        selector==DIAMOND_FILE_PATH_MKDIR_P;
     if(second_is_mode&&has_second&&registers[arg2].kind!=DIAMOND_VALUE_INT) {
         snprintf(vm->error,sizeof vm->error,"Dir.mkdir mode must be an Int");
         VM_RETURN(DIAMOND_VM_TYPE_ERROR);
@@ -660,6 +714,13 @@ DiamondVmStatus outlined_file_path(DiamondVm *vm,const DiamondChunk *chunk,Diamo
                     (int)path->length,path->chars,strerror(errno));
                 VM_RETURN(DIAMOND_VM_IO_ERROR);
             }
+            path_result=registers[arg1];
+            break;
+        }
+        case DIAMOND_FILE_PATH_MKDIR_P: {
+            VM_SANDBOX_GUARD("Dir.mkdir_p", "filesystem");
+            const mode_t mode=has_second?(mode_t)(registers[arg2].as.integer&07777):0777;
+            path_status=dir_mkdir_p_helper(vm,path,mode);
             path_result=registers[arg1];
             break;
         }

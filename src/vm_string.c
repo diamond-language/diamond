@@ -233,22 +233,57 @@ static DiamondVmStatus string_format_helper(DiamondVm *vm,const DiamondChunk *ch
     return DIAMOND_VM_OK;
 }
 
+/* `format % values`, Ruby's spelling of `format.format(values)`: the `%`
+ * operator with a String on the left. Outlined from run_chunk's MODULO
+ * case to keep its locals out of run_chunk's frame. */
+__attribute__((noinline))
+DiamondVmStatus string_percent_helper(DiamondVm *vm,const DiamondChunk *chunk,size_t depth,
+        DiamondValue *registers,uint16_t left,uint16_t right,uint16_t dest) {
+    DiamondValue formatted=DIAMOND_NIL;
+    const DiamondVmStatus status=string_format_helper(vm,chunk,depth,
+        (const DiamondString *)registers[left].as.object,registers[right],&formatted);
+    if(status!=DIAMOND_VM_OK)return status;
+    registers[dest]=formatted;
+    return DIAMOND_VM_OK;
+}
+
+/* sub/gsub/scan's pattern: a Regexp, or a String matched literally. A
+ * String becomes a Regexp parked in registers[dest], which keeps it alive
+ * until the method writes its result there. */
+static DiamondVmStatus string_pattern_argument(DiamondVm *vm,DiamondValue *registers,uint16_t base,
+        uint16_t dest,const char *method,const DiamondRegexp **pattern) {
+    const DiamondValue argument=registers[base];
+    if(argument.kind==DIAMOND_VALUE_OBJECT&&argument.as.object->kind==DIAMOND_OBJECT_REGEXP) {
+        *pattern=(const DiamondRegexp *)argument.as.object;
+        return DIAMOND_VM_OK;
+    }
+    if(argument.kind!=DIAMOND_VALUE_OBJECT||argument.as.object->kind!=DIAMOND_OBJECT_STRING) {
+        snprintf(vm->error,sizeof vm->error,
+            "String#%s pattern must be a Regexp or a String",method);
+        return DIAMOND_VM_TYPE_ERROR;
+    }
+    DiamondValue literal=DIAMOND_NIL;
+    const DiamondVmStatus status=regexp_literal_helper(vm,
+        (const DiamondString *)argument.as.object,&literal);
+    if(status!=DIAMOND_VM_OK)return status;
+    registers[dest]=literal;
+    *pattern=(const DiamondRegexp *)literal.as.object;
+    return DIAMOND_VM_OK;
+}
+
 __attribute__((noinline))
 static DiamondVmStatus string_substitute_method(DiamondVm *vm,const DiamondChunk *chunk,size_t depth,DiamondValue *registers,uint16_t base,uint8_t argc,uint16_t dest,const DiamondString *source,const bool gsub_method) {
     if(argc!=2)return DIAMOND_VM_ARITY_ERROR;
-    if(registers[base].kind!=DIAMOND_VALUE_OBJECT||
-       registers[base].as.object->kind!=DIAMOND_OBJECT_REGEXP) {
-        snprintf(vm->error,sizeof vm->error,
-            "String#%s pattern argument must be a Regexp",
-            gsub_method?"gsub":"sub");
-        return DIAMOND_VM_TYPE_ERROR;
-    }
+    const DiamondRegexp *pattern=nullptr;
+    const DiamondVmStatus pattern_status=string_pattern_argument(vm,registers,base,dest,
+        gsub_method?"gsub":"sub",&pattern);
+    if(pattern_status!=DIAMOND_VM_OK)return pattern_status;
     if(registers[(size_t)base+1].kind==DIAMOND_VALUE_OBJECT&&
        registers[(size_t)base+1].as.object->kind==DIAMOND_OBJECT_CLOSURE) {
         DiamondValue replace_result=DIAMOND_NIL;
         const DiamondVmStatus replace_status=
             regexp_replace_block_helper(vm,chunk,depth,
-            (const DiamondRegexp *)registers[base].as.object,source,
+            pattern,source,
             (const DiamondClosure *)registers[(size_t)base+1].as.object,
             gsub_method,&replace_result);
         if(replace_status!=DIAMOND_VM_OK)return replace_status;
@@ -263,7 +298,7 @@ static DiamondVmStatus string_substitute_method(DiamondVm *vm,const DiamondChunk
     }
     DiamondValue replace_result=DIAMOND_NIL;
     const DiamondVmStatus replace_status=regexp_replace_helper(vm,
-        (const DiamondRegexp *)registers[base].as.object,source,
+        pattern,source,
         (const DiamondString *)registers[(size_t)base+1].as.object,
         gsub_method,&replace_result);
     if(replace_status!=DIAMOND_VM_OK)return replace_status;
@@ -273,14 +308,11 @@ static DiamondVmStatus string_substitute_method(DiamondVm *vm,const DiamondChunk
 __attribute__((noinline))
 static DiamondVmStatus string_scan_method(DiamondVm *vm,DiamondValue *registers,uint16_t base,uint8_t argc,uint16_t dest,const DiamondString *source) {
     if(argc!=1)return DIAMOND_VM_ARITY_ERROR;
-    if(registers[base].kind!=DIAMOND_VALUE_OBJECT||
-       registers[base].as.object->kind!=DIAMOND_OBJECT_REGEXP) {
-        snprintf(vm->error,sizeof vm->error,
-            "String#scan argument must be a Regexp");
-        return DIAMOND_VM_TYPE_ERROR;
-    }
-    const DiamondVmStatus scan_status=regexp_scan_helper(vm,
-        (const DiamondRegexp *)registers[base].as.object,source,
+    const DiamondRegexp *pattern=nullptr;
+    const DiamondVmStatus pattern_status=string_pattern_argument(vm,registers,base,dest,
+        "scan",&pattern);
+    if(pattern_status!=DIAMOND_VM_OK)return pattern_status;
+    const DiamondVmStatus scan_status=regexp_scan_helper(vm,pattern,source,
         registers,dest);
     if(scan_status!=DIAMOND_VM_OK)return scan_status;
     return DIAMOND_VM_OK;
@@ -599,20 +631,24 @@ static DiamondVmStatus string_slice_method(DiamondVm *vm,DiamondValue *registers
 
 __attribute__((noinline))
 static DiamondVmStatus string_affix_test_method(DiamondVm *vm,DiamondValue *registers,uint16_t base,uint8_t argc,uint16_t dest,const DiamondString *source,const bool start_with_method) {
-    if(argc!=1)return DIAMOND_VM_ARITY_ERROR;
-    if(registers[base].kind!=DIAMOND_VALUE_OBJECT||
-       registers[base].as.object->kind!=DIAMOND_OBJECT_STRING) {
-        snprintf(vm->error,sizeof vm->error,
-            "String#%s argument must be a String",
-            start_with_method?"start_with?":"end_with?");
-        return DIAMOND_VM_TYPE_ERROR;
+    /* Several candidates, as in Ruby: true if any of them matches. */
+    if(argc==0)return DIAMOND_VM_ARITY_ERROR;
+    bool matches=false;
+    for(uint8_t index=0;index<argc;index++) {
+        const DiamondValue argument=registers[(size_t)base+index];
+        if(argument.kind!=DIAMOND_VALUE_OBJECT||
+           argument.as.object->kind!=DIAMOND_OBJECT_STRING) {
+            snprintf(vm->error,sizeof vm->error,
+                "String#%s argument must be a String",
+                start_with_method?"start_with?":"end_with?");
+            return DIAMOND_VM_TYPE_ERROR;
+        }
+        const DiamondString *needle=(const DiamondString *)argument.as.object;
+        matches=matches||(needle->length<=source->length&&
+            memcmp(start_with_method?source->chars:
+                   source->chars+source->length-needle->length,
+                   needle->chars,needle->length)==0);
     }
-    const DiamondString *needle=
-        (const DiamondString *)registers[base].as.object;
-    const bool matches=needle->length<=source->length&&
-        memcmp(start_with_method?source->chars:
-               source->chars+source->length-needle->length,
-               needle->chars,needle->length)==0;
     registers[dest]=DIAMOND_BOOL(matches);return DIAMOND_VM_OK;
 }
 

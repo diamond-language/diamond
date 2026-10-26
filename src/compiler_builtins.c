@@ -539,6 +539,10 @@ uint16_t parse_dir_entries_call(Compiler *compiler) {
             advance_token(compiler);
             return parse_file_path_binary_call(compiler,DIAMOND_FILE_PATH_MKDIR);
         }
+        if(name_equals(compiler,"mkdir_p",method,false)) {
+            advance_token(compiler);
+            return parse_file_path_binary_call(compiler,DIAMOND_FILE_PATH_MKDIR_P);
+        }
         if(name_equals(compiler,"delete",method,false)) {
             advance_token(compiler);
             return parse_file_path_unary_call(compiler,DIAMOND_FILE_PATH_RMDIR);
@@ -550,7 +554,7 @@ uint16_t parse_dir_entries_call(Compiler *compiler) {
     }
     if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER||
        !name_equals(compiler,"entries",compiler->current.span,false)) {
-        fail(compiler,compiler->current.span,"expected 'entries', 'mkdir', 'delete' or 'sync' after 'Dir'");
+        fail(compiler,compiler->current.span,"expected 'entries', 'mkdir', 'mkdir_p', 'delete' or 'sync' after 'Dir'");
         return 0;
     }
     advance_token(compiler); /* consume 'entries' */
@@ -643,7 +647,7 @@ static uint16_t parse_file_path_unary_call(Compiler *compiler,DiamondFilePathFun
     emit_register(compiler,second_register);emit_byte(compiler,(uint8_t)id);
     compiler->known_types[dest]=
         (id==DIAMOND_FILE_PATH_ABSOLUTE||id==DIAMOND_FILE_PATH_DIRECTORY||
-         id==DIAMOND_FILE_PATH_EXIST)?
+         id==DIAMOND_FILE_PATH_EXIST||id==DIAMOND_FILE_PATH_TTY)?
         DIAMOND_TYPE_BOOL:DIAMOND_TYPE_STRING;
     return dest;
 }
@@ -1327,9 +1331,14 @@ uint16_t parse_tls_listen_call(Compiler *compiler) {
 
 uint16_t parse_io_poll_call(Compiler *compiler) {
     advance_token(compiler); /* consume '.' */
+    if(compiler->current.kind==DIAMOND_TOKEN_IDENTIFIER&&
+       name_equals(compiler,"tty?",compiler->current.span,false)) {
+        advance_token(compiler);
+        return parse_file_path_unary_call(compiler,DIAMOND_FILE_PATH_TTY);
+    }
     if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER||
        !name_equals(compiler,"poll",compiler->current.span,false)) {
-        fail(compiler,compiler->current.span,"expected 'poll' after 'IO'");
+        fail(compiler,compiler->current.span,"expected 'poll' or 'tty?' after 'IO'");
         return 0;
     }
     advance_token(compiler); /* consume 'poll' */

@@ -1269,6 +1269,49 @@ DiamondVmStatus process_stream_dispatch_helper(DiamondVm *vm,
         }
         registers[dest]=DIAMOND_INT((int64_t)data->length);return DIAMOND_VM_OK;
     }
+    const bool gets_method=method_name->length==4&&memcmp(method_name->chars,"gets",4)==0;
+    if(gets_method) {
+        /* One line without its line ending, like gets() on stdin, or nil at
+         * end of output. It reads a byte at a time so nothing past the
+         * newline is consumed: a read() after it sees exactly what follows. */
+        if(argc!=0)return DIAMOND_VM_ARITY_ERROR;
+        if(target->fd<0) {
+            snprintf(vm->error,sizeof vm->error,"process stream is closed");
+            return DIAMOND_VM_IO_ERROR;
+        }
+        StringBuilder line={};
+        bool ended=false;
+        for(;;) {
+            char byte=0;
+            const ssize_t got=read(target->fd,&byte,1);
+            if(got<0&&errno==EINTR)continue;
+            if(got<0&&(errno==EAGAIN||errno==EWOULDBLOCK)) {
+                struct pollfd ready={.fd=target->fd,.events=POLLIN};
+                (void)poll(&ready,1,-1);
+                continue;
+            }
+            if(got<0) {
+                free(line.chars);
+                snprintf(vm->error,sizeof vm->error,"read error: %s",strerror(errno));
+                return DIAMOND_VM_IO_ERROR;
+            }
+            if(got==0)break;
+            if(byte=='\n') {ended=true;break;}
+            if(!builder_append(&line,&byte,1)) {
+                free(line.chars);return DIAMOND_VM_OUT_OF_MEMORY;
+            }
+        }
+        if(!ended&&line.length==0) {
+            free(line.chars);
+            registers[dest]=DIAMOND_NIL;return DIAMOND_VM_OK;
+        }
+        size_t length=line.length;
+        if(ended&&length>0&&line.chars[length-1]=='\r')length--;
+        DiamondString *text=allocate_string(vm,line.chars!=nullptr?line.chars:"",length);
+        free(line.chars);
+        if(text==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
+        registers[dest]=DIAMOND_OBJECT(text);return DIAMOND_VM_OK;
+    }
     if(!read_method&&!close_method) {
         snprintf(vm->error,sizeof vm->error,"undefined method '%.*s' for Process::Stream",
             (int)method_name->length,method_name->chars);

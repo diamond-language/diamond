@@ -981,6 +981,13 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     break;
                 }
                 if(registers[left].kind==DIAMOND_VALUE_OBJECT&&
+                   registers[left].as.object->kind==DIAMOND_OBJECT_STRING) {
+                    const DiamondVmStatus percent_status=string_percent_helper(vm,chunk,
+                        depth,registers,left,right,destination);
+                    VM_PROPAGATE(percent_status);
+                    break;
+                }
+                if(registers[left].kind==DIAMOND_VALUE_OBJECT&&
                    registers[left].as.object->kind==DIAMOND_OBJECT_INSTANCE) {
                     bool found=false;DiamondValue op_result=DIAMOND_NIL;
                     const uint8_t *site=bytecode+instruction_offset;

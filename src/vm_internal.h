@@ -319,6 +319,7 @@ DIAMOND_INTERNAL bool numeric_as_double(DiamondValue value, double *out);
 /* vm_regexp.c: entry points called from run_chunk and the rest of vm.c */
 DIAMOND_INTERNAL DiamondVmStatus regexp_match_helper(DiamondVm *vm, const DiamondRegexp *regexp, const DiamondString *subject, bool test_only, DiamondValue *registers, uint16_t dest);
 DIAMOND_INTERNAL DiamondVmStatus regexp_new_helper(DiamondVm *vm, const DiamondString *pattern, int64_t options, DiamondValue *result);
+DIAMOND_INTERNAL DiamondVmStatus regexp_literal_helper(DiamondVm *vm, const DiamondString *text, DiamondValue *result);
 DIAMOND_INTERNAL DiamondVmStatus regexp_replace_block_helper(DiamondVm *vm, const DiamondChunk *chunk,size_t depth,const DiamondRegexp *regexp, const DiamondString *subject,const DiamondClosure *block, bool replace_all,DiamondValue *result);
 DIAMOND_INTERNAL DiamondVmStatus regexp_replace_helper(DiamondVm *vm,const DiamondRegexp *regexp, const DiamondString *subject,const DiamondString *replacement, bool replace_all,DiamondValue *result);
 DIAMOND_INTERNAL DiamondVmStatus regexp_scan_helper(DiamondVm *vm,const DiamondRegexp *regexp, const DiamondString *subject,DiamondValue *registers,uint16_t dest);
@@ -1558,6 +1559,7 @@ DIAMOND_INTERNAL DiamondVmStatus regexp_invoke_helper(DiamondVm *vm,
 
 DIAMOND_INTERNAL DiamondVmStatus collection_invoke_helper(DiamondVm *vm,const DiamondChunk *chunk,size_t depth,DiamondValue *registers,uint16_t recv,uint16_t base,uint8_t argc,uint16_t dest,const DiamondStringConstant *method_name);
 
+DIAMOND_INTERNAL DiamondVmStatus string_percent_helper(DiamondVm *vm,const DiamondChunk *chunk,size_t depth,DiamondValue *registers,uint16_t left,uint16_t right,uint16_t dest);
 DIAMOND_INTERNAL DiamondVmStatus string_invoke_helper(DiamondVm *vm,const DiamondChunk *chunk,size_t depth,DiamondValue *registers,uint16_t recv,uint16_t base,uint8_t argc,uint16_t dest,const DiamondStringConstant *method_name);
 
 DIAMOND_INTERNAL DiamondVmStatus numeric_invoke_helper(DiamondVm *vm,const DiamondChunk *chunk,size_t depth,DiamondValue *registers,uint16_t recv,uint16_t base,uint8_t argc,uint16_t dest,const DiamondStringConstant *method_name);

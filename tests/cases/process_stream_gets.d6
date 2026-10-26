@@ -1,0 +1,8 @@
+child = Process.spawn(["sh", "-c", "printf 'one\\r\\n\\nthree\\nrest'"])
+out = child.stdout()
+p(out.gets())
+p(out.gets())
+p(out.gets())
+p(out.read(100))
+p(out.gets())
+child.wait()

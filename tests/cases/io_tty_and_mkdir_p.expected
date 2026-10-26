@@ -1,0 +1,8 @@
+false
+"IO.tty? takes :stdin, :stdout or :stderr, not :nope"
+true
+true
+true
+true
+true
+true

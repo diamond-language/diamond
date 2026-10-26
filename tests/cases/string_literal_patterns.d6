@@ -1,0 +1,13 @@
+p("abc".sub("b", "x"))
+p("a.b.c".gsub(".", "-"))
+p("a.b.c".gsub(".") do |m| "[#{m}]" end)
+p("1+1=2, 1+1".scan("1+1"))
+p("(x)".sub("(x)", "<\\0>"))
+p("abc".start_with?("x", "a"))
+p("abc".end_with?("x", "y"))
+p("abc".start_with?("a"))
+begin
+  "abc".sub(1, "x")
+rescue e
+  p(e.message())
+end
