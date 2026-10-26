@@ -17,14 +17,12 @@
 # and reported as a distinguishable, guaranteed-not-to-match segment.
 require "parser"
 
-# puts(...), not a bare call: the native reference side's own printed
-# output always ends with the CLI's own auto-printed top-level result
-# (see src/repl.c/src/main.c -- any `diamond program.d6` run prints its
-# program's final expression value), and every tests/parser_cases/*.d6
+# puts(...), not a bare call: parser_positive_suite.d6 runs the native
+# reference side with DIAMOND_PRINT_RESULT=1, so its output ends with the
+# program's final expression value, and every tests/parser_cases/*.d6
 # fixture deliberately ends in a bare value for exactly this reason. This
 # explicit puts reproduces that same line for the self-hosted side, since
-# parse_and_run_with_core's return value never otherwise reaches stdout
-# here the way it does when the case runs as its own top-level program.
+# parse_and_run_with_core's return value never otherwise reaches stdout.
 index = 0
 while index < ARGV.length()
   path = ARGV[index]
@@ -36,8 +34,6 @@ while index < ARGV.length()
   end
   index = index + 1
 end
-# One more marker after the loop: this whole file's own top-level result
-# (the while loop above) gets auto-printed too, same as every case's
-# does -- without this, that trailing line would land inside the last
-# case's own segment instead of a segment nothing reads.
+# One more marker after the loop, so anything printed after the last case
+# lands in a segment nothing reads rather than inside that case's.
 print(30.chr())

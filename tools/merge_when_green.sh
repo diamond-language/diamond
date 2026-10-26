@@ -31,7 +31,8 @@ read_checks() {
     for state in "${states[@]:1}"; do
         case "$state" in
             SUCCESS) ;;
-            QUEUED|IN_PROGRESS|PENDING|REQUESTED|WAITING) checks_green=false ;;
+            # A check can report NEUTRAL briefly while it registers; keep waiting, and never merge on it.
+            QUEUED|IN_PROGRESS|PENDING|REQUESTED|WAITING|NEUTRAL) checks_green=false ;;
             *) echo "NOT MERGED: check state is $state" >&2; return 1 ;;
         esac
     done
