@@ -14,6 +14,9 @@ authoritative fine-grained record.
 
 ### Changed
 
+- A `do ... end` block with no parameters ignores the arguments it is called with, so
+  `3.times() do ... end` and `hash.each() do ... end` work as in Ruby. Any other parameter
+  count must still match exactly.
 - An object pattern naming an unknown class says so: `unknown class 'Missing' in object
   pattern`.
 - A block with the wrong number of parameters reports the block's arity:
