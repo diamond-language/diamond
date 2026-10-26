@@ -5,9 +5,18 @@ The corrected A record is **142.93.192.149**. External health and catalog
 requests succeeded. Since 2026-09-25 nginx terminates TLS with certbot
 certificates (see "Proxy and certificates" below); Caddy was retired.
 
-Runtime revision: `1fd92adc655a50c30ed81bdb2cfdb19b350e77cf` (v0.20.0, deployed
-2026-10-25 with `tools/deploy_registry.sh` after a verified snapshot; 19 public cuts
-re-verified, minitest 0.1.0 included). v0.19.1 (`3b565861`) was deployed 2026-10-24 the
+Runtime revision: `2fcde4dc8679255e6fb9415b2a9dadcf9d9c0019` (v0.20.1, deployed
+2026-10-25 with `tools/deploy_registry.sh` after a verified snapshot). The same evening,
+after a second verified snapshot, one 30-minute credential (31, `publish:` for each of the
+twenty, revoked) published a patch release of every public cut carrying the flagless
+`facet add` README install line: arel 0.35.1, active_record 0.20.1, cookies 0.2.1,
+database_config 0.2.1, div 0.3.1, graphql 0.3.1, graphsql 0.2.1, http 0.2.1, logger 0.5.1,
+gremlin 0.5.2, jobs 0.2.1, log_viewer 0.2.1, minitest 0.1.1, multipart 0.3.1,
+network_safety 0.2.1, rack 0.2.1, redis 0.2.1, registry 0.2.1, websocket 0.2.1 (digests in
+`docs/registry-launch-inventory.json`) and mjolnir 0.3.2 (sha256
+`1d428669bd57db668f44f97b4e8d4a2476bf662d6823bc9c7253343db2eaad51`).
+`tools/verify_registry_launch.d6` then passed for all 19 public cuts. v0.20.0
+(`1fd92adc`) was deployed earlier the same day with 19 cuts. v0.19.1 (`3b565861`) was deployed 2026-10-24 the
 same way with 18 cuts. v0.19.0 (`961519af`) was deployed 2026-10-23 after verified snapshots
 and Ubuntu HTTP/nginx/systemd staging checks.
 The installed unit now starts `app.d6`; the upgrade preserves and restores the
