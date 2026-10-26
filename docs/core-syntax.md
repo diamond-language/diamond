@@ -384,6 +384,22 @@ def total_price(items, tax) =
 ```
 The parentheses after the name are required, as for any `def`.
 
+The body may also be a `raise`, which suits a method that subclasses must override. A
+postfix condition makes it a guard that returns `nil` when the condition is false:
+```ruby
+class Shape
+  def area() -> Float = raise ArgumentError.new("subclass must define area")
+end
+def check(x: Int) = raise ArgumentError.new("negative") if x < 0
+
+begin
+  Shape.new().area()
+rescue error: ArgumentError
+  puts(error.message())  # prints: subclass must define area
+end
+check(3)  # => nil
+```
+
 ## Compound assignment
 
 ```ruby

@@ -1394,9 +1394,17 @@ static bool compile_definition_body(Compiler *compiler,int return_type,uint16_t 
         const size_t condition_jump=has_postfix
             ? emit_jump(compiler,DIAMOND_OP_JUMP,0):SIZE_MAX;
         const size_t body_start=compiler->function->code_count;
-        *body_result=return_type>=0?
-            parse_with_expected_set(compiler,(uint16_t)return_type):
-            parse_expression(compiler);
+        /* `raise` is a statement, not an expression, but `def f() = raise E` is the natural
+         * way to write a method that only raises. */
+        const bool raises=compiler->current.kind==DIAMOND_TOKEN_RAISE;
+        if(raises) {
+            *body_result=compile_raise(compiler);
+            *body_diverges=!has_postfix;
+        } else {
+            *body_result=return_type>=0?
+                parse_with_expected_set(compiler,(uint16_t)return_type):
+                parse_expression(compiler);
+        }
         if(has_postfix) {
             if(compiler->current.kind!=postfix) {
                 fail(compiler,compiler->current.span,"expected postfix condition");
