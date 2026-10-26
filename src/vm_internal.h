@@ -1300,7 +1300,7 @@ DIAMOND_INTERNAL void diamond_format_value_type(char *buffer, size_t capacity,
                               DiamondValue value);
 
 DIAMOND_INTERNAL void format_value_type_detailed(char *buffer,size_t capacity,
-        DiamondValue value);
+        const DiamondChunk *chunk,DiamondValue value);
 
 DIAMOND_INTERNAL void format_operator_type_error(DiamondVm *vm,DiamondValue left_value,
         DiamondValue right_value,const char *op_name);

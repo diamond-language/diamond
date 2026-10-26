@@ -1,0 +1,14 @@
+def name_of(event)
+  case event
+  when Outer{inner: Inner{name: name}} then name
+  else "other"
+  end
+end
+
+struct Inner(name: String)
+end
+struct Outer(inner: Inner)
+end
+
+puts(name_of(Outer.new(Inner.new("deep"))))
+puts(name_of(1))

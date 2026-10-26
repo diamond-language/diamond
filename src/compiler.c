@@ -2339,7 +2339,10 @@ int parse_type_annotation(Compiler *compiler) {
         for(size_t index=0;index<16;index++)
             parsed.callable_parameter_sets[index]=callable_parameter_sets[index];
         set=&compiler->function->type_sets[set_index];
-        for(size_t index=0;index<set->count;index++)
+        /* Discovery resolves a not-yet-declared class to Nil (see
+         * resolve_type_name), so `Later | Nil` would look duplicated here;
+         * the real pass, with every declaration known, checks for real. */
+        for(size_t index=0;!compiler->discovery_pass&&index<set->count;index++)
             if(type_members_structurally_equal(&set->members[index],
                     compiler->function->type_sets,
                     compiler->function->type_set_count,&parsed,

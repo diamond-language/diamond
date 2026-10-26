@@ -57,6 +57,24 @@ static const DiamondMethod *case_pattern_reader(const Compiler *compiler,
     return nullptr;
 }
 
+/* `Name{...}` can only be an object pattern. Discovery has not seen a class
+ * declared later in the source yet, so it parses the pattern against
+ * CASE_UNDISCOVERED_CLASS and leaves the checks to the real pass; there, an
+ * unknown name is an error instead of a parse failure at the '{'. */
+enum { CASE_UNDISCOVERED_CLASS = -2 };
+
+static int object_pattern_class(Compiler *compiler,const char *name,
+        DiamondTokenKind after_kind) {
+    const int found=find_class_qualified_or_scoped(compiler,name);
+    if(found>=0||after_kind!=DIAMOND_TOKEN_LEFT_BRACE||name[0]<'A'||name[0]>'Z')
+        return found;
+    if(compiler->discovery_pass)return CASE_UNDISCOVERED_CLASS;
+    char message[sizeof compiler->diagnostic->message];
+    snprintf(message,sizeof message,"unknown class '%s' in object pattern",name);
+    fail(compiler,compiler->current.span,message);
+    return -1;
+}
+
 static int probe_case_pattern_class(Compiler *compiler,
         DiamondTokenKind *after_kind) {
     if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER)return -1;
@@ -67,7 +85,7 @@ static int probe_case_pattern_class(Compiler *compiler,
     if(strstr(name,"::")==nullptr&&
        (find_local(compiler,compiler->current.span)>=0||
         find_function(compiler,compiler->current.span)>=0))return -1;
-    return find_class_qualified_or_scoped(compiler,name);
+    return object_pattern_class(compiler,name,probe.current.kind);
 }
 
 static uint16_t compile_case_pattern_class(Compiler *compiler,int class_index) {
@@ -203,12 +221,13 @@ static uint8_t parse_case_object_group(Compiler *compiler,CaseArrayNode *nodes,s
         size_t depth,CaseArrayNode *node,uint8_t index,
         int object_class) {
     char object_name[DIAMOND_MAX_FUNCTION_NAME]={};
+    const bool undiscovered=object_class==CASE_UNDISCOVERED_CLASS;
     node->kind=CASE_OBJECT_GROUP;
-    node->class_index=(uint16_t)object_class;
+    node->class_index=undiscovered?DIAMOND_NO_CLASS:(uint16_t)object_class;
     node->value_register=allocate_register(compiler);
     emit_opcode(compiler,DIAMOND_OP_LOAD_CLASS);
     emit_register(compiler,node->value_register);
-    emit_register(compiler,(uint16_t)object_class);
+    emit_register(compiler,undiscovered?0:(uint16_t)object_class);
     (void)consume_qualified_name(compiler,object_name,
                                  sizeof object_name);
     advance_token(compiler);skip_newlines(compiler);
@@ -226,9 +245,10 @@ static uint8_t parse_case_object_group(Compiler *compiler,CaseArrayNode *nodes,s
             return index;
         }
         const DiamondSpan reader_name=compiler->current.span;
-        const DiamondMethod *reader=case_pattern_reader(
+        const DiamondMethod *reader=undiscovered?nullptr:case_pattern_reader(
             compiler,(uint16_t)object_class,reader_name);
-        if(reader==nullptr||reader->is_private||reader->required_arity>0) {
+        if(!undiscovered&&
+           (reader==nullptr||reader->is_private||reader->required_arity>0)) {
             fail(compiler,reader_name,
                 "case object pattern requires a public zero-argument reader");
             return index;
@@ -333,9 +353,10 @@ static uint8_t parse_case_array_node(Compiler *compiler,CaseArrayNode *nodes,
         Compiler object_probe=*compiler;
         (void)consume_qualified_name(&object_probe,object_name,
                                      sizeof object_name);
-        const int object_class=find_class_qualified_or_scoped(
-            compiler,object_name);
-        if(object_class>=0&&
+        const int object_class=object_pattern_class(compiler,object_name,
+            object_probe.current.kind);
+        if(compiler->failed)return index;
+        if(object_class!=-1&&
            object_probe.current.kind==DIAMOND_TOKEN_LEFT_BRACE) {
             return parse_case_object_group(compiler,nodes,node_count,depth,node,index,
                 object_class);
@@ -750,7 +771,8 @@ static bool compile_case_array_alternatives(Compiler *compiler,uint16_t subject,
                 if(kind!=CASE_ARRAY_BIND&&kind!=CASE_ARRAY_WILDCARD)
                     unconstrained_object=false;
             }
-            if(unconstrained_object&&covered_id_count<DIAMOND_MAX_UNION_TYPES)
+            if(unconstrained_object&&covered_id_count<DIAMOND_MAX_UNION_TYPES&&
+               array_nodes[array_root].class_index!=DIAMOND_NO_CLASS)
                 covered_ids[covered_id_count++]=(uint16_t)
                     (DIAMOND_TYPE_CLASS_BASE+array_nodes[array_root].class_index);
         }
@@ -934,8 +956,9 @@ uint16_t parse_case_branches(Compiler *compiler, uint16_t subject,
     DiamondTokenKind after_pattern_head=DIAMOND_TOKEN_ERROR;
     const int pattern_head_class=
         probe_case_pattern_class(compiler,&after_pattern_head);
+    if(compiler->failed)return destination;
     const bool object_pattern=compiler->current.kind==DIAMOND_TOKEN_IDENTIFIER&&
-        pattern_head_class>=0&&after_pattern_head==DIAMOND_TOKEN_LEFT_BRACE;
+        pattern_head_class!=-1&&after_pattern_head==DIAMOND_TOKEN_LEFT_BRACE;
     const bool array_pattern=!subjectless&&(
         compiler->current.kind==DIAMOND_TOKEN_LEFT_BRACKET||
         compiler->current.kind==DIAMOND_TOKEN_LEFT_BRACE||object_pattern);

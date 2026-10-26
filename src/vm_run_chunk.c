@@ -2285,7 +2285,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 if(!matches) {
                     char expected[256]; char actual[256];
                     format_type_set_index(expected,sizeof expected,chunk,set_index);
-                    format_value_type_detailed(actual,sizeof actual,registers[source]);
+                    format_value_type_detailed(actual,sizeof actual,chunk,registers[source]);
                     snprintf(vm->error,sizeof vm->error,"expected %s, got %s",
                              expected,actual);
                     VM_RETURN(DIAMOND_VM_TYPE_ERROR);
