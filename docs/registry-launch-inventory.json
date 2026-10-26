@@ -22,9 +22,9 @@
       "archive": "cookies.tar",
       "dependencies": {},
       "name": "cookies",
-      "sha256": "d9ab3e6002cf088cbe30b32443ae03206f18356f968e695afe5ffacf6be50642",
+      "sha256": "64e69507f9cbabf6a94498a80a89788550a63c615b840ca873863bc1dfaa3eea",
       "size": 30208,
-      "version": "0.2.1"
+      "version": "0.2.2"
     },
     {
       "archive": "database_config.tar",
@@ -46,9 +46,9 @@
       "archive": "graphql.tar",
       "dependencies": {},
       "name": "graphql",
-      "sha256": "80beff1abbd1a7d4d603b8fc53fbe283f42e82addd329e12de61f8d4d981e336",
+      "sha256": "b25a79b51b310f2b51f0a871ed9b6a4616c2969d3e30c18b0e48a26e6bb679a2",
       "size": 178688,
-      "version": "0.3.1"
+      "version": "0.3.2"
     },
     {
       "archive": "graphsql.tar",
@@ -57,17 +57,17 @@
         "graphql": "^0.3.0"
       },
       "name": "graphsql",
-      "sha256": "19095964211e145d368420721dbf0532796f2cb22c6a8493dd1b9e9f13d0d781",
+      "sha256": "7fcb1589e5beb62efaa90e83c3fea649d640b7123f8a18cdc4cfd2388277150b",
       "size": 30208,
-      "version": "0.2.1"
+      "version": "0.2.2"
     },
     {
       "archive": "http.tar",
       "dependencies": {},
       "name": "http",
-      "sha256": "074a31a07e9a2c4937291bce59d5439b352ebb4b093661fb6f44880efb292b32",
+      "sha256": "7d2599766a727404e5b9f4327f21271e8d4b148d5afabc5100c75daea4d7121f",
       "size": 45056,
-      "version": "0.2.1"
+      "version": "0.2.2"
     },
     {
       "archive": "logger.tar",
@@ -142,9 +142,9 @@
       "archive": "redis.tar",
       "dependencies": {},
       "name": "redis",
-      "sha256": "3dc0944e731dd64384e0cc436c8607cf5fed4203b064690cb5f7a9741586e5a6",
+      "sha256": "9af9d9f70e3689427acc7bc4af04213e9343f8975bc8be840cf5cf76ed75a0d1",
       "size": 48128,
-      "version": "0.2.1"
+      "version": "0.2.2"
     },
     {
       "archive": "registry.tar",

@@ -36,6 +36,7 @@ anything:
 pure string manipulation with no real syscall, unlike `.directory?` (`stat`) and
 `.expand_path` (path resolution against the real filesystem).
 
+<!-- doc-check: skip -->
 ```ruby
 begin
   File.open("secrets.txt", "r")
@@ -121,6 +122,7 @@ allocator failure is deliberately *not* catchable in Diamond (nothing can safely
 recover from real memory exhaustion), but hitting your own *configured* cap, with
 plenty of real memory still available, is a different, safe-to-catch situation.
 
+<!-- doc-check: skip -->
 ```ruby
 begin
   index = 0

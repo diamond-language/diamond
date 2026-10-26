@@ -65,6 +65,7 @@ def answer() = 42
 def answer() = 99
 ```
 
+<!-- doc-check: skip -->
 ```ruby
 # main.d6, with both helpers beside it
 require "helper"

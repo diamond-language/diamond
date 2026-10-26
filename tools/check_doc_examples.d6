@@ -1,0 +1,224 @@
+# Run the Diamond code blocks in Markdown files and check them.
+#
+#   build/diamond tools/check_doc_examples.d6 FILE.md...
+#
+# A ```ruby or ```diamond block with `code  # => value` lines must reach each
+# such line and produce that value: its inspect() or to_s(), optionally
+# followed by commentary after a `,` `;` or space (`# => 0, nums == []`), or
+# matching up to a `...` (`# => "$2b$12$..."`). `puts(x)  # => v` checks x.
+# A block that fails on its own is retried after the earlier blocks of the
+# same file, since docs build on previous examples.
+#
+# A block with no `# =>` lines is only compiled, not run, and only has to
+# parse: a fragment may use names the surrounding prose defines, but a syntax
+# error is always a mistake.
+#
+# `<!-- doc-check: skip -->` on the line before a fence skips that block, for
+# output that depends on the machine (a kernel-chosen port, a directory
+# listing) or a block that is a signature rather than code.
+#
+# Each block runs in its own temporary directory with cuts/ pointing at the
+# repository's packages, under a timeout. DIAMOND_BIN names the interpreter
+# (default: the one running this script, via build/diamond).
+
+TIMEOUT_SECONDS = "10"
+SKIP_MARKER = "<!-- doc-check: skip -->"
+CLAIM = Regexp.new("^(.*?\\S)\\s+#\\s*=>\\s*(.+?)\\s*$")
+ASSIGNMENT = Regexp.new("^(\\s*)([a-z_][A-Za-z0-9_]*)\\s*([-+*/]|\\|\\||&&)?=[^=]")
+PRINTED = Regexp.new("^(\\s*)(puts|print)\\((.*)\\)$")
+OPEN_LINE = Regexp.new("(\\bdo(\\s*\\|[^|]*\\|)?|[(,{\\[]|\\bthen|\\belse)\\s*$")
+STATEMENT = Regexp.new("^(return|def|class|module|if|unless|while|until|elsif|when|case|end|raise|require|yield)\\b")
+SYNTAX_ERROR = Regexp.new(":[0-9]+:[0-9]+: error: (expected|unexpected)")
+# Prepended to every block: prints a claim's value, newlines escaped, under a marker.
+HELPER = [
+  "def doccheck_zz(id: Int, value)",
+  "  shown = [value.inspect(), value.to_s()].map() do |text| text.split(\"\\n\").join(\"\\\\n\") end",
+  "  puts(\"@@DOC \#{id}\\t\#{shown[0]}\\t\#{shown[1]}\")",
+  "  value",
+  "end",
+  ""].join("\n")
+
+struct Block(path: String, line: Int, code: Array, skip: Bool)
+end
+
+struct Claim(line: Int, code: String, expected: String)
+end
+
+def fences(path)
+  lines = File.read(path).split("\n")
+  blocks = []
+  index = 0
+  while index < lines.length()
+    fence = lines[index].strip()
+    if fence == "```ruby" || fence == "```diamond"
+      previous = index - 1
+      previous -= 1 while previous >= 0 && lines[previous].strip() == ""
+      skip = previous >= 0 && lines[previous].strip() == SKIP_MARKER
+      # A fence inside a list item is indented; so are its code and closing fence.
+      indent = lines[index].length() - lines[index].lstrip().length()
+      start = index + 1
+      index = start
+      index += 1 while index < lines.length() && !lines[index].strip().start_with?("```")
+      code = lines.slice(start, index - start).map() do |line|
+        if line.length() <= indent
+          line.strip()
+        else
+          line.slice(0, indent).strip() == "" ? line.slice(indent, line.length()) : line
+        end
+      end
+      blocks.push(Block.new(path, start + 1, code, skip))
+    end
+    index += 1
+  end
+  blocks
+end
+
+# Rewrites each checkable claim line to report its value; claims whose code
+# is not a whole expression (an opening `do`, a `return`, ...) are left as code.
+def instrument(block, claims)
+  out = []
+  block.code().each_with_index() do |line, offset|
+    match = CLAIM.match(line)
+    if match == nil || line.strip().start_with?("#")
+      out.push(line)
+      next
+    end
+    code = match[1]
+    lead = code.strip()
+    if OPEN_LINE.match?(code) || STATEMENT.match?(lead)
+      out.push(code)
+      next
+    end
+    id = claims.length()
+    claims.push(Claim.new(block.line() + offset, lead, match[2]))
+    indent = code.slice(0, code.length() - code.lstrip().length())
+    printed = PRINTED.match(code)
+    assigned = ASSIGNMENT.match(code)
+    if printed != nil
+      out.push("#{indent}#{printed[2]}(doccheck_zz(#{id}, (#{printed[3]})))")
+    elsif assigned != nil
+      out.push(code)
+      out.push("#{indent}doccheck_zz(#{id}, #{assigned[2]})")
+    else
+      out.push("#{indent}doccheck_zz(#{id}, (#{lead}))")
+    end
+  end
+  out
+end
+
+def strip_claims(block)
+  block.code().map() do |line|
+    match = CLAIM.match(line)
+    match == nil || line.strip().start_with?("#") ? line : match[1]
+  end
+end
+
+# Runs source as main.d6, or with compile_only just compiles it (`cache warm`).
+def run(diamond, cuts, source, compile_only = false)
+  dir = Process.run(["mktemp", "-d"]).stdout().strip()
+  begin
+    Process.run(["ln", "-s", cuts, dir + "/cuts"])
+    File.write(dir + "/main.d6", source)
+    command = compile_only ? [diamond, "cache", "warm", "main.d6"] : [diamond, "main.d6"]
+    Process.run(["timeout", TIMEOUT_SECONDS] + command, {"cwd": dir, "stdin": ""})
+  ensure
+    Process.run(["rm", "-rf", dir])
+  end
+end
+
+def reported(stdout)
+  values = {}
+  stdout.split("\n").each() do |line|
+    next unless line.start_with?("@@DOC ")
+    parts = line.slice(6, line.length() - 6).split("\t")
+    id = parts[0].to_i()
+    values[id] = [parts[1], parts.slice(2, parts.length() - 2).join("\t")] unless values.include_key?(id)
+  end
+  values
+end
+
+def normalize(text)
+  text.strip().gsub(Regexp.new("\\s+"), " ").split("`").join("")
+end
+
+def claim_matches?(expected, actual)
+  want = normalize(expected)
+  actual.any?() do |value|
+    got = normalize(value)
+    if want == got
+      true
+    elsif want.include?("...")
+      got.start_with?(want.slice(0, want.index_of("...")))
+    elsif got.length() > 0 && want.start_with?(got)
+      rest = want.slice(got.length(), want.length() - got.length())
+      rest.start_with?(",") || rest.start_with?(";") || rest.start_with?(" ")
+    else
+      false
+    end
+  end
+end
+
+# The failures for one block, given the blocks before it in the same file.
+def check(diamond, cuts, block, earlier)
+  claims = []
+  body = instrument(block, claims).join("\n") + "\n"
+  compile_only = claims.length() == 0
+  result = run(diamond, cuts, HELPER + body, compile_only)
+  values = reported(result.stdout())
+  with_earlier = result.exit_code() != 0 && result.exit_code() != 124 && earlier.length() > 0 &&
+    (claims.length() > 0 ? values.length() < claims.length() : SYNTAX_ERROR.match?(result.stderr()))
+  if with_earlier
+    prefix = earlier.map() do |previous| strip_claims(previous).join("\n") end.join("\n")
+    again = run(diamond, cuts, HELPER + prefix + "\n" + body, compile_only)
+    again_values = reported(again.stdout())
+    if again_values.length() > values.length() || (claims.length() == 0 && !SYNTAX_ERROR.match?(again.stderr()))
+      result = again
+      values = again_values
+    end
+  end
+  failures = []
+  if claims.length() == 0
+    if SYNTAX_ERROR.match?(result.stderr())
+      message = result.stderr().strip().split("\n")[0]
+      message = message.slice(message.index_of("error: "), message.length()) if message.index_of("error: ") != nil
+      failures.push("#{block.path()}:#{block.line()}: does not parse: #{message}")
+    end
+    return failures
+  end
+  claims.each_with_index() do |claim, id|
+    where = "#{block.path()}:#{claim.line()}"
+    if !values.include_key?(id)
+      reason = result.exit_code() == 124 ? "timed out" : result.stderr().strip().split("\n").first_or("exited #{result.exit_code()}")
+      failures.push("#{where}: `#{claim.code()}` was not reached: #{reason}")
+    elsif !claim_matches?(claim.expected(), values[id])
+      failures.push("#{where}: `#{claim.code()}` is #{values[id][0]}, docs say #{claim.expected()}")
+    end
+  end
+  failures
+end
+
+if ARGV.length() == 0
+  warn("usage: check_doc_examples.d6 FILE.md...")
+  exit(2)
+end
+root = File.expand_path(File.dirname(__FILE__) + "/..")
+diamond = ENV["DIAMOND_BIN"] == nil ? root + "/build/diamond" : File.expand_path(ENV["DIAMOND_BIN"])
+cuts = root + "/packages"
+failures = []
+block_count = 0
+skipped = 0
+ARGV.each() do |path|
+  earlier = []
+  fences(path).each() do |block|
+    if block.skip()
+      skipped += 1
+      next
+    end
+    block_count += 1
+    check(diamond, cuts, block, earlier).each() do |failure| failures.push(failure) end
+    earlier.push(block)
+  end
+end
+failures.each() do |failure| puts(failure) end
+puts("doc examples: #{block_count} blocks checked, #{skipped} skipped, #{failures.length()} failures")
+exit(failures.length() == 0 ? 0 : 1)

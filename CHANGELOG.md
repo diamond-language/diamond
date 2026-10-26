@@ -22,6 +22,14 @@ authoritative fine-grained record.
 - A block with the wrong number of parameters reports the block's arity:
   `expected Callable[1], got Callable[0]`.
 
+### Docs
+
+- `make test-docs` (part of `make test-integration` in CI) runs the Ruby examples in the docs
+  and the published cuts' READMEs: every `# => value` must hold and every block must parse.
+  It found the ranges example in core-syntax.md, whose `def` read an outer local and did not
+  compile. The cookies, graphql, graphsql, http and redis cuts get patch releases for README
+  changes.
+
 ## 0.20.1 — 2026-10-25
 
 `facet add <cut>` needs no flags, and errors say more about what went wrong:

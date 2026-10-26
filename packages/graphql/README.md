@@ -160,6 +160,7 @@ schema = GraphQL::Schema.new().query(QueryType).mutation(MutationType)
 
 ## Executing
 
+<!-- doc-check: skip -->
 ```ruby
 result = schema.execute(query_string, variables = {}, context = {}, root_value = nil, operation_name = nil)
 ```

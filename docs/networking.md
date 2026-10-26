@@ -29,6 +29,7 @@ multiple addresses were tried.
 `TCPServer.listen(port)` also takes keyword options after the port, in any
 order:
 
+<!-- doc-check: skip -->
 ```ruby
 server = TCPServer.listen(0, host: "127.0.0.1", backlog: 16)
 server.port()   # => the port the kernel chose

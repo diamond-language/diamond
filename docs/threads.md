@@ -313,6 +313,7 @@ forever is restarted forever; see [Restart policy](#restart-policy) to bound
 both. A `Supervisor` accepts at most 32 children, raising `SupervisorError`
 past that.
 
+<!-- doc-check: skip -->
 ```ruby
 sup.restart_count(0)  # => how many times child 0 has crashed and restarted
 sup.last_error(0)     # => the most recent crash's message, or nil if it
@@ -341,6 +342,7 @@ interrupt one. An interrupted child has `alive?` false, no restart counted and
 a `last_error` of `"stopped: Supervisor#stop timed out"`; `stop(0)` interrupts
 immediately.
 
+<!-- doc-check: skip -->
 ```ruby
 sup.stop(5000)  # => true if everything wound down within 5 seconds
 ```

@@ -162,6 +162,7 @@ Every mapped column must exist in the repository's `column_names`, so construct 
 
 ## Resolving
 
+<!-- doc-check: skip -->
 ```diamond
 GraphSQL.resolve(relation, db, lookahead, mapping, required_associations = [], required_columns = [])
 ```

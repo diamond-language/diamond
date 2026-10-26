@@ -16,6 +16,7 @@ This installs the cut into `cuts/redis/`; load it with `require_cut "redis"`.
 
 ## Usage
 
+<!-- doc-check: skip -->
 ```ruby
 require_cut "redis"
 

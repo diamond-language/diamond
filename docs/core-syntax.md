@@ -39,6 +39,7 @@ def answer() = 42
 def answer() = 99
 ```
 
+<!-- doc-check: skip -->
 ```ruby
 # main.d6
 require "helper"
@@ -629,10 +630,8 @@ a collected array — the loop itself is the point.
 (5..1).length()        # => 0, reversed ranges are just empty
 
 sum = 0
-def add(x)
-  sum = sum + x
-end
-(1..5).each(add)       # sum == 15
+(1..5).each() do |x| sum += x end
+sum                    # => 15
 ```
 
 `1..5` (inclusive of `5`) and `1...5` (exclusive of `5`) both desugar

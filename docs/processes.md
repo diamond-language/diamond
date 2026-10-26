@@ -38,6 +38,7 @@ A relative output path is resolved against the child's `"cwd"` when one is given
 
 An unknown key, or a value of the wrong type, raises `TypeError`.
 
+<!-- doc-check: skip -->
 ```ruby
 result = Process.run(["ls", "-la", dir])
 puts(result.stdout())
