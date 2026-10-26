@@ -1,0 +1,18 @@
+# A `do ... end` block with no parameters ignores what it is called with.
+3.times() do print(".") end
+puts("")
+{"a": 1, "b": 2}.each() do print("h") end
+puts("")
+puts([1, 2].map() do "x" end.inspect())
+
+def twice(&block)
+  yield(1)
+  yield(2)
+end
+twice() do print("y") end
+puts("")
+
+def typed(&block: Callable[[Int], String])
+  yield(5)
+end
+puts(typed() do "typed" end)

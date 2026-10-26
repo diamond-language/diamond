@@ -43,6 +43,7 @@ DiamondVmStatus call_closure_helper(DiamondVm *vm,const DiamondChunk *chunk,
         const DiamondFunction *fn,const DiamondClosure *called,
         const DiamondValue *registers,uint16_t base,uint8_t argc,size_t depth,
         DiamondValue *result) {
+    if(diamond_block_ignores_arguments(called,fn))argc=0;
     const bool needs_self_slot=fn->owner_class!=DIAMOND_OWNER_NONE;
     /* A `closure` (compiler.c's UINT8_MAX-2 owner_class sentinel) also
      * needs the phantom-slot-0 padding below -- it reserves register 0
