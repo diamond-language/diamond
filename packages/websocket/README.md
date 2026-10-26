@@ -8,8 +8,8 @@ From your project directory (see the [package guide](https://github.com/diamond-
 
 ```sh
 facet init myapp          # once, if the project has no diamond.cut yet
-facet add websocket --registry https://cuts.dilang.tech --version "^0.1.2"
-facet update
+facet add websocket
+facet install
 ```
 
 This installs the cut into `cuts/websocket/`; load it with `require_cut "websocket"`.

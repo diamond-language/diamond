@@ -8,8 +8,8 @@ From your project directory (see the [package guide](https://github.com/diamond-
 
 ```sh
 facet init myapp          # once, if the project has no diamond.cut yet
-facet add jobs --registry https://cuts.dilang.tech --version "^0.1.2"
-facet update
+facet add jobs
+facet install
 ```
 
 This installs the cut into `cuts/jobs/`; load it with `require_cut "jobs"`.

@@ -8,8 +8,8 @@ From your project directory (see the [package guide](https://github.com/diamond-
 
 ```sh
 facet init myapp          # once, if the project has no diamond.cut yet
-facet add network_safety --registry https://cuts.dilang.tech --version "^0.1.2"
-facet update
+facet add network_safety
+facet install
 ```
 
 This installs the cut into `cuts/network_safety/`; load it with `require_cut "network_safety"`. `http` is installed with it.

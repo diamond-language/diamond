@@ -8,8 +8,8 @@ From your project directory (see the [package guide](https://github.com/diamond-
 
 ```sh
 facet init myapp          # once, if the project has no diamond.cut yet
-facet add active_record --registry https://cuts.dilang.tech --version "^0.19.4"
-facet update
+facet add active_record
+facet install
 ```
 
 This installs the cut into `cuts/active_record/`; load it with `require_cut "active_record"`. `arel` is installed with it.

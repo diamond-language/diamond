@@ -9,8 +9,8 @@ Tests are a development dependency, so add it to `diamond.dev.cut` (see the
 [package guide](https://github.com/diamond-language/diamond/blob/main/docs/packages.md#development-dependencies)):
 
 ```sh
-facet add minitest --dev --registry https://cuts.dilang.tech --version "^0.1.0"
-facet update
+facet add minitest --dev
+facet install
 ```
 
 This installs the cut into `cuts/minitest/`; load it with `require_cut "minitest"`.

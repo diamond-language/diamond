@@ -11,8 +11,8 @@ From your project directory (see the [package guide](https://github.com/diamond-
 
 ```sh
 facet init myapp          # once, if the project has no diamond.cut yet
-facet add div --registry https://cuts.dilang.tech --version "^0.2.4"
-facet update
+facet add div
+facet install
 ```
 
 This installs the cut into `cuts/div/`. `require_cut "div"` loads the small runtime

@@ -8,8 +8,8 @@ From your project directory (see the [package guide](https://github.com/diamond-
 
 ```sh
 facet init myapp          # once, if the project has no diamond.cut yet
-facet add log_viewer --registry https://cuts.dilang.tech --version "^0.1.2"
-facet update
+facet add log_viewer
+facet install
 ```
 
 This installs the cut into `cuts/log_viewer/`; load it with `require_cut "log_viewer"`.
