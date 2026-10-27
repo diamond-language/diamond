@@ -306,8 +306,10 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
         if (superclass_byte < class_index) {
             const DiamondClass *parent = program->classes[superclass_byte];
             class->superclass = superclass_byte;
+            if (!diamond_class_reserve_fields(class, parent->field_count)) return 0;
             class->field_count = parent->field_count;
-            memcpy(class->fields, parent->fields, parent->field_count * sizeof class->fields[0]);
+            if (parent->field_count != 0)
+                memcpy(class->fields, parent->fields, parent->field_count * sizeof class->fields[0]);
         }
         for (size_t field = 0; field < field_total && diamond_class_reserve_fields(class, class->field_count + 1); field++)
             (void)snprintf(class->fields[class->field_count++], sizeof class->fields[0], "f%zu", field);

@@ -45,6 +45,9 @@ echo "fuzz smoke test passed ($runs runs, 20s bound, no crash)"
 # other input from nothing.
 execute_corpus="$work/execute_corpus"
 mkdir -p "$execute_corpus"
+# Inheriting builtin exception fields needs an allocated field table, even
+# when the generated subclass declares no fields of its own.
+printf '\x5b\x00\x00\x00\x05\xfd\xe7\x00\x00' > "$execute_corpus/inherited_field_table"
 printf '\x00\x00\x00\x05\xfd\xe7\x00\x00' > "$execute_corpus/move_out_of_range_register"
 
 # Seeded the same way, for a diamond_format_value_type SEGV a 2026-09-27
