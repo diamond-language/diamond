@@ -119,7 +119,10 @@ enum {
      * #include "vm.h" still brings this in unchanged for every existing
      * caller. */
     DIAMOND_JIT_MAX_REGISTERS = 256,
-    DIAMOND_MAX_NAMESPACE_CONSTANTS = 128,
+    /* Every namespace constant in a program, prelude and packages
+     * included: the 16-bit GET/SET_NAMESPACE_CONSTANT operand's range.
+     * Storage grows on demand (DiamondProgram, DiamondVm). */
+    DIAMOND_MAX_NAMESPACE_CONSTANTS = UINT16_MAX,
     /* Compile-time ceiling and READ_SHORT-encoded bytecode operand range
      * (big-endian 16-bit, matching the JUMP-target/function-index
      * convention) -- not a fixed per-call runtime array size. run_chunk
@@ -1827,8 +1830,13 @@ struct DiamondVm {
      * hardcoded class index, confirmed directly that one can shift with
      * conservative prelude module selection). */
     uint16_t range_class_index;
-    DiamondValue namespace_constants[DIAMOND_MAX_NAMESPACE_CONSTANTS];
-    bool namespace_constant_initialized[DIAMOND_MAX_NAMESPACE_CONSTANTS];
+    /* Namespace constant values, indexed by the GET/SET_NAMESPACE_CONSTANT
+     * operand, and which have been set. Allocated on the first SET past the
+     * end (vm_reserve_namespace_constants); an index at or past
+     * namespace_constant_capacity is simply not set yet. */
+    DiamondValue *namespace_constants;
+    bool *namespace_constant_initialized;
+    size_t namespace_constant_capacity;
     /* True for a VM that Thread.new created: it never ran the program's
      * top-level code, so a constant that is unset in it was either not
      * defined yet when the thread started or holds a value that cannot cross

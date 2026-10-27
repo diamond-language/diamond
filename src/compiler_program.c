@@ -274,6 +274,33 @@ void diamond_program_free(DiamondProgram *program) {
         program->classes[index]=nullptr;
     }
     program->class_count=0;
+    free(program->namespace_constants);
+    free(program->namespace_constant_defined);
+    program->namespace_constants=nullptr;
+    program->namespace_constant_defined=nullptr;
+    program->namespace_constant_count=0;
+    program->namespace_constant_capacity=0;
+}
+
+bool diamond_program_reserve_namespace_constants(DiamondProgram *program,size_t count) {
+    if(count>DIAMOND_MAX_NAMESPACE_CONSTANTS)return false;
+    if(count<=program->namespace_constant_capacity)return true;
+    size_t capacity=program->namespace_constant_capacity<16?16:
+        program->namespace_constant_capacity*2;
+    if(capacity<count)capacity=count;
+    if(capacity>DIAMOND_MAX_NAMESPACE_CONSTANTS)capacity=DIAMOND_MAX_NAMESPACE_CONSTANTS;
+    char (*names)[DIAMOND_MAX_FUNCTION_NAME]=
+        realloc(program->namespace_constants,capacity*sizeof *names);
+    if(names==nullptr)return false;
+    program->namespace_constants=names;
+    bool *defined=realloc(program->namespace_constant_defined,capacity*sizeof *defined);
+    if(defined==nullptr)return false;
+    program->namespace_constant_defined=defined;
+    const size_t old=program->namespace_constant_capacity;
+    memset(names+old,0,(capacity-old)*sizeof *names);
+    memset(defined+old,0,(capacity-old)*sizeof *defined);
+    program->namespace_constant_capacity=capacity;
+    return true;
 }
 
 /* The non-memset half of diamond_program_init: populate `program`'s
@@ -749,9 +776,14 @@ static void adopt_discovered_tables(DiamondProgram *program,DiamondProgram *disc
     memcpy(program->modules, discovery->modules,
         discovery->module_count*sizeof program->modules[0]);
     program->module_count = discovery->module_count;
-    memcpy(program->namespace_constants,discovery->namespace_constants,
-        discovery->namespace_constant_count*sizeof program->namespace_constants[0]);
-    program->namespace_constant_count=discovery->namespace_constant_count;
+    /* Only the names: each pass marks its own definitions. */
+    if(diamond_program_reserve_namespace_constants(program,
+           discovery->namespace_constant_count)) {
+        if(discovery->namespace_constant_count>0)
+            memcpy(program->namespace_constants,discovery->namespace_constants,
+                discovery->namespace_constant_count*sizeof program->namespace_constants[0]);
+        program->namespace_constant_count=discovery->namespace_constant_count;
+    }
 }
 
 /* After the discovery pass's tables reach `program`, marks the entries the real pass will declare

@@ -2249,7 +2249,8 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 uint16_t destination=0,index=0;READ_SHORT(destination);READ_SHORT(index);
                 if(index>=DIAMOND_MAX_NAMESPACE_CONSTANTS)
                     VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
-                if(!vm->namespace_constant_initialized[index]) {
+                if(index>=vm->namespace_constant_capacity||
+                   !vm->namespace_constant_initialized[index]) {
                     snprintf(vm->error,sizeof vm->error,vm->spawned_thread?
                         "uninitialized constant (in a spawned thread: its value "
                         "cannot cross a thread boundary, or it was defined after "
@@ -2262,6 +2263,8 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 uint16_t index=0,source=0;READ_SHORT(index);READ_SHORT(source);
                 if(index>=DIAMOND_MAX_NAMESPACE_CONSTANTS)
                     VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
+                if(!vm_reserve_namespace_constants(vm,(size_t)index+1))
+                    VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
                 if(vm->namespace_constant_initialized[index]) {
                     snprintf(vm->error,sizeof vm->error,"constant is already initialized");
                     VM_RETURN(DIAMOND_VM_CONSTANT_ERROR);

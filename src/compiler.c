@@ -2144,7 +2144,7 @@ int load_constant_receiver(Compiler *compiler,DiamondSpan name) {
     const uint16_t receiver=allocate_register(compiler);
     if(constant>=0)
         emit_instruction(compiler,DIAMOND_OP_GET_NAMESPACE_CONSTANT,receiver,
-                         (uint8_t)constant,0,2);
+                         (uint16_t)constant,0,2);
     else
         emit_instruction(compiler,DIAMOND_OP_NIL,receiver,0,0,1);
     return (int)receiver;
@@ -2163,20 +2163,21 @@ uint16_t store_namespace_constant(Compiler *compiler,DiamondSpan name,
         fail(compiler,name,"constant name is too long");return value;
     }
     int constant=find_namespace_constant_name(compiler,qualified);
-    if(constant>=0&&compiler->namespace_constant_defined[(size_t)constant]) {
+    if(constant>=0&&compiler->program->namespace_constant_defined[(size_t)constant]) {
         fail(compiler,name,"constant is already defined");return value;
     }
     if(constant<0) {
-        if(compiler->program->namespace_constant_count==DIAMOND_MAX_NAMESPACE_CONSTANTS) {
+        if(!diamond_program_reserve_namespace_constants(compiler->program,
+               compiler->program->namespace_constant_count+1)) {
             fail(compiler,name,"too many namespace constants");return value;
         }
         constant=(int)compiler->program->namespace_constant_count++;
         (void)snprintf(compiler->program->namespace_constants[(size_t)constant],
                        DIAMOND_MAX_FUNCTION_NAME,"%s",qualified);
     }
-    compiler->namespace_constant_defined[(size_t)constant]=true;
+    compiler->program->namespace_constant_defined[(size_t)constant]=true;
     emit_instruction(compiler,DIAMOND_OP_SET_NAMESPACE_CONSTANT,
-                     (uint8_t)constant,value,0,2);
+                     (uint16_t)constant,value,0,2);
     return value;
 }
 

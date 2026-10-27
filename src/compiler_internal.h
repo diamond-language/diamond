@@ -380,7 +380,6 @@ typedef struct Compiler {
      * a normal compile always has, except every declaration is already
      * known up front. */
     bool discovery_pass;
-    bool namespace_constant_defined[DIAMOND_MAX_NAMESPACE_CONSTANTS];
     /* True only for the real (discovery_pass=false) pass of a
      * diamond_compile_with_breakpoints call -- compile_sequence emits a
      * DIAMOND_OP_BREAKPOINT_CHECK at the start of *every* statement

@@ -489,7 +489,8 @@ static DiamondVmStatus program_builder_declare_namespace_constant(DiamondVm *vm,
     }
     const DiamondString *name=(const DiamondString *)registers[base].as.object;
     if(name->length==0||name->length>=DIAMOND_MAX_FUNCTION_NAME||
-       built->namespace_constant_count==DIAMOND_MAX_NAMESPACE_CONSTANTS) {
+       !diamond_program_reserve_namespace_constants(built,
+           built->namespace_constant_count+1)) {
         snprintf(vm->error,sizeof vm->error,
             "ProgramBuilder#declare_namespace_constant has an invalid name");
         return DIAMOND_VM_TYPE_ERROR;

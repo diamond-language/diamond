@@ -316,7 +316,7 @@ static void mark_roots(DiamondVm *vm, bool minor) {
     mark_value(vm->env_value,minor);
     for(size_t index=0;index<vm->gc_protected_count;index++)
         mark_value(vm->gc_protected[index],minor);
-    for(size_t index=0;index<DIAMOND_MAX_NAMESPACE_CONSTANTS;index++)
+    for(size_t index=0;index<vm->namespace_constant_capacity;index++)
         if(vm->namespace_constant_initialized[index])
             mark_value(vm->namespace_constants[index],minor);
     /* Never allocated (see class_variables' own comment in vm.h) until

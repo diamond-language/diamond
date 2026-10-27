@@ -380,7 +380,9 @@ bool copy_value_into_vm(DiamondVm *dest_vm, DiamondValue value,
 void copy_namespace_constants_into_vm(const DiamondVm *parent, DiamondVm *child,
                                       DiamondClass *const *source_classes,
                                       DiamondClass *const *dest_classes) {
-    for(size_t index=0;index<DIAMOND_MAX_NAMESPACE_CONSTANTS;index++) {
+    /* A child that can't get the room just sees these as unset. */
+    if(!vm_reserve_namespace_constants(child,parent->namespace_constant_capacity))return;
+    for(size_t index=0;index<parent->namespace_constant_capacity;index++) {
         if(!parent->namespace_constant_initialized[index])continue;
         DiamondValue copy=DIAMOND_NIL;
         if(!copy_value_into_vm(child,parent->namespace_constants[index],nullptr,
@@ -388,6 +390,26 @@ void copy_namespace_constants_into_vm(const DiamondVm *parent, DiamondVm *child,
         child->namespace_constants[index]=copy;
         child->namespace_constant_initialized[index]=true;
     }
+}
+
+bool vm_reserve_namespace_constants(DiamondVm *vm, size_t count) {
+    if(count<=vm->namespace_constant_capacity)return true;
+    if(count>DIAMOND_MAX_NAMESPACE_CONSTANTS)return false;
+    size_t capacity=vm->namespace_constant_capacity<16?16:vm->namespace_constant_capacity*2;
+    if(capacity<count)capacity=count;
+    if(capacity>DIAMOND_MAX_NAMESPACE_CONSTANTS)capacity=DIAMOND_MAX_NAMESPACE_CONSTANTS;
+    DiamondValue *values=realloc(vm->namespace_constants,capacity*sizeof *values);
+    if(values==nullptr)return false;
+    vm->namespace_constants=values;
+    bool *initialized=realloc(vm->namespace_constant_initialized,capacity*sizeof *initialized);
+    if(initialized==nullptr)return false;
+    vm->namespace_constant_initialized=initialized;
+    for(size_t index=vm->namespace_constant_capacity;index<capacity;index++) {
+        values[index]=DIAMOND_NIL;
+        initialized[index]=false;
+    }
+    vm->namespace_constant_capacity=capacity;
+    return true;
 }
 
 bool numeric_as_double(DiamondValue value, double *out) {

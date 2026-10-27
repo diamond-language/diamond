@@ -487,6 +487,8 @@ void diamond_vm_free(DiamondVm *vm) {
     free_object_list(vm,vm->old_objects);
     free_adopted_programs(vm->adopted_programs);
     free(vm->class_variables);
+    free(vm->namespace_constants);
+    free(vm->namespace_constant_initialized);
     free(vm->gc_protected);
     free(vm->rewritten_sites);
     free(vm->remembered_set);

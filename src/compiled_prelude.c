@@ -277,7 +277,7 @@ static bool write_program_body(const DiamondProgram *program, size_t skip, FILE 
         if (!write_interface(file, &program->interfaces[index])) return false;
     for (size_t index = 0; index < program->module_count; index++)
         if (!write_module(file, &program->modules[index])) return false;
-    if (!write_all(file, program->namespace_constants,
+    if (program->namespace_constant_count > 0 && !write_all(file, program->namespace_constants,
             program->namespace_constant_count * sizeof program->namespace_constants[0])) return false;
     if (!write_all(file, &program->range_class_index, sizeof program->range_class_index)) return false;
 
@@ -560,7 +560,9 @@ static bool read_program_body(const uint8_t *data, size_t size, DiamondProgram *
     for (uint64_t index = 0; index < module_count; index++)
         if (!read_module(&cursor, end, &out->modules[index])) return false;
 
-    if (!read_bytes(&cursor, end, out->namespace_constants,
+    if (!diamond_program_reserve_namespace_constants(out, (size_t)namespace_constant_count))
+        return false;
+    if (namespace_constant_count > 0 && !read_bytes(&cursor, end, out->namespace_constants,
             (size_t)namespace_constant_count * sizeof out->namespace_constants[0])) return false;
     if (!read_bytes(&cursor, end, &out->range_class_index, sizeof out->range_class_index)) return false;
 

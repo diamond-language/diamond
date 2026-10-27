@@ -12,6 +12,8 @@ authoritative fine-grained record.
   handles destructuring and splats, case patterns and exhaustiveness, structs and sealed
   classes, `&block` parameters and block forwarding, `break`/`next`/`return` in blocks, `self`
   in class singleton methods, method references, and keyword calls with spreads and blocks.
+- A program may define up to 65,535 namespace constants (`Module::NAME`, class constants),
+  up from 128 across the prelude, cuts and user code. The tables grow on demand.
 
 ### Fixed
 
