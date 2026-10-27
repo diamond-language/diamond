@@ -1,0 +1,13 @@
+class Box
+  def initialize(v)
+    @v = v
+  end
+
+  private
+
+  def v() = @v
+end
+
+case Box.new(1)
+when Box{v: x} then x
+end

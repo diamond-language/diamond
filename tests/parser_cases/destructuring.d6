@@ -1,0 +1,42 @@
+a, b = 1, 2
+puts(a + b)
+[first, [second, *rest]] = [3, [4, 5, 6]]
+puts(first)
+puts(second)
+puts(rest.join(","))
+head, *middle, tail = [1, 2, 3, 4, 5]
+puts(middle.join(","))
+puts(tail)
+key = "dynamic"
+{"name": name, key: value, **others} = {"name": "Ada", "dynamic": 7, "extra": true}
+puts(name)
+puts(value)
+puts(others["extra"])
+values = [0, 0]
+values[0], values[1] = values[1] + 8, 9
+puts(values.join(","))
+class Box
+  attr_accessor(label)
+
+  def fill(pair)
+    [@left, @@count] = pair
+    @right, spare = @left, 0
+    [@left, @right, @@count]
+  end
+end
+box = Box.new()
+puts(box.fill([10, 11]).join(","))
+box.label, spare = "filled", 0
+puts(box.label())
+kept = "kept"
+begin
+  [kept, [inner, other]] = ["changed", [1]]
+rescue error: ArgumentError
+  puts(error.message())
+end
+puts(kept)
+lambda_values = [1, 2].map() do |pair_item|
+  left, right = pair_item, pair_item * 10
+  left + right
+end
+puts(lambda_values.join(","))

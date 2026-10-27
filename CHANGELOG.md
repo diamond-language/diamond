@@ -6,6 +6,13 @@ authoritative fine-grained record.
 
 ## Unreleased
 
+### Changed
+
+- The self-hosted compiler runs 1,166 of the 1,488 test programs (up from 1,035): it now
+  handles destructuring and splats, case patterns and exhaustiveness, structs and sealed
+  classes, `&block` parameters and block forwarding, `break`/`next`/`return` in blocks, `self`
+  in class singleton methods, method references, and keyword calls with spreads and blocks.
+
 ### Fixed
 
 - A generic function no longer crashes when a type variable is inferred from a class value

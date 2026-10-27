@@ -1,0 +1,45 @@
+def shout(text) = text.upcase()
+
+class Greeter
+  def initialize(prefix)
+    @prefix = prefix
+  end
+
+  def greet(name) = @prefix + name
+
+  def loud(name) = shout(greet(name))
+
+  def later_method(name) = decorate(name)
+
+  def later_function(name) = whisper(greet(name))
+
+  def all(names) = names.map() do |name|
+    decorate(greet(name))
+  end
+
+  def spread(parts) = join_parts(*parts)
+
+  def join_parts(*parts) = parts.join("+")
+
+  def with_block(count) = repeat(count) do |i|
+    greet(i.to_s())
+  end
+
+  def repeat(count, &body) = (0...count).map() do |i|
+    body(i)
+  end
+
+  private
+
+  def decorate(text) = "<" + text + ">"
+end
+
+def whisper(text) = text.downcase()
+
+greeter = Greeter.new("Hi ")
+puts(greeter.loud("ada"))
+puts(greeter.later_method("bo"))
+puts(greeter.later_function("CY"))
+puts(greeter.all(["di", "ed"]))
+puts(greeter.spread(["a", "b", "c"]))
+puts(greeter.with_block(2))

@@ -1,0 +1,34 @@
+# `return` in a do block returns from the enclosing def; `break` ends the
+# call the block was passed to, with the break value as its result.
+def first_big(items: Array) -> Int
+  items.each() do |x|
+    return x if x > 2
+  end
+  0
+end
+puts(first_big([1, 5, 9]))
+puts(first_big([1]))
+
+found = [1, 2, 3].each() do |x|
+  break x * 10 if x == 2
+end
+puts(found)
+
+nothing = [1, 2].each() do |x|
+  break if x == 1
+end
+puts(nothing == nil)
+
+def collect(items: Array) -> Array
+  result = []
+  items.each() do |x|
+    begin
+      break if x == 3
+      result.push(x)
+    ensure
+      result.push(0)
+    end
+  end
+  result
+end
+puts(collect([1, 2, 3, 4]))

@@ -1,0 +1,32 @@
+# break/next from inside begin blocks within a loop leave those blocks
+# through UNWIND_JUMP, running each ensure body once.
+log = []
+i = 0
+while i < 3
+  i += 1
+  begin
+    next if i == 1
+    break if i == 3
+    log.push("body #{i}")
+  ensure
+    log.push("ensure #{i}")
+  end
+end
+puts(log.join(","))
+
+found = loop do
+  begin
+    raise "x"
+  rescue
+    break "rescued"
+  ensure
+    log.push("inner")
+  end
+end
+puts(found)
+puts(log.length())
+
+[1, 2].each() do |x|
+  next if x == 1
+  puts(x)
+end

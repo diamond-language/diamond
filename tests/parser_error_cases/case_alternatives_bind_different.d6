@@ -1,0 +1,3 @@
+case [1]
+when [1, x], [2, y] then 0
+end

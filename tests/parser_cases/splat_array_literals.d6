@@ -1,0 +1,9 @@
+# One splat per array literal, anywhere among the elements.
+rest = [2, 3]
+puts([1, *rest, 4])
+puts([*rest])
+puts([0, *rest])
+puts([*rest, 9,])
+puts([*[]])
+words = ["b", "c"]
+puts(["a", *words.map() do |word| word.upcase() end].join(","))

@@ -1,0 +1,11 @@
+class Circle
+end
+
+class Square
+end
+
+def area(shape: Circle | Square)
+  case shape
+  when Circle then 3
+  end
+end

@@ -1,0 +1,11 @@
+# A Callable type-set member with arity -1 is a Callable of any arity, as a
+# bare `Callable` annotation is: CHECK_TYPE nil against it names plain
+# Callable.
+b = ProgramBuilder.new()
+set = b.declare_type_set(-1, [[7, -1, -1, -1, -1, []]])
+# NIL r0; CHECK_TYPE r0, set; RETURN r0
+[3, 0, 0, 50, 0, 0, 0, set, 57, 0, 0].each() do |byte|
+  b.emit_byte(-1, byte)
+end
+b.set_register_count(-1, 1)
+b.run()

@@ -1,0 +1,46 @@
+# Inside a function with a &block parameter, yield calls the block; inside a
+# nested block it reaches the method's block through the capture.
+def twice(value, &block)
+  yield(yield(value))
+end
+
+def each_doubled(items, &block)
+  items.each() do |item|
+    yield(item * 2)
+  end
+end
+
+def greet(&block) = yield()
+
+# No &block parameter: yield is Fiber.yield.
+def fiber_body()
+  yield(5)
+  6
+end
+
+puts(twice(3) do |n| n + 1 end)
+each_doubled([1, 2]) do |n|
+  puts(n)
+end
+puts(greet() do "hi" end)
+fiber = Fiber.new(fiber_body)
+puts(fiber.resume())
+puts(fiber.resume())
+
+class Counter
+  def initialize(limit: Int)
+    @limit = limit
+  end
+
+  def each(&block)
+    index = 0
+    while index < @limit
+      yield(index)
+      index += 1
+    end
+  end
+end
+
+Counter.new(3).each() do |index|
+  puts(index)
+end

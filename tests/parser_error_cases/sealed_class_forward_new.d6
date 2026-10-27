@@ -1,0 +1,4 @@
+def make() = Shape.new()
+sealed class Shape
+end
+make()

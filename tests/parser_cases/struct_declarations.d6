@@ -1,0 +1,26 @@
+# Generated initialize/readers/==/to_s, a hand-written body, inheritance,
+# and keyword arguments to `new`.
+struct Point(x: Int, y: Int)
+  def sum() -> Int = @x + @y
+end
+
+struct Point3D(z: Int) < Point
+  def to_s() = "<#{@x}, #{@y}, #{@z}>"
+end
+
+module Shapes
+  struct Size(width: Int, height: Int)
+  end
+end
+
+a = Point.new(1, 2)
+puts(a)
+puts(a.x() + a.y())
+puts(a.sum())
+puts(a == Point.new(1, 2))
+puts(a == Point.new(2, 1))
+b = Point3D.new(x: 1, y: 2, z: 3)
+puts(b)
+puts(b.sum() + b.z())
+puts(a == b)
+puts(Shapes::Size.new(height: 4, width: 3))

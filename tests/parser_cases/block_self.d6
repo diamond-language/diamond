@@ -1,0 +1,30 @@
+class Counter
+  def initialize(step)
+    @step = step
+    @total = 0
+  end
+
+  def scale(x) = x * @step
+
+  def add_all(values)
+    values.each() do |value|
+      @total = @total + self.scale(value)
+    end
+    @total
+  end
+
+  def nested(rows)
+    rows.map() do |row|
+      row.map() do |cell|
+        cell + @step
+      end
+    end
+  end
+end
+counter = Counter.new(3)
+puts(counter.add_all([1, 2]))
+puts(counter.nested([[1], [2, 3]]))
+top = [1, 2].map() do |x|
+  x + 1
+end
+puts(top)

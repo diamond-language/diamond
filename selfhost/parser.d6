@@ -57,6 +57,9 @@ module Opcode
   CALL_CLOSURE = 32
   # DIAMOND_OP_CALL_CLOSURE_KEYWORDS: a direct call that skips a defaulted parameter; keep in step with src/vm.h.
   CALL_CLOSURE_KEYWORDS = 152
+  INVOKE_KEYWORDS = 150
+  NEW_KEYWORDS = 153
+  GET_CAPTURE = 33
   GET_CAPTURE_CELL = 34
   BOX_LOCAL = 36
   GET_CELL = 37
@@ -71,6 +74,19 @@ module Opcode
   ARRAY = 51
   INDEX_GET = 52
   INDEX_SET = 53
+  CHECK_DESTRUCTURE_COUNT = 95
+  COLLECT_VARIADIC = 129
+  CALL_SPREAD = 130
+  INVOKE_SPREAD = 140
+  INVOKE_TYPED_SPREAD = 146
+  CALL_CLOSURE_SPREAD = 141
+  NEW_SPREAD = 142
+  BUILD_SPREAD_ARGS = 144
+  LOAD_CLASS = 110
+  HASH_REST = 136
+  ARRAY_MIDDLE = 137
+  ARRAY_SUFFIX = 138
+  CHECK_HASH_KEY = 139
   HASH = 54
   NOT = 55
   JUMP_IF_TRUE = 56
@@ -125,17 +141,24 @@ module Opcode
   JSON_STRINGIFY = 178
   # DIAMOND_OP_JSON_STRINGIFY_OPTIONS: JSON.stringify(value, options); same operands plus the options register.
   JSON_STRINGIFY_OPTIONS = 186
+  UNWIND_JUMP = 185
+  INVOKE_SELF_METHOD = 111
+  BLOCK_RETURN = 173
+  BLOCK_BREAK = 174
   # DIAMOND_OP_CASE_MATCH: `when` tests (Range, Regexp, class and == patterns); keep in step with src/vm.h.
   CASE_MATCH = 131
+  CASE_ARRAY_SHAPE = 132
+  CASE_HASH_SHAPE = 134
+  CASE_HASH_HAS = 135
   MATH_UNARY = 88
   MATH_BINARY = 89
   PROGRAM_BUILDER_NEW = 90
-  # 91 (THREAD_NEW), 94-98 (SQLITE3_OPEN, CHECK_DESTRUCTURE_COUNT,
-  # TIME_MONOTONIC, TIME_NOW, TIME_AT) in src/vm.h's DiamondOpCode enum
-  # have no entry of their own here -- none of them are constructs this
-  # self-hosted parser emits (Thread, SQLite3, ProgramBuilder-internal
-  # opcodes, and Time literals aren't part of its supported grammar).
-  # 92-93 (GET_CVAR/SET_CVAR) *are* named below: class variables.
+  # 91 (THREAD_NEW), 94 (SQLITE3_OPEN) and 96-98 (TIME_MONOTONIC,
+  # TIME_NOW, TIME_AT) in src/vm.h's DiamondOpCode enum have no entry of
+  # their own here -- none of them are constructs this self-hosted
+  # parser emits (Thread, SQLite3, and Time literals aren't part of its
+  # supported grammar). 92-93 (GET_CVAR/SET_CVAR) *are* named below:
+  # class variables; 95 (CHECK_DESTRUCTURE_COUNT) is named above.
   # SHIFT_LEFT below still has to account for the full original 8-opcode
   # gap (91-98) to match the real enum value -- same class of bug the
   # comment above (REGEXP_NEW's own gap) already flags. Confirmed
@@ -229,6 +252,335 @@ module Type
   INTERFACE_BASE = 61952
 end
 
+# Helpers that need no parser state, kept outside Parser: a class holds at
+# most 256 methods (DIAMOND_MAX_METHODS).
+
+# The `Callable[[params], R]` annotation member a do block passed as
+# argument `slot` of a top-level function takes its types from, or nil:
+# the parameter must be typed with exactly that one member, as in
+# compiler_calls.c's compile_contextual_typed_block.
+def contextual_block_member(function_entry, slot)
+  return nil if function_entry.length() < 8
+  types = function_entry[7]
+  return nil if types == nil || slot < 0 || slot >= types.length()
+  annotation = types[slot]
+  return nil if annotation == nil || annotation.length() != 1
+  member = annotation[0]
+  return nil if member[0] != "Callable" || member[5] == nil
+  member
+end
+
+# The native VM's built-in exception hierarchy (DiamondBuiltinClass,
+# src/vm.h) is constructed directly by diamond_program_init -- called
+# by both diamond_compile and the ProgramBuilder native bridge -- and
+# never goes through any .d6 source at all, so it's otherwise invisible
+# to a parser whose class bookkeeping only ever sees what it compiles
+# from `class ... end` syntax. These twelve indices are fixed and
+# already occupied before this parser (or any target program) declares
+# its own first class, so they're safe to hardcode rather than query.
+# Fourth element is the class's singleton-method descriptor list
+# (see compile_class's own @classes.push), empty here since none of
+# the built-ins declare any -- kept for a uniform four-element shape
+# across every class_entry source (find_class doesn't otherwise care
+# which of the two returned it).
+def find_builtin_class(name)
+  return ["Exception", 0, nil, []] if name == "Exception"
+  return ["StandardError", 1, 0, []] if name == "StandardError"
+  return ["RuntimeError", 2, 1, []] if name == "RuntimeError"
+  return ["TypeError", 3, 1, []] if name == "TypeError"
+  return ["ArgumentError", 4, 1, []] if name == "ArgumentError"
+  return ["IndexError", 5, 1, []] if name == "IndexError"
+  return ["ZeroDivisionError", 6, 1, []] if name == "ZeroDivisionError"
+  return ["RangeError", 7, 1, []] if name == "RangeError"
+  return ["SystemStackError", 8, 0, []] if name == "SystemStackError"
+  return ["FiberError", 9, 1, []] if name == "FiberError"
+  return ["IOError", 10, 1, []] if name == "IOError"
+  return ["RegexpError", 11, 1, []] if name == "RegexpError"
+  # 12-18 (WouldBlockError..JSONError) are the same kind of silent
+  # mirror desync the Opcode module's own comments already warn
+  # about (see MODULO/COMPARE's fix) -- this list stopped at
+  # RegexpError while src/vm.h's DiamondBuiltinClass enum grew seven
+  # more entries. JSONError specifically became a builtin (previously
+  # a lib/core/json_codec.d6 class declaration this parser could
+  # already see) when JSON.parse went native, which is what actually
+  # surfaced this: lib/core/json_codec.d6's own `raise JSONError.new(...)`
+  # started failing to self-parse with "undefined local variable" --
+  # find_class (line ~692) falls through to find_builtin_class for any
+  # bare capitalized name it can't resolve as a user-declared class,
+  # and this returning nil for JSONError sent that fallthrough to
+  # local-variable lookup instead, which is what actually raised the
+  # error. Verified against src/vm.h's DiamondBuiltinClass enum
+  # directly (plain sequential enum, no gaps), not counted by hand.
+  return ["WouldBlockError", 12, 1, []] if name == "WouldBlockError"
+  return ["ThreadError", 13, 1, []] if name == "ThreadError"
+  return ["SQLite3Error", 14, 1, []] if name == "SQLite3Error"
+  return ["PostgreSQLError", 15, 1, []] if name == "PostgreSQLError"
+  return ["MySQLError", 16, 1, []] if name == "MySQLError"
+  return ["NoMethodError", 17, 1, []] if name == "NoMethodError"
+  return ["JSONError", 18, 1, []] if name == "JSONError"
+  return ["SupervisorError", 19, 1, []] if name == "SupervisorError"
+  return ["SandboxError", 20, 1, []] if name == "SandboxError"
+  return ["ResourceLimitError", 21, 1, []] if name == "ResourceLimitError"
+  return ["FrozenError", 22, 1, []] if name == "FrozenError"
+  nil
+end
+
+# The entry in `classes` (Parser's @classes) for a class index, or nil.
+def class_entry_by_index(classes, class_index)
+  index = 0
+  result = nil
+  while index < classes.length()
+    result = classes[index] if classes[index][1] == class_index
+    index = index + 1
+  end
+  result
+end
+
+# The context a trailing block passed to a singleton takes its types from:
+# the singleton's last parameter (descriptor[4] is its signature), or nil.
+def singleton_block_context(descriptor)
+  return nil if descriptor.length() < 5 || descriptor[2] == 0 || descriptor[4][2].length() > 0
+  contextual_block_member([nil, nil, nil, nil, nil, nil, nil, descriptor[4][0]], descriptor[2] - 1)
+end
+
+# The registers base, base + 1, ... base + count - 1.
+def contiguous_registers(base, count)
+  registers = []
+  index = 0
+  while index < count
+    registers.push(base + index)
+    index = index + 1
+  end
+  registers
+end
+
+# Does a token of this kind end a statement, so a break/return before it
+# carries no value? The modifier keywords count: `break if x`.
+def statement_end_kind?(kind)
+  kind == :newline || kind == :end || kind == :else || kind == :if ||
+    kind == :unless || kind == :eof
+end
+
+# parse_parameter_names already rejects a required parameter following
+# a default one, so the first non-nil entry (if any) marks where
+# optional parameters begin -- everything before it is required.
+# Parameters before the first default, variadic or block parameter.
+def required_parameter_count(parsed_parameters)
+  defaults = parsed_parameters[2]
+  last = defaults.length() - 1
+  index = 0
+  while index < defaults.length()
+    return index if defaults[index] != nil || index == parsed_parameters[4]
+    return index if index == last && parsed_parameters[3]
+    index = index + 1
+  end
+  index
+end
+
+def type_fact_in(facts, reg)
+  index = facts.length() - 1
+  while index >= 0
+    return facts[index][1] if facts[index][0] == reg
+    index = index - 1
+  end
+  nil
+end
+
+def struct_field_index(fields, field_name)
+  index = 0
+  while index < fields.length()
+    return index if fields[index][0] == field_name
+    index = index + 1
+  end
+  nil
+end
+
+# An instance method: register 0 is always `self` (allocated before
+# any user-declared parameter, exactly mirroring compile_definition.c's
+# own class/module branch), and the compiled function is registered
+# into the class via declare_method rather than @functions -- resolved
+# later at INVOKE time by the VM against the receiver's runtime class,
+# not by this parser at compile time the way a direct top-level call
+# is. One level of nested `def` is supported inside a method body (see
+# compile_method_body's own function_nesting_depth increment and
+# compile_definition's self_offset handling) -- the nested closure gets
+# its own independent `self`, not a captured one, so it can be handed
+# to redefine_method and later invoked normally against any receiver.
+# Operator overloading: a method literally named "+"/"=="/etc. is
+# already legal at the VM level (lookup_method dispatches purely by
+# name-string + arity, no charset restriction) -- the only barrier is
+# the parser accepting the token as a method name. Unary minus is
+# deliberately NOT included: it's named "negate", an ordinary
+# identifier, mirroring compiler.c's own operator_name list exactly
+# (compile_definition's identical check).
+def operator_method_token?(kind)
+  return true if kind == :plus
+  return true if kind == :minus
+  return true if kind == :star
+  return true if kind == :slash
+  return true if kind == :percent
+  return true if kind == :equal_equal
+  return true if kind == :less
+  return true if kind == :less_equal
+  return true if kind == :greater
+  return true if kind == :greater_equal
+  return true if kind == :spaceship
+  false
+end
+
+def attribute_keyword?(kind)
+  return true if kind == :attr
+  return true if kind == :attr_reader
+  return true if kind == :attr_writer
+  return true if kind == :attr_accessor
+  kind == :attr_predicate
+end
+
+def find_parameter_slot(parameter_names, name)
+  index = 0
+  result = -1
+  while index < parameter_names.length() && result == -1
+    result = index if parameter_names[index] == name
+    index = index + 1
+  end
+  result
+end
+
+def compound_assignment_token?(kind)
+  kind == :plus_equal || kind == :minus_equal || kind == :star_equal ||
+    kind == :slash_equal || kind == :percent_equal ||
+    kind == :or_or_equal || kind == :and_and_equal
+end
+
+# Destructuring assignment -- a port of compiler_assignment.c's
+# multi_assignment_ahead/compile_multi_assignment. The lookahead
+# recognizes the comma-root form (`a, b =`) and bracketed/braced
+# recursive patterns (`[a, [b, c]] =`, `{"k": v, **rest} =`) without
+# stealing an ordinary Array or Hash literal from expression parsing.
+def destructuring_target_kind?(kind)
+  kind == :identifier || kind == :instance_variable || kind == :class_variable
+end
+
+# Skips `.member` and `[index]` suffixes after a target name; returns
+# the first token past them.
+def scan_destructuring_target_suffix(lexer, token)
+  while true
+    if token.kind() == :dot
+      token = lexer.next_token()
+      return token if token.kind() != :identifier
+      token = lexer.next_token()
+    elsif token.kind() == :left_bracket
+      depth = 1
+      while depth > 0
+        token = lexer.next_token()
+        return token if token.kind() == :eof || token.kind() == :error
+        depth = depth + 1 if token.kind() == :left_bracket
+        depth = depth - 1 if token.kind() == :right_bracket
+      end
+      token = lexer.next_token()
+    else
+      return token
+    end
+  end
+end
+
+# A pattern node: [kind (:leaf/:array/:hash), children, rest,
+# hash_rest, name token, instance_variable, class_variable,
+# key register, target (:plain/:indexed/:member), target receiver,
+# target index register or member name, value register].
+def destructure_node(kind) = [kind, [], false, false, nil, false, false, 0, :plain, 0, nil, 0]
+
+def copy_type_facts_from(facts)
+  copy = []
+  index = 0
+  while index < facts.length()
+    copy.push(facts[index])
+    index = index + 1
+  end
+  copy
+end
+
+# --- Array/Hash/object patterns in `when`, as compiler_case.c ---
+# A node: [kind, name token, reader name, value register, key register,
+# subject register (set while matching), children, class index]. Kinds:
+# :array, :hash, :object (groups), :bind, :wildcard, :rest_bind,
+# :rest_wildcard, :hash_rest_bind, :hash_rest_wildcard, :pin, :value.
+def case_pattern_node(kind) = [kind, nil, nil, 0, 0, 0, [], nil]
+
+def lowercase_name?(text)
+  first = text.slice(0, 1)
+  first >= "a" && first <= "z"
+end
+
+def rest_kind?(node) = node[0] == :rest_bind || node[0] == :rest_wildcard
+
+def hash_rest_kind?(node) = node[0] == :hash_rest_bind || node[0] == :hash_rest_wildcard
+
+# The binding nodes of a pattern, in source order.
+def collect_case_bindings(node, found)
+  found.push(node) if node[0] == :bind || node[0] == :rest_bind || node[0] == :hash_rest_bind
+  index = 0
+  while index < node[6].length()
+    collect_case_bindings(node[6][index], found)
+    index = index + 1
+  end
+  found
+end
+
+def token_precedence(kind)
+  return Precedence::RANGE if kind == :dot_dot || kind == :dot_dot_dot
+  return Precedence::OR if kind == :or_or || kind == :or
+  return Precedence::AND if kind == :and_and || kind == :and
+  return Precedence::EQUALITY if kind == :equal_equal || kind == :bang_equal ||
+    kind == :is || kind == :spaceship
+  return Precedence::COMPARISON if kind == :less || kind == :less_equal || kind == :greater || kind == :greater_equal
+  return Precedence::SHIFT if kind == :less_less || kind == :greater_greater ||
+    kind == :ampersand || kind == :pipe || kind == :caret
+  return Precedence::TERM if kind == :plus || kind == :minus
+  return Precedence::FACTOR if kind == :star || kind == :slash || kind == :percent
+  Precedence::NONE
+end
+
+def binary_opcode(kind)
+  return Opcode::ADD if kind == :plus
+  return Opcode::SUBTRACT if kind == :minus
+  return Opcode::MULTIPLY if kind == :star
+  return Opcode::DIVIDE if kind == :slash
+  return Opcode::MODULO if kind == :percent
+  return Opcode::EQUAL if kind == :equal_equal
+  return Opcode::NOT_EQUAL if kind == :bang_equal
+  return Opcode::LESS if kind == :less
+  return Opcode::LESS_EQUAL if kind == :less_equal
+  return Opcode::GREATER if kind == :greater
+  return Opcode::GREATER_EQUAL if kind == :greater_equal
+  return Opcode::COMPARE if kind == :spaceship
+  return Opcode::SHIFT_RIGHT if kind == :greater_greater
+  return Opcode::BITWISE_AND if kind == :ampersand
+  return Opcode::BITWISE_OR if kind == :pipe
+  return Opcode::BITWISE_XOR if kind == :caret
+  Opcode::SHIFT_LEFT
+end
+
+def find_descriptor(descriptors, name)
+  index = 0
+  result = nil
+  while index < descriptors.length()
+    result = descriptors[index] if descriptors[index][0] == name
+    index = index + 1
+  end
+  result
+end
+
+def math_unary_id(name)
+  return 0 if name == "sqrt"
+  return 1 if name == "sin"
+  return 2 if name == "cos"
+  return 5 if name == "exp"
+  return 6 if name == "log"
+  return 7 if name == "tanh"
+  3
+end
+
 class Parser
   def initialize(source, builder)
     @source = source
@@ -256,7 +608,29 @@ class Parser
     # Inside a loop whose body may capture (loop_body_may_capture?): new
     # locals start captured. Mirrors compiler.c's loop_captures_pending.
     @loop_captures_pending = false
+    # The name of the enclosing method's `&block` parameter, which `yield`
+    # calls; nil outside one, where `yield` is Fiber.yield. Mirrors
+    # compiler.c's has_current_block/current_block_register.
+    @current_block_name = nil
+    @current_block_type = nil
+    # Inside a do block (not a def nested in one): `next` returns from it.
+    @in_block = false
+    # A do block whose `break` lands in the call it is passed to: that
+    # call's offset is recorded by the next call opcode emitted.
+    @block_has_break = false
+    @pending_block_call = nil
+    # The enclosing def a block's `return` returns from (-1 outside one)
+    # and its declared return type.
+    @method_function_index = -1
+    @method_return_type = nil
+    # The `Callable[[params], R]` member a do block about to be compiled
+    # fills, from the callee's parameter: its parameter and result types.
+    @block_context = nil
+    # Whether the block being compiled returns early (`next value`), so its
+    # result type can't be read off the body alone.
+    @block_returns_early = false
     @loops = []
+    @begin_depth = 0
     @functions = []
     @namespace_constants = []
     # Forward references, patched at the end of compile(): constant reads
@@ -270,6 +644,33 @@ class Parser
     # token, method name, argument count, method name token].
     @forward_news = []
     @forward_singleton_calls = []
+    # Function indices declared with a `*name` parameter: calls to them may
+    # pass more arguments than the declared arity.
+    @variadic_functions = []
+    # [variadic index or nil, has block parameter] for the def whose
+    # parameters bind_parameters binds next; see compile_definition.
+    @parameter_shape = nil
+    # True while compiling a body whose register 0 holds self: an instance
+    # method, a def nested in one, and blocks inside either.
+    @in_method = false
+    # Inside a class's `def self.x` (not a module's): `self.name(...)` and a
+    # bare call to one of the class's singleton methods dispatch on self's
+    # actual class, as compiler.c's in_singleton_method does.
+    @in_singleton_method = false
+    # Class indices declared `sealed class`; `.new` on one is a compile error.
+    @sealed_classes = []
+    # The class a `when` value named, for exhaustiveness (see
+    # parse_case_class_pattern).
+    @case_pattern_class_index = nil
+    # [class_index, [[field, type source text, token], ...]] for each struct,
+    # inherited fields first.
+    @struct_fields = []
+    # [class_index, method name, private, required arity] for each instance
+    # method, and the classes that include a module (whose methods aren't
+    # listed): what a `when Class{reader: ...}` pattern checks its readers
+    # against.
+    @instance_methods = []
+    @classes_with_includes = []
     # -1 targets the ProgramBuilder entry function; a real function's own
     # index once compile_definition switches into its body. Every
     # emit_byte/add_constant/add_string/patch_byte call routes through
@@ -511,6 +912,16 @@ class Parser
     operand
   end
 
+  # Emits a call opcode, first giving a pending breaking block this call's
+  # offset -- compiler.c's emit_opcode does the same.
+  def emit_call_opcode(opcode)
+    if @pending_block_call != nil
+      @builder.set_block_call_offset(@pending_block_call, @code_count)
+      @pending_block_call = nil
+    end
+    self.emit_byte(opcode)
+  end
+
   def patch_jump(operand, target)
     @builder.patch_byte(@current_function_index, operand, target / 256)
     @builder.patch_byte(@current_function_index, operand + 1, mod(target, 256))
@@ -544,6 +955,13 @@ class Parser
     # parameter after the first from the wrong register. Found via
     # legacy_0132.d6 once ProgramBuilder#run could finally return its
     # Array result to expose the wrong value at all.
+    shape = @parameter_shape
+    @parameter_shape = nil
+    if shape != nil && shape[1]
+      @current_block_name = parameter_names[parameter_names.length() - 1]
+      # Its annotation, which `yield` checks the block against.
+      @current_block_type = parameter_types[parameter_types.length() - 1]
+    end
     parameter_base = @next_register
     index = 0
     while index < parameter_names.length()
@@ -568,7 +986,14 @@ class Parser
       default_position = parameter_defaults[index]
       self.compile_parameter_default(register, index + index_offset, default_position) if default_position != nil
       type_name = parameter_types[index]
-      if type_name != nil
+      # A `&block: Callable[...]` parameter is nil when no block is given,
+      # so it gets no entry check or type fact, as in compiler.c; its type
+      # is still recorded for callers.
+      is_block = shape != nil && shape[1] && index == parameter_names.length() - 1
+      if type_name != nil && is_block
+        set_index = self.declare_annotation(type_name)
+        @builder.set_parameter_type(function_index, index, set_index) unless @failed
+      elsif type_name != nil
         @declared_types.push([register, type_name])
         set_index = self.emit_type_check(register, type_name)
         # Unlike ARGUMENT_PROVIDED above (a call-time argument index,
@@ -589,6 +1014,29 @@ class Parser
       end
       index = index + 1
     end
+    self.finish_parameter_shape(function_index, shape, parameter_base, index_offset) if shape != nil
+  end
+
+  # A `*name` parameter collects every argument past the fixed ones (the
+  # receiver slot included) into an Array, keeping a trailing block out of
+  # it when a `&block` parameter follows.
+  def finish_parameter_shape(function_index, shape, parameter_base, index_offset)
+    variadic_index = shape[0]
+    return if variadic_index == nil && !shape[1]
+    @builder.set_parameter_flags(function_index, variadic_index != nil, shape[1]) unless @failed
+    return if variadic_index == nil
+    @variadic_functions.push(function_index)
+    register = parameter_base + variadic_index
+    self.emit_instruction3(Opcode::COLLECT_VARIADIC, register, variadic_index + index_offset,
+      if shape[1] then 1 else 0 end)
+    self.set_type_fact(register, Type::ARRAY)
+  end
+
+  def variadic_function?(function_index) = @variadic_functions.include?(function_index)
+
+  # Whether `count` arguments overflow a callee declaring `arity` parameters.
+  def too_many_arguments?(count, arity, function_index)
+    count > arity && !self.variadic_function?(function_index)
   end
 
   def compile_parameter_default(register, parameter_index, position)
@@ -700,6 +1148,11 @@ class Parser
     self.emit_instruction1(Opcode::BOX_LOCAL, entry[1])
     destination = self.allocate_register()
     self.emit_instruction2(Opcode::GET_CELL, destination, entry[1])
+    # The copy is the local's value, so it keeps what is known about it.
+    fact = self.type_fact(entry[1])
+    self.set_type_fact(destination, fact) if fact != nil
+    declaration = self.declared_type(entry[1])
+    @declared_types.push([destination, declaration]) if declaration != nil
     destination
   end
 
@@ -730,59 +1183,8 @@ class Parser
       result = entry if entry[0] == name
       index = index - 1
     end
-    result = self.find_builtin_class(name) if result == nil
+    result = find_builtin_class(name) if result == nil
     result
-  end
-
-  # The native VM's built-in exception hierarchy (DiamondBuiltinClass,
-  # src/vm.h) is constructed directly by diamond_program_init -- called
-  # by both diamond_compile and the ProgramBuilder native bridge -- and
-  # never goes through any .d6 source at all, so it's otherwise invisible
-  # to a parser whose class bookkeeping only ever sees what it compiles
-  # from `class ... end` syntax. These twelve indices are fixed and
-  # already occupied before this parser (or any target program) declares
-  # its own first class, so they're safe to hardcode rather than query.
-  # Fourth element is the class's singleton-method descriptor list
-  # (see compile_class's own @classes.push), empty here since none of
-  # the built-ins declare any -- kept for a uniform four-element shape
-  # across every class_entry source (find_class doesn't otherwise care
-  # which of the two returned it).
-  def find_builtin_class(name)
-    return ["Exception", 0, nil, []] if name == "Exception"
-    return ["StandardError", 1, 0, []] if name == "StandardError"
-    return ["RuntimeError", 2, 1, []] if name == "RuntimeError"
-    return ["TypeError", 3, 1, []] if name == "TypeError"
-    return ["ArgumentError", 4, 1, []] if name == "ArgumentError"
-    return ["IndexError", 5, 1, []] if name == "IndexError"
-    return ["ZeroDivisionError", 6, 1, []] if name == "ZeroDivisionError"
-    return ["RangeError", 7, 1, []] if name == "RangeError"
-    return ["SystemStackError", 8, 0, []] if name == "SystemStackError"
-    return ["FiberError", 9, 1, []] if name == "FiberError"
-    return ["IOError", 10, 1, []] if name == "IOError"
-    return ["RegexpError", 11, 1, []] if name == "RegexpError"
-    # 12-18 (WouldBlockError..JSONError) are the same kind of silent
-    # mirror desync the Opcode module's own comments already warn
-    # about (see MODULO/COMPARE's fix) -- this list stopped at
-    # RegexpError while src/vm.h's DiamondBuiltinClass enum grew seven
-    # more entries. JSONError specifically became a builtin (previously
-    # a lib/core/json_codec.d6 class declaration this parser could
-    # already see) when JSON.parse went native, which is what actually
-    # surfaced this: lib/core/json_codec.d6's own `raise JSONError.new(...)`
-    # started failing to self-parse with "undefined local variable" --
-    # find_class (line ~692) falls through to find_builtin_class for any
-    # bare capitalized name it can't resolve as a user-declared class,
-    # and this returning nil for JSONError sent that fallthrough to
-    # local-variable lookup instead, which is what actually raised the
-    # error. Verified against src/vm.h's DiamondBuiltinClass enum
-    # directly (plain sequential enum, no gaps), not counted by hand.
-    return ["WouldBlockError", 12, 1, []] if name == "WouldBlockError"
-    return ["ThreadError", 13, 1, []] if name == "ThreadError"
-    return ["SQLite3Error", 14, 1, []] if name == "SQLite3Error"
-    return ["PostgreSQLError", 15, 1, []] if name == "PostgreSQLError"
-    return ["MySQLError", 16, 1, []] if name == "MySQLError"
-    return ["NoMethodError", 17, 1, []] if name == "NoMethodError"
-    return ["JSONError", 18, 1, []] if name == "JSONError"
-    nil
   end
 
   def find_interface(name)
@@ -913,11 +1315,15 @@ class Parser
         0
       end
       body_start = @code_count
-      declaration_statement = @current.kind() == :def || @current.kind() == :class || @current.kind() == :interface || @current.kind() == :module
+      declaration_statement = @current.kind() == :def || @current.kind() == :class ||
+        @current.kind() == :sealed || @current.kind() == :struct ||
+        @current.kind() == :interface || @current.kind() == :module
       if @current.kind() == :def
         result = self.compile_definition()
-      elsif @current.kind() == :class
+      elsif @current.kind() == :class || @current.kind() == :sealed
         result = self.compile_class()
+      elsif @current.kind() == :struct
+        result = self.compile_struct()
       elsif @current.kind() == :interface
         result = self.compile_interface()
       elsif @current.kind() == :module
@@ -932,6 +1338,8 @@ class Parser
         result = self.compile_retry()
       elsif self.index_assignment_ahead?()
         result = self.compile_index_assignment()
+      elsif self.multi_assignment_ahead?()
+        result = self.compile_multi_assignment()
       elsif self.compound_assignment_ahead?()
         result = self.compile_compound_assignment()
       elsif self.assignment_ahead?()
@@ -1038,13 +1446,32 @@ class Parser
       self.advance_token()
     end
 
+    # Inside a method the block sees self as its register 0, as in
+    # compiler.c's compile_block: a boxed copy of the enclosing self is
+    # captured after the enclosing locals, and the CAPTURED_SELF owner
+    # (65533) makes the VM pass the block's arguments from register 1.
+    self_copy = nil
+    if @in_method || @in_singleton_method
+      self_copy = self.allocate_register()
+      self.emit_instruction2(Opcode::MOVE, self_copy, 0)
+      self.emit_instruction1(Opcode::BOX_LOCAL, self_copy)
+    end
     function_index = @builder.declare_function("<block>", parameter_names.length(),
       parameter_names.length())
+    @builder.set_function_owner_class(function_index, 65533) if self_copy != nil
     enclosing_locals = @locals
 
     outer_locals = @locals
     outer_loop_captures_pending = @loop_captures_pending
+    outer_current_block_name = @current_block_name
+    outer_current_block_type = @current_block_type
+    outer_in_block = @in_block
+    outer_block_has_break = @block_has_break
+    outer_block_returns_early = @block_returns_early
+    context = @block_context
+    @block_context = nil
     outer_loops = @loops
+    outer_begin_depth = @begin_depth
     outer_next_register = @next_register
     outer_code_count = @code_count
     outer_function_index = @current_function_index
@@ -1055,20 +1482,43 @@ class Parser
 
     @locals = []
     @loop_captures_pending = false
+    @in_block = true
+    @block_has_break = false
+    @block_returns_early = false
     @loops = []
+    @begin_depth = 0
     @next_register = 0
     @code_count = 0
     @current_function_index = function_index
     @enclosing_locals = enclosing_locals
-    @current_return_type = nil
+    # A `next value` is checked against the contextual result type.
+    @current_return_type = if context == nil then nil else context[4] end
     @type_facts = []
     @declared_types = []
     @function_nesting_depth = @function_nesting_depth + 1
 
+    if self_copy != nil
+      self_register = self.allocate_register()
+      self.emit_instruction2(Opcode::GET_CAPTURE, self_register, enclosing_locals.length())
+    end
     index = 0
     while index < parameter_names.length()
       register = self.allocate_register()
       @locals.push([parameter_names[index], register, false])
+      # The contextual parameter type is part of the block's Callable
+      # signature, which typed Callable checks read, and a fact in its body.
+      if context != nil && index < context[5].length()
+        parameter_type = context[5][index]
+        set_index = self.declare_annotation(parameter_type)
+        @builder.set_parameter_type(function_index, index, set_index) unless @failed
+        @declared_types.push([register, parameter_type])
+        fact = self.annotation_single_type(parameter_type)
+        self.set_type_fact(register, fact) if fact != nil
+      end
+      if parameter_names[index] == @current_block_name
+        @current_block_name = nil
+        @current_block_type = nil
+      end
       index = index + 1
     end
 
@@ -1089,6 +1539,18 @@ class Parser
     end
 
     body_result = self.compile_body()
+    # The result is checked against the contextual type, or else its known
+    # type becomes the block's declared result, as compiler.c's
+    # finish_block_return does (only without an early `next value`, whose
+    # type the body alone doesn't show).
+    if @current_return_type != nil
+      set_index = self.emit_type_check(body_result, @current_return_type)
+      @builder.set_return_type(function_index, set_index) unless @failed
+    elsif !@block_returns_early && self.type_fact(body_result) != nil && !@failed
+      set_index = @builder.declare_type_set(function_index,
+        [[self.type_fact(body_result), -1, -1, -1, -1, []]])
+      @builder.set_return_type(function_index, set_index)
+    end
     self.emit_instruction1(Opcode::RETURN, body_result)
     if @current.kind() != :end
       self.fail("expected 'end' after block body")
@@ -1099,7 +1561,11 @@ class Parser
 
     @locals = outer_locals
     @loop_captures_pending = outer_loop_captures_pending
+    @current_block_name = outer_current_block_name
+    @current_block_type = outer_current_block_type
+    @in_block = outer_in_block
     @loops = outer_loops
+    @begin_depth = outer_begin_depth
     @next_register = outer_next_register
     @code_count = outer_code_count
     @current_function_index = outer_function_index
@@ -1121,6 +1587,7 @@ class Parser
       capture_registers.push(entry[1])
       index = index + 1
     end
+    capture_registers.push(self_copy) if self_copy != nil
     result = self.allocate_register()
     self.emit_byte(Opcode::CLOSURE)
     self.emit_register(result)
@@ -1131,6 +1598,13 @@ class Parser
       self.emit_register(capture_registers[index])
       index = index + 1
     end
+    # The break lands in this frame, in the call the block is passed to.
+    if @block_has_break
+      @builder.set_nonlocal_landing(@current_function_index)
+      @pending_block_call = function_index
+    end
+    @block_has_break = outer_block_has_break
+    @block_returns_early = outer_block_returns_early
     result
   end
 
@@ -1143,7 +1617,7 @@ class Parser
     # gives inside a class, matching compiler.c's own unified
     # compile_definition exactly rather than falling through to the
     # generic "expected function name" message.
-    if self.operator_method_token?(@current.kind()) &&
+    if operator_method_token?(@current.kind()) &&
        @current_class_index == nil && @current_module_index == nil
       self.fail("operator methods can only be defined inside a class or module")
       return 0
@@ -1202,8 +1676,8 @@ class Parser
     else
       0
     end
-    required_arity = self.required_parameter_count(parameter_defaults) -
-      (if has_block_parameter then 1 else 0 end)
+    required_arity = required_parameter_count(parsed_parameters)
+    @parameter_shape = [parsed_parameters[4], has_block_parameter]
     function_index = @builder.declare_function(name, arity + self_offset,
       required_arity + self_offset)
     if self_offset == 1
@@ -1222,7 +1696,7 @@ class Parser
     if at_top_level
       @functions.push([name, function_index, arity, parameter_names,
                        @current_type_variables.length(), return_type,
-                       required_arity])
+                       required_arity, parameter_types, has_block_parameter])
     end
     # Every entry currently in scope becomes a capture candidate,
     # unconditionally -- mirroring compiler.c's own eager design (not
@@ -1282,18 +1756,6 @@ class Parser
     variables
   end
 
-  # parse_parameter_names already rejects a required parameter following
-  # a default one, so the first non-nil entry (if any) marks where
-  # optional parameters begin -- everything before it is required.
-  def required_parameter_count(parameter_defaults)
-    index = 0
-    while index < parameter_defaults.length()
-      return index if parameter_defaults[index] != nil
-      index = index + 1
-    end
-    index
-  end
-
   # Returns [names, types]: parallel arrays, `types[i]` is a recursive
   # annotation tree, or nil if it
   # had no `: Type` annotation. Resolving a type name to a type id and
@@ -1317,6 +1779,7 @@ class Parser
     types = []
     defaults = []
     has_block_parameter = false
+    variadic_index = nil
     saw_default = false
     if @current.kind() != :right_paren
       more = true
@@ -1324,9 +1787,44 @@ class Parser
         block_parameter = @current.kind() == :ampersand
         has_block_parameter = true if block_parameter
         self.advance_token() if block_parameter
+        variadic = !block_parameter && @current.kind() == :star
+        if variadic
+          if variadic_index != nil
+            self.fail("a function can only declare one variadic parameter")
+            return nil
+          end
+          self.advance_token()
+        end
         if @current.kind() != :identifier
           self.fail("expected parameter name")
           more = false
+        elsif variadic
+          # `*name` collects the remaining arguments into an Array: no type,
+          # no default, and only a `&block` may follow it.
+          names.push(self.token_text(@current))
+          types.push(nil)
+          defaults.push(nil)
+          variadic_index = names.length() - 1
+          self.advance_token()
+          if @current.kind() == :colon
+            self.fail("a variadic parameter cannot have a type annotation")
+            return nil
+          end
+          if @current.kind() == :equal
+            self.fail("a variadic parameter cannot have a default value")
+            return nil
+          end
+          self.skip_newlines()
+          more = false
+          if @current.kind() == :comma
+            self.advance_token()
+            self.skip_newlines()
+            if @current.kind() != :ampersand
+              self.fail("only a block parameter may follow a variadic parameter")
+              return nil
+            end
+            more = true
+          end
         else
           names.push(self.token_text(@current))
           self.advance_token()
@@ -1361,7 +1859,7 @@ class Parser
         end
       end
     end
-    [names, types, defaults, has_block_parameter]
+    [names, types, defaults, has_block_parameter, variadic_index]
   end
 
   def skip_default_expression()
@@ -1622,7 +2120,7 @@ class Parser
       return
     end
     self.advance_token()
-    if @current.kind() != :identifier && !self.operator_method_token?(@current.kind())
+    if @current.kind() != :identifier && !operator_method_token?(@current.kind())
       self.fail("expected interface method name")
       return
     end
@@ -1634,6 +2132,7 @@ class Parser
     end
     self.advance_token()
     parsed = self.parse_parameter_names()
+    return if @failed
     if @current.kind() != :right_paren
       self.fail("expected ')' after interface parameters")
       return
@@ -1735,23 +2234,14 @@ class Parser
     copy
   end
 
-  def type_fact_in(facts, reg)
-    index = facts.length() - 1
-    while index >= 0
-      return facts[index][1] if facts[index][0] == reg
-      index = index - 1
-    end
-    nil
-  end
-
   def merge_local_type_facts(original, then_facts, else_facts)
     @type_facts = original
     index = 0
     while index < @locals.length()
       local = @locals[index]
       unless local[2]
-        then_fact = self.type_fact_in(then_facts, local[1])
-        else_fact = self.type_fact_in(else_facts, local[1])
+        then_fact = type_fact_in(then_facts, local[1])
+        else_fact = type_fact_in(else_facts, local[1])
         if then_fact != nil && then_fact == else_fact
           self.set_type_fact(local[1], then_fact)
         end
@@ -1907,7 +2397,11 @@ class Parser
                             parameter_defaults, return_type, enclosing_locals, self_offset)
     outer_locals = @locals
     outer_loop_captures_pending = @loop_captures_pending
+    outer_current_block_name = @current_block_name
+    outer_current_block_type = @current_block_type
+    outer_in_block = @in_block
     outer_loops = @loops
+    outer_begin_depth = @begin_depth
     outer_next_register = @next_register
     outer_code_count = @code_count
     outer_function_index = @current_function_index
@@ -1915,15 +2409,27 @@ class Parser
     outer_return_type = @current_return_type
     outer_type_facts = @type_facts
     outer_declared_types = @declared_types
+    outer_in_method = @in_method
+    outer_in_singleton_method = @in_singleton_method
+    @in_method = self_offset == 1
+    @in_singleton_method = false
 
     @locals = []
     @loop_captures_pending = false
+    @current_block_name = nil
+    @current_block_type = nil
+    @in_block = false
     @loops = []
+    @begin_depth = 0
     @next_register = 0
     @code_count = 0
     @current_function_index = function_index
     @enclosing_locals = enclosing_locals
+    outer_method_function_index = @method_function_index
+    outer_method_return_type = @method_return_type
     @current_return_type = return_type
+    @method_function_index = function_index
+    @method_return_type = return_type
     @type_facts = []
     @declared_types = []
     @function_nesting_depth = @function_nesting_depth + 1
@@ -2010,14 +2516,22 @@ class Parser
 
     @locals = outer_locals
     @loop_captures_pending = outer_loop_captures_pending
+    @current_block_name = outer_current_block_name
+    @current_block_type = outer_current_block_type
+    @in_block = outer_in_block
     @loops = outer_loops
+    @begin_depth = outer_begin_depth
     @next_register = outer_next_register
     @code_count = outer_code_count
     @current_function_index = outer_function_index
     @enclosing_locals = outer_enclosing_locals
     @current_return_type = outer_return_type
+    @method_function_index = outer_method_function_index
+    @method_return_type = outer_method_return_type
     @type_facts = outer_type_facts
     @declared_types = outer_declared_types
+    @in_method = outer_in_method
+    @in_singleton_method = outer_in_singleton_method
     @function_nesting_depth = @function_nesting_depth - 1
   end
 
@@ -2058,7 +2572,12 @@ class Parser
   # function/method body: a much narrower scope cut than compiler.c's
   # own class declarations, which have no such restriction -- confirmed
   # by testing directly against the real compiler, not assumed).
+  # `sealed class X` makes X itself impossible to instantiate (its
+  # subclasses still can); the lexer only produces :sealed right before
+  # `class`.
   def compile_class()
+    sealed = @current.kind() == :sealed
+    self.advance_token() if sealed
     self.advance_token()
     if @function_nesting_depth != 0 || @current_class_index != nil
       self.fail("classes must be declared at the top level")
@@ -2095,6 +2614,10 @@ class Parser
       superclass_index
     end)
     @classes.push([name, class_index, superclass_index, []])
+    if sealed
+      @builder.seal_class(class_index)
+      @sealed_classes.push(class_index)
+    end
     @current_class_entry = @classes.length() - 1
     @current_class_index = class_index
     @current_class_superclass_index = superclass_index
@@ -2108,24 +2631,7 @@ class Parser
       @current_class_methods_private = false
       return 0
     end
-    while !@failed && @current.kind() != :end
-      if @current.kind() == :def
-        self.compile_method()
-      elsif @current.kind() == :identifier && self.assignment_ahead?()
-        self.compile_module_constant(name)
-      elsif self.attribute_keyword?(@current.kind())
-        self.compile_attribute()
-      elsif @current.kind() == :private || @current.kind() == :public
-        self.compile_class_visibility()
-      elsif @current.kind() == :include
-        self.compile_class_include()
-      elsif @current.kind() == :alias_method
-        self.compile_alias_method()
-      else
-        self.fail("expected method definition or include in class")
-      end
-      self.skip_newlines() if @current.kind() == :newline
-    end
+    self.compile_class_members(name)
     if @current.kind() != :end
       self.fail("expected method definition or include in class") unless @failed
       @current_class_index = nil
@@ -2140,6 +2646,269 @@ class Parser
     # Sole-writer fresh register; run_chunk's zero-init already covers
     # nil, matching compile_class.c's own return value exactly.
     self.allocate_register()
+  end
+
+  # The members of a class (or struct) body, up to its `end`.
+  def compile_class_members(name)
+    while !@failed && @current.kind() != :end
+      if @current.kind() == :def
+        self.compile_method()
+      elsif @current.kind() == :identifier && self.assignment_ahead?()
+        self.compile_module_constant(name)
+      elsif attribute_keyword?(@current.kind())
+        self.compile_attribute()
+      elsif @current.kind() == :private || @current.kind() == :public
+        self.compile_class_visibility()
+      elsif @current.kind() == :include
+        self.compile_class_include()
+      elsif @current.kind() == :alias_method
+        self.compile_alias_method()
+      else
+        self.fail("expected method definition or include in class")
+      end
+      self.skip_newlines() if @current.kind() == :newline
+    end
+  end
+
+  # `struct Name(field: Type, ...) [< Parent] ... end` -- a class whose
+  # typed initialize, readers, == and to_s are generated, as in
+  # compiler.c's compile_struct. The fields take the first slots (a parent
+  # struct's first), then the hand-written body compiles, then the
+  # generated methods are compiled from Diamond source text; a body that
+  # defines == or to_s replaces that generated one.
+  def compile_struct()
+    self.advance_token()
+    if @function_nesting_depth != 0 || @current_class_index != nil
+      self.fail("classes must be declared at the top level")
+      return 0
+    end
+    if @current.kind() != :identifier
+      self.fail("expected valid struct name")
+      return 0
+    end
+    name = self.token_text(@current)
+    name = @current_module_name + "::" + name if @current_module_name != nil
+    if self.find_class(name) != nil
+      self.fail("struct is already defined")
+      return 0
+    end
+    if self.find_interface(name) != nil
+      self.fail("type name is already defined")
+      return 0
+    end
+    index = 0
+    while index < @modules.length()
+      self.fail("type name is already defined") if @modules[index][0] == name
+      index = index + 1
+    end
+    return 0 if @failed
+    self.advance_token()
+    fields = self.parse_struct_fields()
+    return 0 if fields == nil
+    parent_entry = nil
+    inherited = []
+    if @current.kind() == :less
+      self.advance_token()
+      if @current.kind() != :identifier
+        self.fail("expected superclass name after '<'")
+        return 0
+      end
+      parent_token = @current
+      parent_entry = self.find_forward_class(self.token_text(@current), @current_module_name)
+      if parent_entry == nil
+        self.fail("undefined superclass")
+        return 0
+      end
+      inherited = self.struct_fields_of(parent_entry[1])
+      if inherited == nil
+        self.fail("a struct's superclass must be a struct declared earlier")
+        return 0
+      end
+      index = 0
+      while index < fields.length()
+        if struct_field_index(inherited, fields[index][0]) != nil
+          token = fields[index][2]
+          self.fail_at(token.start(), token.line(), token.column(),
+            "struct field is already defined by its superclass")
+          return 0
+        end
+        index = index + 1
+      end
+      self.advance_token()
+    end
+    superclass_index = if parent_entry == nil then nil else parent_entry[1] end
+    class_index = @builder.declare_class(name, if superclass_index == nil then -1 else superclass_index end)
+    all_fields = inherited + fields
+    @classes.push([name, class_index, superclass_index, []])
+    @struct_fields.push([class_index, all_fields])
+    index = 0
+    while index < fields.length()
+      @builder.declare_field(class_index, fields[index][0])
+      index = index + 1
+    end
+    @current_class_entry = @classes.length() - 1
+    @current_class_index = class_index
+    @current_class_superclass_index = superclass_index
+    @current_class_method_names = []
+    @current_class_singleton_method_names = []
+    @current_class_methods_private = false
+    if self.consume_block_start()
+      self.compile_generated_source(self.struct_constructor_source(all_fields, fields))
+      self.compile_class_members(name) unless @failed
+      if @current.kind() != :end
+        self.fail("expected method definition or include in class") unless @failed
+      else
+        self.compile_generated_source(self.struct_comparison_source(name, all_fields))
+        self.advance_token() unless @failed
+      end
+    end
+    @current_class_index = nil
+    @current_class_superclass_index = nil
+    @current_class_methods_private = false
+    self.allocate_register()
+  end
+
+  # `(field: Type, ...)`: [[name, type source text, name token], ...], or nil.
+  def parse_struct_fields()
+    if @current.kind() != :left_paren
+      self.fail("expected '(' after struct name")
+      return nil
+    end
+    self.advance_token()
+    self.skip_newlines()
+    fields = []
+    while @current.kind() != :right_paren && !@failed
+      if @current.kind() != :identifier
+        self.fail("expected field name")
+        return nil
+      end
+      if fields.length() == 32
+        self.fail("too many struct fields")
+        return nil
+      end
+      field_token = @current
+      field_name = self.token_text(@current)
+      if field_name == "initialize" || field_name == "to_s"
+        self.fail("field name collides with a generated struct method")
+        return nil
+      end
+      if struct_field_index(fields, field_name) != nil
+        self.fail("duplicate struct field name")
+        return nil
+      end
+      self.advance_token()
+      if @current.kind() != :colon
+        self.fail("expected ':' and a type after field name")
+        return nil
+      end
+      self.advance_token()
+      type_start = @current.start()
+      self.parse_type_annotation()
+      return nil if @failed
+      type_end = @previous.start() + @previous.length()
+      fields.push([field_name, @source.slice(type_start, type_end - type_start), field_token])
+      self.skip_newlines()
+      break if @current.kind() != :comma
+      self.advance_token()
+      self.skip_newlines()
+    end
+    if @current.kind() != :right_paren
+      self.fail("expected ')' after struct fields")
+      return nil
+    end
+    self.advance_token()
+    fields
+  end
+
+  def struct_fields_of(class_index)
+    index = 0
+    while index < @struct_fields.length()
+      return @struct_fields[index][1] if @struct_fields[index][0] == class_index
+      index = index + 1
+    end
+    nil
+  end
+
+  def struct_method_defined?(method_name)
+    index = 0
+    while index < @current_class_method_names.length()
+      return true if @current_class_method_names[index] == method_name
+      index = index + 1
+    end
+    false
+  end
+
+  # initialize and the readers, compiled before the hand-written body so a
+  # body redefining one fails at its own def.
+  def struct_constructor_source(all_fields, own_fields)
+    text = "def initialize("
+    index = 0
+    while index < all_fields.length()
+      text = text + ", " if index > 0
+      text = text + all_fields[index][0] + ": " + all_fields[index][1]
+      index = index + 1
+    end
+    text = text + ")\n"
+    index = 0
+    while index < all_fields.length()
+      text = text + "@" + all_fields[index][0] + " = " + all_fields[index][0] + "\n"
+      index = index + 1
+    end
+    text = text + "end\n"
+    index = 0
+    while index < own_fields.length()
+      text = text + "def " + own_fields[index][0] + "() -> " + own_fields[index][1] +
+        " = @" + own_fields[index][0] + "\n"
+      index = index + 1
+    end
+    text
+  end
+
+  # == and to_s, after the body, which may define its own.
+  def struct_comparison_source(name, all_fields)
+    text = ""
+    if !self.struct_method_defined?("==")
+      text = text + "def ==(other)\nreturn false unless self.class() == other.class()\n"
+      index = 0
+      while index < all_fields.length()
+        text = text + "return false unless @" + all_fields[index][0] + " == other." +
+          all_fields[index][0] + "()\n"
+        index = index + 1
+      end
+      text = text + "true\nend\n"
+    end
+    if !self.struct_method_defined?("to_s")
+      text = text + "def to_s() = \"" + name + "("
+      index = 0
+      while index < all_fields.length()
+        text = text + ", " if index > 0
+        text = text + all_fields[index][0] + ": #" + "{@" + all_fields[index][0] + "}"
+        index = index + 1
+      end
+      text = text + ")\"\n"
+    end
+    text
+  end
+
+  # Compiles generated members from source text, swapped in for the file
+  # being compiled.
+  def compile_generated_source(text)
+    outer_source = @source
+    outer_lexer = @lexer
+    outer_current = @current
+    outer_previous = @previous
+    @source = text
+    @lexer = Lexer.new(text)
+    @current = @lexer.next_token()
+    self.skip_newlines()
+    while !@failed && @current.kind() != :eof
+      self.compile_method()
+      self.skip_newlines()
+    end
+    @source = outer_source
+    @lexer = outer_lexer
+    @current = outer_current
+    @previous = outer_previous
   end
 
   def compile_class_include()
@@ -2167,6 +2936,7 @@ class Parser
       self.fail("undefined module")
     else
       @builder.include_module(@current_class_index, module_index)
+      @classes_with_includes.push(@current_class_index)
     end
   end
 
@@ -2372,12 +3142,14 @@ class Parser
       while !@failed && @current.kind() != :end
         if @current.kind() == :def
           self.compile_method()
-        elsif self.attribute_keyword?(@current.kind())
+        elsif attribute_keyword?(@current.kind())
           self.compile_attribute()
         elsif @current.kind() == :interface
           self.compile_interface()
-        elsif @current.kind() == :class
+        elsif @current.kind() == :class || @current.kind() == :sealed
           self.compile_class()
+        elsif @current.kind() == :struct
+          self.compile_struct()
         elsif @current.kind() == :module
           self.compile_module()
         elsif @current.kind() == :module_function
@@ -2493,8 +3265,14 @@ class Parser
     index = 0
     while index < @forward_constants.length() && !@failed
       entry = @forward_constants[index]
+      # A `when` pattern (entry[5]) names a class before a constant, and
+      # loads it with LOAD_CLASS -- the same size as the constant read.
+      class_entry = if entry[5] then self.find_forward_class(entry[2], entry[6]) else nil end
       constant_index = self.find_constant_from(entry[3], entry[2])
-      if constant_index == nil
+      if class_entry != nil
+        @builder.patch_byte(entry[0], entry[1] - 3, Opcode::LOAD_CLASS)
+        self.patch_index(entry[0], entry[1], class_entry[1])
+      elsif constant_index == nil
         token = entry[4]
         self.fail_at(token.start(), token.line(), token.column(),
           "undefined constant '" + entry[2] + "'")
@@ -2508,9 +3286,23 @@ class Parser
       entry = @forward_calls[index]
       token = entry[4]
       function_entry = self.find_function(entry[2])
-      if function_entry == nil
+      paths = entry[5]
+      if paths != nil
+        # An implicit self call: the function if one exists, else self's method.
+        target = if function_entry == nil
+          paths[2]
+        else
+          paths[1]
+        end
+        self.patch_index(entry[0], paths[0], target)
+        @builder.set_block_call_offset(paths[3], target) if paths[3] != nil
+      end
+      if function_entry == nil && paths != nil
+        # Dispatched on self at run time.
+      elsif function_entry == nil
         self.fail_at(token.start(), token.line(), token.column(), "undefined function")
-      elsif entry[3] < function_entry[6] || entry[3] > function_entry[2]
+      elsif entry[3] >= 0 && (entry[3] < function_entry[6] ||
+                              self.too_many_arguments?(entry[3], function_entry[2], function_entry[1]))
         self.fail_at(token.start(), token.line(), token.column(), "wrong number of arguments")
       else
         self.patch_index(entry[0], entry[1], function_entry[1])
@@ -2529,7 +3321,7 @@ class Parser
         token = entry[4]
         self.fail_at(token.start(), token.line(), token.column(),
           "undefined constant '" + entry[2] + "'")
-      else
+      elsif !self.fail_if_sealed(class_entry[1], entry[5])
         self.patch_index(entry[0], entry[1], class_entry[1])
       end
       index = index + 1
@@ -2551,10 +3343,12 @@ class Parser
         method_token = entry[7]
         self.fail_at(method_token.start(), method_token.line(), method_token.column(),
           "undefined class singleton method")
-      elsif entry[6] < descriptor[3] || entry[6] > descriptor[2]
+      elsif entry[6] >= 0 && (entry[6] < descriptor[3] ||
+                              self.too_many_arguments?(entry[6], descriptor[2], descriptor[1]))
         self.fail_at(token.start(), token.line(), token.column(), "wrong number of arguments")
       else
         self.patch_index(entry[0], entry[1], descriptor[1])
+        self.patch_index(entry[0], entry[8], class_entry[1])
       end
       index = index + 1
     end
@@ -2569,13 +3363,44 @@ class Parser
   # A capitalized name with nothing declared under it yet: a constant
   # assigned later in the file. Read with a placeholder index.
   def compile_forward_constant(name)
+    self.emit_forward_name(name, false)
+  end
+
+  def emit_forward_name(name, class_pattern)
     destination = self.allocate_register()
     self.emit_byte(48)
     self.emit_register(destination)
     @forward_constants.push([@current_function_index, @code_count, name,
-                             self.constant_scope(), @previous])
+                             self.constant_scope(), @previous, class_pattern,
+                             @current_module_name])
     self.emit_register(0)
     destination
+  end
+
+  # `when Circle`: a class name is matched as a class (LOAD_CLASS, which
+  # CASE_MATCH tests with is_a?). A name nothing is declared under yet may
+  # be a class or a constant declared later; resolve_forward_references
+  # decides. nil when the pattern is an ordinary expression.
+  def parse_case_class_pattern()
+    return nil if @current.kind() != :identifier
+    name = self.token_text(@current)
+    first = name.slice(0, 1)
+    return nil if first < "A" || first > "Z"
+    return nil if self.find_local(name) != nil || self.find_function(name) != nil
+    after = @lexer.clone().next_token().kind()
+    return nil if after == :dot || after == :left_paren || after == :left_brace ||
+      after == :double_colon || after == :left_bracket
+    class_entry = self.find_forward_class(name, @current_module_name)
+    if class_entry != nil
+      self.advance_token()
+      destination = self.allocate_register()
+      self.emit_instruction2(Opcode::LOAD_CLASS, destination, class_entry[1])
+      @case_pattern_class_index = class_entry[1]
+      return destination
+    end
+    return nil if self.find_lexical_constant(name) != nil
+    self.advance_token()
+    self.emit_forward_name(name, true)
   end
 
   # A call to a top-level function defined later in the file. Its
@@ -2586,10 +3411,14 @@ class Parser
       self.fail("undefined function")
       return 0
     end
+    return self.compile_implicit_self_call(name_token) if @in_method && @current_class_index != nil
+    if @in_singleton_method && !self.call_arguments_have_spread_after_paren?()
+      return self.compile_implicit_self_call(name_token)
+    end
     site = self.emit_forward_call_site()
     return 0 if site == nil
     @forward_calls.push([@current_function_index, site[1], self.token_text(name_token),
-                         site[2], name_token])
+                         site[2], name_token, nil])
     site[0]
   end
 
@@ -2599,6 +3428,35 @@ class Parser
   def emit_forward_call_site()
     self.advance_token()
     self.skip_newlines()
+    if self.call_arguments_have_spread?()
+      # The argument count is only known at run time: -1 skips the arity
+      # check when the call is resolved.
+      spread_arguments = self.parse_spread_call_arguments()
+      return nil if spread_arguments == nil
+      destination = self.allocate_register()
+      self.emit_call_opcode(Opcode::CALL_SPREAD)
+      self.emit_register(destination)
+      offset = @code_count
+      self.emit_function_index(0)
+      self.emit_register(spread_arguments)
+      return [destination, offset, -1]
+    end
+    parsed = self.parse_forward_call_arguments()
+    return nil if parsed == nil
+    destination = self.allocate_register()
+    self.emit_call_opcode(Opcode::CALL)
+    self.emit_register(destination)
+    offset = @code_count
+    self.emit_function_index(0)
+    self.emit_register(parsed[0])
+    self.emit_byte(parsed[1])
+    [destination, offset, parsed[1]]
+  end
+
+  # Positional arguments through ')' plus an optional trailing do block,
+  # moved into contiguous registers: [base, count], or nil. Keyword
+  # arguments need the callee's parameter names, so they are rejected.
+  def parse_forward_call_arguments()
     arguments = []
     if @current.kind() != :right_paren
       more = true
@@ -2624,25 +3482,76 @@ class Parser
     end
     self.advance_token()
     arguments.push(self.compile_block()) if @current.kind() == :do
-    argument_base = self.allocate_register()
-    i = 1
-    while i < arguments.length()
-      self.allocate_register()
-      i = i + 1
+    [self.move_contiguous(arguments), arguments.length()]
+  end
+
+  # Does the argument list after the current '(' contain a splat?
+  def call_arguments_have_spread_after_paren?()
+    lookahead = @lexer.clone()
+    depth = 1
+    kind = lookahead.next_token().kind()
+    while depth > 0 && kind != :eof
+      return true if kind == :star && depth == 1
+      depth = depth + 1 if kind == :left_paren || kind == :left_bracket || kind == :left_brace
+      depth = depth - 1 if kind == :right_paren || kind == :right_bracket || kind == :right_brace
+      kind = lookahead.next_token().kind() if depth > 0
     end
-    i = 0
-    while i < arguments.length()
-      self.emit_instruction2(Opcode::MOVE, argument_base + i, arguments[i])
-      i = i + 1
+    false
+  end
+
+  # `name(...)` inside an instance method (or, through INVOKE_SELF_METHOD,
+  # a class singleton method) with no function `name` declared
+  # yet: a top-level function declared later in the file wins, as in
+  # compiler.c, and otherwise it calls self's method. Which one is only
+  # known once the whole file is compiled, so both are emitted behind a
+  # jump that resolve_forward_references points at one of them.
+  def compile_implicit_self_call(name_token)
+    self.advance_token()
+    self.skip_newlines()
+    spread = self.call_arguments_have_spread?()
+    parsed = if spread
+      arguments = self.parse_spread_call_arguments()
+      if arguments == nil
+        nil
+      else
+        [arguments, -1]
+      end
+    else
+      self.parse_forward_call_arguments()
     end
+    return 0 if parsed == nil
+    # Which of the two calls a breaking block lands in is known only once
+    # resolve_forward_references picks one.
+    block = @pending_block_call
+    @pending_block_call = nil
+    selector = self.emit_jump(Opcode::JUMP, 0)
+    call_start = @code_count
     destination = self.allocate_register()
-    self.emit_byte(Opcode::CALL)
+    self.emit_byte(if spread then Opcode::CALL_SPREAD else Opcode::CALL end)
     self.emit_register(destination)
     offset = @code_count
     self.emit_function_index(0)
-    self.emit_register(argument_base)
-    self.emit_byte(arguments.length())
-    [destination, offset, arguments.length()]
+    self.emit_register(parsed[0])
+    self.emit_byte(parsed[1]) unless spread
+    skip = self.emit_jump(Opcode::JUMP, 0)
+    invoke_start = @code_count
+    if @in_singleton_method
+      # On self's class: INVOKE_SELF_METHOD, as compile_self_class_call.
+      self.emit_byte(Opcode::INVOKE_SELF_METHOD)
+      self.emit_register(destination)
+      self.emit_register(self.add_string(self.token_text(name_token)))
+    else
+      self.emit_byte(if spread then Opcode::INVOKE_SPREAD else Opcode::INVOKE end)
+      self.emit_register(destination)
+      self.emit_register(0)
+      self.emit_register(self.add_string(self.token_text(name_token)))
+    end
+    self.emit_register(parsed[0])
+    self.emit_byte(parsed[1]) unless spread
+    self.patch_jump(skip, @code_count)
+    @forward_calls.push([@current_function_index, offset, self.token_text(name_token),
+                         parsed[1], name_token, [selector, call_start, invoke_start, block]])
+    destination
   end
 
   # `X.new(...)` or `X.method(...)` where class X, or the singleton method,
@@ -2665,21 +3574,56 @@ class Parser
       parsed = self.parse_call_arguments()
       return 0 if parsed == nil
       destination = self.allocate_register()
-      self.emit_byte(Opcode::NEW)
+      self.emit_call_opcode(Opcode::NEW)
       self.emit_register(destination)
       @forward_news.push([@current_function_index, @code_count, self.token_text(name_token),
-                          @current_module_name, name_token])
+                          @current_module_name, name_token, method_token])
       self.emit_register(0)
       self.emit_register(parsed[0])
       self.emit_byte(parsed[1])
       return destination
     end
-    site = self.emit_forward_call_site()
+    site = self.emit_forward_singleton_site()
     return 0 if site == nil
     @forward_singleton_calls.push([@current_function_index, site[1], self.token_text(name_token),
                                    @current_module_name, name_token, method_name, site[2],
-                                   method_token])
+                                   method_token, site[3]])
     site[0]
+  end
+
+  # emit_forward_call_site for a class singleton declared later: the
+  # receiver slot gets a LOAD_CLASS whose class index is patched in at
+  # resolution, too. Returns [destination, function index operand offset,
+  # argument count (-1 for a spread), class index operand offset].
+  def emit_forward_singleton_site()
+    self.advance_token()
+    self.skip_newlines()
+    receiver = self.allocate_register()
+    class_operand = @code_count + 3
+    self.emit_instruction2(Opcode::LOAD_CLASS, receiver, 0)
+    if self.call_arguments_have_spread?()
+      spread_arguments = self.parse_spread_call_arguments()
+      return nil if spread_arguments == nil
+      arguments = self.emit_build_spread_arguments([receiver], spread_arguments, [], false)
+      destination = self.allocate_register()
+      self.emit_call_opcode(Opcode::CALL_SPREAD)
+      self.emit_register(destination)
+      offset = @code_count
+      self.emit_function_index(0)
+      self.emit_register(arguments)
+      return [destination, offset, -1, class_operand]
+    end
+    parsed = self.parse_forward_call_arguments()
+    return nil if parsed == nil
+    base = self.move_contiguous([receiver] + contiguous_registers(parsed[0], parsed[1]))
+    destination = self.allocate_register()
+    self.emit_call_opcode(Opcode::CALL)
+    self.emit_register(destination)
+    offset = @code_count
+    self.emit_function_index(0)
+    self.emit_register(base)
+    self.emit_byte(parsed[1] + 1)
+    [destination, offset, parsed[1], class_operand]
   end
 
   # The class a forward reference names, looked up the way parse_name
@@ -2822,39 +3766,6 @@ class Parser
     name
   end
 
-  # An instance method: register 0 is always `self` (allocated before
-  # any user-declared parameter, exactly mirroring compile_definition.c's
-  # own class/module branch), and the compiled function is registered
-  # into the class via declare_method rather than @functions -- resolved
-  # later at INVOKE time by the VM against the receiver's runtime class,
-  # not by this parser at compile time the way a direct top-level call
-  # is. One level of nested `def` is supported inside a method body (see
-  # compile_method_body's own function_nesting_depth increment and
-  # compile_definition's self_offset handling) -- the nested closure gets
-  # its own independent `self`, not a captured one, so it can be handed
-  # to redefine_method and later invoked normally against any receiver.
-  # Operator overloading: a method literally named "+"/"=="/etc. is
-  # already legal at the VM level (lookup_method dispatches purely by
-  # name-string + arity, no charset restriction) -- the only barrier is
-  # the parser accepting the token as a method name. Unary minus is
-  # deliberately NOT included: it's named "negate", an ordinary
-  # identifier, mirroring compiler.c's own operator_name list exactly
-  # (compile_definition's identical check).
-  def operator_method_token?(kind)
-    return true if kind == :plus
-    return true if kind == :minus
-    return true if kind == :star
-    return true if kind == :slash
-    return true if kind == :percent
-    return true if kind == :equal_equal
-    return true if kind == :less
-    return true if kind == :less_equal
-    return true if kind == :greater
-    return true if kind == :greater_equal
-    return true if kind == :spaceship
-    false
-  end
-
   def compile_method()
     self.advance_token()
     module_singleton = false
@@ -2867,7 +3778,7 @@ class Parser
       end
       self.advance_token()
     end
-    operator_name = self.operator_method_token?(@current.kind())
+    operator_name = operator_method_token?(@current.kind())
     # A module's own operator method is inert until some class `include`s
     # it -- copied into the including class's own method table exactly
     # like any other module method, at which point dispatch works the
@@ -2884,14 +3795,18 @@ class Parser
       self.fail("expected function name after 'def'")
       return
     end
+    name_token = @current
     name = self.token_text(@current)
     self.advance_token()
     if @current.kind() == :equal
       name = name + "="
       self.advance_token()
     end
-    self.fail("method is already defined") if self.duplicate_method_name?(name, module_singleton)
-    return if @failed
+    if self.duplicate_method_name?(name, module_singleton)
+      self.fail_at(name_token.start(), name_token.line(), name_token.column(),
+        "duplicate or excessive method definition")
+      return
+    end
     outer_type_variables = @current_type_variables
     @current_type_variables = self.parse_type_variables()
     return if @failed
@@ -2919,9 +3834,11 @@ class Parser
     return if @failed
 
     arity = parameter_names.length()
-    required_arity = self.required_parameter_count(parameter_defaults) -
-      (if has_block_parameter then 1 else 0 end)
-    self_offset = if module_singleton
+    required_arity = required_parameter_count(parsed_parameters)
+    @parameter_shape = [parsed_parameters[4], has_block_parameter]
+    # A class's `def self.x` reserves register 0 for the class it was called
+    # on, as compiler.c does; a module's does not.
+    self_offset = if module_singleton && @current_class_index == nil
       0
     else
       1
@@ -2933,7 +3850,8 @@ class Parser
     @current_method_uses_state = false
     self.compile_method_body(function_index, parameter_names, parameter_types, parameter_defaults, return_type, module_singleton)
     @current_method_name = outer_method_name
-    self.register_compiled_method(name, function_index, arity, required_arity, module_singleton)
+    signature = [parameter_types, return_type, @current_type_variables, parameter_names]
+    self.register_compiled_method(name, function_index, arity, required_arity, module_singleton, signature)
     @current_method_uses_state = false
     @current_type_variables = outer_type_variables
   end
@@ -2976,20 +3894,24 @@ class Parser
   # declare_class_singleton_method/declare_module_singleton_method bridge
   # calls -- distinct from module_function's export_module_method, which
   # instead re-exports an already-declared regular method.
-  def register_compiled_method(name, function_index, arity, required_arity, module_singleton)
+  # `signature` ([parameter types, return type, type variables, parameter
+  # names]) rides on singleton descriptors and instance method entries for
+  # compile_reference_wrapper.
+  def register_compiled_method(name, function_index, arity, required_arity, module_singleton, signature)
     class_context = @current_module_index == nil || @current_class_index != nil
     if module_singleton
       if class_context
         @current_class_singleton_method_names.push(name)
-        @classes[@current_class_entry][3].push([name, function_index, arity, required_arity])
+        @classes[@current_class_entry][3].push([name, function_index, arity, required_arity, signature])
         @builder.declare_class_singleton_method(@current_class_index, name, function_index, arity, required_arity)
       else
-        @modules[@current_module_entry][9].push([name, function_index, arity, required_arity])
+        @modules[@current_module_entry][9].push([name, function_index, arity, required_arity, signature])
         @builder.declare_module_singleton_method(@current_module_index, name, function_index, arity, required_arity)
       end
     else
       if class_context
         @current_class_method_names.push(name)
+        @instance_methods.push([@current_class_index, name, @current_class_methods_private, required_arity, function_index, arity, signature])
         @builder.declare_method(@current_class_index, name, function_index, arity, required_arity, @current_class_methods_private)
       else
         self.register_module_method(name, function_index, arity, required_arity)
@@ -3016,24 +3938,40 @@ class Parser
   def compile_method_body(function_index, parameter_names, parameter_types, parameter_defaults, return_type, module_singleton)
     outer_locals = @locals
     outer_loop_captures_pending = @loop_captures_pending
+    outer_current_block_name = @current_block_name
+    outer_current_block_type = @current_block_type
+    outer_in_block = @in_block
     outer_loops = @loops
+    outer_begin_depth = @begin_depth
     outer_next_register = @next_register
     outer_code_count = @code_count
     outer_function_index = @current_function_index
     outer_return_type = @current_return_type
     outer_type_facts = @type_facts
     outer_declared_types = @declared_types
+    outer_in_method = @in_method
+    outer_in_singleton_method = @in_singleton_method
+    @in_method = !module_singleton
+    @in_singleton_method = module_singleton && @current_class_index != nil
 
     @locals = []
     @loop_captures_pending = false
+    @current_block_name = nil
+    @current_block_type = nil
+    @in_block = false
     @loops = []
+    @begin_depth = 0
     @next_register = 0
     @code_count = 0
     @current_function_index = function_index
+    outer_method_function_index = @method_function_index
+    outer_method_return_type = @method_return_type
     @current_return_type = return_type
+    @method_function_index = function_index
+    @method_return_type = return_type
     @type_facts = []
     @declared_types = []
-    index_offset = if module_singleton
+    index_offset = if module_singleton && @current_class_index == nil
       0
     else
       self.allocate_register()
@@ -3111,22 +4049,22 @@ class Parser
 
     @locals = outer_locals
     @loop_captures_pending = outer_loop_captures_pending
+    @current_block_name = outer_current_block_name
+    @current_block_type = outer_current_block_type
+    @in_block = outer_in_block
     @loops = outer_loops
+    @begin_depth = outer_begin_depth
     @next_register = outer_next_register
     @code_count = outer_code_count
     @current_function_index = outer_function_index
     @current_return_type = outer_return_type
+    @method_function_index = outer_method_function_index
+    @method_return_type = outer_method_return_type
     @type_facts = outer_type_facts
     @declared_types = outer_declared_types
+    @in_method = outer_in_method
+    @in_singleton_method = outer_in_singleton_method
     @function_nesting_depth = @function_nesting_depth - 1
-  end
-
-  def attribute_keyword?(kind)
-    return true if kind == :attr
-    return true if kind == :attr_reader
-    return true if kind == :attr_writer
-    return true if kind == :attr_accessor
-    kind == :attr_predicate
   end
 
   # `attr`/`attr_reader`/`attr_writer`/`attr_accessor`/`attr_predicate`,
@@ -3210,7 +4148,11 @@ class Parser
 
     outer_locals = @locals
     outer_loop_captures_pending = @loop_captures_pending
+    outer_current_block_name = @current_block_name
+    outer_current_block_type = @current_block_type
+    outer_in_block = @in_block
     outer_loops = @loops
+    outer_begin_depth = @begin_depth
     outer_next_register = @next_register
     outer_code_count = @code_count
     outer_function_index = @current_function_index
@@ -3220,7 +4162,11 @@ class Parser
 
     @locals = []
     @loop_captures_pending = false
+    @current_block_name = nil
+    @current_block_type = nil
+    @in_block = false
     @loops = []
+    @begin_depth = 0
     @next_register = 0
     @code_count = 0
     @current_function_index = function_index
@@ -3267,7 +4213,11 @@ class Parser
 
     @locals = outer_locals
     @loop_captures_pending = outer_loop_captures_pending
+    @current_block_name = outer_current_block_name
+    @current_block_type = outer_current_block_type
+    @in_block = outer_in_block
     @loops = outer_loops
+    @begin_depth = outer_begin_depth
     @next_register = outer_next_register
     @code_count = outer_code_count
     @current_function_index = outer_function_index
@@ -3279,6 +4229,7 @@ class Parser
       self.register_module_method(method_name, function_index, arity, arity)
     else
       @current_class_method_names.push(method_name)
+      @instance_methods.push([@current_class_index, method_name, @current_class_methods_private, arity])
       @builder.declare_method(@current_class_index, method_name, function_index, arity, arity, @current_class_methods_private)
     end
   end
@@ -3289,6 +4240,341 @@ class Parser
   # a newly allocated base register -- the layout every call-family
   # opcode (CALL/CALL_CLOSURE) expects. Returns [argument_base, count],
   # or nil on a parse failure (caller should return 0 in that case).
+  # --- call-site spread (`f(a, *rest, &block)`): the arguments become one
+  # Array, passed through the *_SPREAD call opcodes. Mirrors compiler.c's
+  # call_arguments_have_spread/parse_spread_argument_array. ---
+
+  # Whether the argument list starting at the current token (just past the
+  # '(') has a top-level `*expression` argument.
+  def call_arguments_have_spread?()
+    lookahead = @lexer.clone()
+    kind = @current.kind()
+    nesting = 0
+    argument_start = true
+    while kind != :eof
+      return false if nesting == 0 && kind == :right_paren
+      return true if nesting == 0 && argument_start && kind == :star
+      if kind == :left_paren || kind == :left_bracket || kind == :left_brace
+        nesting = nesting + 1
+      elsif kind == :right_paren || kind == :right_bracket || kind == :right_brace
+        nesting = nesting - 1 if nesting > 0
+      end
+      if kind == :comma
+        argument_start = nesting == 0
+      elsif kind != :newline
+        argument_start = false
+      end
+      kind = lookahead.next_token().kind()
+    end
+    false
+  end
+
+  # Whether a top-level argument of the call is `name: value`; the current
+  # token is the first argument.
+  def call_arguments_have_keyword?()
+    lookahead = @lexer.clone()
+    kind = @current.kind()
+    nesting = 0
+    argument_start = true
+    previous_was_argument_name = false
+    while kind != :eof
+      return false if nesting == 0 && kind == :right_paren
+      return true if previous_was_argument_name && kind == :colon
+      previous_was_argument_name = nesting == 0 && argument_start && kind == :identifier
+      if kind == :left_paren || kind == :left_bracket || kind == :left_brace
+        nesting = nesting + 1
+      elsif kind == :right_paren || kind == :right_bracket || kind == :right_brace
+        nesting = nesting - 1 if nesting > 0
+      end
+      if kind == :comma
+        argument_start = nesting == 0
+      elsif kind != :newline
+        argument_start = false
+      end
+      kind = lookahead.next_token().kind()
+    end
+    false
+  end
+
+  # Arguments matched to parameters by name at run time (NEW_KEYWORDS,
+  # INVOKE_KEYWORDS): [positional Array register, [[name string index,
+  # value register], ...], block register or nil], or nil; a trailing block
+  # takes its types from `block_context`. Mirrors compiler_calls.c's
+  # parse_dynamic_keyword_arguments.
+  def parse_dynamic_keyword_arguments(block_context = nil)
+    positional = []
+    keywords = []
+    names = []
+    seen_keyword = false
+    spread = nil
+    spread_at = 0
+    while @current.kind() != :right_paren && !@failed
+      if self.keyword_argument_ahead?()
+        seen_keyword = true
+        if keywords.length() == 32
+          self.fail("too many keyword arguments")
+          return nil
+        end
+        keyword_name = self.token_text(@current)
+        if names.include?(keyword_name)
+          self.fail("multiple values for the same argument")
+          return nil
+        end
+        names.push(keyword_name)
+        name_index = self.add_string(keyword_name)
+        self.advance_token()
+        self.advance_token()
+        self.skip_newlines()
+        keywords.push([name_index, self.parse_expression()])
+      else
+        if seen_keyword
+          self.fail("positional argument cannot follow a keyword argument")
+          return nil
+        end
+        if @current.kind() == :star
+          if spread != nil
+            self.fail("a call can contain only one spread argument")
+            return nil
+          end
+          self.advance_token()
+          self.skip_newlines()
+          spread = self.parse_expression()
+          spread_at = positional.length()
+        elsif positional.length() == 32
+          self.fail("too many fixed call arguments")
+          return nil
+        else
+          positional.push(self.parse_expression())
+        end
+      end
+      self.skip_newlines()
+      break if @current.kind() != :comma
+      self.advance_token()
+      self.skip_newlines()
+    end
+    return nil if @failed
+    if @current.kind() != :right_paren
+      self.fail("expected ')' after arguments")
+      return nil
+    end
+    self.advance_token()
+    # A `*spread` among the positional arguments builds the Array around it.
+    if spread != nil
+      array = self.emit_build_spread_arguments(positional.slice(0, spread_at), spread,
+        positional.slice(spread_at, positional.length() - spread_at), false)
+    else
+      base = if positional.length() == 0 then self.allocate_register() else self.move_contiguous(positional) end
+      array = self.allocate_register()
+      self.emit_instruction3(Opcode::ARRAY, array, base, positional.length())
+      self.set_type_fact(array, Type::ARRAY)
+    end
+    block = nil
+    if @current.kind() == :do
+      # Snapshot the values so the block's own registers can't disturb them.
+      index = 0
+      while index < keywords.length()
+        snapshot = self.allocate_register()
+        self.emit_instruction2(Opcode::MOVE, snapshot, keywords[index][1])
+        keywords[index] = [keywords[index][0], snapshot]
+        index = index + 1
+      end
+      @block_context = block_context
+      block = self.compile_block()
+    end
+    [array, keywords, block]
+  end
+
+  # The keyword trailer NEW_KEYWORDS and INVOKE_KEYWORDS share.
+  def emit_keyword_trailer(arguments)
+    keywords = arguments[1]
+    self.emit_register(arguments[0])
+    self.emit_byte(keywords.length() | if arguments[2] == nil then 0 else 128 end)
+    index = 0
+    while index < keywords.length()
+      self.emit_register(keywords[index][0])
+      self.emit_register(keywords[index][1])
+      index = index + 1
+    end
+    self.emit_register(arguments[2]) if arguments[2] != nil
+  end
+
+  # MOVEs `values` into fresh contiguous registers; returns the first.
+  def move_contiguous(values)
+    base = self.allocate_register()
+    index = 1
+    while index < values.length()
+      self.allocate_register()
+      index = index + 1
+    end
+    index = 0
+    while index < values.length()
+      self.emit_instruction2(Opcode::MOVE, base + index, values[index])
+      index = index + 1
+    end
+    base
+  end
+
+  # prefix + spread + suffix as one Array. With optional_block the last
+  # suffix value is a forwarded `&block`, dropped when it is nil.
+  def emit_build_spread_arguments(prefix, spread, suffix, optional_block)
+    prefix_base = if prefix.length() > 0
+      self.move_contiguous(prefix)
+    else
+      spread
+    end
+    suffix_base = if suffix.length() > 0
+      self.move_contiguous(suffix)
+    else
+      spread
+    end
+    destination = self.allocate_register()
+    self.emit_byte(Opcode::BUILD_SPREAD_ARGS)
+    self.emit_register(destination)
+    self.emit_register(prefix_base)
+    self.emit_byte(prefix.length())
+    self.emit_register(spread)
+    self.emit_register(suffix_base)
+    self.emit_byte(suffix.length() + (if optional_block then 128 else 0 end))
+    self.set_type_fact(destination, Type::ARRAY)
+    destination
+  end
+
+  # Parses the arguments through ')' (the current token is the first one)
+  # plus an optional trailing do block; returns the argument Array, or nil.
+  # `keywords`, when given, is [parameter names, []]: keyword arguments are
+  # then allowed, and land in the second element as [slot, register]. With
+  # nil names, keywords stay rejected and a trailing block lands there as
+  # [-1, register] instead of joining the Array; a third element is that
+  # block's context (see contextual_block_member).
+  def parse_spread_call_arguments(keywords = nil)
+    prefix = []
+    suffix = []
+    spread = nil
+    optional_block = false
+    while @current.kind() != :right_paren && !@failed
+      if self.keyword_argument_ahead?()
+        if keywords == nil || keywords[0] == nil
+          self.fail("keyword arguments cannot be combined with a spread argument")
+          return nil
+        end
+        keyword_token = @current
+        slot = find_parameter_slot(keywords[0], self.token_text(@current))
+        if slot == -1
+          self.fail("no parameter with this name")
+          return nil
+        end
+        index = 0
+        while index < keywords[1].length()
+          if keywords[1][index][0] == slot
+            self.fail_at(keyword_token.start(), keyword_token.line(), keyword_token.column(),
+              "multiple values for the same argument")
+            return nil
+          end
+          index = index + 1
+        end
+        self.advance_token()
+        self.advance_token()
+        keywords[1].push([slot, self.parse_expression()])
+      elsif keywords != nil && keywords[1].length() > 0
+        self.fail("positional argument cannot follow a keyword argument")
+        return nil
+      elsif @current.kind() == :star
+        if spread != nil
+          self.fail("a call can contain only one spread argument")
+          return nil
+        end
+        self.advance_token()
+        self.skip_newlines()
+        spread = self.parse_expression()
+      else
+        forwarded_block = @current.kind() == :ampersand
+        value = self.parse_expression()
+        if spread == nil
+          prefix.push(value)
+        else
+          suffix.push(value)
+        end
+        if forwarded_block
+          if @current.kind() != :right_paren || spread == nil
+            self.fail("a forwarded block argument must be last")
+            return nil
+          end
+          optional_block = true
+        end
+      end
+      self.skip_newlines()
+      break if @current.kind() != :comma
+      self.advance_token()
+      self.skip_newlines()
+    end
+    return nil if @failed
+    if @current.kind() != :right_paren
+      self.fail("expected ')' after arguments")
+      return nil
+    end
+    self.advance_token()
+    arguments = if prefix.length() == 0 && suffix.length() == 0
+      spread
+    else
+      self.emit_build_spread_arguments(prefix, spread, suffix, optional_block)
+    end
+    if @current.kind() == :do
+      @block_context = keywords[2] if keywords != nil && keywords.length() > 2
+      block = self.compile_block()
+      # With keywords the block fills the last parameter by slot, as in
+      # compiler.c's parse_spread_function_call.
+      if keywords != nil && keywords[0] == nil
+        keywords[1].push([-1, block])
+      elsif keywords != nil && keywords[1].length() > 0
+        keywords[1].push([keywords[0].length() - 1, block])
+      else
+        arguments = self.emit_build_spread_arguments([], arguments, [block], false)
+      end
+    end
+    arguments
+  end
+
+  def fail_spread_type_arguments(type_arguments)
+    return false if type_arguments.length() == 0
+    self.fail("explicit generic arguments cannot be combined with a spread argument")
+    true
+  end
+
+  def emit_call_spread(function_index, arguments)
+    destination = self.allocate_register()
+    self.emit_call_opcode(Opcode::CALL_SPREAD)
+    self.emit_register(destination)
+    self.emit_function_index(function_index)
+    self.emit_register(arguments)
+    destination
+  end
+
+  # A module_function export reserves register 0 for an implicit receiver,
+  # so its argument Array gets a leading nil there.
+  # A trailing block goes by CALL_SINGLETON_KEYWORDS' block flag with the
+  # spread Array as the positional arguments, as in compiler_calls.c;
+  # `block_context` types it.
+  def emit_singleton_spread_call(function_index, needs_receiver, type_arguments, block_context = nil)
+    return 0 if self.fail_spread_type_arguments(type_arguments)
+    collected = [nil, [], block_context]
+    arguments = self.parse_spread_call_arguments(collected)
+    return 0 if arguments == nil
+    if collected[1].length() > 0
+      return self.compile_singleton_keyword_call(function_index, needs_receiver, type_arguments,
+        [arguments, [], collected[1][0][1]])
+    end
+    if needs_receiver != false
+      receiver = self.allocate_register()
+      if needs_receiver == true
+        self.emit_instruction1(Opcode::NIL, receiver)
+      else
+        self.emit_instruction2(Opcode::LOAD_CLASS, receiver, needs_receiver)
+      end
+      arguments = self.emit_build_spread_arguments([receiver], arguments, [], false)
+    end
+    self.emit_call_spread(function_index, arguments)
+  end
+
   def parse_call_arguments()
     self.skip_newlines()
     arguments = []
@@ -3373,6 +4659,29 @@ class Parser
     return 0 if @failed
     self.advance_token()
     self.skip_newlines()
+    if self.call_arguments_have_spread?()
+      return 0 if self.fail_spread_type_arguments(type_arguments)
+      # Keywords alongside a spread fill their slots by index
+      # (CALL_KEYWORD_SPREAD), as in compiler.c's parse_spread_function_call.
+      collected = [function_entry[3], []]
+      arguments = self.parse_spread_call_arguments(collected)
+      keywords = collected[1]
+      return 0 if arguments == nil
+      return self.publish_call_return(function_entry, self.emit_call_spread(function_entry[1], arguments)) if keywords.length() == 0
+      destination = self.allocate_register()
+      self.emit_call_opcode(148) # CALL_KEYWORD_SPREAD; Opcode is at its constant limit
+      self.emit_register(destination)
+      self.emit_function_index(function_entry[1])
+      self.emit_register(arguments)
+      self.emit_byte(keywords.length())
+      index = 0
+      while index < keywords.length()
+        self.emit_byte(keywords[index][0])
+        self.emit_register(keywords[index][1])
+        index = index + 1
+      end
+      return self.publish_call_return(function_entry, destination)
+    end
     parsed_arguments = self.parse_keyword_call_arguments(function_entry, name_token)
     return 0 if parsed_arguments == nil
     slot_values = parsed_arguments[0]
@@ -3401,9 +4710,9 @@ class Parser
     end
     destination = self.allocate_register()
     if type_arguments.length() == 0
-      self.emit_byte(Opcode::CALL)
+      self.emit_call_opcode(Opcode::CALL)
     else
-      self.emit_byte(Opcode::CALL_TYPED)
+      self.emit_call_opcode(Opcode::CALL_TYPED)
     end
     self.emit_register(destination)
     self.emit_function_index(function_entry[1])
@@ -3479,7 +4788,7 @@ class Parser
       slot = slot + 1
     end
     destination = self.allocate_register()
-    self.emit_byte(Opcode::CALL_CLOSURE_KEYWORDS)
+    self.emit_call_opcode(Opcode::CALL_CLOSURE_KEYWORDS)
     self.emit_register(destination)
     self.emit_register(callable)
     self.emit_register(positional)
@@ -3499,16 +4808,6 @@ class Parser
     lookahead.next_token().kind() == :colon
   end
 
-  def find_parameter_slot(parameter_names, name)
-    index = 0
-    result = -1
-    while index < parameter_names.length() && result == -1
-      result = index if parameter_names[index] == name
-      index = index + 1
-    end
-    result
-  end
-
   # Returns an Array of `arity` value registers, one per declared
   # parameter slot (in declaration order, regardless of the order
   # arguments were written at the call site), or nil on a parse
@@ -3517,7 +4816,11 @@ class Parser
   # argument fills the next not-yet-seen slot in order; a positional
   # argument can't follow a keyword one.
   def parse_keyword_call_arguments(function_entry, name_token)
-    arity = function_entry[2]
+    arity = if self.variadic_function?(function_entry[1])
+      255
+    else
+      function_entry[2]
+    end
     parameter_names = function_entry[3]
     slot_values = []
     slot_filled = []
@@ -3538,7 +4841,7 @@ class Parser
           keyword_name = self.token_text(@current)
           self.advance_token()
           self.advance_token()
-          slot = self.find_parameter_slot(parameter_names, keyword_name)
+          slot = find_parameter_slot(parameter_names, keyword_name)
           if slot == -1
             self.fail_at(keyword_token.start(), keyword_token.line(), keyword_token.column(),
               "no parameter with this name")
@@ -3603,14 +4906,20 @@ class Parser
     # own parse_call fix exactly (block goes into the next slot right
     # after argument_count is computed, before the "every slot below the
     # highest filled one must be filled" check below).
+    # With a `&block` parameter (entry[8]) the block fills that last slot,
+    # leaving defaulted parameters before it to their defaults.
     if @current.kind() == :do
-      if argument_count >= arity
+      block_slot = argument_count
+      block_slot = arity - 1 if function_entry.length() > 8 && function_entry[8] &&
+        !self.variadic_function?(function_entry[1]) && arity - 1 > argument_count
+      if block_slot >= arity
         self.fail("too many call arguments")
         return nil
       end
-      slot_values[argument_count] = self.compile_block()
-      slot_filled[argument_count] = true
-      argument_count = argument_count + 1
+      @block_context = contextual_block_member(function_entry, block_slot)
+      slot_values[block_slot] = self.compile_block()
+      slot_filled[block_slot] = true
+      argument_count = block_slot + 1
     end
     # A slot below the highest filled one may stay empty only when its
     # parameter has a default (index >= required arity); compile_call then
@@ -3649,17 +4958,126 @@ class Parser
   # an ordinary ArityError at CALL_CLOSURE time instead, matching
   # compiler.c's own parse_call CALL_CLOSURE branch exactly.
   def compile_closure_call(local)
-    callable = self.read_local(local)
+    self.compile_callable_call(self.read_local(local))
+  end
+
+  # `callable(args)` on a value already in a register (a local, @ivar or
+  # @@cvar), the current token being the '('.
+  # A trailing do block is one more call argument, in the register right
+  # after `parsed`'s contiguous [base, count] (see compile_invoke); returns
+  # the arguments with it.
+  def append_trailing_block(parsed)
+    return parsed if @current.kind() != :do
+    block_slot = parsed[0] + parsed[1]
+    self.allocate_register() if block_slot == @next_register
+    block_result = self.compile_block()
+    self.emit_instruction2(Opcode::MOVE, block_slot, block_result)
+    [parsed[0], parsed[1] + 1]
+  end
+
+  def compile_callable_call(callable)
+    self.advance_token()
+    self.skip_newlines()
+    if self.call_arguments_have_keyword?()
+      arguments = self.parse_dynamic_keyword_arguments()
+      return 0 if arguments == nil
+      destination = self.allocate_register()
+      self.emit_call_opcode(Opcode::CALL_CLOSURE_KEYWORDS)
+      self.emit_register(destination)
+      self.emit_register(callable)
+      self.emit_keyword_trailer(arguments)
+      return destination
+    end
+    if self.call_arguments_have_spread?()
+      arguments = self.parse_spread_call_arguments()
+      return 0 if arguments == nil
+      destination = self.allocate_register()
+      self.emit_call_opcode(Opcode::CALL_CLOSURE_SPREAD)
+      self.emit_register(destination)
+      self.emit_register(callable)
+      self.emit_register(arguments)
+      return destination
+    end
+    parsed = self.parse_call_arguments()
+    return 0 if parsed == nil
+    # A declared `Callable[[params], R]` types a trailing block from its
+    # last parameter, and fewer arguments than that leave the ones before it
+    # to their defaults: the block then goes by CALL_CLOSURE_KEYWORDS' block
+    # flag (compiler.c's compile_callable_value_block).
+    declaration = self.declared_type(callable)
+    if @current.kind() == :do && declaration != nil && declaration.length() == 1 &&
+       declaration[0][0] == "Callable" && declaration[0][5] != nil && declaration[0][5].length() > 0
+      slot = declaration[0][5].length() - 1
+      @block_context = contextual_block_member([nil, nil, nil, nil, nil, nil, nil, declaration[0][5]], slot)
+      if parsed[1] < slot
+        positional = self.allocate_register()
+        self.emit_instruction3(Opcode::ARRAY, positional, parsed[0], parsed[1])
+        block_result = self.compile_block()
+        destination = self.allocate_register()
+        self.emit_call_opcode(Opcode::CALL_CLOSURE_KEYWORDS)
+        self.emit_register(destination)
+        self.emit_register(callable)
+        self.emit_keyword_trailer([positional, [], block_result])
+        return destination
+      end
+    end
+    argument_count = self.append_trailing_block(parsed)[1]
+    destination = self.allocate_register()
+    self.emit_call_opcode(Opcode::CALL_CLOSURE)
+    self.emit_register(destination)
+    self.emit_register(callable)
+    self.emit_register(parsed[0])
+    self.emit_byte(argument_count)
+    destination
+  end
+
+  # `name(args)` on self's class from inside a class singleton method,
+  # dispatched on the class self actually is (a subclass inherits it); the
+  # current token is the '('. Mirrors parse_self_class_method_arguments.
+  def compile_self_class_call(name)
+    if @current.kind() != :left_paren
+      self.fail("member access requires a method call with '()'")
+      return 0
+    end
     self.advance_token()
     parsed = self.parse_call_arguments()
     return 0 if parsed == nil
     destination = self.allocate_register()
-    self.emit_byte(Opcode::CALL_CLOSURE)
+    self.emit_call_opcode(Opcode::INVOKE_SELF_METHOD)
     self.emit_register(destination)
-    self.emit_register(callable)
+    self.emit_register(self.add_string(name))
     self.emit_register(parsed[0])
     self.emit_byte(parsed[1])
     destination
+  end
+
+  # Whether the class being compiled has declared its own `p` method (or
+  # singleton method) so far,
+  # which a bare `p(...)` inside it calls instead.
+  def class_defines_p?()
+    return false if @current_class_index == nil
+    @current_class_method_names.include?("p") || @current_class_singleton_method_names.include?("p")
+  end
+
+  # `p(value)`: prints value.inspect() and returns value, when nothing else
+  # named p exists. Mirrors compiler_builtins.c's parse_p_call.
+  def parse_p_call()
+    self.advance_token()
+    self.skip_newlines()
+    value = self.parse_expression()
+    self.skip_newlines()
+    if @current.kind() != :right_paren
+      self.fail("expected ')' after arguments (p takes one value)")
+      return 0
+    end
+    self.advance_token()
+    text = self.emit_destructure_invoke(value, "inspect", nil)
+    printed = self.allocate_register()
+    self.emit_byte(Opcode::PRINT)
+    self.emit_register(printed)
+    self.emit_register(text)
+    self.emit_byte(1)
+    value
   end
 
   def parse_print_call(newline)
@@ -3689,42 +5107,48 @@ class Parser
     lookahead.next_token().kind() == :equal
   end
 
-  def compound_assignment_token?(kind)
-    kind == :plus_equal || kind == :minus_equal || kind == :star_equal ||
-      kind == :slash_equal || kind == :percent_equal ||
-      kind == :or_or_equal || kind == :and_and_equal
-  end
-
   # Same shape as assignment_ahead? above (identifier/@ivar/@@cvar
-  # targets only -- indexed (arr[i] += 1) compound assignment is a
-  # deliberate v1 scope cut, matching the native compiler's own
-  # compound_assignment_ahead).
+  # targets; `arr[i] += 1` goes through index_assignment_ahead?).
   def compound_assignment_ahead?()
     return false if @current.kind() != :identifier && @current.kind() != :instance_variable &&
       @current.kind() != :class_variable
     lookahead = @lexer.clone()
-    self.compound_assignment_token?(lookahead.next_token().kind())
+    compound_assignment_token?(lookahead.next_token().kind())
   end
 
+  # `name[i] = v`, or a chain `name[i][j] = v`?
+  # Or `name[i] += v` (one index only, as in compiler.c's
+  # index_compound_assignment_ahead). The target may be an @ivar or @@cvar.
   def index_assignment_ahead?()
-    return false if @current.kind() != :identifier
+    return false if @current.kind() != :identifier && @current.kind() != :instance_variable &&
+      @current.kind() != :class_variable
     lookahead = @lexer.clone()
-    return false if lookahead.next_token().kind() != :left_bracket
-    depth = 1
-    while depth > 0
+    kind = lookahead.next_token().kind()
+    return false if kind != :left_bracket
+    groups = 0
+    while kind == :left_bracket
+      depth = 1
+      while depth > 0
+        kind = lookahead.next_token().kind()
+        return false if kind == :eof || kind == :newline
+        depth = depth + 1 if kind == :left_bracket
+        depth = depth - 1 if kind == :right_bracket
+      end
+      groups = groups + 1
       kind = lookahead.next_token().kind()
-      return false if kind == :eof || kind == :newline
-      depth = depth + 1 if kind == :left_bracket
-      depth = depth - 1 if kind == :right_bracket
     end
-    lookahead.next_token().kind() == :equal
+    kind == :equal || (groups == 1 && compound_assignment_token?(kind))
   end
 
   def compile_index_assignment()
     name = self.token_text(@current)
     local = self.find_local(name)
     constant_index = self.find_lexical_constant(name)
-    receiver = if local != nil
+    receiver = if @current.kind() == :instance_variable
+      self.compile_ivar_read(@current)
+    elsif @current.kind() == :class_variable
+      self.compile_cvar_read(@current)
+    elsif local != nil
       self.read_local(local)
     elsif constant_index != nil
       destination = self.allocate_register()
@@ -3742,6 +5166,20 @@ class Parser
       return 0
     end
     self.advance_token()
+    # In a chain, every index but the last reads the next receiver.
+    while @current.kind() == :left_bracket
+      element = self.allocate_register()
+      self.emit_instruction3(Opcode::INDEX_GET, element, receiver, index)
+      receiver = element
+      self.advance_token()
+      index = self.parse_expression()
+      if @current.kind() != :right_bracket
+        self.fail("expected ']' after assignment index")
+        return 0
+      end
+      self.advance_token()
+    end
+    return self.compile_index_compound_store(receiver, index) if compound_assignment_token?(@current.kind())
     if @current.kind() != :equal
       self.fail("expected '=' after indexed target")
       return 0
@@ -3750,6 +5188,45 @@ class Parser
     value = self.parse_expression()
     self.emit_instruction3(Opcode::INDEX_SET, receiver, index, value)
     value
+  end
+
+  # `receiver[index] op= value`, the current token being the operator: the
+  # index is evaluated once and its register reused for the read and the
+  # write. Mirrors compiler_assignment.c's compile_index_compound_assignment.
+  def compile_index_compound_store(receiver, index)
+    left = self.allocate_register()
+    self.emit_instruction3(Opcode::INDEX_GET, left, receiver, index)
+    op_kind = @current.kind()
+    self.advance_token()
+    if op_kind == :or_or_equal || op_kind == :and_and_equal
+      destination = self.allocate_register()
+      self.emit_instruction2(Opcode::MOVE, destination, left)
+      end_jump = self.emit_jump(if op_kind == :and_and_equal
+        Opcode::JUMP_IF_FALSE
+      else
+        Opcode::JUMP_IF_TRUE
+      end, left)
+      right = self.parse_expression()
+      self.emit_instruction2(Opcode::MOVE, destination, right)
+      self.patch_jump(end_jump, @code_count)
+    else
+      plain_kind = if op_kind == :plus_equal
+        :plus
+      elsif op_kind == :minus_equal
+        :minus
+      elsif op_kind == :star_equal
+        :star
+      elsif op_kind == :slash_equal
+        :slash
+      else
+        :percent
+      end
+      right = self.parse_expression()
+      destination = self.allocate_register()
+      self.emit_instruction3(binary_opcode(plain_kind), destination, left, right)
+    end
+    self.emit_instruction3(Opcode::INDEX_SET, receiver, index, destination)
+    destination
   end
 
   def compile_assignment_store(token, instance_variable, class_variable, value)
@@ -3789,6 +5266,478 @@ class Parser
     self.compile_assignment_store(token, instance_variable, class_variable, value)
   end
 
+  # Returns the token after one pattern starting at `token`, or nil when
+  # the tokens don't form a pattern.
+  def scan_destructuring_pattern(lexer, token, depth)
+    return nil if depth > 8
+    if token.kind() == :star
+      token = lexer.next_token()
+      return nil unless destructuring_target_kind?(token.kind())
+      return scan_destructuring_target_suffix(lexer, lexer.next_token())
+    end
+    if destructuring_target_kind?(token.kind())
+      return scan_destructuring_target_suffix(lexer, lexer.next_token())
+    end
+    if token.kind() == :left_brace
+      token = lexer.next_token()
+      return nil if token.kind() == :right_brace
+      while true
+        if token.kind() == :star
+          token = lexer.next_token()
+          return nil if token.kind() != :star
+          token = lexer.next_token()
+          return nil unless destructuring_target_kind?(token.kind())
+          token = scan_destructuring_target_suffix(lexer, lexer.next_token())
+        else
+          # Skip the key expression up to its top-level ':'.
+          nesting = 0
+          scanning = true
+          while scanning
+            kind = token.kind()
+            return nil if kind == :eof || kind == :error || kind == :newline
+            if kind == :colon && nesting == 0
+              scanning = false
+            else
+              nesting = nesting + 1 if kind == :left_paren || kind == :left_bracket || kind == :left_brace
+              if kind == :right_paren || kind == :right_bracket || kind == :right_brace
+                return nil if nesting == 0
+                nesting = nesting - 1
+              end
+              token = lexer.next_token()
+            end
+          end
+          token = self.scan_destructuring_pattern(lexer, lexer.next_token(), depth + 1)
+          return nil if token == nil
+        end
+        return lexer.next_token() if token.kind() == :right_brace
+        return nil if token.kind() != :comma
+        token = lexer.next_token()
+      end
+    end
+    return nil if token.kind() != :left_bracket
+    token = lexer.next_token()
+    return nil if token.kind() == :right_bracket
+    while true
+      token = self.scan_destructuring_pattern(lexer, token, depth + 1)
+      return nil if token == nil
+      return lexer.next_token() if token.kind() == :right_bracket
+      return nil if token.kind() != :comma
+      token = lexer.next_token()
+    end
+  end
+
+  def multi_assignment_ahead?()
+    lookahead = @lexer.clone()
+    token = @current
+    if token.kind() == :left_bracket || token.kind() == :left_brace
+      after = self.scan_destructuring_pattern(lookahead, token, 0)
+      return after != nil && after.kind() == :equal
+    end
+    return false unless destructuring_target_kind?(token.kind())
+    token = scan_destructuring_target_suffix(lookahead, lookahead.next_token())
+    return false if token.kind() != :comma
+    while token != nil && token.kind() == :comma
+      token = self.scan_destructuring_pattern(lookahead, lookahead.next_token(), 0)
+    end
+    token != nil && token.kind() == :equal
+  end
+
+  def emit_destructure_invoke(receiver, name, argument)
+    base = if argument == nil
+      self.allocate_register()
+    else
+      argument
+    end
+    destination = self.allocate_register()
+    self.emit_call_opcode(Opcode::INVOKE)
+    self.emit_register(destination)
+    self.emit_register(receiver)
+    self.emit_register(self.add_string(name))
+    self.emit_register(base)
+    self.emit_byte(if argument == nil
+      0
+    else
+      1
+    end)
+    destination
+  end
+
+  def load_destructure_target(token, kind)
+    return self.compile_ivar_read(token) if kind == :instance_variable
+    return self.compile_cvar_read(token) if kind == :class_variable
+    name = self.token_text(token)
+    local = self.find_local(name)
+    return self.read_local(local) if local != nil
+    constant_index = self.find_lexical_constant(name)
+    if constant_index != nil
+      destination = self.allocate_register()
+      self.emit_instruction2(48, destination, constant_index)
+      return destination
+    end
+    self.fail_at(token.start(), token.line(), token.column(), "undefined local variable")
+    0
+  end
+
+  def parse_destructure_target(node)
+    kind = @current.kind()
+    node[0] = :leaf
+    node[4] = @current
+    node[5] = kind == :instance_variable
+    node[6] = kind == :class_variable
+    self.advance_token()
+    return node if @current.kind() != :left_bracket && @current.kind() != :dot
+    receiver = self.load_destructure_target(node[4], kind)
+    while !@failed && (@current.kind() == :left_bracket || @current.kind() == :dot)
+      if @current.kind() == :left_bracket
+        self.advance_token()
+        index = self.parse_expression()
+        if @current.kind() != :right_bracket
+          self.fail("expected ']' after destructuring target index")
+          return node
+        end
+        self.advance_token()
+        if @current.kind() == :left_bracket || @current.kind() == :dot
+          loaded = self.allocate_register()
+          self.emit_instruction3(Opcode::INDEX_GET, loaded, receiver, index)
+          receiver = loaded
+        else
+          node[8] = :indexed
+          node[9] = receiver
+          node[10] = index
+        end
+      else
+        self.advance_token()
+        if @current.kind() != :identifier
+          self.fail("expected member after '.' in destructuring target")
+          return node
+        end
+        member = self.token_text(@current)
+        self.advance_token()
+        if @current.kind() == :left_bracket || @current.kind() == :dot
+          receiver = self.emit_destructure_invoke(receiver, member, nil)
+        else
+          node[8] = :member
+          node[9] = receiver
+          node[10] = member
+        end
+      end
+    end
+    node
+  end
+
+  def fail_at_node(node, message)
+    token = node[4]
+    if token == nil
+      self.fail(message)
+    else
+      self.fail_at(token.start(), token.line(), token.column(), message)
+    end
+  end
+
+  def parse_hash_destructure_node(node, depth)
+    self.advance_token()
+    self.skip_newlines()
+    children = node[1]
+    while @current.kind() != :right_brace && !@failed
+      if children.length() == 16
+        self.fail("too many Hash destructuring targets")
+        return node
+      end
+      if @current.kind() == :star && @lexer.clone().next_token().kind() == :star
+        self.advance_token()
+        self.advance_token()
+        child = self.parse_destructure_node(depth + 1)
+        return node if @failed
+        if child[0] != :leaf
+          self.fail_at(@previous.start(), @previous.line(), @previous.column(),
+            "Hash rest target must be a variable")
+          return node
+        end
+        child[3] = true
+        children.push(child)
+        self.skip_newlines()
+        if @current.kind() != :right_brace
+          self.fail("Hash rest target must be last")
+          return node
+        end
+        break
+      end
+      key = self.parse_expression()
+      if @current.kind() != :colon
+        self.fail("expected ':' after Hash destructuring key")
+        return node
+      end
+      self.advance_token()
+      child = self.parse_destructure_node(depth + 1)
+      return node if @failed
+      if child[2]
+        self.fail_at_node(child, "rest target is not valid as a Hash entry target")
+        return node
+      end
+      child[7] = key
+      children.push(child)
+      self.skip_newlines()
+      break if @current.kind() == :right_brace
+      if @current.kind() != :comma
+        self.fail("expected ',' in Hash destructuring pattern")
+        return node
+      end
+      self.advance_token()
+      self.skip_newlines()
+    end
+    return node if @failed
+    if children.length() == 0
+      self.fail("Hash destructuring pattern cannot be empty")
+      return node
+    end
+    self.advance_token()
+    node
+  end
+
+  # Appends one pattern to an Array node, enforcing the 16-target and
+  # single-rest limits; false once compilation has failed.
+  def push_destructure_child(node, depth)
+    children = node[1]
+    if children.length() == 16
+      self.fail("too many destructuring targets")
+      return false
+    end
+    child = self.parse_destructure_node(depth)
+    return false if @failed
+    if child[2]
+      index = 0
+      while index < children.length()
+        if children[index][2]
+          self.fail_at_node(child, "destructuring pattern may contain only one rest target")
+          return false
+        end
+        index = index + 1
+      end
+    end
+    children.push(child)
+    true
+  end
+
+  def parse_destructure_node(depth)
+    if @destructure_node_count == 64 || depth > 8
+      self.fail("destructuring pattern is too complex")
+      return destructure_node(:leaf)
+    end
+    @destructure_node_count = @destructure_node_count + 1
+    node = destructure_node(:array)
+    if @current.kind() == :star
+      node[2] = true
+      self.advance_token()
+      if !destructuring_target_kind?(@current.kind())
+        self.fail("expected target after '*' in destructuring pattern")
+        return node
+      end
+    end
+    return self.parse_destructure_target(node) if destructuring_target_kind?(@current.kind())
+    if @current.kind() == :left_brace
+      node[0] = :hash
+      return self.parse_hash_destructure_node(node, depth)
+    end
+    if @current.kind() != :left_bracket
+      self.fail("expected destructuring target")
+      return node
+    end
+    self.advance_token()
+    while @current.kind() != :right_bracket && !@failed
+      return node unless self.push_destructure_child(node, depth + 1)
+      break if @current.kind() == :right_bracket
+      if @current.kind() != :comma
+        self.fail("expected ',' in destructuring pattern")
+        return node
+      end
+      self.advance_token()
+    end
+    return node if @failed
+    if node[1].length() == 0
+      self.fail("destructuring pattern cannot be empty")
+      return node
+    end
+    self.advance_token()
+    node
+  end
+
+  def emit_destructure_hash_extract(node, value, array_set, hash_set)
+    self.emit_instruction2(Opcode::CHECK_TYPE, value, hash_set)
+    children = node[1]
+    fixed_count = 0
+    index = 0
+    while index < children.length()
+      fixed_count = fixed_count + 1 unless children[index][3]
+      index = index + 1
+    end
+    index = 0
+    while index < children.length()
+      child = children[index]
+      if child[3]
+        # `**rest`: everything except the keys named before it.
+        key_base = self.allocate_register()
+        key = 1
+        while key < fixed_count
+          self.allocate_register()
+          key = key + 1
+        end
+        key_index = 0
+        fixed = 0
+        while fixed < children.length()
+          if !children[fixed][3]
+            self.emit_instruction2(Opcode::MOVE, key_base + key_index, children[fixed][7])
+            key_index = key_index + 1
+          end
+          fixed = fixed + 1
+        end
+        excluded = self.allocate_register()
+        self.emit_instruction3(Opcode::ARRAY, excluded, key_base, fixed_count)
+        self.set_type_fact(excluded, Type::ARRAY)
+        rest = self.allocate_register()
+        self.emit_instruction3(Opcode::HASH_REST, rest, value, excluded)
+        self.set_type_fact(rest, Type::HASH)
+        child[11] = rest
+      else
+        self.emit_instruction2(Opcode::CHECK_HASH_KEY, value, child[7])
+        element = self.allocate_register()
+        self.emit_instruction3(Opcode::INDEX_GET, element, value, child[7])
+        self.emit_destructure_extract(child, element, array_set, hash_set)
+      end
+      index = index + 1
+    end
+  end
+
+  # Checks each group's shape against the already-evaluated value and
+  # loads every leaf's value into a register; stores happen afterwards
+  # (emit_destructure_stores), so a shape error leaves all targets
+  # unchanged.
+  def emit_destructure_extract(node, value, array_set, hash_set)
+    node[11] = value
+    return if node[0] == :leaf
+    return self.emit_destructure_hash_extract(node, value, array_set, hash_set) if node[0] == :hash
+    self.emit_instruction2(Opcode::CHECK_TYPE, value, array_set)
+    children = node[1]
+    count = children.length()
+    rest_index = -1
+    index = 0
+    while index < count
+      rest_index = index if children[index][2]
+      index = index + 1
+    end
+    has_rest = rest_index >= 0
+    fixed_count = if has_rest
+      count - 1
+    else
+      count
+    end
+    self.emit_instruction2(Opcode::CHECK_DESTRUCTURE_COUNT, value, if has_rest
+      fixed_count + 32768
+    else
+      fixed_count
+    end)
+    index = 0
+    while index < count
+      child = children[index]
+      element = self.allocate_register()
+      if child[2]
+        self.emit_instruction3(Opcode::ARRAY_MIDDLE, element, value,
+          index * 256 + (count - index - 1))
+        self.set_type_fact(element, Type::ARRAY)
+      elsif has_rest && index > rest_index
+        self.emit_instruction3(Opcode::ARRAY_SUFFIX, element, value, count - index)
+      else
+        index_register = self.allocate_register()
+        self.emit_instruction2(Opcode::CONSTANT, index_register, self.add_constant(index))
+        self.set_type_fact(index_register, Type::INT)
+        self.emit_instruction3(Opcode::INDEX_GET, element, value, index_register)
+      end
+      self.emit_destructure_extract(child, element, array_set, hash_set)
+      index = index + 1
+    end
+  end
+
+  def emit_destructure_stores(node)
+    value = node[11]
+    if node[0] == :leaf
+      if node[8] == :indexed
+        self.emit_instruction3(Opcode::INDEX_SET, node[9], node[10], value)
+        return value
+      end
+      if node[8] == :member
+        self.emit_destructure_invoke(node[9], node[10] + "=", value)
+        return value
+      end
+      return self.compile_assignment_store(node[4], node[5], node[6], value)
+    end
+    last = value
+    index = 0
+    while index < node[1].length()
+      last = self.emit_destructure_stores(node[1][index])
+      index = index + 1
+    end
+    last
+  end
+
+  # The right-hand side is evaluated once; several comma-separated values
+  # become one Array first.
+  def compile_multi_assignment()
+    @destructure_node_count = 0
+    root = if @current.kind() == :left_bracket || @current.kind() == :left_brace
+      self.parse_destructure_node(0)
+    else
+      node = destructure_node(:array)
+      @destructure_node_count = 1
+      parsing = true
+      while parsing && self.push_destructure_child(node, 0)
+        if @current.kind() == :comma
+          self.advance_token()
+        else
+          parsing = false
+        end
+      end
+      node
+    end
+    return 0 if @failed
+    if @current.kind() != :equal
+      self.fail("expected '=' after destructuring pattern")
+      return 0
+    end
+    self.advance_token()
+    values = [self.parse_expression()]
+    while @current.kind() == :comma && !@failed
+      if values.length() == 16
+        self.fail("too many destructuring right-hand values")
+        return 0
+      end
+      self.advance_token()
+      self.skip_newlines()
+      values.push(self.parse_expression())
+    end
+    return 0 if @failed
+    value = values[0]
+    if values.length() > 1
+      base = self.allocate_register()
+      index = 1
+      while index < values.length()
+        self.allocate_register()
+        index = index + 1
+      end
+      index = 0
+      while index < values.length()
+        self.emit_instruction2(Opcode::MOVE, base + index, values[index])
+        index = index + 1
+      end
+      value = self.allocate_register()
+      self.emit_instruction3(Opcode::ARRAY, value, base, values.length())
+      self.set_type_fact(value, Type::ARRAY)
+    end
+    array_set = self.declare_annotation([["Array", nil, nil, -1, nil, nil]])
+    hash_set = self.declare_annotation([["Hash", nil, nil, -1, nil, nil]])
+    return 0 if @failed
+    self.emit_destructure_extract(root, value, array_set, hash_set)
+    self.emit_destructure_stores(root)
+  end
+
   # `x += y`/.../`x ||= y`/`x &&= y` -- see compiler.c's compile_compound_
   # assignment for the full rationale; this mirrors it exactly, just
   # built from this parser's own read/write primitives (read_local/
@@ -3809,7 +5758,7 @@ class Parser
     else
       existing = self.find_local(name)
       if existing == nil
-        self.fail("undefined local variable")
+        self.fail_at(token.start(), token.line(), token.column(), "undefined local variable")
         0
       else
         self.read_local(existing)
@@ -3844,7 +5793,7 @@ class Parser
     end
     right = self.parse_expression()
     destination = self.allocate_register()
-    self.emit_instruction3(self.binary_opcode(plain_kind), destination, left, right)
+    self.emit_instruction3(binary_opcode(plain_kind), destination, left, right)
     result_fact = self.binary_result_fact(plain_kind, left, right)
     self.set_type_fact(destination, result_fact) if result_fact != nil
     self.compile_assignment_store(token, instance_variable, class_variable, destination)
@@ -3930,7 +5879,19 @@ class Parser
   # count against a statically-known type_variable_count). Returns an
   # Array of declared type-set indices (empty if there's no '[' at
   # all), or nil on a parse failure.
-  def parse_explicit_type_arguments()
+  # The type sets of explicit generic arguments, or nil after a failure.
+  def declare_annotations(annotations)
+    return nil if annotations == nil
+    sets = []
+    index = 0
+    while index < annotations.length() && !@failed
+      sets.push(self.declare_annotation(annotations[index]))
+      index = index + 1
+    end
+    sets
+  end
+
+  def parse_explicit_type_annotations()
     type_arguments = []
     return type_arguments unless @current.kind() == :left_bracket
     self.advance_token()
@@ -3939,8 +5900,7 @@ class Parser
       if type_arguments.length() == 8
         self.fail("too many generic arguments")
       else
-        annotation = self.parse_type_annotation()
-        type_arguments.push(self.declare_annotation(annotation))
+        type_arguments.push(self.parse_type_annotation())
         self.skip_newlines()
         if @current.kind() == :comma
           self.advance_token()
@@ -3957,6 +5917,160 @@ class Parser
     end
     return nil if @failed
     type_arguments
+  end
+
+  # A method named without an argument list, as a Callable value, built as
+  # a wrapper function. `target` is a method name for `receiver.method`: the
+  # wrapper captures the receiver and INVOKEs the method on it. When the
+  # receiver's class is known, the wrapper has the method's own signature;
+  # otherwise it collects any arguments and goes through INVOKE_SPREAD
+  # (compiler.c's parse_bound_method_reference). For `Owner.method`, `target`
+  # is [descriptor, needs_receiver] and the wrapper, typed like the
+  # singleton, calls it directly (parse_singleton_reference). A typed wrapper
+  # leaves out unprovided trailing arguments so their defaults run, and
+  # declares a generic target's type variables itself; explicit generic
+  # arguments are declared again in the wrapper, whose type sets they index.
+  def compile_reference_wrapper(receiver, target, type_annotations)
+    bound = target.is_a?(String)
+    callee = nil
+    if bound
+      fact = self.type_fact(receiver)
+      fact = self.annotation_single_type(self.declared_type(receiver)) if fact == nil
+      if fact != nil && fact >= Type::CLASS_BASE && fact < 57344
+        entry = self.case_pattern_reader(fact - Type::CLASS_BASE, target)
+        callee = entry if entry != nil && entry.length() > 6 && !@variadic_functions.include?(entry[4])
+      end
+      captured = self.allocate_register()
+      self.emit_instruction2(Opcode::MOVE, captured, receiver)
+      self.emit_instruction1(Opcode::BOX_LOCAL, captured)
+    else
+      if @variadic_functions.include?(target[0][1])
+        self.fail("expected '(' after singleton function")
+        return 0
+      end
+      # A singleton descriptor is [name, function_index, arity,
+      # required_arity, signature?]; an instance method entry is [class,
+      # name, private, required_arity, function_index, arity, signature].
+      descriptor = target[0]
+      callee = [nil, descriptor[0], false, descriptor[3], descriptor[1], descriptor[2],
+                if descriptor.length() > 4 then descriptor[4] else nil end]
+    end
+    arity = if callee == nil then 1 else callee[5] end
+    required_arity = if callee == nil then 0 else callee[3] end
+    function_index = @builder.declare_function("<method reference>", arity, required_arity)
+    @builder.set_parameter_flags(function_index, true, false) if callee == nil && !@failed
+
+    outer_locals = @locals
+    outer_loops = @loops
+    outer_begin_depth = @begin_depth
+    outer_next_register = @next_register
+    outer_code_count = @code_count
+    outer_function_index = @current_function_index
+    outer_pending_block_call = @pending_block_call
+    outer_type_facts = @type_facts
+    outer_type_variables = @current_type_variables
+    @locals = []
+    @loops = []
+    @begin_depth = 0
+    @next_register = 0
+    @code_count = 0
+    @current_function_index = function_index
+    @pending_block_call = nil
+    @type_facts = []
+
+    base = @next_register
+    index = 0
+    while index < arity
+      self.allocate_register()
+      index = index + 1
+    end
+    type_arguments = self.declare_annotations(type_annotations)
+    # signature is [parameter types, return type, type variables,
+    # parameter names]; with explicit bindings a generic one stays untyped.
+    signature = if callee == nil then nil else callee[6] end
+    if signature != nil && (signature[2].length() == 0 || type_arguments.length() == 0)
+      @current_type_variables = signature[2]
+      @builder.set_type_variables(function_index, signature[2]) if signature[2].length() > 0
+      index = 0
+      while index < arity && !@failed
+        @builder.set_parameter_name(function_index, index, signature[3][index])
+        if signature[0][index] != nil
+          @builder.set_parameter_type(function_index, index, self.declare_annotation(signature[0][index]))
+        end
+        index = index + 1
+      end
+      @builder.set_return_type(function_index, self.declare_annotation(signature[1])) if signature[1] != nil && !@failed
+    end
+    @current_type_variables = outer_type_variables
+    if callee == nil
+      self.emit_instruction3(Opcode::COLLECT_VARIADIC, base, 0, 0)
+      required_arity = arity
+    end
+    if bound
+      bound_receiver = self.allocate_register()
+      self.emit_instruction2(Opcode::GET_CAPTURE, bound_receiver, 0)
+      method_name_index = self.add_string(target)
+    end
+    count = required_arity
+    while count <= arity
+      skip = nil
+      if count < arity
+        provided = self.allocate_register()
+        self.emit_instruction2(Opcode::ARGUMENT_PROVIDED, provided, count)
+        skip = self.emit_jump(Opcode::JUMP_IF_TRUE, provided)
+      end
+      if bound
+        result = self.allocate_register()
+        opcode = if callee == nil then Opcode::INVOKE_SPREAD else Opcode::INVOKE end
+        if type_arguments.length() > 0
+          opcode = if callee == nil then Opcode::INVOKE_TYPED_SPREAD else Opcode::INVOKE_TYPED end
+        end
+        self.emit_call_opcode(opcode)
+        self.emit_register(result)
+        self.emit_register(bound_receiver)
+        self.emit_register(method_name_index)
+        self.emit_register(base)
+        self.emit_byte(count) if callee != nil
+        if type_arguments.length() > 0
+          self.emit_byte(type_arguments.length())
+          index = 0
+          while index < type_arguments.length()
+            self.emit_register(type_arguments[index])
+            index = index + 1
+          end
+        end
+      else
+        result = self.emit_singleton_call(callee[4], [base, count], target[1], type_arguments)
+      end
+      if skip != nil
+        self.emit_instruction1(Opcode::RETURN, result)
+        self.patch_jump(skip, @code_count)
+      end
+      count = count + 1
+    end
+    self.emit_instruction1(Opcode::RETURN, result)
+    @builder.set_register_count(function_index, @next_register) unless @failed
+
+    @locals = outer_locals
+    @loops = outer_loops
+    @begin_depth = outer_begin_depth
+    @next_register = outer_next_register
+    @code_count = outer_code_count
+    @current_function_index = outer_function_index
+    @pending_block_call = outer_pending_block_call
+    @type_facts = outer_type_facts
+
+    destination = self.allocate_register()
+    self.emit_byte(Opcode::CLOSURE)
+    self.emit_register(destination)
+    self.emit_function_index(function_index)
+    if bound
+      self.emit_byte(1)
+      self.emit_register(captured)
+    else
+      self.emit_byte(0)
+    end
+    destination
   end
 
   # `receiver.method(args)` -- reached from parse_precedence's own
@@ -3977,6 +6091,11 @@ class Parser
     if @current.kind() == :equal
       name = name + "="
       self.advance_token()
+      # `recv.attr = value` is `recv.attr=(value)`.
+      if @current.kind() != :left_paren
+        value = self.parse_expression()
+        return self.emit_destructure_invoke(receiver, name, value)
+      end
     end
     if name == "class" && @current.kind() == :left_paren
       self.advance_token()
@@ -4017,14 +6136,66 @@ class Parser
     # resolved at INVOKE time against the receiver's runtime class, the
     # same reason there's no argument-count check above. Mirrors
     # compiler.c's own parse_invoke exactly.
-    type_arguments = self.parse_explicit_type_arguments()
-    return 0 if type_arguments == nil
+    type_annotations = self.parse_explicit_type_annotations()
+    return 0 if type_annotations == nil
     if @current.kind() != :left_paren
-      self.fail("expected '(' after method name")
-      return 0
+      return self.compile_reference_wrapper(receiver, name, type_annotations)
     end
+    type_arguments = self.declare_annotations(type_annotations)
     self.advance_token()
     method_name_index = self.add_string(name)
+    # The method, when the receiver's class is known statically: a trailing
+    # block takes its types from the last parameter, as a top-level
+    # function's does (contextual_block_member).
+    fact = self.type_fact(receiver)
+    fact = self.annotation_single_type(self.declared_type(receiver)) if fact == nil
+    entry = nil
+    entry = self.case_pattern_reader(fact - Type::CLASS_BASE, name) if fact != nil && fact >= Type::CLASS_BASE && fact < 57344
+    entry = nil if entry != nil && entry.length() < 7
+    block_context = nil
+    if entry != nil && entry[6][2].length() == 0 && entry[5] > 0
+      block_context = contextual_block_member([nil, nil, nil, nil, nil, nil, nil, entry[6][0]], entry[5] - 1)
+    end
+    self.skip_newlines()
+    if self.call_arguments_have_keyword?()
+      if type_arguments.length() > 0
+        self.fail("explicit type arguments cannot be combined with keyword arguments")
+        return 0
+      end
+      arguments = self.parse_dynamic_keyword_arguments()
+      return 0 if arguments == nil
+      destination = self.allocate_register()
+      self.emit_call_opcode(Opcode::INVOKE_KEYWORDS)
+      self.emit_register(destination)
+      self.emit_register(receiver)
+      self.emit_register(method_name_index)
+      self.emit_keyword_trailer(arguments)
+      return destination
+    end
+    if self.call_arguments_have_spread?()
+      return 0 if self.fail_spread_type_arguments(type_arguments)
+      collected = [nil, [], block_context]
+      arguments = self.parse_spread_call_arguments(collected)
+      return 0 if arguments == nil
+      # A trailing block goes by INVOKE_KEYWORDS' block flag, with the spread
+      # Array as the positional arguments, as in compiler.c.
+      if collected[1].length() > 0
+        destination = self.allocate_register()
+        self.emit_call_opcode(Opcode::INVOKE_KEYWORDS)
+        self.emit_register(destination)
+        self.emit_register(receiver)
+        self.emit_register(method_name_index)
+        self.emit_keyword_trailer([arguments, [], collected[1][0][1]])
+        return destination
+      end
+      destination = self.allocate_register()
+      self.emit_call_opcode(Opcode::INVOKE_SPREAD)
+      self.emit_register(destination)
+      self.emit_register(receiver)
+      self.emit_register(method_name_index)
+      self.emit_register(arguments)
+      return destination
+    end
     parsed = self.parse_call_arguments()
     return 0 if parsed == nil
     argument_base = parsed[0]
@@ -4047,6 +6218,22 @@ class Parser
     # @next_register - 1, not @next_register -- allocating again would
     # leave a silent one-register gap between it and the block.
     if @current.kind() == :do
+      # Fewer arguments than a statically known method's block slot leave
+      # its defaulted parameters out: the block goes by INVOKE_KEYWORDS'
+      # block flag instead, as in compiler.c's parse_invoke.
+      @block_context = block_context
+      if entry != nil && argument_count < entry[5] - 1 && type_arguments.length() == 0
+        positional = self.allocate_register()
+        self.emit_instruction3(Opcode::ARRAY, positional, argument_base, argument_count)
+        block_result = self.compile_block()
+        destination = self.allocate_register()
+        self.emit_call_opcode(Opcode::INVOKE_KEYWORDS)
+        self.emit_register(destination)
+        self.emit_register(receiver)
+        self.emit_register(method_name_index)
+        self.emit_keyword_trailer([positional, [], block_result])
+        return destination
+      end
       block_slot = argument_base + argument_count
       self.allocate_register() if block_slot == @next_register
       block_result = self.compile_block()
@@ -4055,9 +6242,9 @@ class Parser
     end
     destination = self.allocate_register()
     if type_arguments.length() == 0
-      self.emit_byte(Opcode::INVOKE)
+      self.emit_call_opcode(Opcode::INVOKE)
     else
-      self.emit_byte(Opcode::INVOKE_TYPED)
+      self.emit_call_opcode(Opcode::INVOKE_TYPED)
     end
     self.emit_register(destination)
     self.emit_register(receiver)
@@ -4083,6 +6270,15 @@ class Parser
       return 0
     end
     self.advance_token()
+    # `expr[index] = value` (or `+=` and friends) on a receiver that isn't
+    # a plain local/@ivar/@@cvar -- `table()[key] += 1`, `a[i][j] += 1`.
+    if @current.kind() == :equal
+      self.advance_token()
+      value = self.parse_expression()
+      self.emit_instruction3(Opcode::INDEX_SET, receiver, index, value)
+      return value
+    end
+    return self.compile_index_compound_store(receiver, index) if compound_assignment_token?(@current.kind())
     destination = self.allocate_register()
     self.emit_instruction3(Opcode::INDEX_GET, destination, receiver, index)
     receiver_annotation = self.declared_type(receiver)
@@ -4110,6 +6306,22 @@ class Parser
 
   def compile_break()
     kind = @current.kind()
+    # `next` in a do block, outside any loop inside it, ends this call of
+    # the block -- what `return` already does there.
+    return self.compile_return() if @loops.length() == 0 && kind == :next && @in_block
+    # `break` there ends the call the block was passed to, whose result
+    # becomes the break value.
+    if @loops.length() == 0 && kind == :break && @in_block
+      self.advance_token()
+      value = if statement_end_kind?(@current.kind())
+        self.allocate_register()
+      else
+        self.parse_expression()
+      end
+      @block_has_break = true
+      self.emit_instruction1(Opcode::BLOCK_BREAK, value)
+      return value
+    end
     if @loops.length() == 0
       if kind == :break
         self.fail("'break' used outside a loop")
@@ -4131,17 +6343,58 @@ class Parser
       self.emit_instruction2(Opcode::MOVE, frame[0], value)
     end
     if kind == :break
-      frame[1].push(self.emit_jump(Opcode::JUMP, 0))
+      frame[1].push(self.emit_loop_jump(frame, 0))
     elsif kind == :next
-      self.emit_byte(Opcode::JUMP)
-      self.emit_byte(frame[2] / 256)
-      self.emit_byte(mod(frame[2], 256))
+      self.emit_loop_jump(frame, frame[2])
     else
-      self.emit_byte(Opcode::JUMP)
-      self.emit_byte(frame[3] / 256)
-      self.emit_byte(mod(frame[3], 256))
+      self.emit_loop_jump(frame, frame[3])
     end
     self.allocate_register()
+  end
+
+  # The jump a break/next/redo ends in: from inside begin blocks within the
+  # loop, an UNWIND_JUMP that leaves them (running their ensure bodies)
+  # first, otherwise a plain JUMP. Returns the target operand's offset, for
+  # a break to patch. Mirrors compiler_control.c's emit_loop_jump.
+  def emit_loop_jump(frame, target)
+    levels = @begin_depth - frame[4]
+    if levels <= 0
+      operand = self.emit_jump(Opcode::JUMP, 0)
+      self.patch_jump(operand, target)
+      return operand
+    end
+    if levels > 255
+      self.fail("loop control is nested too deeply in begin blocks")
+      return 0
+    end
+    self.emit_byte(Opcode::UNWIND_JUMP)
+    self.emit_byte(levels)
+    operand = @code_count
+    self.emit_byte(0)
+    self.emit_byte(0)
+    self.patch_jump(operand, target)
+    operand
+  end
+
+  # `return` in a do block returns from the enclosing def: BLOCK_RETURN
+  # unwinds every frame in between, running their ensure bodies. The value
+  # is checked against the def's return type here, since the def's own
+  # RETURN is skipped. Mirrors compiler_control.c's compile_block_return.
+  def compile_block_return()
+    if @method_function_index == -1
+      self.fail("'return' in a block outside any def; use 'next' to end the block")
+      return 0
+    end
+    self.advance_token()
+    value = if statement_end_kind?(@current.kind())
+      self.allocate_register()
+    else
+      self.parse_expression()
+    end
+    self.emit_type_check(value, @method_return_type) if @method_return_type != nil
+    @builder.set_nonlocal_landing(@method_function_index)
+    self.emit_instruction1(Opcode::BLOCK_RETURN, value)
+    value
   end
 
   # RETURN halts run_chunk unconditionally the instant it executes,
@@ -4152,6 +6405,8 @@ class Parser
       self.fail("'return' used outside a function")
       return 0
     end
+    return self.compile_block_return() if @in_block && @current.kind() == :return
+    @block_returns_early = true if @in_block
     self.advance_token()
     has_value = @current.kind() != :newline && @current.kind() != :end && @current.kind() != :else && @current.kind() != :if && @current.kind() != :unless && @current.kind() != :eof
     value = if has_value
@@ -4287,6 +6542,7 @@ class Parser
   # Opens a protected region: PUSH_ENSURE, then the rescue handler.
   # Returns [ensure_operand, exception, retry_target, handler].
   def open_begin_frame()
+    @begin_depth = @begin_depth + 1
     ensure_operand = @code_count + 1
     self.emit_byte(Opcode::PUSH_ENSURE)
     self.emit_byte(0)
@@ -4392,6 +6648,7 @@ class Parser
     end
     self.emit_byte(Opcode::END_ENSURE)
     self.patch_jump(continuation_operand, @code_count)
+    @begin_depth = @begin_depth - 1
     @type_facts = original_facts
     if body_fact != nil && body_fact == rescued_fact
       self.set_type_fact(destination, body_fact)
@@ -4448,14 +6705,16 @@ class Parser
   # here the way the native compiler's own fix needed -- @type_facts is already a plain growable Array here,
   # not indexed by register, so copy_type_facts()/direct reassignment is
   # the self-hosted parser's own existing, unbounded equivalent.
-  def parse_case_branches(subject, entry_facts, destination)
-    @type_facts = self.copy_type_facts_from(entry_facts)
+  # exhaustiveness: nil, or [required type ids, covered flags, case token]
+  # when the subject's type is closed (see case_exhaustiveness).
+  def parse_case_branches(subject, entry_facts, destination, subjectless, exhaustiveness)
+    @type_facts = copy_type_facts_from(entry_facts)
     if @current.kind() == :else
       self.advance_token()
       self.skip_newlines() if @current.kind() == :newline
       body_result = self.compile_sequence()
       self.emit_instruction2(Opcode::MOVE, destination, body_result)
-      @type_facts = self.copy_type_facts_from(entry_facts)
+      @type_facts = copy_type_facts_from(entry_facts)
       if @current.kind() != :end
         self.fail("expected 'end' after case expression")
         return destination
@@ -4464,6 +6723,7 @@ class Parser
       return destination
     end
     if @current.kind() == :end
+      return destination if self.fail_unless_exhaustive(exhaustiveness)
       self.emit_instruction1(Opcode::NIL, destination)
       self.advance_token()
       return destination
@@ -4474,14 +6734,178 @@ class Parser
     end
     self.advance_token()
     match_reg = self.allocate_register()
+    bindings = []
+    collection_pattern = !subjectless && (@current.kind() == :left_bracket ||
+      @current.kind() == :left_brace || self.object_pattern_ahead?())
+    return destination if @failed
+    covered = []
+    if collection_pattern
+      bindings = self.compile_case_pattern_alternatives(subject, match_reg, covered)
+      return destination if bindings == nil
+    else
+      self.compile_case_scalar_values(subject, subjectless, match_reg, covered)
+    end
+    # A guard can reject a matching value, so a guarded `when` covers nothing.
+    self.mark_case_coverage(exhaustiveness, covered) if @current.kind() != :if
+    if @current.kind() == :if
+      # A guard sees the pattern's bindings without storing them yet.
+      skip_guard = self.emit_jump(Opcode::JUMP_IF_FALSE, match_reg)
+      self.advance_token()
+      saved_local_count = @locals.length()
+      index = 0
+      while index < bindings.length()
+        @locals.push([self.token_text(bindings[index][0]), bindings[index][1], false])
+        index = index + 1
+      end
+      guard = self.parse_expression()
+      while @locals.length() > saved_local_count
+        @locals.pop()
+      end
+      self.emit_instruction2(Opcode::NOT, match_reg, guard)
+      self.emit_instruction2(Opcode::NOT, match_reg, match_reg)
+      self.patch_jump(skip_guard, @code_count)
+    end
+    return destination unless self.consume_block_start_or(:then)
+    false_jump = self.emit_jump(Opcode::JUMP_IF_FALSE, match_reg)
+    index = 0
+    while index < bindings.length()
+      self.compile_assignment_store(bindings[index][0], false, false, bindings[index][1])
+      index = index + 1
+    end
+    body_result = self.compile_sequence()
+    self.emit_instruction2(Opcode::MOVE, destination, body_result)
+    end_jump = self.emit_jump(Opcode::JUMP, 0)
+    self.patch_jump(false_jump, @code_count)
+    result = self.parse_case_branches(subject, entry_facts, destination, subjectless, exhaustiveness)
+    self.patch_jump(end_jump, @code_count)
+    result
+  end
+
+  def parse_case()
+    case_token = @previous
+    # `case` alone on its line tests each `when` value for truthiness.
+    subjectless = @current.kind() == :newline
+    subject = if subjectless
+      truth = self.allocate_register()
+      self.emit_instruction2(Opcode::BOOL, truth, 1)
+      truth
+    else
+      self.parse_expression()
+    end
+    self.skip_newlines()
+    exhaustiveness = if subjectless then nil else self.case_exhaustiveness(subject, case_token) end
+    destination = self.allocate_register()
+    entry_facts = self.copy_type_facts()
+    if @current.kind() != :when
+      self.fail("expected 'when' after case expression")
+      return destination
+    end
+    self.parse_case_branches(subject, entry_facts, destination, subjectless, exhaustiveness)
+  end
+
+  # A subject declared as a union of classes and Nil, or known to be a
+  # sealed class (then its direct subclasses), must have every member
+  # covered unless the case has an `else`. Mirrors compiler_case.c.
+  def case_exhaustiveness(subject, case_token)
+    annotation = self.declared_type(subject)
+    if annotation != nil && annotation.length() > 1
+      required = []
+      index = 0
+      while index < annotation.length()
+        id = self.resolve_type_name(annotation[index][0])
+        return nil if @failed
+        return nil if id != Type::NIL && (id < Type::CLASS_BASE || id >= Type::VARIABLE_BASE)
+        required.push(id)
+        index = index + 1
+      end
+      return [required, required.map() do |_| false end, case_token]
+    end
+    fact = self.type_fact(subject)
+    fact = self.resolve_type_name(annotation[0][0]) if fact == nil && annotation != nil
+    return nil if fact == nil || fact < Type::CLASS_BASE || fact >= Type::VARIABLE_BASE
+    return nil unless @sealed_classes.include?(fact - Type::CLASS_BASE)
+    required = []
+    index = 0
+    while index < @classes.length()
+      required.push(Type::CLASS_BASE + @classes[index][1]) if @classes[index][2] == fact - Type::CLASS_BASE
+      index = index + 1
+    end
+    return nil if required.length() == 0 || required.length() > 8
+    [required, required.map() do |_| false end, case_token]
+  end
+
+  # Marks each required member a `when` covers: the type itself, or for a
+  # class, any of its superclasses (`when Shape` matches a Circle).
+  def mark_case_coverage(exhaustiveness, covered)
+    return if exhaustiveness == nil
+    required = exhaustiveness[0]
+    flags = exhaustiveness[1]
+    member = 0
+    while member < required.length()
+      walk = required[member]
+      while walk != nil && !flags[member]
+        flags[member] = true if covered.include?(walk)
+        walk = if walk >= Type::CLASS_BASE
+          parent = self.superclass_of(walk - Type::CLASS_BASE)
+          if parent == nil then nil else Type::CLASS_BASE + parent end
+        else
+          nil
+        end
+      end
+      member = member + 1
+    end
+  end
+
+  def fail_unless_exhaustive(exhaustiveness)
+    return false if exhaustiveness == nil
+    missing = []
+    member = 0
+    while member < exhaustiveness[0].length()
+      missing.push(self.closed_type_name(exhaustiveness[0][member])) unless exhaustiveness[1][member]
+      member = member + 1
+    end
+    return false if missing.length() == 0
+    token = exhaustiveness[2]
+    self.fail_at(token.start(), token.line(), token.column(),
+      "case is not exhaustive over its subject's known closed type; missing: " +
+      missing.join(", ") + "; add the missing branch or an 'else'")
+    true
+  end
+
+  def closed_type_name(id)
+    return "Nil" if id == Type::NIL
+    index = 0
+    while index < @classes.length()
+      return @classes[index][0] if Type::CLASS_BASE + @classes[index][1] == id
+      index = index + 1
+    end
+    "?"
+  end
+
+  # A `when` of plain values or class names: match_reg becomes whether any
+  # of them matches the subject (or is truthy, for a subjectless case).
+  def compile_case_scalar_values(subject, subjectless, match_reg, covered)
     first_value = true
     skip_jump = 0
     more_values = true
     while more_values
       skip_jump = self.emit_jump(Opcode::JUMP_IF_TRUE, match_reg) unless first_value
-      value_reg = self.parse_expression()
+      @case_pattern_class_index = nil
+      value_reg = self.parse_case_class_pattern()
+      if value_reg != nil && @case_pattern_class_index != nil
+        covered.push(Type::CLASS_BASE + @case_pattern_class_index)
+      end
+      if value_reg == nil
+        value_reg = self.parse_expression()
+        covered.push(Type::NIL) if self.type_fact(value_reg) == Type::NIL
+      end
       eq_reg = self.allocate_register()
-      self.emit_instruction3(Opcode::CASE_MATCH, eq_reg, value_reg, subject)
+      if subjectless
+        self.emit_instruction2(Opcode::NOT, eq_reg, value_reg)
+        self.emit_instruction2(Opcode::NOT, eq_reg, eq_reg)
+      else
+        self.emit_instruction3(Opcode::CASE_MATCH, eq_reg, value_reg, subject)
+      end
       self.set_type_fact(eq_reg, Type::BOOL)
       self.emit_instruction2(Opcode::MOVE, match_reg, eq_reg)
       self.patch_jump(skip_jump, @code_count) unless first_value
@@ -4493,37 +6917,504 @@ class Parser
         more_values = false
       end
     end
-    return destination unless self.consume_block_start_or(:then)
-    false_jump = self.emit_jump(Opcode::JUMP_IF_FALSE, match_reg)
-    body_result = self.compile_sequence()
-    self.emit_instruction2(Opcode::MOVE, destination, body_result)
-    end_jump = self.emit_jump(Opcode::JUMP, 0)
-    self.patch_jump(false_jump, @code_count)
-    result = self.parse_case_branches(subject, entry_facts, destination)
-    self.patch_jump(end_jump, @code_count)
-    result
   end
 
-  def copy_type_facts_from(facts)
-    copy = []
+  # `Name{` or `Mod::Name{` at the current token: [qualified name, the
+  # number of tokens it spans], or nil.
+  def object_pattern_name()
+    return nil if @current.kind() != :identifier
+    name = self.token_text(@current)
+    return nil if lowercase_name?(name) || name == "_"
+    lookahead = @lexer.clone()
+    next_token = lookahead.next_token()
+    tokens = 1
+    while next_token.kind() == :double_colon
+      part = lookahead.next_token()
+      return nil if part.kind() != :identifier
+      name = name + "::" + self.token_text(part)
+      tokens = tokens + 2
+      next_token = lookahead.next_token()
+    end
+    return nil if next_token.kind() != :left_brace
+    [name, tokens]
+  end
+
+  def object_pattern_ahead?() = self.object_pattern_name() != nil
+
+  def case_pattern_reader(class_index, reader)
+    walk = class_index
+    while walk != nil
+      index = @instance_methods.length() - 1
+      while index >= 0
+        entry = @instance_methods[index]
+        return entry if entry[0] == walk && entry[1] == reader
+        index = index - 1
+      end
+      walk = self.superclass_of(walk)
+    end
+    nil
+  end
+
+  def superclass_of(class_index)
     index = 0
-    while index < facts.length()
-      copy.push(facts[index])
+    while index < @classes.length()
+      return @classes[index][2] if @classes[index][1] == class_index
       index = index + 1
     end
-    copy
+    nil
   end
 
-  def parse_case()
-    subject = self.parse_expression()
-    self.skip_newlines()
-    destination = self.allocate_register()
-    entry_facts = self.copy_type_facts()
-    if @current.kind() != :when
-      self.fail("expected 'when' after case expression")
-      return destination
+  def includes_a_module?(class_index)
+    walk = class_index
+    while walk != nil
+      return true if @classes_with_includes.include?(walk)
+      walk = self.superclass_of(walk)
     end
-    self.parse_case_branches(subject, entry_facts, destination)
+    false
+  end
+
+  # counter is [nodes parsed so far] for the whole pattern.
+  def parse_case_pattern_node(depth, counter)
+    node = case_pattern_node(:wildcard)
+    if counter[0] == 64 || depth > 8
+      self.fail("case Array pattern is too complex")
+      return node
+    end
+    counter[0] = counter[0] + 1
+    return self.parse_case_array_group(node, depth, counter) if @current.kind() == :left_bracket
+    return self.parse_case_hash_group(node, depth, counter) if @current.kind() == :left_brace
+    object_name = self.object_pattern_name()
+    return self.parse_case_object_group(node, object_name, depth, counter) if object_name != nil
+    if @current.kind() == :star
+      self.advance_token()
+      if @current.kind() != :identifier
+        self.fail("expected lowercase binding or '_' after '*' in case Array pattern")
+        return node
+      end
+      node[1] = @current
+      text = self.token_text(@current)
+      if text == "_"
+        node[0] = :rest_wildcard
+      elsif !lowercase_name?(text)
+        self.fail("rest binding in case Array pattern must be lowercase")
+        return node
+      else
+        node[0] = :rest_bind
+      end
+      self.advance_token()
+      return node
+    end
+    if @current.kind() == :caret
+      self.advance_token()
+      if @current.kind() != :identifier
+        self.fail("expected lowercase local after '^' in case Array pattern")
+        return node
+      end
+      node[1] = @current
+      text = self.token_text(@current)
+      if !lowercase_name?(text) || text == "_"
+        self.fail("pin in case Array pattern must name a lowercase local")
+        return node
+      end
+      entry = self.find_local(text)
+      if entry == nil
+        self.fail("pin references undefined local variable")
+        return node
+      end
+      self.advance_token()
+      node[0] = :pin
+      node[3] = self.read_local(entry)
+      return node
+    end
+    if @current.kind() == :identifier
+      text = self.token_text(@current)
+      if text == "_"
+        self.advance_token()
+        return node
+      end
+      if lowercase_name?(text)
+        node[0] = :bind
+        node[1] = @current
+        self.advance_token()
+        return node
+      end
+    end
+    node[0] = :value
+    value = self.parse_case_class_pattern()
+    value = self.parse_expression() if value == nil
+    node[3] = value
+    node
+  end
+
+  # `[a, *rest, ...]`: the current token is the '['.
+  def parse_case_array_group(node, depth, counter)
+    node[0] = :array
+    self.advance_token()
+    rest_seen = false
+    while @current.kind() != :right_bracket && !@failed
+      if node[6].length() == 16
+        self.fail("too many case Array elements")
+        return node
+      end
+      child = self.parse_case_pattern_node(depth + 1, counter)
+      node[6].push(child)
+      if rest_kind?(child)
+        if rest_seen
+          token = child[1]
+          self.fail_at(token.start(), token.line(), token.column(),
+            "case Array pattern may contain only one rest binding")
+          return node
+        end
+        rest_seen = true
+      end
+      break if @current.kind() == :right_bracket
+      if @current.kind() != :comma
+        self.fail("expected ',' in case Array pattern")
+        return node
+      end
+      self.advance_token()
+    end
+    return node if @failed
+    if node[6].length() == 0
+      self.fail("case Array pattern cannot be empty")
+      return node
+    end
+    self.advance_token()
+    node
+  end
+
+  # `{key: pattern, ..., **rest}`: the current token is the '{'.
+  def parse_case_hash_group(node, depth, counter)
+    node[0] = :hash
+    self.advance_token()
+    self.skip_newlines()
+    while @current.kind() != :right_brace && !@failed
+      if node[6].length() == 16
+        self.fail("too many case Hash entries")
+        return node
+      end
+      if @current.kind() == :star && @lexer.clone().next_token().kind() == :star
+        self.advance_token()
+        self.advance_token()
+        if @current.kind() != :identifier
+          self.fail("expected lowercase binding or '_' after '**' in case Hash pattern")
+          return node
+        end
+        if counter[0] == 64
+          self.fail("case Hash pattern is too complex")
+          return node
+        end
+        counter[0] = counter[0] + 1
+        rest = case_pattern_node(:hash_rest_wildcard)
+        rest[1] = @current
+        text = self.token_text(@current)
+        if text != "_"
+          if !lowercase_name?(text)
+            self.fail("rest binding in case Hash pattern must be lowercase")
+            return node
+          end
+          rest[0] = :hash_rest_bind
+        end
+        node[6].push(rest)
+        self.advance_token()
+        self.skip_newlines()
+        if @current.kind() != :right_brace
+          self.fail("rest binding must be last in case Hash pattern")
+          return node
+        end
+        break
+      end
+      key = self.parse_expression()
+      if @current.kind() != :colon
+        self.fail("expected ':' after case Hash pattern key")
+        return node
+      end
+      self.advance_token()
+      child = self.parse_case_pattern_node(depth + 1, counter)
+      if rest_kind?(child) || hash_rest_kind?(child)
+        token = child[1]
+        self.fail_at(token.start(), token.line(), token.column(),
+          "rest bindings are not supported in case Hash patterns")
+        return node
+      end
+      child[4] = key
+      node[6].push(child)
+      self.skip_newlines()
+      break if @current.kind() == :right_brace
+      if @current.kind() != :comma
+        self.fail("expected ',' in case Hash pattern")
+        return node
+      end
+      self.advance_token()
+      self.skip_newlines()
+    end
+    return node if @failed
+    if @current.kind() != :right_brace
+      self.fail("expected '}' after case Hash pattern")
+      return node
+    end
+    self.advance_token()
+    node
+  end
+
+  # `Class{reader: pattern, ...}`, matched through public zero-argument
+  # readers: the current token is the class name.
+  def parse_case_object_group(node, object_name, depth, counter)
+    class_entry = self.find_forward_class(object_name[0], @current_module_name)
+    if class_entry == nil
+      self.fail("unknown class '" + object_name[0] + "' in object pattern")
+      return node
+    end
+    node[0] = :object
+    node[7] = class_entry[1]
+    node[3] = self.allocate_register()
+    self.emit_instruction2(Opcode::LOAD_CLASS, node[3], class_entry[1])
+    index = 0
+    while index < object_name[1]
+      self.advance_token()
+      index = index + 1
+    end
+    self.advance_token()
+    self.skip_newlines()
+    while @current.kind() != :right_brace && !@failed
+      if node[6].length() == 16
+        self.fail("too many case object fields")
+        return node
+      end
+      if @current.kind() != :identifier || !lowercase_name?(self.token_text(@current))
+        self.fail("expected lowercase reader in case object pattern")
+        return node
+      end
+      reader_token = @current
+      reader_name = self.token_text(@current)
+      reader = self.case_pattern_reader(class_entry[1], reader_name)
+      unknown = reader == nil && !self.includes_a_module?(class_entry[1])
+      if unknown || (reader != nil && (reader[2] || reader[3] > 0))
+        self.fail("case object pattern requires a public zero-argument reader")
+        return node
+      end
+      self.advance_token()
+      if @current.kind() != :colon
+        self.fail("expected ':' after case object reader")
+        return node
+      end
+      self.advance_token()
+      child = self.parse_case_pattern_node(depth + 1, counter)
+      if rest_kind?(child)
+        token = child[1]
+        self.fail_at(token.start(), token.line(), token.column(),
+          "rest bindings are not supported in case object patterns")
+        return node
+      end
+      child[2] = reader_name
+      node[6].push(child)
+      self.skip_newlines()
+      break if @current.kind() == :right_brace
+      if @current.kind() != :comma
+        self.fail("expected ',' in case object pattern")
+        return node
+      end
+      self.advance_token()
+      self.skip_newlines()
+    end
+    return node if @failed
+    if @current.kind() != :right_brace
+      self.fail("expected '}' after case object pattern")
+      return node
+    end
+    self.advance_token()
+    node
+  end
+
+  # Emits the checks for node against subject: each failing check jumps
+  # (recorded in failures) with match_reg false.
+  def emit_case_pattern_match(node, subject, match_reg, failures)
+    node[5] = subject
+    kind = node[0]
+    return if kind == :bind || kind == :wildcard || rest_kind?(node) || hash_rest_kind?(node)
+    test = self.allocate_register()
+    if kind == :value || kind == :pin || kind == :object
+      self.emit_instruction3(Opcode::CASE_MATCH, test, node[3], subject)
+    elsif kind == :array
+      has_rest = false
+      index = 0
+      while index < node[6].length()
+        has_rest = true if rest_kind?(node[6][index])
+        index = index + 1
+      end
+      fixed_count = node[6].length() - (if has_rest then 1 else 0 end)
+      self.emit_instruction3(Opcode::CASE_ARRAY_SHAPE, test, subject,
+        fixed_count + (if has_rest then 32768 else 0 end))
+    else
+      self.emit_instruction2(Opcode::CASE_HASH_SHAPE, test, subject)
+    end
+    self.set_type_fact(test, Type::BOOL)
+    self.emit_instruction2(Opcode::MOVE, match_reg, test)
+    failures.push(self.emit_jump(Opcode::JUMP_IF_FALSE, match_reg))
+    return if kind != :array && kind != :hash && kind != :object
+    children = node[6]
+    rest_index = nil
+    if kind == :array
+      index = 0
+      while index < children.length()
+        rest_index = index if rest_kind?(children[index])
+        index = index + 1
+      end
+    end
+    index = 0
+    while index < children.length()
+      child = children[index]
+      if hash_rest_kind?(child)
+        if child[0] == :hash_rest_bind
+          keys = []
+          key = 0
+          while key < index
+            keys.push(children[key][4])
+            key = key + 1
+          end
+          key_base = self.move_contiguous(keys)
+          excluded = self.allocate_register()
+          self.emit_instruction3(Opcode::ARRAY, excluded, key_base, index)
+          self.set_type_fact(excluded, Type::ARRAY)
+          rest = self.allocate_register()
+          self.emit_instruction3(Opcode::HASH_REST, rest, subject, excluded)
+          self.set_type_fact(rest, Type::HASH)
+          child[5] = rest
+        end
+      elsif rest_kind?(child)
+        if child[0] == :rest_bind
+          rest = self.allocate_register()
+          suffix = children.length() - index - 1
+          self.emit_instruction3(Opcode::ARRAY_MIDDLE, rest, subject, index * 256 + suffix)
+          self.set_type_fact(rest, Type::ARRAY)
+          child[5] = rest
+        end
+      elsif kind == :object
+        element = self.emit_destructure_invoke(subject, child[2], nil)
+        self.emit_case_pattern_match(child, element, match_reg, failures)
+      elsif kind == :array && rest_index != nil && index > rest_index
+        element = self.allocate_register()
+        self.emit_instruction3(Opcode::ARRAY_SUFFIX, element, subject, children.length() - index)
+        self.emit_case_pattern_match(child, element, match_reg, failures)
+      else
+        index_reg = child[4]
+        if kind == :array
+          index_reg = self.allocate_register()
+          self.emit_instruction2(Opcode::CONSTANT, index_reg, self.add_constant(index))
+        else
+          present = self.allocate_register()
+          self.emit_instruction3(Opcode::CASE_HASH_HAS, present, subject, index_reg)
+          self.set_type_fact(present, Type::BOOL)
+          self.emit_instruction2(Opcode::MOVE, match_reg, present)
+          failures.push(self.emit_jump(Opcode::JUMP_IF_FALSE, match_reg))
+        end
+        element = self.allocate_register()
+        self.emit_instruction3(Opcode::INDEX_GET, element, subject, index_reg)
+        self.emit_case_pattern_match(child, element, match_reg, failures)
+      end
+      index = index + 1
+    end
+  end
+
+  # The comma-joined patterns of one `when`: emits each matcher into
+  # match_reg and returns the bindings ([name token, register] each, filled
+  # from whichever alternative matched), or nil after a compile error.
+  def compile_case_pattern_alternatives(subject, match_reg, covered)
+    bindings = []
+    success_jumps = []
+    first_pattern = true
+    loop do
+      if success_jumps.length() == 16
+        self.fail("too many case pattern alternatives")
+        return nil
+      end
+      root = self.parse_case_pattern_node(0, [0])
+      return nil if @failed
+      # An object pattern whose readers only bind or ignore matches every
+      # instance of its class, as a bare `when Class` does.
+      if root[0] == :object
+        unconstrained = true
+        index = 0
+        while index < root[6].length()
+          kind = root[6][index][0]
+          unconstrained = false if kind != :bind && kind != :wildcard
+          index = index + 1
+        end
+        covered.push(Type::CLASS_BASE + root[7]) if unconstrained
+      end
+      found = collect_case_bindings(root, [])
+      left = 0
+      while left < found.length()
+        right = left + 1
+        while right < found.length()
+          if self.token_text(found[left][1]) == self.token_text(found[right][1])
+            token = found[right][1]
+            self.fail_at(token.start(), token.line(), token.column(),
+              "duplicate binding in case collection pattern")
+            return nil
+          end
+          right = right + 1
+        end
+        left = left + 1
+      end
+      aligned = []
+      if first_pattern
+        index = 0
+        while index < found.length()
+          bindings.push([found[index][1], self.allocate_register()])
+          aligned.push(found[index])
+          index = index + 1
+        end
+      else
+        if found.length() != bindings.length()
+          self.fail_at(@previous.start(), @previous.line(), @previous.column(),
+            "case pattern alternatives must bind the same names")
+          return nil
+        end
+        index = 0
+        while index < bindings.length()
+          name = self.token_text(bindings[index][0])
+          match = nil
+          candidate = 0
+          while candidate < found.length() && match == nil
+            match = found[candidate] if self.token_text(found[candidate][1]) == name
+            candidate = candidate + 1
+          end
+          if match == nil
+            self.fail_at(@previous.start(), @previous.line(), @previous.column(),
+              "case pattern alternatives must bind the same names")
+            return nil
+          end
+          aligned.push(match)
+          index = index + 1
+        end
+      end
+      self.emit_instruction2(Opcode::BOOL, match_reg, 1)
+      self.set_type_fact(match_reg, Type::BOOL)
+      failures = []
+      self.emit_case_pattern_match(root, subject, match_reg, failures)
+      index = 0
+      while index < bindings.length()
+        self.emit_instruction2(Opcode::MOVE, bindings[index][1], aligned[index][5])
+        index = index + 1
+      end
+      success_jumps.push(self.emit_jump(Opcode::JUMP, 0))
+      index = 0
+      while index < failures.length()
+        self.patch_jump(failures[index], @code_count)
+        index = index + 1
+      end
+      first_pattern = false
+      break if @current.kind() != :comma
+      self.advance_token()
+      self.skip_newlines()
+    end
+    index = 0
+    while index < success_jumps.length()
+      self.patch_jump(success_jumps[index], @code_count)
+      index = index + 1
+    end
+    bindings
   end
 
   def parse_if(inverted)
@@ -4620,7 +7511,7 @@ class Parser
       self.emit_instruction2(Opcode::NOT, branch_condition, condition)
     end
     exit_jump = self.emit_jump(Opcode::JUMP_IF_FALSE, branch_condition)
-    frame = [destination, [], loop_start, @code_count]
+    frame = [destination, [], loop_start, @code_count, @begin_depth]
     entry_facts = self.copy_type_facts()
     @loops.push(frame)
     self.compile_sequence()
@@ -4646,7 +7537,7 @@ class Parser
     return destination unless self.consume_block_start_or(:do)
     outer_loop_captures_pending = self.enter_capturing_loop()
     body_start = @code_count
-    frame = [destination, [], body_start, body_start]
+    frame = [destination, [], body_start, body_start, @begin_depth]
     @loops.push(frame)
     self.compile_sequence()
     @loops.pop()
@@ -4666,38 +7557,14 @@ class Parser
   # --- expressions (Pratt/precedence-climbing, mirroring
   # parse_precedence/parse_prefix/token_precedence/binary_opcode) ---
 
-  def token_precedence(kind)
-    return Precedence::RANGE if kind == :dot_dot || kind == :dot_dot_dot
-    return Precedence::OR if kind == :or_or || kind == :or
-    return Precedence::AND if kind == :and_and || kind == :and
-    return Precedence::EQUALITY if kind == :equal_equal || kind == :bang_equal ||
-      kind == :is || kind == :spaceship
-    return Precedence::COMPARISON if kind == :less || kind == :less_equal || kind == :greater || kind == :greater_equal
-    return Precedence::SHIFT if kind == :less_less || kind == :greater_greater ||
-      kind == :ampersand || kind == :pipe || kind == :caret
-    return Precedence::TERM if kind == :plus || kind == :minus
-    return Precedence::FACTOR if kind == :star || kind == :slash || kind == :percent
-    Precedence::NONE
-  end
-
-  def binary_opcode(kind)
-    return Opcode::ADD if kind == :plus
-    return Opcode::SUBTRACT if kind == :minus
-    return Opcode::MULTIPLY if kind == :star
-    return Opcode::DIVIDE if kind == :slash
-    return Opcode::MODULO if kind == :percent
-    return Opcode::EQUAL if kind == :equal_equal
-    return Opcode::NOT_EQUAL if kind == :bang_equal
-    return Opcode::LESS if kind == :less
-    return Opcode::LESS_EQUAL if kind == :less_equal
-    return Opcode::GREATER if kind == :greater
-    return Opcode::GREATER_EQUAL if kind == :greater_equal
-    return Opcode::COMPARE if kind == :spaceship
-    return Opcode::SHIFT_RIGHT if kind == :greater_greater
-    return Opcode::BITWISE_AND if kind == :ampersand
-    return Opcode::BITWISE_OR if kind == :pipe
-    return Opcode::BITWISE_XOR if kind == :caret
-    Opcode::SHIFT_LEFT
+  # After `..` or `...`: does the next token close or separate rather than
+  # start an end expression (`a[1..]`, `(1..)`, `when 5..`)? Mirrors
+  # compiler_expressions.c's range_end_absent.
+  def range_end_absent?()
+    kind = @current.kind()
+    kind == :right_bracket || kind == :right_paren || kind == :right_brace ||
+      kind == :comma || kind == :newline || kind == :eof || kind == :then ||
+      kind == :end || kind == :do
   end
 
   # Mirrors src/compiler.c's parse_ternary -- see that function's own
@@ -4742,16 +7609,20 @@ class Parser
 
   def parse_precedence(precedence)
     left = self.parse_prefix()
-    while !@failed && (@current.kind() == :dot || @current.kind() == :left_bracket)
+    # `expr(...)` right after a whole expression calls the Callable it made
+    # (`make()(1)`, `table[0]()`), as compiler.c's parse_precedence does.
+    while !@failed && (@current.kind() == :dot || @current.kind() == :left_bracket || @current.kind() == :left_paren)
       left = if @current.kind() == :dot
         self.compile_invoke(left)
+      elsif @current.kind() == :left_paren
+        self.compile_callable_call(left)
       else
         self.parse_index(left)
       end
     end
-    while !@failed && self.token_precedence(@current.kind()) >= precedence
+    while !@failed && token_precedence(@current.kind()) >= precedence
       operator = @current.kind()
-      operator_precedence = self.token_precedence(operator)
+      operator_precedence = token_precedence(operator)
       self.advance_token()
       # A newline right after a binary operator can only mean "the right
       # operand continues on the next line" -- mirrors src/compiler.c's
@@ -4780,7 +7651,14 @@ class Parser
         end
       elsif operator == :dot_dot || operator == :dot_dot_dot
         exclusive = operator == :dot_dot_dot
-        right = self.parse_precedence(operator_precedence + 1)
+        # `1..` with nothing after it is an endless range: the end is nil.
+        right = if self.range_end_absent?()
+          nil_end = self.allocate_register()
+          self.emit_instruction1(Opcode::NIL, nil_end)
+          nil_end
+        else
+          self.parse_precedence(operator_precedence + 1)
+        end
         class_entry = self.find_class("Range")
         if class_entry == nil
           self.fail("'Range' is not defined -- is the prelude loaded?")
@@ -4798,7 +7676,7 @@ class Parser
           self.emit_instruction2(Opcode::MOVE, argument_base + 1, right)
           self.emit_instruction2(Opcode::MOVE, argument_base + 2, exclusive_register)
           destination = self.allocate_register()
-          self.emit_byte(Opcode::NEW)
+          self.emit_call_opcode(Opcode::NEW)
           self.emit_register(destination)
           self.emit_register(class_entry[1])
           self.emit_register(argument_base)
@@ -4823,7 +7701,7 @@ class Parser
       elsif operator != :is
         right = self.parse_precedence(operator_precedence + 1)
         destination = self.allocate_register()
-        self.emit_instruction3(self.binary_opcode(operator), destination, left, right)
+        self.emit_instruction3(binary_opcode(operator), destination, left, right)
         if operator == :equal_equal || operator == :bang_equal
           self.set_type_fact(destination, Type::BOOL)
           nil_when_true = operator == :equal_equal
@@ -4862,13 +7740,27 @@ class Parser
         self.fail("'self' used outside a method")
         return 0
       end
+      if @in_singleton_method && @current.kind() == :dot
+        self.advance_token()
+        if @current.kind() != :identifier
+          self.fail("expected method name after '.'")
+          return 0
+        end
+        name = self.token_text(@current)
+        self.advance_token()
+        return self.compile_self_class_call(name)
+      end
       return 0
     end
-    if kind == :instance_variable
-      return self.compile_ivar_read(@previous)
-    end
-    if kind == :class_variable
-      return self.compile_cvar_read(@previous)
+    if kind == :instance_variable || kind == :class_variable
+      value = if kind == :instance_variable
+        self.compile_ivar_read(@previous)
+      else
+        self.compile_cvar_read(@previous)
+      end
+      # `@callback(x)` calls the Callable the variable holds.
+      return self.compile_callable_call(value) if @current.kind() == :left_paren
+      return value
     end
     if kind == :minus
       operand = self.parse_precedence(Precedence::PREFIX)
@@ -4901,10 +7793,67 @@ class Parser
     0
   end
 
+  # Inside a method with a `&block` parameter, `yield(args)` calls that
+  # block (through its Cell inside a nested block); elsewhere it is
+  # Fiber.yield. Mirrors compiler_control.c's compile_yield.
+  # `block_given?()`, the current token being the '(': whether the
+  # enclosing method's `&block` is non-nil; false in one without a `&block`.
+  # Mirrors compiler_calls.c's parse_block_given_call.
+  def compile_block_given()
+    self.advance_token()
+    self.skip_newlines()
+    if @current.kind() != :right_paren
+      self.fail("block_given? does not accept arguments")
+      return 0
+    end
+    self.advance_token()
+    destination = self.allocate_register()
+    block_entry = if @current_block_name == nil then nil else self.find_local(@current_block_name) end
+    if block_entry == nil
+      self.emit_instruction2(Opcode::BOOL, destination, 0)
+    else
+      block = self.read_local(block_entry)
+      absent = self.allocate_register()
+      self.emit_instruction1(Opcode::NIL, absent)
+      missing = self.allocate_register()
+      self.emit_instruction3(Opcode::EQUAL, missing, block, absent)
+      self.emit_instruction2(Opcode::NOT, destination, missing)
+    end
+    self.set_type_fact(destination, Type::BOOL)
+    destination
+  end
+
   def compile_yield()
+    block_entry = if @current_block_name == nil then nil else self.find_local(@current_block_name) end
+    if block_entry != nil
+      block = self.read_local(block_entry)
+      callable_set = self.declare_annotation(if @current_block_type == nil
+        [["Callable", nil, nil, -1, nil, nil]]
+      else
+        @current_block_type
+      end)
+      self.emit_instruction2(Opcode::CHECK_TYPE, block, callable_set)
+      return self.compile_closure_call(block_entry) if @current.kind() == :left_paren
+      base = self.allocate_register()
+      destination = self.allocate_register()
+      self.emit_call_opcode(Opcode::CALL_CLOSURE)
+      self.emit_register(destination)
+      self.emit_register(block)
+      self.emit_register(base)
+      self.emit_byte(0)
+      return destination
+    end
     source = if @current.kind() == :left_paren
       self.advance_token()
-      value = self.parse_expression()
+      self.skip_newlines()
+      value = if @current.kind() == :right_paren
+        nil_value = self.allocate_register()
+        self.emit_instruction1(Opcode::NIL, nil_value)
+        nil_value
+      else
+        self.parse_expression()
+      end
+      self.skip_newlines()
       if @current.kind() != :right_paren
         self.fail("expected ')' after yield value")
         return 0
@@ -4937,7 +7886,7 @@ class Parser
     return 0 if parsed == nil
     destination = self.allocate_register()
     method_name_index = self.add_string(@current_method_name)
-    self.emit_byte(Opcode::SUPER)
+    self.emit_call_opcode(Opcode::SUPER)
     self.emit_register(destination)
     self.emit_register(@current_class_index)
     self.emit_register(method_name_index)
@@ -4958,10 +7907,29 @@ class Parser
 
   def parse_array()
     elements = []
+    # `[head, *rest, tail]`: at most one splat, whose Array's elements are
+    # spliced in place; spread_at is its position among elements.
+    spread_at = nil
     self.skip_newlines()
     while !@failed && @current.kind() != :right_bracket
-      if elements.length() == 32
+      # DIAMOND_MAX_ARGUMENTS, as in compiler_expressions.c's parse_array.
+      if elements.length() == 255
         self.fail("array literal has too many elements")
+      elsif @current.kind() == :star
+        if spread_at != nil
+          self.fail("an array literal can splat only one array")
+          return 0
+        end
+        self.advance_token()
+        spread_at = elements.length()
+        elements.push(self.parse_expression())
+        self.skip_newlines()
+        if @current.kind() == :comma
+          self.advance_token()
+          self.skip_newlines()
+        else
+          break
+        end
       else
         elements.push(self.parse_expression())
         self.skip_newlines()
@@ -4977,6 +7945,13 @@ class Parser
       self.fail("expected ']' after array literal")
     else
       self.advance_token() unless @failed
+    end
+    if spread_at != nil
+      # The builder a call's `f(a, *rest, z)` uses: TypeError unless the
+      # splat is an Array.
+      return 0 if @failed
+      return self.emit_build_spread_arguments(elements.slice(0, spread_at), elements[spread_at],
+        elements.slice(spread_at + 1, elements.length() - spread_at - 1), false)
     end
     base = self.allocate_register()
     index = 1
@@ -5105,7 +8080,7 @@ class Parser
     if local == nil
       function_entry = self.find_function(name)
       return self.compile_function_value(function_entry) if function_entry != nil
-      self.fail("undefined local variable")
+      self.fail_at(@previous.start(), @previous.line(), @previous.column(), "undefined local variable")
       return 0
     end
     self.read_local(local)
@@ -5125,10 +8100,16 @@ class Parser
 
   def parse_name_call(name, local)
     return self.compile_closure_call(local) if local != nil
+    return self.compile_block_given() if name == "block_given?"
+    if @in_singleton_method && self.find_function(name) == nil &&
+       @current_class_singleton_method_names.include?(name)
+      return self.compile_self_class_call(name)
+    end
+    return self.parse_p_call() if name == "p" && self.find_function(name) == nil && !self.class_defines_p?()
     return self.parse_print_call(true) if name == "puts" && self.find_function(name) == nil
     return self.parse_print_call(false) if name == "print" && self.find_function(name) == nil
     return self.parse_builtin_scalar_call(name) if self.is_builtin_scalar_target(name)
-    return self.parse_math_unary_call(self.math_unary_id(name)) if self.is_math_unary_target(name)
+    return self.parse_math_unary_call(math_unary_id(name)) if self.is_math_unary_target(name)
     return self.parse_math_binary_call(4) if self.is_math_binary_target(name)
     self.compile_call(name)
   end
@@ -5172,11 +8153,14 @@ class Parser
   # positions aligned with the wrapped function's real parameter layout.
   # A directly-declared singleton (`def self.foo`, class or module) never
   # reserves self in the first place, so its call has no such slot.
+  # needs_receiver is false, true (a module_function export: a nil
+  # receiver slot) or the index of the class whose singleton is called,
+  # loaded into the receiver slot.
   def emit_singleton_call(function_index, parsed, needs_receiver, type_arguments)
-    offset = if needs_receiver
-      1
-    else
+    offset = if needs_receiver == false
       0
+    else
+      1
     end
     base = self.allocate_register()
     index = 1
@@ -5184,6 +8168,7 @@ class Parser
       self.allocate_register()
       index = index + 1
     end
+    self.emit_instruction2(Opcode::LOAD_CLASS, base, needs_receiver) if needs_receiver != true && needs_receiver != false
     index = 0
     while index < parsed[1]
       self.emit_instruction2(Opcode::MOVE, base + index + offset, parsed[0] + index)
@@ -5191,9 +8176,9 @@ class Parser
     end
     destination = self.allocate_register()
     if type_arguments.length() == 0
-      self.emit_byte(Opcode::CALL)
+      self.emit_call_opcode(Opcode::CALL)
     else
-      self.emit_byte(Opcode::CALL_TYPED)
+      self.emit_call_opcode(Opcode::CALL_TYPED)
     end
     self.emit_register(destination)
     self.emit_function_index(function_index)
@@ -5210,26 +8195,6 @@ class Parser
     destination
   end
 
-  def find_descriptor(descriptors, name)
-    index = 0
-    result = nil
-    while index < descriptors.length()
-      result = descriptors[index] if descriptors[index][0] == name
-      index = index + 1
-    end
-    result
-  end
-
-  def find_class_by_index(class_index)
-    index = 0
-    result = nil
-    while index < @classes.length()
-      result = @classes[index] if @classes[index][1] == class_index
-      index = index + 1
-    end
-    result
-  end
-
   # A directly-declared class singleton method (`def self.foo`) is
   # resolved at compile time against the class's own descriptor list
   # only -- unlike instance methods, which the VM looks up dynamically
@@ -5240,12 +8205,12 @@ class Parser
   def find_class_singleton_descriptor(class_entry, name)
     owner = class_entry
     while owner != nil
-      descriptor = self.find_descriptor(owner[3], name)
+      descriptor = find_descriptor(owner[3], name)
       return descriptor if descriptor != nil
       owner = if owner[2] == nil
         nil
       else
-        self.find_class_by_index(owner[2])
+        class_entry_by_index(@classes, owner[2])
       end
     end
     nil
@@ -5267,33 +8232,109 @@ class Parser
       name = name + "="
       self.advance_token()
     end
-    exported = self.find_descriptor(module_entry[7], name)
-    declared = self.find_descriptor(module_entry[9], name)
+    exported = find_descriptor(module_entry[7], name)
+    declared = find_descriptor(module_entry[9], name)
     if exported == nil && declared == nil
       self.fail("undefined module singleton function")
       return 0
     end
-    type_arguments = self.parse_explicit_type_arguments()
-    return 0 if type_arguments == nil
+    type_annotations = self.parse_explicit_type_annotations()
+    return 0 if type_annotations == nil
     if @current.kind() != :left_paren
-      self.fail("expected '(' after singleton function")
-      return 0
+      if exported != nil
+        self.fail("expected '(' after singleton function")
+        return 0
+      end
+      return self.compile_reference_wrapper(nil, [declared, false], type_annotations)
     end
+    type_arguments = self.declare_annotations(type_annotations)
     self.advance_token()
+    self.skip_newlines()
+    if self.call_arguments_have_keyword?()
+      return self.compile_singleton_keyword_call(exported[1], true, type_arguments) if exported != nil
+      return self.compile_singleton_keyword_call(declared[1], false, type_arguments, nil, singleton_block_context(declared))
+    end
+    if self.call_arguments_have_spread?()
+      return self.emit_singleton_spread_call(exported[1], true, type_arguments) if exported != nil
+      return self.emit_singleton_spread_call(declared[1], false, type_arguments, singleton_block_context(declared))
+    end
     parsed = self.parse_call_arguments()
     return 0 if parsed == nil
+    if exported == nil
+      result = self.compile_singleton_block_call(declared, false, type_arguments, parsed)
+      return result if result != nil
+    end
+    parsed = self.append_trailing_block(parsed)
     if exported != nil
-      if parsed[1] < exported[4] || parsed[1] > exported[2]
+      if parsed[1] < exported[4] || self.too_many_arguments?(parsed[1], exported[2], exported[1])
         self.fail("wrong number of arguments")
         return 0
       end
       return self.emit_singleton_call(exported[1], parsed, true, type_arguments)
     end
-    if parsed[1] < declared[3] || parsed[1] > declared[2]
+    if parsed[1] < declared[3] || self.too_many_arguments?(parsed[1], declared[2], declared[1])
       self.fail("wrong number of arguments")
       return 0
     end
     self.emit_singleton_call(declared[1], parsed, false, type_arguments)
+  end
+
+  # A singleton call's positional arguments `parsed` with a trailing do
+  # block, if any. The block takes its types from the last parameter, and
+  # fewer arguments than that slot leave the defaulted ones before it out:
+  # the call then goes by CALL_SINGLETON_KEYWORDS' block flag, as in
+  # compiler_calls.c. Returns the call's register, or nil to make an
+  # ordinary call with the block appended to `parsed`.
+  def compile_singleton_block_call(descriptor, needs_receiver, type_arguments, parsed)
+    return nil if @current.kind() != :do || descriptor.length() < 5
+    @block_context = singleton_block_context(descriptor)
+    return nil if parsed[1] >= descriptor[2] - 1
+    positional = self.allocate_register()
+    self.emit_instruction3(Opcode::ARRAY, positional, parsed[0], parsed[1])
+    block_result = self.compile_block()
+    self.compile_singleton_keyword_call(descriptor[1], needs_receiver, type_arguments,
+      [positional, [], block_result])
+  end
+
+  # `Owner.method(name: value)`: arguments matched to parameters by name at
+  # run time (CALL_SINGLETON_KEYWORDS), which fills the receiver slot from
+  # needs_receiver -- compiler_calls.c's parse_singleton_keyword_call.
+  # needs_receiver is false, true (a module_function export) or the index
+  # of the class whose singleton is called.
+  def compile_singleton_keyword_call(function_index, needs_receiver, type_arguments, arguments = nil, block_context = nil)
+    arguments = self.parse_dynamic_keyword_arguments(block_context) if arguments == nil
+    return 0 if arguments == nil
+    destination = self.allocate_register()
+    # CALL_SINGLETON_KEYWORDS (154) / CALL_TYPED_SINGLETON_KEYWORDS (155):
+    # the Opcode module is at its constant limit.
+    self.emit_call_opcode(if type_arguments.length() == 0 then 154 else 155 end)
+    self.emit_register(destination)
+    self.emit_function_index(function_index)
+    self.emit_register(arguments[0])
+    if needs_receiver == true || needs_receiver == false
+      self.emit_register(65535)
+    else
+      self.emit_register(needs_receiver)
+    end
+    self.emit_byte(if needs_receiver == false then 0 else 1 end)
+    keywords = arguments[1]
+    self.emit_byte(keywords.length() | if arguments[2] == nil then 0 else 128 end)
+    index = 0
+    while index < keywords.length()
+      self.emit_register(keywords[index][0])
+      self.emit_register(keywords[index][1])
+      index = index + 1
+    end
+    self.emit_register(arguments[2]) if arguments[2] != nil
+    if type_arguments.length() > 0
+      self.emit_byte(type_arguments.length())
+      index = 0
+      while index < type_arguments.length()
+        self.emit_register(type_arguments[index])
+        index = index + 1
+      end
+    end
+    destination
   end
 
   # class_entry[3] holds def self.foo-declared descriptors ([name,
@@ -5316,20 +8357,30 @@ class Parser
       self.fail("undefined class singleton method")
       return 0
     end
-    type_arguments = self.parse_explicit_type_arguments()
-    return 0 if type_arguments == nil
+    type_annotations = self.parse_explicit_type_annotations()
+    return 0 if type_annotations == nil
     if @current.kind() != :left_paren
-      self.fail("expected '(' after singleton function")
-      return 0
+      return self.compile_reference_wrapper(nil, [descriptor, class_entry[1]], type_annotations)
     end
+    type_arguments = self.declare_annotations(type_annotations)
     self.advance_token()
+    self.skip_newlines()
+    if self.call_arguments_have_keyword?()
+      return self.compile_singleton_keyword_call(descriptor[1], class_entry[1], type_arguments, nil, singleton_block_context(descriptor))
+    end
+    if self.call_arguments_have_spread?()
+      return self.emit_singleton_spread_call(descriptor[1], class_entry[1], type_arguments, singleton_block_context(descriptor))
+    end
     parsed = self.parse_call_arguments()
     return 0 if parsed == nil
-    if parsed[1] < descriptor[3] || parsed[1] > descriptor[2]
+    result = self.compile_singleton_block_call(descriptor, class_entry[1], type_arguments, parsed)
+    return result if result != nil
+    parsed = self.append_trailing_block(parsed)
+    if parsed[1] < descriptor[3] || self.too_many_arguments?(parsed[1], descriptor[2], descriptor[1])
       self.fail("wrong number of arguments")
       return 0
     end
-    self.emit_singleton_call(descriptor[1], parsed, false, type_arguments)
+    self.emit_singleton_call(descriptor[1], parsed, class_entry[1], type_arguments)
   end
 
   # `Klass.` at this point could mean `.new(...)`, `redefine_method(...)`,
@@ -5408,22 +8459,53 @@ class Parser
     destination
   end
 
+  def fail_if_sealed(class_index, token)
+    return false unless @sealed_classes.include?(class_index)
+    self.fail_at(token.start(), token.line(), token.column(),
+      "cannot instantiate a sealed class directly -- use one of its subclasses")
+    true
+  end
+
   def compile_new_call(class_index)
     self.advance_token()
     if @current.kind() != :identifier || self.token_text(@current) != "new"
       self.fail("expected 'new' after class name")
       return 0
     end
+    return 0 if self.fail_if_sealed(class_index, @current)
     self.advance_token()
     if @current.kind() != :left_paren
       self.fail("expected '(' after 'new'")
       return 0
     end
     self.advance_token()
+    self.skip_newlines()
+    if self.call_arguments_have_keyword?()
+      arguments = self.parse_dynamic_keyword_arguments()
+      return 0 if arguments == nil
+      destination = self.allocate_register()
+      self.emit_call_opcode(Opcode::NEW_KEYWORDS)
+      self.emit_register(destination)
+      self.emit_register(class_index)
+      self.emit_keyword_trailer(arguments)
+      self.set_type_fact(destination, Type::CLASS_BASE + class_index)
+      return destination
+    end
+    if self.call_arguments_have_spread?()
+      arguments = self.parse_spread_call_arguments()
+      return 0 if arguments == nil
+      destination = self.allocate_register()
+      self.emit_call_opcode(Opcode::NEW_SPREAD)
+      self.emit_register(destination)
+      self.emit_register(class_index)
+      self.emit_register(arguments)
+      self.set_type_fact(destination, Type::CLASS_BASE + class_index)
+      return destination
+    end
     parsed = self.parse_call_arguments()
     return 0 if parsed == nil
     destination = self.allocate_register()
-    self.emit_byte(Opcode::NEW)
+    self.emit_call_opcode(Opcode::NEW)
     self.emit_register(destination)
     self.emit_register(class_index)
     self.emit_register(parsed[0])
@@ -5528,16 +8610,6 @@ class Parser
   def is_math_binary_target(name)
     return false if self.find_function(name) != nil
     name == "pow"
-  end
-
-  def math_unary_id(name)
-    return 0 if name == "sqrt"
-    return 1 if name == "sin"
-    return 2 if name == "cos"
-    return 5 if name == "exp"
-    return 6 if name == "log"
-    return 7 if name == "tanh"
-    3
   end
 
   def parse_math_unary_call(id)

@@ -1,0 +1,32 @@
+def classify(value)
+  case value
+  when Later
+    "later"
+  when Shape
+    "shape"
+  when ArgumentError, TypeError
+    "error"
+  else
+    "other"
+  end
+end
+
+sealed class Shape
+end
+
+class Circle < Shape
+  def initialize(r)
+    @r = r
+  end
+end
+
+class Later
+end
+
+sealed = "still a name"
+puts(sealed)
+puts(classify(Circle.new(1)))
+puts(classify(Later.new()))
+puts(classify(ArgumentError.new("bad")))
+puts(classify(3))
+puts(Circle.new(2).is_a?(Shape))

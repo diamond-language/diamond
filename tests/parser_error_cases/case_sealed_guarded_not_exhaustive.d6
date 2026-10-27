@@ -1,0 +1,15 @@
+sealed class Shape
+end
+
+class Circle < Shape
+end
+
+class Square < Shape
+end
+
+def area(shape: Shape)
+  case shape
+  when Circle if true then 3
+  when Square then 4
+  end
+end

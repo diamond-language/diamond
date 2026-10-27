@@ -222,14 +222,20 @@ Keep the self-hosted implementation at practical parity where it protects the la
 but do not duplicate every native optimization unless it advances a specific bootstrap or
 language-design goal.
 
-Running every `tests/cases` program through the self-hosted compiler (2026-10-26): 1,035 of
-1,483 compile and run. Open language gaps, roughly by size:
+Running every `tests/cases` program through the self-hosted compiler (2026-10-27): 1,166 of
+1,488 compile and run. Most of the rest use runtime builtins (below). Open language gaps,
+roughly by size:
 
-- splat destructuring (`[head, *rest] = ...`) and splat array literals;
-- `&block` parameters, block forwarding, and `&block` after a defaulted parameter;
-- `define_method`/`compile_method`, `delegate`, `struct` and class variables inside modules;
-- unions and object patterns naming a later class, qualified case patterns;
-- string escapes the native lexer accepts, bignum constants;
+- `delegate` and `protected` in class bodies, `define_method`/`compile_method`, and class
+  variables inside modules;
+- self-recursive tail calls (deep recursion overflows the call stack without them);
+- reopening a module or class, and forward references to a later class's singleton methods;
+- unions that repeat a type, generic type variables as `rescue` filters, and object patterns
+  naming a later class;
+- static return-type errors for blocks (native rejects them at compile time; self-hosted
+  checks at run time), and Callable signatures inferred for generic spreads;
+- postfix `while`/`until` and conditions, string escapes the native lexer accepts, bignum
+  constants;
 - `require_cut` / package requires.
 
 The runtime builtin surfaces (Channel, Process, Time, Thread, SQLite3, Supervisor, sockets,

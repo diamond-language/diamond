@@ -1,0 +1,5 @@
+ProgramBuilder#set_nonlocal_landing has an invalid function index
+ProgramBuilder#set_block_call_offset has an invalid function or offset
+ProgramBuilder#set_block_call_offset has an invalid function or offset
+ok
+nil
