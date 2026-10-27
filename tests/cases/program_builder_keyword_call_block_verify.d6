@@ -1,0 +1,38 @@
+# The bytecode verifier read the block register of keyword calls at an
+# offset relative to the instruction instead of the function, rejected a
+# block with no keywords (`Class.new(*args) do ... end` compiles to that)
+# and ignored the block flag of CALL_SINGLETON_KEYWORDS altogether. The
+# leading JUMPs (over the calls, which never run) leave opcode 27 at
+# absolute offset 12, which the old check read as register r6912.
+b = ProgramBuilder.new()
+klass = b.declare_class("Widget", -1)
+function = b.declare_function("helper", 1, 1)
+b.emit_byte(function, 57)
+b.emit_byte(function, 0)
+b.emit_byte(function, 0)
+b.set_register_count(function, 1)
+method_name = b.add_string(-1, "build")
+keyword_name = b.add_string(-1, "size")
+calls = []
+# NEW_KEYWORDS r1, Widget, r2, size: r3, block r4.
+calls = calls + [153, 0, 1, 0, klass, 0, 2, 129, 0, keyword_name, 0, 3, 0, 4]
+# NEW_KEYWORDS r1, Widget, r2, no keywords, block r4.
+calls = calls + [153, 0, 1, 0, klass, 0, 2, 128, 0, 4]
+# INVOKE_KEYWORDS r1, r0.build, r2, size: r3, block r4.
+calls = calls + [150, 0, 1, 0, 0, 0, method_name, 0, 2, 129, 0, keyword_name, 0, 3, 0, 4]
+# CALL_CLOSURE_KEYWORDS r1, r0, r2, size: r3, block r4.
+calls = calls + [152, 0, 1, 0, 0, 0, 2, 129, 0, keyword_name, 0, 3, 0, 4]
+# CALL_SINGLETON_KEYWORDS r1, helper, r2, Widget, no receiver, size: r3, block r4.
+calls = calls + [154, 0, 1, 0, function, 0, 2, 0, klass, 0, 129, 0, keyword_name, 0, 3, 0, 4]
+done = 15 + calls.length()
+code = []
+5.times() do
+  code = code + [27, done / 256, done % 256]
+end
+# NIL r0; RETURN r0
+code = code + calls + [3, 0, 0, 57, 0, 0]
+code.each() do |byte|
+  b.emit_byte(-1, byte)
+end
+b.set_register_count(-1, 5)
+puts(b.run() == nil)
