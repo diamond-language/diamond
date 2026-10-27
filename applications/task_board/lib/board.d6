@@ -1,7 +1,9 @@
+require "./store"
+
 # The controller has no terminal dependencies: key handling and validated writes
 # can be exercised without a pseudo-terminal.
 class TaskBoard
-  def initialize(store)
+  def initialize(store: BoardStore)
     @store = store
     @column = 0
     @row = 0
