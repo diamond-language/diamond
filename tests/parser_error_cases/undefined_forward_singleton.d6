@@ -1,0 +1,3 @@
+class A
+end
+def f() = A.thing(1)

@@ -1,0 +1,15 @@
+def value() = LATER
+class Config
+  def self.value() = LIMIT
+  def self.outer() = LATER
+  LIMIT = 42
+end
+module Settings
+  def self.name() = NAME
+  NAME = "settings"
+end
+LATER = 12
+puts(value())
+puts(Config.value())
+puts(Config.outer())
+Settings.name()

@@ -1,0 +1,11 @@
+def doubled(items) = items.map() do |x| x * 2 end
+def tagged(items)
+  label = "n"
+  pair = [label, items.map() do |x| x + 1 end]
+  pair
+end
+ys = [3, 4]
+puts(doubled([1, 2]).inspect())
+puts(tagged([5]).inspect())
+puts(ys.map() do |y| y + 1 end.inspect())
+[ys, ys.select() do |y| y > 3 end]

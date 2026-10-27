@@ -1,0 +1,19 @@
+def count_up(limit, eager)
+  i = 0
+  if eager
+    [1].each() do |unused|
+      i = i + 100
+    end
+  end
+  while i < limit
+    i = i + 1
+  end
+  i
+end
+puts(count_up(3, false))
+puts(count_up(3, true))
+total = 0
+(1..4).each() do |x|
+  total = total + x
+end
+puts(total)

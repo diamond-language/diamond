@@ -1,0 +1,21 @@
+# The condition reads `ids` before the block later in the body captures
+# it; the next iteration's read must see through the Cell.
+ids = [1]
+index = 0
+while index < ids.length()
+  children = if ids[index] < 4 then [ids[index] * 2, ids[index] * 2 + 1] else [] end
+  children.each() do |child|
+    ids.push(child)
+  end
+  index = index + 1
+end
+puts(ids)
+count = 0
+loop do
+  fresh = count
+  [1].each() do |step|
+    count = fresh + step
+  end
+  break if count == 3
+end
+puts(count)
