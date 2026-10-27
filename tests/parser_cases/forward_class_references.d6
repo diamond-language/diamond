@@ -1,0 +1,26 @@
+class Factory
+  def make(name) = Widget.new(name)
+  def self.default() = Widget.named("default")
+  def self.count() = Factory.later_count()
+  def self.later_count() = 3
+end
+module Shop
+  def self.build() = Item.new(2)
+  class Item
+    def initialize(price)
+      @price = price
+    end
+    def price() = @price
+  end
+end
+class Widget
+  def initialize(name)
+    @name = name
+  end
+  def self.named(name) = Widget.new(name + "!")
+  def to_s() = "widget " + @name
+end
+puts(Factory.new().make("a"))
+puts(Factory.default())
+puts(Factory.count())
+Shop.build().price()

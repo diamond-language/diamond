@@ -1,0 +1,12 @@
+def total(items) = items.map() do |x| double(x) end.sum() + offset()
+def double(x) = x * 2
+def offset() = 1
+class Report
+  def value() = triple(5)
+end
+def triple(x) = x * 3
+def each_twice(item) = twice(item)
+def twice(x) = [x, x]
+puts(total([1, 2, 3]))
+puts(Report.new().value())
+each_twice(7)

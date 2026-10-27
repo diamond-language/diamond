@@ -253,9 +253,23 @@ class Parser
     # nested function's own body), needing GET_CELL/SET_CELL rather than
     # a direct register read/MOVE. See compile_definition/BOX_LOCAL.
     @locals = []
+    # Inside a loop whose body may capture (loop_body_may_capture?): new
+    # locals start captured. Mirrors compiler.c's loop_captures_pending.
+    @loop_captures_pending = false
     @loops = []
     @functions = []
     @namespace_constants = []
+    # Forward references, patched at the end of compile(): constant reads
+    # [function index, operand offset, name, scope, token] and direct calls
+    # [function index, operand offset, name, argument count, token].
+    @forward_constants = []
+    @forward_calls = []
+    # Classes named before their declaration: `X.new(...)` sites
+    # [function index, operand offset, name, module, token] and
+    # `X.method(...)` sites [function index, operand offset, name, module,
+    # token, method name, argument count, method name token].
+    @forward_news = []
+    @forward_singleton_calls = []
     # -1 targets the ProgramBuilder entry function; a real function's own
     # index once compile_definition switches into its body. Every
     # emit_byte/add_constant/add_string/patch_byte call routes through
@@ -360,6 +374,7 @@ class Parser
     end
     self.emit_instruction1(Opcode::RETURN, result)
     @builder.set_register_count(-1, @next_register)
+    self.resolve_forward_references() unless @failed
     !@failed
   end
 
@@ -670,15 +685,19 @@ class Parser
 
   def define_local(name)
     register = self.allocate_register()
-    @locals.push([name, register, false])
+    @locals.push([name, register, @loop_captures_pending])
     register
   end
 
   # A captured local's register holds a Cell (see compile_definition's
   # GET_CAPTURE_CELL loop), so reading its value needs an extra GET_CELL
   # unwrap; an ordinary local's register already holds the value directly.
+  # A captured local's boxing site may sit in a branch that didn't run
+  # (a block or nested def inside an `if`), so every Cell access re-emits
+  # BOX_LOCAL first -- it does nothing once the register holds a Cell.
   def read_local(entry)
     return entry[1] unless entry[2]
+    self.emit_instruction1(Opcode::BOX_LOCAL, entry[1])
     destination = self.allocate_register()
     self.emit_instruction2(Opcode::GET_CELL, destination, entry[1])
     destination
@@ -805,10 +824,82 @@ class Parser
     nil
   end
 
+  # Does the statement starting at @current contain a `do` block or a def
+  # before its first line ends (brackets let it span lines)? Mirrors
+  # compiler.c's statement_may_capture. A block boxes every visible local
+  # in place, so a value read earlier in the same statement (the receiver
+  # of `items.map() do ... end`) would otherwise turn into the Cell.
+  def statement_may_capture?()
+    lookahead = @lexer.clone()
+    kind = @current.kind()
+    depth = 0
+    while kind != :eof
+      return true if kind == :do || kind == :def
+      if kind == :left_paren || kind == :left_bracket || kind == :left_brace
+        depth = depth + 1
+      elsif kind == :right_paren || kind == :right_bracket || kind == :right_brace
+        return false if depth == 0
+        depth = depth - 1
+      elsif kind == :newline
+        return false if depth == 0
+      end
+      kind = lookahead.next_token().kind()
+    end
+    false
+  end
+
+  # Marks every local captured, so the statement's reads copy the value
+  # out of a Cell (read_local) instead of handing over the register a
+  # block is about to box in place.
+  def mark_locals_captured()
+    index = 0
+    while index < @locals.length()
+      entry = @locals[index]
+      entry[2] = true
+      index = index + 1
+    end
+  end
+
+  # Does the loop body starting at the current token contain a def or `do`
+  # before its own `end`? A local read by the condition (or early in the
+  # body) and captured later in the body must be box-aware from the start,
+  # since the next iteration finds it boxed. Mirrors compiler_flow.c's
+  # loop_body_may_capture, false positives included (they only cost some
+  # boxing).
+  def loop_body_may_capture?()
+    lookahead = @lexer.clone()
+    kind = @current.kind()
+    depth = 0
+    while kind != :eof
+      return true if kind == :def || kind == :do
+      if kind == :if || kind == :unless || kind == :while || kind == :until ||
+          kind == :loop || kind == :case || kind == :begin || kind == :class ||
+          kind == :module || kind == :interface
+        depth = depth + 1
+      elsif kind == :end
+        return false if depth == 0
+        depth = depth - 1
+      end
+      kind = lookahead.next_token().kind()
+    end
+    false
+  end
+
+  # Enters a loop; returns the outer pending flag to restore on exit.
+  def enter_capturing_loop()
+    outer = @loop_captures_pending
+    if !@loop_captures_pending && self.loop_body_may_capture?()
+      @loop_captures_pending = true
+      self.mark_locals_captured()
+    end
+    outer
+  end
+
   def compile_sequence()
     self.skip_newlines()
     result = self.allocate_register()
     while !@failed && !self.at_block_end?()
+      self.mark_locals_captured() if self.statement_may_capture?()
       postfix = self.postfix_modifier_ahead()
       has_postfix = postfix == :if || postfix == :unless
       postfix_result = if has_postfix
@@ -952,6 +1043,7 @@ class Parser
     enclosing_locals = @locals
 
     outer_locals = @locals
+    outer_loop_captures_pending = @loop_captures_pending
     outer_loops = @loops
     outer_next_register = @next_register
     outer_code_count = @code_count
@@ -962,6 +1054,7 @@ class Parser
     outer_declared_types = @declared_types
 
     @locals = []
+    @loop_captures_pending = false
     @loops = []
     @next_register = 0
     @code_count = 0
@@ -1005,6 +1098,7 @@ class Parser
     @builder.set_register_count(function_index, @next_register)
 
     @locals = outer_locals
+    @loop_captures_pending = outer_loop_captures_pending
     @loops = outer_loops
     @next_register = outer_next_register
     @code_count = outer_code_count
@@ -1812,6 +1906,7 @@ class Parser
   def compile_function_body(function_index, parameter_names, parameter_types,
                             parameter_defaults, return_type, enclosing_locals, self_offset)
     outer_locals = @locals
+    outer_loop_captures_pending = @loop_captures_pending
     outer_loops = @loops
     outer_next_register = @next_register
     outer_code_count = @code_count
@@ -1822,6 +1917,7 @@ class Parser
     outer_declared_types = @declared_types
 
     @locals = []
+    @loop_captures_pending = false
     @loops = []
     @next_register = 0
     @code_count = 0
@@ -1855,6 +1951,7 @@ class Parser
     if endless
       self.advance_token()
       self.skip_newlines()
+      self.mark_locals_captured() if self.statement_may_capture?()
       postfix = self.postfix_modifier_ahead()
       has_postfix = postfix == :if || postfix == :unless
       postfix_result = self.allocate_register() if has_postfix
@@ -1912,6 +2009,7 @@ class Parser
     @builder.set_register_count(function_index, @next_register)
 
     @locals = outer_locals
+    @loop_captures_pending = outer_loop_captures_pending
     @loops = outer_loops
     @next_register = outer_next_register
     @code_count = outer_code_count
@@ -2372,8 +2470,11 @@ class Parser
     ""
   end
 
-  def find_lexical_constant(name)
-    scope = self.constant_scope()
+  def find_lexical_constant(name) = self.find_constant_from(self.constant_scope(), name)
+
+  # Resolves name the way a reference inside `scope` does: innermost
+  # enclosing class or module first, then outward to the top level.
+  def find_constant_from(scope, name)
     while scope != ""
       found = self.find_namespace_constant(scope + "::" + name)
       return found if found != nil
@@ -2382,6 +2483,211 @@ class Parser
       scope = parts.join("::")
     end
     self.find_namespace_constant(name)
+  end
+
+  # A single-pass compiler sees a constant read or a call before a later
+  # declaration of it; compiler.c learns every declaration up front from its
+  # discovery pass instead. Each such reference was emitted with a
+  # placeholder index and is patched here, once every declaration is known.
+  def resolve_forward_references()
+    index = 0
+    while index < @forward_constants.length() && !@failed
+      entry = @forward_constants[index]
+      constant_index = self.find_constant_from(entry[3], entry[2])
+      if constant_index == nil
+        token = entry[4]
+        self.fail_at(token.start(), token.line(), token.column(),
+          "undefined constant '" + entry[2] + "'")
+      else
+        self.patch_index(entry[0], entry[1], constant_index)
+      end
+      index = index + 1
+    end
+    index = 0
+    while index < @forward_calls.length() && !@failed
+      entry = @forward_calls[index]
+      token = entry[4]
+      function_entry = self.find_function(entry[2])
+      if function_entry == nil
+        self.fail_at(token.start(), token.line(), token.column(), "undefined function")
+      elsif entry[3] < function_entry[6] || entry[3] > function_entry[2]
+        self.fail_at(token.start(), token.line(), token.column(), "wrong number of arguments")
+      else
+        self.patch_index(entry[0], entry[1], function_entry[1])
+      end
+      index = index + 1
+    end
+    self.resolve_forward_class_references()
+  end
+
+  def resolve_forward_class_references()
+    index = 0
+    while index < @forward_news.length() && !@failed
+      entry = @forward_news[index]
+      class_entry = self.find_forward_class(entry[2], entry[3])
+      if class_entry == nil
+        token = entry[4]
+        self.fail_at(token.start(), token.line(), token.column(),
+          "undefined constant '" + entry[2] + "'")
+      else
+        self.patch_index(entry[0], entry[1], class_entry[1])
+      end
+      index = index + 1
+    end
+    index = 0
+    while index < @forward_singleton_calls.length() && !@failed
+      entry = @forward_singleton_calls[index]
+      token = entry[4]
+      class_entry = self.find_forward_class(entry[2], entry[3])
+      descriptor = if class_entry == nil
+        nil
+      else
+        self.find_class_singleton_descriptor(class_entry, entry[5])
+      end
+      if class_entry == nil
+        self.fail_at(token.start(), token.line(), token.column(),
+          "undefined constant '" + entry[2] + "'")
+      elsif descriptor == nil
+        method_token = entry[7]
+        self.fail_at(method_token.start(), method_token.line(), method_token.column(),
+          "undefined class singleton method")
+      elsif entry[6] < descriptor[3] || entry[6] > descriptor[2]
+        self.fail_at(token.start(), token.line(), token.column(), "wrong number of arguments")
+      else
+        self.patch_index(entry[0], entry[1], descriptor[1])
+      end
+      index = index + 1
+    end
+  end
+
+  # Overwrites a 16-bit operand, big-endian like emit_register.
+  def patch_index(function_index, offset, value)
+    @builder.patch_byte(function_index, offset, value / 256)
+    @builder.patch_byte(function_index, offset + 1, mod(value, 256))
+  end
+
+  # A capitalized name with nothing declared under it yet: a constant
+  # assigned later in the file. Read with a placeholder index.
+  def compile_forward_constant(name)
+    destination = self.allocate_register()
+    self.emit_byte(48)
+    self.emit_register(destination)
+    @forward_constants.push([@current_function_index, @code_count, name,
+                             self.constant_scope(), @previous])
+    self.emit_register(0)
+    destination
+  end
+
+  # A call to a top-level function defined later in the file. Its
+  # parameters aren't known yet, so arguments are positional only; the
+  # count is checked against the arity once the definition is reached.
+  def compile_forward_call(name_token)
+    if @current.kind() != :left_paren
+      self.fail("undefined function")
+      return 0
+    end
+    site = self.emit_forward_call_site()
+    return 0 if site == nil
+    @forward_calls.push([@current_function_index, site[1], self.token_text(name_token),
+                         site[2], name_token])
+    site[0]
+  end
+
+  # Parses `(args)` plus an optional trailing do block (the current token is
+  # the '(') and emits a CALL whose function index is a placeholder.
+  # Returns [destination, function index operand offset, argument count].
+  def emit_forward_call_site()
+    self.advance_token()
+    self.skip_newlines()
+    arguments = []
+    if @current.kind() != :right_paren
+      more = true
+      while more && !@failed
+        if self.keyword_argument_ahead?()
+          self.fail("keyword arguments need the function defined before the call")
+          return nil
+        end
+        arguments.push(self.parse_expression())
+        self.skip_newlines()
+        if @current.kind() == :comma
+          self.advance_token()
+          self.skip_newlines()
+          more = @current.kind() != :right_paren
+        else
+          more = false
+        end
+      end
+    end
+    if @current.kind() != :right_paren
+      self.fail("expected ')' after arguments")
+      return nil
+    end
+    self.advance_token()
+    arguments.push(self.compile_block()) if @current.kind() == :do
+    argument_base = self.allocate_register()
+    i = 1
+    while i < arguments.length()
+      self.allocate_register()
+      i = i + 1
+    end
+    i = 0
+    while i < arguments.length()
+      self.emit_instruction2(Opcode::MOVE, argument_base + i, arguments[i])
+      i = i + 1
+    end
+    destination = self.allocate_register()
+    self.emit_byte(Opcode::CALL)
+    self.emit_register(destination)
+    offset = @code_count
+    self.emit_function_index(0)
+    self.emit_register(argument_base)
+    self.emit_byte(arguments.length())
+    [destination, offset, arguments.length()]
+  end
+
+  # `X.new(...)` or `X.method(...)` where class X, or the singleton method,
+  # is declared later. The current token is the '.'.
+  def compile_forward_class_call(name_token)
+    self.advance_token()
+    if @current.kind() != :identifier
+      self.fail("expected method name after '.'")
+      return 0
+    end
+    method_name = self.token_text(@current)
+    method_token = @current
+    self.advance_token()
+    if @current.kind() != :left_paren
+      self.fail("expected '(' after singleton function")
+      return 0
+    end
+    if method_name == "new"
+      self.advance_token()
+      parsed = self.parse_call_arguments()
+      return 0 if parsed == nil
+      destination = self.allocate_register()
+      self.emit_byte(Opcode::NEW)
+      self.emit_register(destination)
+      @forward_news.push([@current_function_index, @code_count, self.token_text(name_token),
+                          @current_module_name, name_token])
+      self.emit_register(0)
+      self.emit_register(parsed[0])
+      self.emit_byte(parsed[1])
+      return destination
+    end
+    site = self.emit_forward_call_site()
+    return 0 if site == nil
+    @forward_singleton_calls.push([@current_function_index, site[1], self.token_text(name_token),
+                                   @current_module_name, name_token, method_name, site[2],
+                                   method_token])
+    site[0]
+  end
+
+  # The class a forward reference names, looked up the way parse_name
+  # does: the bare name, then qualified by the module it appeared in.
+  def find_forward_class(name, module_name)
+    entry = self.find_class(name)
+    entry = self.find_class(module_name + "::" + name) if entry == nil && module_name != nil
+    entry
   end
 
   def store_namespace_constant(name, value)
@@ -2709,6 +3015,7 @@ class Parser
 
   def compile_method_body(function_index, parameter_names, parameter_types, parameter_defaults, return_type, module_singleton)
     outer_locals = @locals
+    outer_loop_captures_pending = @loop_captures_pending
     outer_loops = @loops
     outer_next_register = @next_register
     outer_code_count = @code_count
@@ -2718,6 +3025,7 @@ class Parser
     outer_declared_types = @declared_types
 
     @locals = []
+    @loop_captures_pending = false
     @loops = []
     @next_register = 0
     @code_count = 0
@@ -2744,6 +3052,7 @@ class Parser
     if endless
       self.advance_token()
       self.skip_newlines()
+      self.mark_locals_captured() if self.statement_may_capture?()
       postfix = self.postfix_modifier_ahead()
       has_postfix = postfix == :if || postfix == :unless
       postfix_result = self.allocate_register() if has_postfix
@@ -2801,6 +3110,7 @@ class Parser
     @builder.set_register_count(function_index, @next_register)
 
     @locals = outer_locals
+    @loop_captures_pending = outer_loop_captures_pending
     @loops = outer_loops
     @next_register = outer_next_register
     @code_count = outer_code_count
@@ -2899,6 +3209,7 @@ class Parser
     function_index = @builder.declare_function(method_name, arity + 1, arity + 1)
 
     outer_locals = @locals
+    outer_loop_captures_pending = @loop_captures_pending
     outer_loops = @loops
     outer_next_register = @next_register
     outer_code_count = @code_count
@@ -2908,6 +3219,7 @@ class Parser
     outer_declared_types = @declared_types
 
     @locals = []
+    @loop_captures_pending = false
     @loops = []
     @next_register = 0
     @code_count = 0
@@ -2954,6 +3266,7 @@ class Parser
     @builder.set_register_count(function_index, @next_register)
 
     @locals = outer_locals
+    @loop_captures_pending = outer_loop_captures_pending
     @loops = outer_loops
     @next_register = outer_next_register
     @code_count = outer_code_count
@@ -3017,17 +3330,13 @@ class Parser
   # positional-only, via parse_call_arguments) -- compiler.c scopes
   # keyword arguments the same way, since only a direct call has
   # compile-time, non-polymorphic access to the target's exact
-  # parameter names. No defaults exist in this port (see this file's
-  # header comment), so unlike compiler.c's own version, every
-  # declared slot must always be filled -- there's no partial-call
-  # case to allow.
+  # parameter names. A keyword may skip a defaulted parameter; see
+  # emit_sparse_keyword_call. A function defined later in the file goes
+  # through compile_forward_call.
   def compile_call(name)
     name_token = @previous
     function_entry = self.find_function(name)
-    if function_entry == nil
-      self.fail("undefined function")
-      return 0
-    end
+    return self.compile_forward_call(name_token) if function_entry == nil
     type_arguments = []
     if @current.kind() == :left_bracket
       self.advance_token()
@@ -3451,6 +3760,7 @@ class Parser
     return self.store_namespace_constant(name, value) if first >= "A" && first <= "Z"
     existing = self.find_local(name)
     if existing != nil && existing[2]
+      self.emit_instruction1(Opcode::BOX_LOCAL, existing[1])
       self.emit_instruction2(Opcode::SET_CELL, existing[1], value)
       self.set_type_fact(existing[1], self.type_fact(value))
       return value
@@ -4298,8 +4608,12 @@ class Parser
     destination = self.allocate_register()
     self.emit_instruction1(Opcode::NIL, destination)
     loop_start = @code_count
+    outer_loop_captures_pending = self.enter_capturing_loop()
     condition = self.parse_expression()
-    return 0 unless self.consume_block_start_or(:do)
+    unless self.consume_block_start_or(:do)
+      @loop_captures_pending = outer_loop_captures_pending
+      return 0
+    end
     branch_condition = condition
     if inverted
       branch_condition = self.allocate_register()
@@ -4311,6 +4625,7 @@ class Parser
     @loops.push(frame)
     self.compile_sequence()
     @loops.pop()
+    @loop_captures_pending = outer_loop_captures_pending
     self.emit_byte(Opcode::JUMP)
     self.emit_byte(loop_start / 256)
     self.emit_byte(mod(loop_start, 256))
@@ -4329,11 +4644,13 @@ class Parser
     destination = self.allocate_register()
     self.emit_instruction1(Opcode::NIL, destination)
     return destination unless self.consume_block_start_or(:do)
+    outer_loop_captures_pending = self.enter_capturing_loop()
     body_start = @code_count
     frame = [destination, [], body_start, body_start]
     @loops.push(frame)
     self.compile_sequence()
     @loops.pop()
+    @loop_captures_pending = outer_loop_captures_pending
     self.emit_byte(Opcode::JUMP)
     self.emit_byte(body_start / 256)
     self.emit_byte(mod(body_start, 256))
@@ -4775,14 +5092,35 @@ class Parser
         self.emit_instruction2(48, destination, constant_index)
         return destination
       end
+      first = name.slice(0, 1)
+      if first >= "A" && first <= "Z" && class_entry == nil && module_entry == nil
+        return self.compile_forward_class_call(@previous) if @current.kind() == :dot
+        if @current.kind() != :left_paren && @current.kind() != :left_bracket
+          return self.compile_forward_constant(name)
+        end
+      end
     end
     return self.parse_name_call(name, local) if @current.kind() == :left_paren
     return self.compile_call(name) if @current.kind() == :left_bracket && local == nil
     if local == nil
+      function_entry = self.find_function(name)
+      return self.compile_function_value(function_entry) if function_entry != nil
       self.fail("undefined local variable")
       return 0
     end
     self.read_local(local)
+  end
+
+  # A top-level function named without a call (`f = add`, `list.map(double)`)
+  # is a Callable value: a closure over it with nothing captured, as in
+  # compiler.c.
+  def compile_function_value(function_entry)
+    destination = self.allocate_register()
+    self.emit_byte(Opcode::CLOSURE)
+    self.emit_register(destination)
+    self.emit_function_index(function_entry[1])
+    self.emit_byte(0)
+    destination
   end
 
   def parse_name_call(name, local)
@@ -5029,6 +5367,9 @@ class Parser
       if found != nil
         self.advance_token()
         return self.compile_class_singleton_call(class_entry)
+      end
+      if candidate_name != "new" && after.kind() == :left_paren
+        return self.compile_forward_class_call(@previous)
       end
     end
     self.compile_new_call(class_entry[1])

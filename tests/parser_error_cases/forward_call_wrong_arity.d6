@@ -1,0 +1,2 @@
+def a() = later(1, 2)
+def later(x) = x
