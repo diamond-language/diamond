@@ -948,6 +948,10 @@ test-monitor: $(TARGET)
 test-example-apps: $(TARGET)
 	DIAMOND_BIN=$(CURDIR)/$(BUILD_DIR)/diamond bash tests/example_apps_test.sh
 
+.PHONY: test-task-board
+test-task-board: $(TARGET)
+	DIAMOND_BIN=$(CURDIR)/$(BUILD_DIR)/diamond bash applications/task_board/test.sh
+
 # The ```ruby examples in the docs and the published cuts' READMEs: `# =>` claims
 # must hold and every block must parse -- see tools/check_doc_examples.d6.
 # The taken-down cuts are not published, so their READMEs are left out.
@@ -1108,6 +1112,7 @@ test-integration:
 	$(MAKE) test-graphql-package
 	$(MAKE) test-graphsql-package
 	$(MAKE) test-mjolnir-package
+	$(MAKE) test-task-board
 	$(MAKE) test-logger-package
 	$(MAKE) test-minitest-package
 	$(MAKE) test-log-viewer-package

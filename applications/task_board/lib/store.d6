@@ -1,0 +1,76 @@
+require_cut "mjolnir"
+
+struct BoardProject(id: Int, name: String)
+end
+
+struct BoardTask(id: Int, project_id: Int, title: String, status: String)
+end
+
+def build_board_project(row) = BoardProject.new(row["id"], row["name"])
+def build_board_task(row) = BoardTask.new(row["id"], row["project_id"], row["title"], row["status"])
+
+# Entities are frozen values. Only this repository boundary reads or writes SQL.
+class BoardStore
+  def initialize(db)
+    @db = db
+    @db.execute("PRAGMA foreign_keys = ON")
+    @db.execute("PRAGMA busy_timeout = 5000")
+    @db.execute("CREATE TABLE IF NOT EXISTS projects (id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE)")
+    @db.execute("CREATE TABLE IF NOT EXISTS tasks (id INTEGER PRIMARY KEY,
+      project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+      title TEXT NOT NULL, status TEXT NOT NULL CHECK (status IN ('todo', 'doing', 'done')))")
+    @db.execute("CREATE INDEX IF NOT EXISTS tasks_project_status ON tasks(project_id, status)")
+    @repo = Mjolnir::Repo.new(db)
+    @projects = Mjolnir::Schema.new("projects", {"id": :int, "name": :string}, build_board_project)
+    @tasks = Mjolnir::Schema.new("tasks",
+      {"id": :int, "project_id": :int, "title": :string, "status": :string}, build_board_task)
+    @projects.has_many("tasks", @tasks, "project_id")
+    @tasks.belongs_to("project", @projects, "project_id")
+  end
+
+  def create_project(attrs)
+    changeset = Mjolnir::Changeset.cast(@projects, nil, attrs, ["name"])
+      .validate_required(["name"]).validate_length("name", 1, 80).unique_constraint("name")
+    @repo.insert(changeset)
+  end
+
+  def projects() = @repo.all(@projects.query().order_by("id"))
+  def task(id) = @repo.get(@tasks, id)
+
+  def task_changeset(entity, attrs)
+    changeset = Mjolnir::Changeset.cast(@tasks, entity, attrs, ["project_id", "title", "status"])
+    if entity == nil && !attrs.has_key?("status")
+      changeset = changeset.put_change("status", "todo")
+    end
+    changeset = changeset.validate_required(["project_id", "title", "status"])
+      .validate_length("title", 1, 160).validate_inclusion("status", ["todo", "doing", "done"])
+    project_id = changeset.get_field("project_id")
+    if project_id != nil && !changeset.errors().has_key?("project_id") && @repo.get(@projects, project_id) == nil
+      changeset = changeset.add_error("project_id", "does not exist")
+    end
+    changeset
+  end
+
+  def create_task(attrs) = @repo.insert(task_changeset(nil, attrs))
+
+  def update_task(id, attrs)
+    entity = task(id)
+    if entity == nil then raise ArgumentError.new("task not found") end
+    @repo.update(task_changeset(entity, attrs))
+  end
+
+  # Filtering happens in SQL; every task's project is loaded in one explicit
+  # batch rather than a hidden query per row. The caller receives both values.
+  def tasks(project_id = nil, status = nil)
+    if status != nil && !["todo", "doing", "done"].include?(status)
+      raise ArgumentError.new("status must be todo, doing, or done")
+    end
+    query = @tasks.query().order_by("id")
+    if project_id != nil then query = query.where({"project_id": project_id}) end
+    if status != nil then query = query.where({"status": status}) end
+    entities = @repo.all(query)
+    [entities, @repo.preload(@tasks, entities, "project")]
+  end
+
+  def close() = @db.close()
+end
