@@ -332,7 +332,8 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
      * ProgramBuilder#declare_interface_method requires. */
     program->interface_count = interface_total;
     for (size_t index = 0; index < interface_total; index++) {
-        DiamondInterface *interface = &program->interfaces[index];
+        DiamondInterface *interface = diamond_program_interface_slot(program, index);
+        if (interface == nullptr) abort();
         *interface = (DiamondInterface){};
         (void)snprintf(interface->name, sizeof interface->name, "I%zu", index);
     }
@@ -343,7 +344,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
         fuzz_fill_types(program->functions[index], &reader, type_set_total, program->class_count,
             interface_total, variable_total);
     for (size_t index = 0; index < interface_total; index++) {
-        DiamondInterface *interface = &program->interfaces[index];
+        DiamondInterface *interface = program->interfaces[index];
         const size_t method_total = fuzz_byte(&reader) % 3;
         for (size_t method = 0; method < method_total; method++) {
             DiamondInterfaceMethod *entry = &interface->methods[interface->method_count++];

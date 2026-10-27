@@ -289,6 +289,9 @@ DIAMOND_INTERNAL DiamondString *allocate_string(DiamondVm *vm, const char *chars
 DIAMOND_INTERNAL DiamondRegexp *allocate_regexp_handle(DiamondVm *vm, reginold_regex *compiled,
                                                        const char *source, size_t source_length,
                                                        unsigned int options);
+/* Grows vm's namespace constant storage to `count` entries (new ones
+ * unset); false when over the limit or out of memory. */
+DIAMOND_INTERNAL bool vm_reserve_namespace_constants(DiamondVm *vm, size_t count);
 DIAMOND_INTERNAL void copy_namespace_constants_into_vm(const DiamondVm *parent, DiamondVm *child,
                                                        DiamondClass *const *source_classes,
                                                        DiamondClass *const *dest_classes);

@@ -164,7 +164,7 @@ JsonValue *definition_compute(const DocumentTable *documents,const char *uri,
         }
     }
     for(size_t index=0;!explicit_receiver&&index<chunk.interface_count&&!found;index++) {
-        const DiamondInterface *interface=&chunk.interfaces[index];
+        const DiamondInterface *interface=chunk.interfaces[index];
         if(interface->declaration_start>=user_offset&&strcmp(interface->name,name)==0) {
             declaration_line=interface->declaration_line;
             declaration_column=interface->declaration_column;
@@ -174,7 +174,7 @@ JsonValue *definition_compute(const DocumentTable *documents,const char *uri,
         }
     }
     for(size_t index=0;!explicit_receiver&&index<chunk.module_count&&!found;index++) {
-        const DiamondModule *module=&chunk.modules[index];
+        const DiamondModule *module=chunk.modules[index];
         if(module->declaration_start>=user_offset&&strcmp(module->name,name)==0) {
             declaration_line=module->declaration_line;
             declaration_column=module->declaration_column;

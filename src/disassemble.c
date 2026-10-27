@@ -215,7 +215,7 @@ static bool print_type_set(FILE *stream,const DiamondChunk *chunk,
             fprintf(stream,"T%u",type-DIAMOND_TYPE_VARIABLE_BASE);
         else if(type>=DIAMOND_TYPE_INTERFACE_BASE&&
                 (size_t)(type-DIAMOND_TYPE_INTERFACE_BASE)<chunk->interface_count)
-            fputs(chunk->interfaces[type-DIAMOND_TYPE_INTERFACE_BASE].name,stream);
+            fputs(chunk->interfaces[type-DIAMOND_TYPE_INTERFACE_BASE]->name,stream);
         else if((size_t)(type-DIAMOND_TYPE_CLASS_BASE)<chunk->class_count)
             fputs(chunk->classes[type-DIAMOND_TYPE_CLASS_BASE]->name,stream);
         else {fputs("<invalid type>",stream);valid=false;}
@@ -1667,7 +1667,7 @@ static bool disassemble_patterns_and_types(DisassemblyWalk *walk) {
                 fprintf(stream,"T%u",type-DIAMOND_TYPE_VARIABLE_BASE);
             else if(type>=DIAMOND_TYPE_INTERFACE_BASE&&
                     (size_t)(type-DIAMOND_TYPE_INTERFACE_BASE)<chunk->interface_count)
-                fputs(chunk->interfaces[type-DIAMOND_TYPE_INTERFACE_BASE].name,stream);
+                fputs(chunk->interfaces[type-DIAMOND_TYPE_INTERFACE_BASE]->name,stream);
             else if((size_t)(type-DIAMOND_TYPE_CLASS_BASE)<chunk->class_count)
                 fputs(chunk->classes[type-DIAMOND_TYPE_CLASS_BASE]->name,stream);
             else {fputs("<invalid type>",stream);valid=false;}

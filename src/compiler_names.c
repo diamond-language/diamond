@@ -134,7 +134,7 @@ static uint16_t parse_module_singleton_call(Compiler *compiler, DiamondSpan name
         int module_index) {
     advance_token(compiler);
     const DiamondModule *module=
-        &compiler->program->modules[(size_t)module_index];
+        compiler->program->modules[(size_t)module_index];
     const DiamondMethod *method=nullptr;
     if(compiler->current.kind==DIAMOND_TOKEN_IDENTIFIER)
         for(size_t index=0;index<module->singleton_method_count;index++)
@@ -391,7 +391,7 @@ uint16_t parse_name(Compiler *compiler) {
         if(constant>=0) {
             const uint16_t destination=allocate_register(compiler);
             emit_instruction(compiler,DIAMOND_OP_GET_NAMESPACE_CONSTANT,
-                destination,(uint8_t)constant,0,2);
+                destination,(uint16_t)constant,0,2);
             return destination;
         }
         if(class_index<0&&module_index<0) {
@@ -405,7 +405,7 @@ uint16_t parse_name(Compiler *compiler) {
     if(constant>=0&&find_local(compiler,name)<0) {
         const uint16_t destination=allocate_register(compiler);
         emit_instruction(compiler,DIAMOND_OP_GET_NAMESPACE_CONSTANT,destination,
-                         (uint8_t)constant,0,2);
+                         (uint16_t)constant,0,2);
         return destination;
     }
     if(class_index<0&&find_local(compiler,name)<0&&find_function(compiler,name)<0&&

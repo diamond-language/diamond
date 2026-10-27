@@ -380,7 +380,6 @@ typedef struct Compiler {
      * a normal compile always has, except every declaration is already
      * known up front. */
     bool discovery_pass;
-    bool namespace_constant_defined[DIAMOND_MAX_NAMESPACE_CONSTANTS];
     /* True only for the real (discovery_pass=false) pass of a
      * diamond_compile_with_breakpoints call -- compile_sequence emits a
      * DIAMOND_OP_BREAKPOINT_CHECK at the start of *every* statement
@@ -690,7 +689,7 @@ DIAMOND_INTERNAL int find_class_name(const Compiler *compiler,const char *name);
 DIAMOND_INTERNAL int find_class_qualified_or_scoped(const Compiler *compiler,const char *name);
 DIAMOND_INTERNAL int find_interface_name(const Compiler *compiler,const char *name);
 DIAMOND_INTERNAL int find_module_name(const Compiler *compiler,const char *name);
-DIAMOND_INTERNAL void record_included_module(uint8_t *list,uint8_t *count,uint8_t module_index);
+DIAMOND_INTERNAL bool record_included_module(uint16_t *list,uint8_t *count,uint16_t module_index);
 DIAMOND_INTERNAL int find_lexical_constant_name(const Compiler *compiler,const char *name);
 DIAMOND_INTERNAL int find_qualified_inherited_constant(const Compiler *compiler,
                                              const char *qualified);
@@ -930,6 +929,8 @@ DIAMOND_INTERNAL bool diamond_function_copy(DiamondFunction *destination,
                            const DiamondFunction *source);
 DIAMOND_INTERNAL void diamond_function_free_arrays(DiamondFunction *function);
 DIAMOND_INTERNAL DiamondClass *diamond_program_class_slot(DiamondProgram *program,size_t index);
+DIAMOND_INTERNAL DiamondInterface *diamond_program_interface_slot(DiamondProgram *program,size_t index);
+DIAMOND_INTERNAL DiamondModule *diamond_program_module_slot(DiamondProgram *program,size_t index);
 DIAMOND_INTERNAL void diamond_program_free(DiamondProgram *program);
 DIAMOND_INTERNAL void diamond_program_init(DiamondProgram *program);
 DIAMOND_INTERNAL bool diamond_compile_impl(const char *source, DiamondProgram *program,

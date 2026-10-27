@@ -1155,7 +1155,7 @@ static uint16_t parse_unknown_function_call(Compiler *compiler, DiamondSpan name
         return parse_discovery_unknown_call(compiler);
     /* A module function of that name is reached through its module. */
     for(size_t module=0;module<compiler->program->module_count;module++) {
-        const DiamondModule *owner=&compiler->program->modules[module];
+        const DiamondModule *owner=compiler->program->modules[module];
         for(size_t index=0;index<owner->singleton_method_count;index++) {
             if(!name_equals(compiler,owner->singleton_methods[index].name,name,false))
                 continue;

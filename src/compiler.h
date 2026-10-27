@@ -25,13 +25,19 @@ typedef struct DiamondProgram {
     size_t function_capacity;
     DiamondClass *classes[DIAMOND_MAX_CLASSES];
     size_t class_count;
-    DiamondInterface interfaces[DIAMOND_MAX_INTERFACES];
+    DiamondInterface *interfaces[DIAMOND_MAX_INTERFACES];
     size_t interface_count;
-    DiamondModule modules[DIAMOND_MAX_MODULES];
+    DiamondModule *modules[DIAMOND_MAX_MODULES];
     size_t module_count;
-    char namespace_constants[DIAMOND_MAX_NAMESPACE_CONSTANTS]
-                            [DIAMOND_MAX_FUNCTION_NAME];
+    /* Qualified namespace constant names (`Outer::NAME`), indexed by the
+     * GET/SET_NAMESPACE_CONSTANT operand, and whether this compile pass has
+     * defined each one yet. Both grow together (diamond_program_reserve_
+     * namespace_constants) up to DIAMOND_MAX_NAMESPACE_CONSTANTS and are
+     * released by diamond_program_free. */
+    char (*namespace_constants)[DIAMOND_MAX_FUNCTION_NAME];
+    bool *namespace_constant_defined;
     size_t namespace_constant_count;
+    size_t namespace_constant_capacity;
     /* See DiamondChunk's own copy of this field (src/vm.h) for what it's
      * for -- resolved once at the end of diamond_compile, UINT8_MAX
      * (set in diamond_program_init, alongside every other zero-init
@@ -55,6 +61,11 @@ typedef struct DiamondDiagnostic {
      * that produced them and remain valid when this struct is copied. */
     char message[1024];
 } DiamondDiagnostic;
+
+/* Grows `program`'s namespace constant tables to hold `count` entries;
+ * new entries are zeroed. False when `count` is over the limit or memory
+ * runs out. */
+bool diamond_program_reserve_namespace_constants(DiamondProgram *program,size_t count);
 
 /* Zeroes *program and populates the fixed built-in exception-class table.
  * Call diamond_program_free before reinitializing an already compiled program
@@ -206,6 +217,8 @@ size_t diamond_combined_buffer_line(const char *combined, size_t offset);
  * allocation failure. A slot stays allocated until diamond_program_free, so
  * a reused DiamondProgram keeps its slots, exactly as the inline array did. */
 DiamondClass *diamond_program_class_slot(DiamondProgram *program,size_t index);
+DiamondInterface *diamond_program_interface_slot(DiamondProgram *program,size_t index);
+DiamondModule *diamond_program_module_slot(DiamondProgram *program,size_t index);
 
 int diamond_reader_return_class(DiamondClass *const *classes,size_t class_count,
     const DiamondFunction *function,size_t receiver_class);

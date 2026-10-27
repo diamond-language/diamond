@@ -245,10 +245,10 @@ static bool write_program_body(const DiamondProgram *program, size_t skip, FILE 
             program->classes[index]->singleton_method_count);
     }
     for (size_t index = 0; index < program->module_count; index++) {
-        assert_methods_are_plain(program->modules[index].methods,
-            program->modules[index].method_count);
-        assert_methods_are_plain(program->modules[index].singleton_methods,
-            program->modules[index].singleton_method_count);
+        assert_methods_are_plain(program->modules[index]->methods,
+            program->modules[index]->method_count);
+        assert_methods_are_plain(program->modules[index]->singleton_methods,
+            program->modules[index]->singleton_method_count);
     }
 
     /* Counts before arrays, not after: only the *used* prefix of each
@@ -274,10 +274,10 @@ static bool write_program_body(const DiamondProgram *program, size_t skip, FILE 
     for (size_t index = 0; index < program->class_count; index++)
         if (!write_class(file, program->classes[index])) return false;
     for (size_t index = 0; index < program->interface_count; index++)
-        if (!write_interface(file, &program->interfaces[index])) return false;
+        if (!write_interface(file, program->interfaces[index])) return false;
     for (size_t index = 0; index < program->module_count; index++)
-        if (!write_module(file, &program->modules[index])) return false;
-    if (!write_all(file, program->namespace_constants,
+        if (!write_module(file, program->modules[index])) return false;
+    if (program->namespace_constant_count > 0 && !write_all(file, program->namespace_constants,
             program->namespace_constant_count * sizeof program->namespace_constants[0])) return false;
     if (!write_all(file, &program->range_class_index, sizeof program->range_class_index)) return false;
 
@@ -555,12 +555,18 @@ static bool read_program_body(const uint8_t *data, size_t size, DiamondProgram *
         if (class == nullptr || !read_class(&cursor, end, class)) return false;
         class->index = (uint16_t)index;
     }
-    for (uint64_t index = 0; index < interface_count; index++)
-        if (!read_interface(&cursor, end, &out->interfaces[index])) return false;
-    for (uint64_t index = 0; index < module_count; index++)
-        if (!read_module(&cursor, end, &out->modules[index])) return false;
+    for (uint64_t index = 0; index < interface_count; index++) {
+        DiamondInterface *interface = diamond_program_interface_slot(out, (size_t)index);
+        if (interface == nullptr || !read_interface(&cursor, end, interface)) return false;
+    }
+    for (uint64_t index = 0; index < module_count; index++) {
+        DiamondModule *module = diamond_program_module_slot(out, (size_t)index);
+        if (module == nullptr || !read_module(&cursor, end, module)) return false;
+    }
 
-    if (!read_bytes(&cursor, end, out->namespace_constants,
+    if (!diamond_program_reserve_namespace_constants(out, (size_t)namespace_constant_count))
+        return false;
+    if (namespace_constant_count > 0 && !read_bytes(&cursor, end, out->namespace_constants,
             (size_t)namespace_constant_count * sizeof out->namespace_constants[0])) return false;
     if (!read_bytes(&cursor, end, &out->range_class_index, sizeof out->range_class_index)) return false;
 
@@ -584,7 +590,7 @@ static bool read_program_body(const uint8_t *data, size_t size, DiamondProgram *
      * could reference an interface by name without redeclaring it). */
     diamond_program_recompute_shapes(out);
     for (size_t index = 0; index < out->interface_count; index++)
-        out->interfaces[index].type_sets = out->entry.type_sets;
+        out->interfaces[index]->type_sets = out->entry.type_sets;
 
     return true;
 }
@@ -626,7 +632,7 @@ static bool program_is_valid(const DiamondProgram *program) {
             return false;
     }
     for (size_t index = 0; index < program->module_count; index++) {
-        const DiamondModule *module = &program->modules[index];
+        const DiamondModule *module = program->modules[index];
         if (!method_table_valid(module->methods, module->method_count, program->function_count) ||
             !method_table_valid(module->singleton_methods, module->singleton_method_count,
                 program->function_count))

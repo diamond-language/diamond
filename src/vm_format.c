@@ -32,7 +32,7 @@ static const char *type_name(const DiamondChunk *chunk,uint16_t type) {
     }
     else if(type>=DIAMOND_TYPE_INTERFACE_BASE&&
             (size_t)(type-DIAMOND_TYPE_INTERFACE_BASE)<chunk->interface_count)
-        name=chunk->interfaces[type-DIAMOND_TYPE_INTERFACE_BASE].name;
+        name=chunk->interfaces[type-DIAMOND_TYPE_INTERFACE_BASE]->name;
     else {
         const size_t index=(size_t)(type-DIAMOND_TYPE_CLASS_BASE);
         if(index<chunk->class_count) name=chunk->classes[index]->name;

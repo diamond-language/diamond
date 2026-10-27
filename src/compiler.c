@@ -177,7 +177,7 @@ bool known_type_satisfies_one(const Compiler *compiler, uint16_t known,
     if(expected>=DIAMOND_TYPE_INTERFACE_BASE) {
         const size_t interface_index=(size_t)(expected-DIAMOND_TYPE_INTERFACE_BASE);
         if(interface_index>=compiler->program->interface_count)return false;
-        const DiamondInterface *interface=&compiler->program->interfaces[interface_index];
+        const DiamondInterface *interface=compiler->program->interfaces[interface_index];
         if(known==DIAMOND_TYPE_STRING||known==DIAMOND_TYPE_ARRAY||
            known==DIAMOND_TYPE_HASH) {
             for(size_t required=0;required<interface->method_count;required++) {
@@ -407,7 +407,7 @@ static const char *compiler_type_name(const Compiler *compiler,uint16_t type) {
     if(type>=DIAMOND_TYPE_INTERFACE_BASE) {
         const size_t index=(size_t)(type-DIAMOND_TYPE_INTERFACE_BASE);
         return index<compiler->program->interface_count?
-            compiler->program->interfaces[index].name:"<invalid type>";
+            compiler->program->interfaces[index]->name:"<invalid type>";
     }
     if(type>=DIAMOND_TYPE_CLASS_BASE) {
         const size_t index=(size_t)(type-DIAMOND_TYPE_CLASS_BASE);
@@ -1799,7 +1799,7 @@ static bool function_belongs_to_other_module(const Compiler *compiler,
                                              size_t function_index) {
     for(size_t module=0;module<compiler->program->module_count;module++) {
         if((int)module==compiler->current_module)continue;
-        const DiamondModule *owner=&compiler->program->modules[module];
+        const DiamondModule *owner=compiler->program->modules[module];
         for(size_t index=0;index<owner->singleton_method_count;index++)
             if(owner->singleton_methods[index].function_index==function_index&&
                !owner->singleton_methods[index].needs_receiver)
@@ -1870,7 +1870,7 @@ int find_class(const Compiler *compiler, DiamondSpan name) {
     if(compiler->current_module>=0) {
         char scope[DIAMOND_MAX_FUNCTION_NAME];
         (void)snprintf(scope,sizeof scope,"%s",
-            compiler->program->modules[(size_t)compiler->current_module].name);
+            compiler->program->modules[(size_t)compiler->current_module]->name);
         while(true) {
             char qualified[DIAMOND_MAX_FUNCTION_NAME];
             const int written=snprintf(qualified,sizeof qualified,"%s::%.*s",scope,
@@ -1895,15 +1895,15 @@ int find_interface(const Compiler *compiler,DiamondSpan name) {
     if(compiler->current_module>=0) {
         char qualified[DIAMOND_MAX_FUNCTION_NAME];
         const int written=snprintf(qualified,sizeof qualified,"%s::%.*s",
-            compiler->program->modules[(size_t)compiler->current_module].name,
+            compiler->program->modules[(size_t)compiler->current_module]->name,
             (int)name.length,compiler->source+name.start);
         if(written>0&&(size_t)written<sizeof qualified)
             for(size_t index=0;index<compiler->program->interface_count;index++)
-                if(strcmp(compiler->program->interfaces[index].name,qualified)==0)
+                if(strcmp(compiler->program->interfaces[index]->name,qualified)==0)
                     return (int)index;
     }
     for(size_t index=0;index<compiler->program->interface_count;index++)
-        if(name_equals(compiler,compiler->program->interfaces[index].name,name,false))
+        if(name_equals(compiler,compiler->program->interfaces[index]->name,name,false))
             return (int)index;
     return -1;
 }
@@ -1912,14 +1912,14 @@ int find_module(const Compiler *compiler,DiamondSpan name) {
     if(compiler->current_module>=0) {
         char scope[DIAMOND_MAX_FUNCTION_NAME];
         (void)snprintf(scope,sizeof scope,"%s",
-            compiler->program->modules[(size_t)compiler->current_module].name);
+            compiler->program->modules[(size_t)compiler->current_module]->name);
         while(true) {
             char qualified[DIAMOND_MAX_FUNCTION_NAME];
             const int written=snprintf(qualified,sizeof qualified,"%s::%.*s",scope,
                 (int)name.length,compiler->source+name.start);
             if(written>0&&(size_t)written<sizeof qualified)
                 for(size_t index=0;index<compiler->program->module_count;index++)
-                    if(strcmp(compiler->program->modules[index].name,qualified)==0)
+                    if(strcmp(compiler->program->modules[index]->name,qualified)==0)
                         return (int)index;
             char *separator=strrchr(scope,':');
             if(separator==nullptr)break;
@@ -1927,7 +1927,7 @@ int find_module(const Compiler *compiler,DiamondSpan name) {
         }
     }
     for(size_t index=0;index<compiler->program->module_count;index++)
-        if(name_equals(compiler,compiler->program->modules[index].name,name,false))
+        if(name_equals(compiler,compiler->program->modules[index]->name,name,false))
             return (int)index;
     return -1;
 }
@@ -1966,7 +1966,7 @@ int find_class_qualified_or_scoped(const Compiler *compiler,const char *name) {
     if(compiler->current_module>=0) {
         char scope[DIAMOND_MAX_FUNCTION_NAME];
         (void)snprintf(scope,sizeof scope,"%s",
-            compiler->program->modules[(size_t)compiler->current_module].name);
+            compiler->program->modules[(size_t)compiler->current_module]->name);
         while(true) {
             char qualified[DIAMOND_MAX_FUNCTION_NAME];
             const int written=snprintf(qualified,sizeof qualified,"%s::%s",scope,name);
@@ -1984,14 +1984,14 @@ int find_class_qualified_or_scoped(const Compiler *compiler,const char *name) {
 
 int find_interface_name(const Compiler *compiler,const char *name) {
     for(size_t index=0;index<compiler->program->interface_count;index++)
-        if(stored_name_equals(compiler->program->interfaces[index].name,name))
+        if(stored_name_equals(compiler->program->interfaces[index]->name,name))
             return (int)index;
     return -1;
 }
 
 int find_module_name(const Compiler *compiler,const char *name) {
     for(size_t index=0;index<compiler->program->module_count;index++)
-        if(stored_name_equals(compiler->program->modules[index].name,name))
+        if(stored_name_equals(compiler->program->modules[index]->name,name))
             return (int)index;
     return -1;
 }
@@ -2009,18 +2009,20 @@ static const char *constant_scope(const Compiler *compiler) {
     if(compiler->current_class>=0)
         return compiler->program->classes[(size_t)compiler->current_class]->name;
     if(compiler->current_module>=0)
-        return compiler->program->modules[(size_t)compiler->current_module].name;
+        return compiler->program->modules[(size_t)compiler->current_module]->name;
     return "";
 }
 
 /* Appends `module_index` to an include list unless already present, moving
  * nothing: a repeated `include` (discovery pass, then real pass, or a
- * reopened class) must not grow the list. The list is as large as the
- * module table, so a deduplicated append always fits. */
-void record_included_module(uint8_t *list,uint8_t *count,uint8_t module_index) {
+ * reopened class) must not grow the list. False when the list already
+ * holds DIAMOND_MAX_INCLUDED_MODULES other modules. */
+bool record_included_module(uint16_t *list,uint8_t *count,uint16_t module_index) {
     for(size_t index=0;index<*count;index++)
-        if(list[index]==module_index)return;
+        if(list[index]==module_index)return true;
+    if(*count>=DIAMOND_MAX_INCLUDED_MODULES)return false;
     list[(*count)++]=module_index;
+    return true;
 }
 
 /* Constants inherited through `include`: one constant in `module_index`
@@ -2029,7 +2031,7 @@ void record_included_module(uint8_t *list,uint8_t *count,uint8_t module_index) {
  * include cycle. */
 static int find_module_chain_constant(const Compiler *compiler,int module_index,
                                       const char *name,int depth) {
-    const DiamondModule *module=&compiler->program->modules[(size_t)module_index];
+    const DiamondModule *module=compiler->program->modules[(size_t)module_index];
     char qualified[DIAMOND_MAX_FUNCTION_NAME];
     const int written=snprintf(qualified,sizeof qualified,"%s::%s",module->name,name);
     if(written>0&&(size_t)written<sizeof qualified) {
@@ -2144,7 +2146,7 @@ int load_constant_receiver(Compiler *compiler,DiamondSpan name) {
     const uint16_t receiver=allocate_register(compiler);
     if(constant>=0)
         emit_instruction(compiler,DIAMOND_OP_GET_NAMESPACE_CONSTANT,receiver,
-                         (uint8_t)constant,0,2);
+                         (uint16_t)constant,0,2);
     else
         emit_instruction(compiler,DIAMOND_OP_NIL,receiver,0,0,1);
     return (int)receiver;
@@ -2163,20 +2165,21 @@ uint16_t store_namespace_constant(Compiler *compiler,DiamondSpan name,
         fail(compiler,name,"constant name is too long");return value;
     }
     int constant=find_namespace_constant_name(compiler,qualified);
-    if(constant>=0&&compiler->namespace_constant_defined[(size_t)constant]) {
+    if(constant>=0&&compiler->program->namespace_constant_defined[(size_t)constant]) {
         fail(compiler,name,"constant is already defined");return value;
     }
     if(constant<0) {
-        if(compiler->program->namespace_constant_count==DIAMOND_MAX_NAMESPACE_CONSTANTS) {
+        if(!diamond_program_reserve_namespace_constants(compiler->program,
+               compiler->program->namespace_constant_count+1)) {
             fail(compiler,name,"too many namespace constants");return value;
         }
         constant=(int)compiler->program->namespace_constant_count++;
         (void)snprintf(compiler->program->namespace_constants[(size_t)constant],
                        DIAMOND_MAX_FUNCTION_NAME,"%s",qualified);
     }
-    compiler->namespace_constant_defined[(size_t)constant]=true;
+    compiler->program->namespace_constant_defined[(size_t)constant]=true;
     emit_instruction(compiler,DIAMOND_OP_SET_NAMESPACE_CONSTANT,
-                     (uint8_t)constant,value,0,2);
+                     (uint16_t)constant,value,0,2);
     return value;
 }
 
@@ -2194,7 +2197,7 @@ bool declaration_name(Compiler *compiler,char *buffer,size_t capacity,
     buffer[0]='\0';
     if(compiler->current_module>=0) {
         const char *parent=
-            compiler->program->modules[(size_t)compiler->current_module].name;
+            compiler->program->modules[(size_t)compiler->current_module]->name;
         if(strlen(parent)+2>=capacity)return false;
         (void)snprintf(buffer,capacity,"%s::",parent);
     }
@@ -2443,7 +2446,7 @@ int class_variable_owner(Compiler *compiler, DiamondSpan name) {
     }
     char hidden[DIAMOND_MAX_FUNCTION_NAME];
     const int written = snprintf(hidden, sizeof hidden, "%s.@@",
-        compiler->program->modules[(size_t)compiler->current_module].name);
+        compiler->program->modules[(size_t)compiler->current_module]->name);
     if (written < 0 || (size_t)written >= sizeof hidden) {
         fail(compiler, name, "module name is too long for class variables");
         return -1;
@@ -2499,7 +2502,7 @@ int class_variable_index(Compiler *compiler, DiamondSpan name, bool create) {
 uint16_t module_field_name(Compiler *compiler,DiamondSpan name) {
     compiler->function->uses_instance_state=true;
     DiamondModule *module=
-        &compiler->program->modules[(size_t)compiler->current_module];
+        compiler->program->modules[(size_t)compiler->current_module];
     const size_t length=name.length-1;
     for(size_t field=0;field<module->field_count;field++)
         if(strlen(module->fields[field])==length&&

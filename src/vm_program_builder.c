@@ -108,7 +108,7 @@ DiamondVmStatus program_builder_run_helper(DiamondVm *vm,
      * compiling a self-hosted program that checks `x is SomeInterface`
      * against a typed interface method. */
     for(size_t index=0;index<built->interface_count;index++)
-        built->interfaces[index].type_sets=built->entry.type_sets;
+        built->interfaces[index]->type_sets=built->entry.type_sets;
     /* Range indexing (`items[1..]`) recognizes the prelude's Range class
      * by this index; resolved by name as diamond_compile does. */
     built->range_class_index=DIAMOND_NO_CLASS;
@@ -464,13 +464,15 @@ static DiamondVmStatus program_builder_declare_module(DiamondVm *vm, DiamondProg
         return DIAMOND_VM_TYPE_ERROR;
     }
     for(size_t index=0;index<built->module_count;index++)
-        if(strlen(built->modules[index].name)==name->length&&
-           memcmp(built->modules[index].name,name->chars,name->length)==0) {
+        if(strlen(built->modules[index]->name)==name->length&&
+           memcmp(built->modules[index]->name,name->chars,name->length)==0) {
             snprintf(vm->error,sizeof vm->error,"module name is already defined");
             return DIAMOND_VM_TYPE_ERROR;
         }
     const int64_t index=(int64_t)built->module_count;
-    DiamondModule *module=&built->modules[built->module_count++];
+    DiamondModule *module=diamond_program_module_slot(built,built->module_count);
+    if(module==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
+    built->module_count++;
     *module=(DiamondModule){};
     memcpy(module->name,name->chars,name->length);
     module->name[name->length]='\0';
@@ -489,7 +491,8 @@ static DiamondVmStatus program_builder_declare_namespace_constant(DiamondVm *vm,
     }
     const DiamondString *name=(const DiamondString *)registers[base].as.object;
     if(name->length==0||name->length>=DIAMOND_MAX_FUNCTION_NAME||
-       built->namespace_constant_count==DIAMOND_MAX_NAMESPACE_CONSTANTS) {
+       !diamond_program_reserve_namespace_constants(built,
+           built->namespace_constant_count+1)) {
         snprintf(vm->error,sizeof vm->error,
             "ProgramBuilder#declare_namespace_constant has an invalid name");
         return DIAMOND_VM_TYPE_ERROR;
@@ -602,7 +605,7 @@ static DiamondVmStatus program_builder_declare_module_field(DiamondProgram *buil
     if(module_index<0||(uint64_t)module_index>=built->module_count||
        name->length==0||name->length>=DIAMOND_MAX_FUNCTION_NAME)
         return DIAMOND_VM_TYPE_ERROR;
-    DiamondModule *module=&built->modules[(size_t)module_index];
+    DiamondModule *module=built->modules[(size_t)module_index];
     for(size_t index=0;index<module->field_count;index++)
         if(strlen(module->fields[index])==name->length&&
            memcmp(module->fields[index],name->chars,name->length)==0) {
@@ -706,7 +709,7 @@ static DiamondVmStatus program_builder_declare_module_method(DiamondVm *vm, Diam
        function_index<0||(uint64_t)function_index>=built->function_count||
        arity<0||arity>DIAMOND_MAX_DECLARED_PARAMETERS||required<0||required>arity)
         return DIAMOND_VM_TYPE_ERROR;
-    DiamondModule *module=&built->modules[(size_t)module_index];
+    DiamondModule *module=built->modules[(size_t)module_index];
     for(size_t index=0;index<module->method_count;index++)
         if(!module->methods[index].included&&
            strlen(module->methods[index].name)==name->length&&
@@ -842,7 +845,7 @@ static DiamondVmStatus program_builder_declare_module_singleton_method(DiamondVm
             "declare_module_singleton_method has invalid arguments");
         return DIAMOND_VM_TYPE_ERROR;
     }
-    DiamondModule *module=&built->modules[(size_t)module_index];
+    DiamondModule *module=built->modules[(size_t)module_index];
     for(size_t index=0;index<module->singleton_method_count;index++)
         if(strlen(module->singleton_methods[index].name)==mname->length&&
            memcmp(module->singleton_methods[index].name,mname->chars,
@@ -927,7 +930,7 @@ static DiamondVmStatus program_builder_include_module(DiamondProgram *built,
     const int64_t module_index=registers[(size_t)base+1].as.integer;
     if(class==nullptr||module_index<0||
        (uint64_t)module_index>=built->module_count)return DIAMOND_VM_TYPE_ERROR;
-    const DiamondModule *module=&built->modules[(size_t)module_index];
+    const DiamondModule *module=built->modules[(size_t)module_index];
     if(class->field_count+module->field_count>DIAMOND_MAX_FIELDS||
        class->method_count+module->method_count>DIAMOND_MAX_METHODS)
         return DIAMOND_VM_TYPE_ERROR;
@@ -963,8 +966,8 @@ static DiamondVmStatus program_builder_include_module_in_module(DiamondProgram *
        (uint64_t)target_index>=built->module_count||
        (uint64_t)source_index>=built->module_count)
         return DIAMOND_VM_TYPE_ERROR;
-    DiamondModule *target=&built->modules[(size_t)target_index];
-    const DiamondModule *source=&built->modules[(size_t)source_index];
+    DiamondModule *target=built->modules[(size_t)target_index];
+    const DiamondModule *source=built->modules[(size_t)source_index];
     if(target->field_count+source->field_count>DIAMOND_MAX_FIELDS||
        target->method_count+source->method_count>DIAMOND_MAX_METHODS)
         return DIAMOND_VM_TYPE_ERROR;
@@ -1002,7 +1005,7 @@ static DiamondVmStatus program_builder_set_module_method_visibility(DiamondVm *v
         (const DiamondString *)registers[(size_t)base+1].as.object;
     if(module_index<0||(uint64_t)module_index>=built->module_count)
         return DIAMOND_VM_TYPE_ERROR;
-    DiamondModule *module=&built->modules[(size_t)module_index];
+    DiamondModule *module=built->modules[(size_t)module_index];
     DiamondMethod *found=nullptr;
     for(size_t index=0;index<module->method_count;index++)
         if(!module->methods[index].included&&
@@ -1129,7 +1132,7 @@ static DiamondVmStatus program_builder_alias_module_method(DiamondVm *vm, Diamon
             "alias_module_method has invalid arguments");
         return DIAMOND_VM_TYPE_ERROR;
     }
-    DiamondModule *module=&built->modules[(size_t)module_index];
+    DiamondModule *module=built->modules[(size_t)module_index];
     DiamondMethod *source=nullptr;
     for(size_t index=module->method_count;index>0;index--)
         if(!module->methods[index-1].included&&
@@ -1173,7 +1176,7 @@ static DiamondVmStatus program_builder_export_module_method(DiamondVm *vm, Diamo
         (const DiamondString *)registers[(size_t)base+1].as.object;
     if(module_index<0||(uint64_t)module_index>=built->module_count)
         return DIAMOND_VM_TYPE_ERROR;
-    DiamondModule *module=&built->modules[(size_t)module_index];
+    DiamondModule *module=built->modules[(size_t)module_index];
     DiamondMethod *source=nullptr;
     for(size_t index=module->method_count;index>0;index--)
         if(!module->methods[index-1].included&&
@@ -1631,7 +1634,9 @@ static DiamondVmStatus program_builder_declare_interface(DiamondVm *vm, DiamondP
         return DIAMOND_VM_TYPE_ERROR;
     }
     const int64_t index=(int64_t)built->interface_count;
-    DiamondInterface *interface=&built->interfaces[built->interface_count++];
+    DiamondInterface *interface=diamond_program_interface_slot(built,built->interface_count);
+    if(interface==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
+    built->interface_count++;
     *interface=(DiamondInterface){.type_sets=built->entry.type_sets};
     memcpy(interface->name,name->chars,name->length);
     interface->name[name->length]='\0';
@@ -1650,8 +1655,8 @@ static DiamondVmStatus program_builder_inherit_interface(DiamondVm *vm, DiamondP
        (uint64_t)target_index>=built->interface_count||
        (uint64_t)base_index>=built->interface_count||
        target_index==base_index)return DIAMOND_VM_TYPE_ERROR;
-    DiamondInterface *target=&built->interfaces[(size_t)target_index];
-    const DiamondInterface *source=&built->interfaces[(size_t)base_index];
+    DiamondInterface *target=built->interfaces[(size_t)target_index];
+    const DiamondInterface *source=built->interfaces[(size_t)base_index];
     if(target->method_count+source->method_count>DIAMOND_MAX_METHODS)
         return DIAMOND_VM_TYPE_ERROR;
     for(size_t method=0;method<source->method_count;method++) {
@@ -1690,7 +1695,7 @@ static DiamondVmStatus program_builder_declare_interface_method(DiamondProgram *
        arity<0||arity>DIAMOND_MAX_DECLARED_PARAMETERS||sets->count!=(size_t)arity||
        (return_set>=0&&(uint64_t)return_set>=built->entry.type_set_count))
         return DIAMOND_VM_TYPE_ERROR;
-    DiamondInterface *interface=&built->interfaces[(size_t)interface_index];
+    DiamondInterface *interface=built->interfaces[(size_t)interface_index];
     if(interface->method_count==DIAMOND_MAX_METHODS)return DIAMOND_VM_TYPE_ERROR;
     DiamondInterfaceMethod *method=&interface->methods[interface->method_count++];
     *method=(DiamondInterfaceMethod){.arity=(uint8_t)arity,

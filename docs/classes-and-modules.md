@@ -916,8 +916,10 @@ itself.
 
 ## Modules
 
-A program may declare up to 255 distinct modules, including the prelude and
-all required cuts. Reopening a module does not consume another slot.
+A program may declare up to 1,024 distinct modules (and, separately, 1,024
+interfaces), including the prelude and all required cuts. Reopening a module
+does not consume another slot. A class or module may directly include up to
+255 distinct modules.
 
 `module Name ... end` declares a module; `include Name` copies its method
 descriptors into the receiving class (mixin-style composition, not

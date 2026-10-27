@@ -70,9 +70,14 @@ enum {
      * eliminates the workaround for. */
     DIAMOND_MAX_STRING_LENGTH = 4095,
     DIAMOND_MAX_CLASSES = 1024,
-    DIAMOND_MAX_INTERFACES = 32,
-    /* Include lists store both indices and their count in uint8_t. */
-    DIAMOND_MAX_MODULES = UINT8_MAX,
+    /* Interfaces and modules are separately allocated slots behind a
+     * pointer table (like classes), so these caps cost 8 bytes per entry
+     * until used. Interface type ids are DIAMOND_TYPE_INTERFACE_BASE +
+     * index and must stay below DIAMOND_TYPE_NONE. */
+    DIAMOND_MAX_INTERFACES = 1024,
+    DIAMOND_MAX_MODULES = 1024,
+    /* Modules one class or module includes directly (deduplicated). */
+    DIAMOND_MAX_INCLUDED_MODULES = UINT8_MAX,
     DIAMOND_MAX_TYPE_SETS = UINT16_MAX,
     DIAMOND_NO_TYPE_SET = UINT16_MAX,
     DIAMOND_MAX_UNION_TYPES = 8,
@@ -119,7 +124,10 @@ enum {
      * #include "vm.h" still brings this in unchanged for every existing
      * caller. */
     DIAMOND_JIT_MAX_REGISTERS = 256,
-    DIAMOND_MAX_NAMESPACE_CONSTANTS = 128,
+    /* Every namespace constant in a program, prelude and packages
+     * included: the 16-bit GET/SET_NAMESPACE_CONSTANT operand's range.
+     * Storage grows on demand (DiamondProgram, DiamondVm). */
+    DIAMOND_MAX_NAMESPACE_CONSTANTS = UINT16_MAX,
     /* Compile-time ceiling and READ_SHORT-encoded bytecode operand range
      * (big-endian 16-bit, matching the JUMP-target/function-index
      * convention) -- not a fixed per-call runtime array size. run_chunk
@@ -744,6 +752,8 @@ typedef enum DiamondTypeId : uint16_t {
 
 static_assert((int)DIAMOND_TYPE_CLASS_BASE + (int)DIAMOND_MAX_CLASSES <= (int)DIAMOND_TYPE_CLASS_LIMIT,
               "class type ids must stay below DIAMOND_TYPE_CLASS_LIMIT");
+static_assert((int)DIAMOND_TYPE_INTERFACE_BASE + (int)DIAMOND_MAX_INTERFACES < (int)DIAMOND_TYPE_NONE,
+              "interface type ids must stay below DIAMOND_TYPE_NONE");
 static_assert((int)DIAMOND_MAX_CLASSES < (int)DIAMOND_OWNER_CAPTURED_SELF,
               "class indices must stay below the owner_class sentinels");
 
@@ -942,7 +952,7 @@ typedef struct DiamondModule {
     char fields[DIAMOND_MAX_FIELDS][DIAMOND_MAX_FUNCTION_NAME];
     size_t field_count;
     /* Modules this module `include`s directly; see DiamondClass's copy. */
-    uint8_t included_modules[DIAMOND_MAX_MODULES];
+    uint16_t included_modules[DIAMOND_MAX_INCLUDED_MODULES];
     uint8_t included_module_count;
     /* See DiamondInterface's own copy of this field just above. */
     bool declared_by_discovery;
@@ -1002,7 +1012,7 @@ struct DiamondClass {
      * discovery pass hands the slot to the real pass -- re-including is
      * idempotent, and keeping them makes a constant in an included
      * module visible to a method defined above the `include` line. */
-    uint8_t included_modules[DIAMOND_MAX_MODULES];
+    uint16_t included_modules[DIAMOND_MAX_INCLUDED_MODULES];
     uint8_t included_module_count;
     DiamondMethod methods[DIAMOND_MAX_METHODS];
     size_t method_count;
@@ -1395,9 +1405,9 @@ struct DiamondChunk {
     size_t function_count;
     DiamondClass *const *classes;
     size_t class_count;
-    const DiamondInterface *interfaces;
+    DiamondInterface *const *interfaces;
     size_t interface_count;
-    const DiamondModule *modules;
+    DiamondModule *const *modules;
     size_t module_count;
     const uint16_t *parameter_type_sets;
     uint8_t type_variable_count;
@@ -1827,8 +1837,13 @@ struct DiamondVm {
      * hardcoded class index, confirmed directly that one can shift with
      * conservative prelude module selection). */
     uint16_t range_class_index;
-    DiamondValue namespace_constants[DIAMOND_MAX_NAMESPACE_CONSTANTS];
-    bool namespace_constant_initialized[DIAMOND_MAX_NAMESPACE_CONSTANTS];
+    /* Namespace constant values, indexed by the GET/SET_NAMESPACE_CONSTANT
+     * operand, and which have been set. Allocated on the first SET past the
+     * end (vm_reserve_namespace_constants); an index at or past
+     * namespace_constant_capacity is simply not set yet. */
+    DiamondValue *namespace_constants;
+    bool *namespace_constant_initialized;
+    size_t namespace_constant_capacity;
     /* True for a VM that Thread.new created: it never ran the program's
      * top-level code, so a constant that is unset in it was either not
      * defined yet when the thread started or holds a value that cannot cross

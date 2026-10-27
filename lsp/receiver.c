@@ -412,7 +412,7 @@ static bool resolve_call_targets(const DiamondProgram *program,
         if(!qualified_constant_name(source,tokens,start,call->callee_index-2,
                module_name,sizeof module_name))return false;
         for(size_t module_index=0;module_index<chunk->module_count;module_index++) {
-            const DiamondModule *module=&chunk->modules[module_index];
+            const DiamondModule *module=chunk->modules[module_index];
             if(strcmp(module->name,module_name)!=0)continue;
             for(size_t method_index=0;method_index<module->singleton_method_count;
                 method_index++) {

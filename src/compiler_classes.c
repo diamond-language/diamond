@@ -109,7 +109,7 @@ static void compile_attribute_named(Compiler *compiler,bool writer,bool predicat
         method=&class->methods[class->method_count++];
     } else {
         DiamondModule *module=
-            &compiler->program->modules[(size_t)compiler->current_module];
+            compiler->program->modules[(size_t)compiler->current_module];
         if(compiler->module_function_mode) {
             fail(compiler,name,
                  "stateful attribute cannot use module_function mode");return;
@@ -326,7 +326,7 @@ static void compile_visibility(Compiler *compiler,bool is_private,bool is_protec
                 }
         } else {
             DiamondModule *module=
-                &compiler->program->modules[(size_t)compiler->current_module];
+                compiler->program->modules[(size_t)compiler->current_module];
             for(size_t index=module->method_count;index>0;index--)
                 if((!writer_name&&name_equals(compiler,
                        module->methods[index-1].name,name,false))||
@@ -365,7 +365,7 @@ static void compile_visibility(Compiler *compiler,bool is_private,bool is_protec
 
 static void compile_module_function(Compiler *compiler) {
     DiamondModule *module=
-        &compiler->program->modules[(size_t)compiler->current_module];
+        compiler->program->modules[(size_t)compiler->current_module];
     advance_token(compiler);
     const bool parenthesized=compiler->current.kind==DIAMOND_TOKEN_LEFT_PAREN;
     if(parenthesized) {advance_token(compiler);skip_newlines(compiler);}
@@ -483,7 +483,7 @@ static void compile_alias_method(Compiler *compiler) {
         methods=class->methods;count=&class->method_count;
     } else {
         DiamondModule *module=
-            &compiler->program->modules[(size_t)compiler->current_module];
+            compiler->program->modules[(size_t)compiler->current_module];
         methods=module->methods;count=&module->method_count;
     }
     DiamondMethod *source=nullptr;
@@ -752,7 +752,7 @@ void compile_delegate(Compiler *compiler) {
         methods=class->methods;method_count=&class->method_count;
     } else {
         DiamondModule *module=
-            &compiler->program->modules[(size_t)compiler->current_module];
+            compiler->program->modules[(size_t)compiler->current_module];
         methods=module->methods;method_count=&module->method_count;
     }
     for(size_t index=0;index<*method_count;index++)
@@ -1060,9 +1060,11 @@ static void compile_class_body(Compiler *compiler, DiamondClass *class) {
                 fail(compiler,include_span,"undefined module");break;
             }
             const DiamondModule *module=
-                &compiler->program->modules[(size_t)module_index];
-            record_included_module(class->included_modules,
-                &class->included_module_count,(uint8_t)module_index);
+                compiler->program->modules[(size_t)module_index];
+            if(!record_included_module(class->included_modules,
+                    &class->included_module_count,(uint16_t)module_index)) {
+                fail(compiler,include_span,"too many included modules");break;
+            }
             for(size_t source=0;source<module->field_count;source++) {
                 bool present=false;
                 for(size_t field=0;field<class->field_count;field++)
@@ -2163,7 +2165,7 @@ static DiamondModule *declare_module(Compiler *compiler,DiamondSpan name,
     DiamondModule *module;
     if(existing_module>=0) {
         index=existing_module;
-        module=&compiler->program->modules[(size_t)index];
+        module=compiler->program->modules[(size_t)index];
         if(module->declared_by_discovery&&module->from_template) {
             /* A reopened template (prelude) module: back to the template's
              * own methods and fields; singleton functions stay (discovery
@@ -2225,8 +2227,12 @@ static DiamondModule *declare_module(Compiler *compiler,DiamondSpan name,
                 (unsigned)DIAMOND_MAX_MODULES);
             fail(compiler,name,message);return nullptr;
         }
+        module=diamond_program_module_slot(compiler->program,
+            compiler->program->module_count);
+        if(module==nullptr) {
+            fail(compiler,name,"out of memory declaring a module");return nullptr;
+        }
         index=(int)compiler->program->module_count++;
-        module=&compiler->program->modules[(size_t)index];
         /* Explicit reset, not reliance on this slot already being zero:
          * `program` isn't guaranteed freshly calloc'd/memset -- a caller
          * reusing one DiamondProgram across many compiles (tests/
@@ -2283,9 +2289,11 @@ static bool compile_module_include(Compiler *compiler,DiamondModule *module,int 
         fail(compiler,include_span,"undefined module");return false;
     }
     const DiamondModule *source=
-        &compiler->program->modules[(size_t)included];
-    record_included_module(module->included_modules,
-        &module->included_module_count,(uint8_t)included);
+        compiler->program->modules[(size_t)included];
+    if(!record_included_module(module->included_modules,
+            &module->included_module_count,(uint16_t)included)) {
+        fail(compiler,include_span,"too many included modules");return false;
+    }
     for(size_t imported=0;imported<source->field_count;imported++) {
         bool present=false;
         for(size_t field=0;field<module->field_count;field++)
@@ -2414,19 +2422,27 @@ uint16_t compile_interface(Compiler *compiler) {
     /* See compile_class's own identical comment on declared_by_discovery
      * and the !compiler->discovery_pass conjunct. */
     const bool claiming=existing_interface>=0&&!compiler->discovery_pass&&
-        compiler->program->interfaces[(size_t)existing_interface].declared_by_discovery;
+        compiler->program->interfaces[(size_t)existing_interface]->declared_by_discovery;
     if(!claiming&&(existing_interface>=0||
        find_class_name(compiler,stored_name)>=0||
        find_module_name(compiler,stored_name)>=0)) {
         fail(compiler,name,"type name is already defined");return 0;
     }
     if(!claiming&&compiler->program->interface_count==DIAMOND_MAX_INTERFACES) {
-        fail(compiler,name,"too many interfaces: a program holds at most 32 "
-             "interfaces, cuts included");return 0;
+        char message[128];
+        snprintf(message,sizeof message,
+            "too many interfaces: a program holds at most %u interfaces, cuts included",
+            (unsigned)DIAMOND_MAX_INTERFACES);
+        fail(compiler,name,message);return 0;
     }
     DiamondInterface *interface=claiming
-        ? &compiler->program->interfaces[(size_t)existing_interface]
-        : &compiler->program->interfaces[compiler->program->interface_count++];
+        ? compiler->program->interfaces[(size_t)existing_interface]
+        : diamond_program_interface_slot(compiler->program,
+            compiler->program->interface_count);
+    if(interface==nullptr) {
+        fail(compiler,name,"out of memory declaring an interface");return 0;
+    }
+    if(!claiming)compiler->program->interface_count++;
     if(claiming) {
         /* See compile_class's own identical comment on why a full zero
          * of this array, not just the count, is needed here -- this is
@@ -2476,7 +2492,7 @@ uint16_t compile_interface(Compiler *compiler) {
              * though `interface` itself points at a later slot in the
              * same array. */
             const DiamondInterface *base=
-                &compiler->program->interfaces[(size_t)base_index];
+                compiler->program->interfaces[(size_t)base_index];
             for(size_t index=0;index<base->method_count;index++) {
                 bool duplicate=false;
                 for(size_t existing=0;existing<interface->method_count;existing++)
