@@ -1,0 +1,17 @@
+# Ranges index Arrays and Strings; one with nothing after `..` has a nil end.
+letters = ["a", "b", "c", "d"]
+puts(letters[1..2])
+puts(letters[0...1])
+puts("diamond"[1..3])
+puts(letters[1..])
+puts(letters[2...])
+range = (3..)
+puts(range.include?(100))
+puts(range.include?(2))
+score = 75
+grade = case score
+when 90.. then "A"
+when 70.. then "C"
+else "F"
+end
+puts(grade)

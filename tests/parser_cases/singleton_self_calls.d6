@@ -1,0 +1,29 @@
+class Counter
+  attr_accessor count: Int
+
+  def initialize()
+    def twice(n) = n * 2
+    @count = 0
+    @step = twice
+  end
+
+  def doubled(n)
+    @step(n)
+  end
+
+  def self.two()
+    2
+  end
+
+  def self.four()
+    self.two() + two()
+  end
+end
+
+c = Counter.new()
+c.count = 5
+p(c.count())
+p(c.doubled(21))
+p(Counter.four())
+p("text")
+p([1, :sym, nil])

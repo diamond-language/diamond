@@ -109,6 +109,12 @@ DiamondVmStatus program_builder_run_helper(DiamondVm *vm,
      * against a typed interface method. */
     for(size_t index=0;index<built->interface_count;index++)
         built->interfaces[index].type_sets=built->entry.type_sets;
+    /* Range indexing (`items[1..]`) recognizes the prelude's Range class
+     * by this index; resolved by name as diamond_compile does. */
+    built->range_class_index=DIAMOND_NO_CLASS;
+    for(size_t index=0;index<built->class_count;index++)
+        if(strcmp(built->classes[index]->name,"Range")==0)
+            built->range_class_index=(uint16_t)index;
     const DiamondChunk built_chunk=diamond_program_chunk(built);
     /* #emit_byte/#patch_byte let Diamond code append raw bytes to a
      * function's code array with no idea what instruction it's building
@@ -657,6 +663,7 @@ static DiamondVmStatus program_builder_declare_method(DiamondVm *vm, DiamondProg
     memcpy(method->name,mname->chars,mname->length);
     method->name[mname->length]='\0';
     method->function_index=(uint16_t)target_function;
+    method->has_variadic=built->functions[target_function]->has_variadic;
     method->arity=(uint8_t)arity_value;
     method->required_arity=(uint8_t)required_value;
     method->is_private=registers[(size_t)base+5].as.boolean;
@@ -713,6 +720,7 @@ static DiamondVmStatus program_builder_declare_module_method(DiamondVm *vm, Diam
     memcpy(method->name,name->chars,name->length);
     method->name[name->length]='\0';
     method->function_index=(uint16_t)function_index;
+    method->has_variadic=built->functions[function_index]->has_variadic;
     method->arity=(uint8_t)arity;
     method->required_arity=(uint8_t)required;
     method->is_private=registers[(size_t)base+5].as.boolean;
@@ -778,19 +786,29 @@ static DiamondVmStatus program_builder_declare_class_singleton_method(DiamondVm 
             "duplicate or excessive class singleton method");
         return DIAMOND_VM_TYPE_ERROR;
     }
-    /* No needs_receiver/owner_class here, matching diamond_compile's
-     * own module_singleton branch exactly: a directly-declared
-     * singleton (`def self.foo`) never reserves register 0 for an
-     * implicit self, unlike an ordinary method -- see declare_method
-     * just above for the contrasting case that does. */
+    /* A class's `def self.foo` reserves register 0 for the class it is
+     * called on, as compiler.c's direct_class_singleton_member does: the
+     * function takes one more argument than the method's arity, and
+     * needs_receiver makes callers (INVOKE_SELF_METHOD included) fill that
+     * slot. Its owner_class is the class too, so typed parameters skip
+     * that slot (parameter_offset), as declare_method's do. */
+    DiamondFunction *function=built->functions[target_function];
+    if(function->arity!=arity_value+1) {
+        snprintf(vm->error,sizeof vm->error,"ProgramBuilder#%s",
+            "declare_class_singleton_method needs a function with a receiver slot");
+        return DIAMOND_VM_TYPE_ERROR;
+    }
     DiamondMethod *method=
         &class->singleton_methods[class->singleton_method_count++];
     *method=(DiamondMethod){};
     memcpy(method->name,mname->chars,mname->length);
     method->name[mname->length]='\0';
     method->function_index=(uint16_t)target_function;
+    method->has_variadic=function->has_variadic;
     method->arity=(uint8_t)arity_value;
     method->required_arity=(uint8_t)required_value;
+    method->needs_receiver=true;
+    function->owner_class=(uint16_t)registers[base].as.integer;
     *result=DIAMOND_NIL;return DIAMOND_VM_OK;
 }
 
@@ -844,6 +862,7 @@ static DiamondVmStatus program_builder_declare_module_singleton_method(DiamondVm
     memcpy(method->name,mname->chars,mname->length);
     method->name[mname->length]='\0';
     method->function_index=(uint16_t)target_function;
+    method->has_variadic=built->functions[target_function]->has_variadic;
     method->arity=(uint8_t)arity_value;
     method->required_arity=(uint8_t)required_value;
     *result=DIAMOND_NIL;return DIAMOND_VM_OK;
@@ -879,6 +898,22 @@ static DiamondVmStatus program_builder_set_function_owner_class(DiamondVm *vm,
         return DIAMOND_VM_TYPE_ERROR;
     }
     built->functions[function_index]->owner_class=(uint16_t)owner_class;
+    *result=DIAMOND_NIL;return DIAMOND_VM_OK;
+}
+
+/* `sealed class X`: NEW rejects X itself; its subclasses instantiate normally.
+ * Never cleared -- reopening a sealed class without `sealed` keeps it sealed. */
+static DiamondVmStatus program_builder_seal_class(DiamondVm *vm, DiamondProgram *built,
+        DiamondValue *registers, uint16_t base, uint8_t argc, DiamondValue *result) {
+    if(argc!=1)return DIAMOND_VM_ARITY_ERROR;
+    DiamondClass *class=registers[base].kind==DIAMOND_VALUE_INT?
+        program_builder_class(built,registers[base].as.integer):nullptr;
+    if(class==nullptr||registers[base].as.integer<DIAMOND_BUILTIN_CLASS_COUNT) {
+        snprintf(vm->error,sizeof vm->error,
+            "ProgramBuilder#seal_class has an invalid class index");
+        return DIAMOND_VM_TYPE_ERROR;
+    }
+    class->sealed=true;
     *result=DIAMOND_NIL;return DIAMOND_VM_OK;
 }
 
@@ -1357,7 +1392,9 @@ static DiamondVmStatus program_builder_declare_type_set(DiamondVm *vm, DiamondPr
         const bool callable_arguments=type_id!=DIAMOND_TYPE_CALLABLE?
             callable_arity==-1&&callable_return==-1&&
                 callable_parameters->count==0:
-            callable_arity>=0&&callable_arity<=16&&valid_return&&
+            /* Arity -1 is a Callable of any arity (bare `Callable`), which
+             * takes no parameter list. */
+            callable_arity>=-1&&callable_arity<=16&&valid_return&&
                 valid_parameters&&
                 (callable_parameters->count==0||
                  callable_parameters->count==(size_t)callable_arity);
@@ -1461,6 +1498,71 @@ static DiamondVmStatus program_builder_set_parameter_name(DiamondVm *vm, Diamond
     if(length>=DIAMOND_MAX_FUNCTION_NAME)length=DIAMOND_MAX_FUNCTION_NAME-1;
     memcpy(target->parameter_names[(size_t)parameter],name->chars,length);
     target->parameter_names[(size_t)parameter][length]='\0';
+    *result=DIAMOND_NIL;return DIAMOND_VM_OK;
+}
+
+static DiamondVmStatus program_builder_set_parameter_flags(DiamondVm *vm, DiamondProgram *built,
+        DiamondValue *registers, uint16_t base, uint8_t argc, DiamondValue *result) {
+    if(argc!=3)return DIAMOND_VM_ARITY_ERROR;
+    if(registers[base].kind!=DIAMOND_VALUE_INT||
+       registers[(size_t)base+1].kind!=DIAMOND_VALUE_BOOL||
+       registers[(size_t)base+2].kind!=DIAMOND_VALUE_BOOL) {
+        snprintf(vm->error,sizeof vm->error,"ProgramBuilder#%s",
+            "set_parameter_flags arguments must be (Int, Bool, Bool)");
+        return DIAMOND_VM_TYPE_ERROR;
+    }
+    /* A variadic slot (and a trailing &block after it) occupies a declared
+     * parameter, so a function with no parameters can't carry either. The
+     * flags must be set before declare_method/declare_*_singleton_method,
+     * which copy has_variadic into the method entry. */
+    DiamondFunction *target=
+        program_builder_target(built,registers[base].as.integer);
+    const bool variadic=registers[(size_t)base+1].as.boolean;
+    const bool block=registers[(size_t)base+2].as.boolean;
+    if(target==nullptr||target==&built->entry||
+       (unsigned)variadic+(unsigned)block>target->arity) {
+        snprintf(vm->error,sizeof vm->error,
+            "ProgramBuilder#set_parameter_flags has an invalid function or too few parameters");
+        return DIAMOND_VM_TYPE_ERROR;
+    }
+    target->has_variadic=variadic;
+    target->has_block_parameter=block;
+    *result=DIAMOND_NIL;return DIAMOND_VM_OK;
+}
+
+/* A `break` or `return` in a block lands in this function's frame, which
+ * keeps it out of the JIT -- compile_block/compile_block_return set the same
+ * flag in compiler.c. */
+static DiamondVmStatus program_builder_set_nonlocal_landing(DiamondVm *vm, DiamondProgram *built,
+        DiamondValue *registers, uint16_t base, uint8_t argc, DiamondValue *result) {
+    if(argc!=1)return DIAMOND_VM_ARITY_ERROR;
+    DiamondFunction *target=registers[base].kind==DIAMOND_VALUE_INT?
+        program_builder_target(built,registers[base].as.integer):nullptr;
+    if(target==nullptr) {
+        snprintf(vm->error,sizeof vm->error,
+            "ProgramBuilder#set_nonlocal_landing has an invalid function index");
+        return DIAMOND_VM_TYPE_ERROR;
+    }
+    target->nonlocal_landing=true;
+    *result=DIAMOND_NIL;return DIAMOND_VM_OK;
+}
+
+/* The offset of the call a block that can `break` is passed to, in the
+ * function that creates it: BLOCK_BREAK lands only in that very call.
+ * compiler.c's emit_opcode records the same offset. */
+static DiamondVmStatus program_builder_set_block_call_offset(DiamondVm *vm, DiamondProgram *built,
+        DiamondValue *registers, uint16_t base, uint8_t argc, DiamondValue *result) {
+    if(argc!=2)return DIAMOND_VM_ARITY_ERROR;
+    DiamondFunction *target=registers[base].kind==DIAMOND_VALUE_INT?
+        program_builder_target(built,registers[base].as.integer):nullptr;
+    const DiamondValue offset=registers[(size_t)base+1];
+    if(target==nullptr||target==&built->entry||offset.kind!=DIAMOND_VALUE_INT||
+       offset.as.integer<=0||offset.as.integer>=DIAMOND_MAX_CODE) {
+        snprintf(vm->error,sizeof vm->error,
+            "ProgramBuilder#set_block_call_offset has an invalid function or offset");
+        return DIAMOND_VM_TYPE_ERROR;
+    }
+    target->block_call_offset=(uint32_t)offset.as.integer;
     *result=DIAMOND_NIL;return DIAMOND_VM_OK;
 }
 
@@ -1700,6 +1802,9 @@ DiamondVmStatus program_builder_invoke_helper(DiamondVm *vm,
        memcmp(method_name->chars,"set_function_owner_class",
            sizeof("set_function_owner_class")-1)==0)
         return program_builder_set_function_owner_class(vm,built,registers,base,argc,result);
+    if(method_name->length==sizeof("seal_class")-1&&
+       memcmp(method_name->chars,"seal_class",sizeof("seal_class")-1)==0)
+        return program_builder_seal_class(vm,built,registers,base,argc,result);
     if(method_name->length==sizeof("include_module")-1&&
        memcmp(method_name->chars,"include_module",sizeof("include_module")-1)==0)
         return program_builder_include_module(built,registers,base,argc,result);
@@ -1745,6 +1850,18 @@ DiamondVmStatus program_builder_invoke_helper(DiamondVm *vm,
        memcmp(method_name->chars,"set_parameter_type",
            sizeof("set_parameter_type")-1)==0)
         return program_builder_set_parameter_type(vm,built,registers,base,argc,result);
+    if(method_name->length==sizeof("set_parameter_flags")-1&&
+       memcmp(method_name->chars,"set_parameter_flags",
+           sizeof("set_parameter_flags")-1)==0)
+        return program_builder_set_parameter_flags(vm,built,registers,base,argc,result);
+    if(method_name->length==sizeof("set_nonlocal_landing")-1&&
+       memcmp(method_name->chars,"set_nonlocal_landing",
+           sizeof("set_nonlocal_landing")-1)==0)
+        return program_builder_set_nonlocal_landing(vm,built,registers,base,argc,result);
+    if(method_name->length==sizeof("set_block_call_offset")-1&&
+       memcmp(method_name->chars,"set_block_call_offset",
+           sizeof("set_block_call_offset")-1)==0)
+        return program_builder_set_block_call_offset(vm,built,registers,base,argc,result);
     if(method_name->length==sizeof("set_parameter_name")-1&&
        memcmp(method_name->chars,"set_parameter_name",
            sizeof("set_parameter_name")-1)==0)

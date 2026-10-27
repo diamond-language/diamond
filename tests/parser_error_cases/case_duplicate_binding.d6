@@ -1,0 +1,3 @@
+case [1]
+when [a, a] then a
+end

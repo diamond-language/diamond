@@ -1,0 +1,21 @@
+# set_nonlocal_landing / set_block_call_offset reject bad indexes and offsets.
+builder = ProgramBuilder.new()
+f = builder.declare_function("f", 0, 0)
+begin
+  builder.set_nonlocal_landing(99)
+rescue error
+  puts(error.message())
+end
+begin
+  builder.set_block_call_offset(-1, 4)
+rescue error
+  puts(error.message())
+end
+begin
+  builder.set_block_call_offset(f, 0)
+rescue error
+  puts(error.message())
+end
+builder.set_nonlocal_landing(-1)
+builder.set_block_call_offset(f, 3)
+puts("ok")

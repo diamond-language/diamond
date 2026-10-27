@@ -1,0 +1,47 @@
+class Wrap
+  def self.join(left, right = "R", mark = "!") = left + right + mark
+  def self.each_label(prefix = "item", &block: Callable[[String], String])
+    yield(prefix)
+  end
+  def label(prefix = "obj", &block: Callable[[String], String])
+    yield(prefix)
+  end
+end
+
+module Text
+  def self.pair(first, second = "2") = first + second
+end
+
+def sum3(a, b, c) = a + b + c
+def apply(value: String = "fn", &block: Callable[[String], String]) -> String = yield(value)
+def run(callback: Callable[[String, Callable[[String], String]], String]) = callback() do |text|
+  text + " via callable"
+end
+
+puts(Wrap.join(right: "x", left: "y"))
+puts(Wrap.join("a", mark: "?"))
+puts(Wrap.join(*["s"], mark: "."))
+puts(Text.pair(second: "b", first: "a"))
+puts(Text.pair(*["p"]))
+prefix = [1, 2]
+puts(sum3(*prefix, c: 3))
+puts(apply() do |text|
+  text + " block"
+end)
+puts(Wrap.each_label() do |text|
+  text + " singleton"
+end)
+puts(Wrap.each_label(*[]) do |text|
+  text + " spread"
+end)
+puts(Wrap.each_label(prefix: "kw") do |text|
+  text + " keyword"
+end)
+wrap = Wrap.new()
+puts(wrap.label() do |text|
+  text + " method"
+end)
+puts(wrap.label(*["s"]) do |text|
+  text + " method spread"
+end)
+puts(run(apply))

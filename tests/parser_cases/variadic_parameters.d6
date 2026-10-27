@@ -1,0 +1,39 @@
+def merge(first, *rest) = first.to_s() + ":" + rest.join(",")
+puts(merge(1))
+puts(merge(1, 2, 3))
+
+def receive(label = "values", *values, &block)
+  suffix = if block == nil
+    "no block"
+  else
+    block(values.length()).to_s()
+  end
+  label + "=" + values.join(",") + " " + suffix
+end
+puts(receive())
+puts(receive("xs", 1, 2))
+puts(receive("ys", 3) do |count|
+  count * 10
+end)
+
+class Collector
+  def collect(head, *rest) = head + ":" + rest.join(",")
+
+  def self.count(*items) = items.length()
+end
+puts(Collector.new().collect("a", "b", "c"))
+puts(Collector.count(1, 2, 3, 4))
+
+module Joiner
+  def self.join(separator, *parts) = parts.join(separator)
+end
+puts(Joiner.join("-", "x", "y"))
+
+puts(later(1, 2, 3))
+def later(*items) = items.length()
+
+def outer()
+  def inner(*xs) = xs.length()
+  inner(4, 5)
+end
+puts(outer())

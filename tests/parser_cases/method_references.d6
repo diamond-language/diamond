@@ -1,0 +1,34 @@
+class Box
+  def initialize(base)
+    @base = base
+  end
+
+  def add(value: Int, extra: Int = 0) -> Int = @base + value + extra
+  def identity[T](value: T) -> T = value
+  def self.twice(value: Int) -> Int = value * 2
+  def self.pick[T](value: T) -> T = value
+end
+
+module Tools
+  def self.shout(text: String, mark: String = "!") -> String = text + mark
+end
+
+def typed_add(box: Box) -> Callable[[Int], Int] = box.add
+def generic_pick() -> Callable[[Int], Int] = Box.pick
+def make_adder(box) = box.add
+
+box = Box.new(10)
+add = box.add
+puts(add(1))
+puts(add(value: 1, extra: 5))
+puts(typed_add(box)(2))
+puts(make_adder(box)(3, 4))
+puts(box.identity[String]("generic"))
+twice = Box.twice
+puts(twice(21))
+puts(generic_pick()(7))
+shout = Tools.shout
+puts(shout("hi"))
+puts(shout("hi", "?"))
+join = [1, 2, 3].join
+puts(join("-"))

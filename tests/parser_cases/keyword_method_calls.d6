@@ -1,0 +1,23 @@
+# Keyword arguments matched to parameter names at run time.
+class Greeter
+  def initialize(greeting: String, punctuation: String = "!")
+    @greeting = greeting
+    @punctuation = punctuation
+  end
+
+  def greet(name: String, times: Int = 1) -> String
+    (@greeting + ", " + name + @punctuation) * times
+  end
+
+  def each_word(prefix: String, &block)
+    block(prefix + "a")
+    block(prefix + "b")
+  end
+end
+
+g = Greeter.new(punctuation: "?", greeting: "Hi")
+puts(g.greet(name: "Ada"))
+puts(g.greet("Bob", times: 2))
+g.each_word(prefix: "-") do |word|
+  puts(word)
+end

@@ -1,0 +1,5 @@
+class Base
+end
+
+struct Point(x: Int) < Base
+end

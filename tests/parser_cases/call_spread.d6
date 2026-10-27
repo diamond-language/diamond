@@ -1,0 +1,54 @@
+def merge(*values) = values.join("-")
+def pair(left, right) = left.to_s() + "/" + right.to_s()
+
+middle = [2, 3]
+puts(merge(1, *middle, 4))
+puts(merge(*middle))
+puts(pair(*[5, 6]))
+puts(merge(*middle) do |unused|
+  unused
+end.length())
+
+callable = merge
+puts(callable("a", *["b", "c"], "d"))
+
+class Point
+  attr_reader(x, y)
+
+  def initialize(x, y)
+    @x = x
+    @y = y
+  end
+
+  def shift(dx, dy) = Point.new(@x + dx, @y + dy)
+
+  def self.origin(*coordinates) = coordinates.length()
+end
+point = Point.new(*[1, 2])
+moved = point.shift(*[10, 20])
+puts(moved.x())
+puts(moved.y())
+puts(Point.origin(*[0, 0, 0]))
+
+module Math2
+  module_function
+
+  def total(*numbers) = numbers.sum()
+end
+puts(Math2.total(*[1, 2, 3]))
+
+def forward(*args, &block) = apply(*args, &block)
+def apply(*args, &block)
+  if block == nil
+    args.length()
+  else
+    block(args.length())
+  end
+end
+puts(forward(1, 2))
+puts(forward(1, 2, 3) do |count|
+  count * 100
+end)
+
+puts(forward_later(*[7, 8]))
+def forward_later(a, b) = a + b

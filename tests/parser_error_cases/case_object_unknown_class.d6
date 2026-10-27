@@ -1,0 +1,3 @@
+case 1
+when Missing{a: x} then x
+end

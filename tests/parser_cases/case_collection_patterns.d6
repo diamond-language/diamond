@@ -1,0 +1,73 @@
+# Array, Hash and object patterns in `when`: bindings, `_`, rests, pins,
+# comma-joined alternatives binding the same names, and guards.
+struct Score(points: Int, label: String)
+end
+
+def describe(value, expected)
+  case value
+  when [^expected, [first, *middle, last]]
+    "pinned " + first.to_s() + " " + middle.to_s() + " " + last.to_s()
+  when ["pair", left, right], {"left": left, "right": right}
+    "pair " + left.to_s() + "/" + right.to_s()
+  when {"score": points, **rest} if points > 10
+    "high " + points.to_s() + " " + rest.to_s()
+  when {"score": points}
+    "low " + points.to_s()
+  when Score{points: points, label: "gold"}
+    "gold " + points.to_s()
+  when Score{points: _, label: label}
+    "score " + label
+  when [_, *_]
+    "some array"
+  else
+    "other"
+  end
+end
+
+puts(describe(["k", [1, 2, 3, 4]], "k"))
+puts(describe(["j", [1, 2]], "k"))
+puts(describe(["pair", 1, 2], "k"))
+puts(describe({"right": 4, "left": 3}, "k"))
+puts(describe({"score": 12, "source": "arena"}, "k"))
+puts(describe({"score": 3}, "k"))
+puts(describe(Score.new(7, "gold"), "k"))
+puts(describe(Score.new(2, "tin"), "k"))
+puts(describe(5, "k"))
+
+grade = 82
+result = case
+when grade >= 90 then "A"
+when grade >= 80 then "B"
+else "C"
+end
+puts(result)
+
+grid = [[1, 2], [3, 4]]
+grid[1][0] = 9
+nested = {"a" => {"b" => 1}}
+nested["a"]["b"] = 2
+puts(grid)
+puts(nested)
+
+# Exhaustive over a union and over a sealed hierarchy: no else needed.
+sealed class Shape
+end
+
+class Circle < Shape
+end
+
+class Square < Shape
+end
+
+def shape_name(shape: Shape) = case shape
+  when Circle then "circle"
+  when Square then "square"
+  end
+
+def maybe_name(shape: Circle | Nil) = case shape
+  when Circle then "circle"
+  when nil then "none"
+  end
+
+puts(shape_name(Square.new()))
+puts(maybe_name(nil))

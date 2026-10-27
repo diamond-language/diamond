@@ -14,6 +14,24 @@ set -euo pipefail
 
 diamond=./build/diamond
 
+# find_builtin_class in selfhost/parser.d6 hardcodes the VM's builtin
+# exception classes and their indices; it has fallen behind the native table
+# twice. Each entry of diamond_program_init_fresh's table (listed in enum
+# order) must appear there with the same index.
+builtin_index=0
+while read -r builtin_name; do
+    if ! grep -Fq "[\"$builtin_name\", $builtin_index," selfhost/parser.d6; then
+        echo "selfhost/parser.d6 find_builtin_class lacks $builtin_name at index $builtin_index" >&2
+        exit 1
+    fi
+    builtin_index=$((builtin_index + 1))
+done < <(sed -n 's/^ *\[DIAMOND_CLASS_[A-Z0-9_]*\]={"\([A-Za-z0-9]*\)".*/\1/p' src/compiler_program.c)
+if [[ "$builtin_index" -lt 23 ]]; then
+    echo "found only $builtin_index builtin classes in src/compiler_program.c" >&2
+    exit 1
+fi
+echo "self-hosted builtin exception classes match the native table"
+
 self_parse_result="$(echo "selfhost/parser.d6" | $diamond selfhost/self_parse_check.d6 2>&1)"
 if [[ "$self_parse_result" != "PARSED OK"* ]]; then
     echo "self-hosted parser failed to parse its own source: $self_parse_result" >&2

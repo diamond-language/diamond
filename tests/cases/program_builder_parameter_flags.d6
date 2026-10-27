@@ -1,0 +1,7 @@
+# set_parameter_flags marks a function variadic and/or as taking a block
+# parameter; both flags need a declared parameter slot to occupy.
+builder = ProgramBuilder.new()
+function = builder.declare_function("collect", 2, 0)
+puts(builder.set_parameter_flags(function, true, true))
+empty = builder.declare_function("empty", 0, 0)
+builder.set_parameter_flags(empty, true, false)

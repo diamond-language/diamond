@@ -1,0 +1,28 @@
+# Index assignment on @ivar/@@cvar targets, compound index assignment
+# (one index, or a chain through the postfix path) and ||=.
+class Box
+  def initialize()
+    @items = [[1, 2], [3]]
+    @@all = [0]
+  end
+  def bump()
+    @items[0][1] = 9
+    @items[1] = [4]
+    @items[1][0] += 1
+    @@all[0] += 2
+    @@all[0] ||= 5
+    @items
+  end
+  def all() = @@all
+end
+b = Box.new()
+puts(b.bump())
+puts(b.all())
+counts = {"a" => 1}
+counts["a"] += 1
+counts["b"] ||= 7
+xs = [1, 2]
+i = 0
+xs[i + 1] *= 10
+puts(counts)
+puts(xs)
