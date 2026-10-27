@@ -1,0 +1,50 @@
+require "./lib/store"
+require "../../lib/minitest"
+
+suite = Minitest.new()
+
+suite.test("validated edits preserve stored values and ignore unpermitted IDs") do
+  store = BoardStore.new(SQLite3.open(":memory:"))
+  project = store.create_project({"name": "Diamond"}).value()
+  task = store.create_task({"project_id": "#{project.id()}", "title": "Ship a board", "id": 99}).value()
+  Minitest.assert_equal("todo", task.status())
+  Minitest.assert(task.id() != 99)
+  rejected = store.update_task(task.id(), {"title": "", "status": "unknown"})
+  Minitest.assert(rejected.err?())
+  Minitest.assert(rejected.error().errors().has_key?("title"))
+  Minitest.assert(rejected.error().errors().has_key?("status"))
+  Minitest.assert_equal("Ship a board", store.task(task.id()).title())
+  updated = store.update_task(task.id(), {"status": "doing", "id": 99}).value()
+  Minitest.assert_equal(task.id(), updated.id())
+  Minitest.assert_equal("doing", store.task(task.id()).status())
+  Minitest.assert_equal("todo", task.status())
+  store.close()
+end
+
+suite.test("project and status filters combine with explicit association loading") do
+  store = BoardStore.new(SQLite3.open(":memory:"))
+  first = store.create_project({"name": "Diamond"}).value()
+  second = store.create_project({"name": "Other"}).value()
+  todo = store.create_task({"project_id": first.id(), "title": "One"}).value()
+  store.create_task({"project_id": first.id(), "title": "Two", "status": "done"})
+  store.create_task({"project_id": second.id(), "title": "Three"})
+  filtered = store.tasks(first.id(), "todo")
+  Minitest.assert_equal([todo.id()], filtered[0].map() do |task| task.id() end)
+  Minitest.assert_equal("Diamond", filtered[1][todo.id()].name())
+  Minitest.assert_equal(2, store.tasks(nil, "todo")[0].length())
+  Minitest.assert_equal([], store.tasks(second.id(), "done")[0])
+  store.close()
+end
+
+suite.test("bad project references and duplicate names become validation errors") do
+  store = BoardStore.new(SQLite3.open(":memory:"))
+  store.create_project({"name": "Diamond"})
+  Minitest.assert(store.create_project({"name": "Diamond"}).err?())
+  Minitest.assert(store.create_project({"name": ""}).err?())
+  Minitest.assert(store.create_task({"project_id": 999, "title": "Orphan"}).err?())
+  Minitest.assert(store.create_task({"project_id": "oops", "title": "Bad ID"}).err?())
+  Minitest.assert_equal([], store.tasks()[0])
+  store.close()
+end
+
+suite.run!()

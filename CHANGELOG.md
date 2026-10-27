@@ -6,6 +6,11 @@ authoritative fine-grained record.
 
 ## Unreleased
 
+### Added
+
+- A terminal task board under `applications/task_board`, with Mjolnir-validated
+  project/task writes, status and project filters, and explicit batched association loading.
+
 ### Changed
 
 - The self-hosted compiler runs 1,166 of the 1,488 test programs (up from 1,035): it now

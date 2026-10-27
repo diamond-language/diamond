@@ -1,0 +1,109 @@
+require "./lib/store"
+
+def board_usage() =
+  "usage: board [--db FILE] COMMAND\n" +
+  "  project NAME | projects | add PROJECT TITLE | edit TASK TITLE\n" +
+  "  move TASK todo|doing|done | list [--project ID] [--status todo|doing|done]"
+
+def board_id(text)
+  unless Regexp.new("\\A[1-9][0-9]*\\z").match?(text)
+    raise ArgumentError.new("expected a positive integer ID, got: #{text}")
+  end
+  text.to_i()
+end
+
+def board_result(result, kind)
+  if result.err?()
+    errors = result.error().errors()
+    errors.keys().each() do |field|
+      warn("#{field}: #{errors[field].join(", ")}")
+    end
+    return 65
+  end
+  entity = result.value()
+  if kind == "project"
+    puts("project ##{entity.id()}: #{entity.name()}")
+  else
+    puts("task ##{entity.id()} [#{entity.status()}]: #{entity.title()}")
+  end
+  0
+end
+
+def board_list(store, options)
+  filters = {}
+  index = 0
+  while index < options.length()
+    flag = options[index]
+    if !["--project", "--status"].include?(flag) || index + 1 >= options.length() || filters.has_key?(flag)
+      raise ArgumentError.new("list expects --project ID and/or --status todo|doing|done")
+    end
+    filters[flag] = options[index + 1]
+    index += 2
+  end
+  project_id = if filters.has_key?("--project") then board_id(filters["--project"]) else nil end
+  listed = store.tasks(project_id, filters["--status"])
+  if listed[0].empty?() then puts("No tasks.") end
+  listed[0].each() do |task|
+    project = listed[1][task.id()]
+    puts("##{task.id()} [#{task.status()}] #{project.name()} / #{task.title()}")
+  end
+  0
+end
+
+def board_run(store, args)
+  case args
+  when ["project", name]
+    board_result(store.create_project({"name": name}), "project")
+  when ["projects"]
+    projects = store.projects()
+    if projects.empty?() then puts("No projects.") end
+    projects.each() do |project| puts("##{project.id()} #{project.name()}") end
+    0
+  when ["add", project_id, title]
+    board_result(store.create_task({"project_id": board_id(project_id), "title": title}), "task")
+  when ["edit", task_id, title], ["move", task_id, title]
+    id = board_id(task_id)
+    if store.task(id) == nil
+      warn("task ##{id} not found")
+      return 66
+    end
+    field = if args[0] == "edit" then "title" else "status" end
+    board_result(store.update_task(id, {field: title}), "task")
+  when ["list", *options]
+    board_list(store, options)
+  else
+    warn(board_usage())
+    64
+  end
+end
+
+def board_main(args)
+  path = ENV.fetch("BOARD_DATABASE_PATH", "task_board.db")
+  if args.length() >= 2 && args[0] == "--db"
+    path = args[1]
+    args = args.slice(2, args.length() - 2)
+  end
+  if args == ["--help"]
+    puts(board_usage())
+    return 0
+  end
+  if args.empty?()
+    warn(board_usage())
+    return 64
+  end
+  store = nil
+  begin
+    store = BoardStore.new(SQLite3.open(path))
+    board_run(store, args)
+  rescue error: ArgumentError
+    warn("board: #{error.message()}")
+    64
+  rescue error: SQLite3Error
+    warn("board: #{error.message()}")
+    1
+  ensure
+    if store != nil then store.close() end
+  end
+end
+
+exit(board_main(ARGV))
