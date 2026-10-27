@@ -1,0 +1,21 @@
+# Extra arguments to a variadic function must not leak into its temporaries.
+def describe(*args, &block)
+  block_state = if block == nil
+    "no block"
+  else
+    "block " + block(args.length()).to_s()
+  end
+  nothing = nil
+  args.join(",") + " " + block_state + " " + (nothing == nil).to_s()
+end
+
+puts(describe(1, 2, 3, 4, 5))
+puts(describe(1, 2, 3) do |count|
+  count * 100
+end)
+
+def head_and_rest(head, *rest)
+  marker = nil
+  head.to_s() + ":" + rest.length().to_s() + ":" + (marker == nil).to_s()
+end
+puts(head_and_rest(1, 2, 3, 4, 5, 6, 7, 8))

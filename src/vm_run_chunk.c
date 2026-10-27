@@ -573,6 +573,16 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 if(preserved_count==1)
                     registers[(size_t)destination+1]=preserved==1?
                         arguments[available]:DIAMOND_NIL;
+                /* Arguments past the variadic (and block) slot were copied
+                 * into registers the body treats as never-written temporaries
+                 * -- a bare `nil` operand reads one. Only parameter setup runs
+                 * before this instruction, and a spill means every fixed
+                 * argument was passed, so no default fallback has read them. */
+                const size_t spilled=argument_count<live_register_count?
+                    argument_count:live_register_count;
+                for(size_t index=(size_t)destination+preserved_count+1;
+                    index<spilled;index++)
+                    registers[index]=DIAMOND_NIL;
                 break;
             }
             case DIAMOND_OP_TO_STRING: {

@@ -4,6 +4,15 @@ Diamond is currently pre-release. This file records user-visible capability
 milestones rather than every implementation step; the Git history remains the
 authoritative fine-grained record.
 
+## Unreleased
+
+### Fixed
+
+- A variadic function called with more arguments than it has parameters no longer sees the
+  extra arguments in its temporaries: `block == nil` in `def f(*args, &block)` was true for
+  `f(1, 2, 3) do ... end` because a spilled argument landed in the register that `nil`
+  compiles to.
+
 ## 0.20.2 — 2026-10-26
 
 Shaped by writing two command-line and TCP example apps: `def` bodies take `rescue` without
