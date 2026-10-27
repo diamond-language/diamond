@@ -17,6 +17,10 @@ authoritative fine-grained record.
 - A program may declare up to 1,024 modules (was 255) and 1,024 interfaces (was 32). Both
   tables now allocate entries on demand, as classes already did, so `DiamondProgram` shrinks
   by about 16 MB and a spawned thread copies only the interfaces it uses.
+- A class, module or interface may define up to 4,096 methods (was 256), and a class up to
+  255 instance variables (was 64). Method, field and class-variable tables grow on demand, so a
+  class takes about 5 KB instead of 64 KB (a module 0.7 KB instead of 58 KB), and `Thread.new`
+  copies less. Class variables stay at 64 per class.
 
 ### Fixed
 

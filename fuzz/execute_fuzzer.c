@@ -309,7 +309,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
             class->field_count = parent->field_count;
             memcpy(class->fields, parent->fields, parent->field_count * sizeof class->fields[0]);
         }
-        for (size_t field = 0; field < field_total && class->field_count < DIAMOND_MAX_FIELDS; field++)
+        for (size_t field = 0; field < field_total && diamond_class_reserve_fields(class, class->field_count + 1); field++)
             (void)snprintf(class->fields[class->field_count++], sizeof class->fields[0], "f%zu", field);
         for (size_t method = 0; method < method_total; method++) {
             const uint8_t function_byte = fuzz_byte(&reader);

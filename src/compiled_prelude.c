@@ -21,15 +21,11 @@
  * never by trusting a raw pointer value read from the file.
  *
  * classes[]/interfaces[]/modules[] are each written field-by-field
- * (write_class/write_module/write_interface below) rather than as a
- * single fixed-size struct dump: DiamondClass/DiamondModule's own
- * methods[DIAMOND_MAX_METHODS=256]/singleton_methods[256] arrays (and
- * DiamondInterface's own methods[256]) are sized for a program far
- * larger than the prelude ever populates, so writing only the actual
- * method_count/singleton_method_count entries (same "count before the
+ * (write_class/write_module/write_interface below): their method, field
+ * and class-variable tables are heap pointers, so each is written as a
+ * count followed by that many entries (same "count before the
  * variable-length tail" shape as write_function's own dynamic arrays
- * above) is what keeps this format from ballooning back out to
- * something close to raw sizeof(DiamondProgram). DiamondMethod itself
+ * above), and the reader allocates them again. DiamondMethod itself
  * has two pointers (source_chunk/bound_values),
  * but per its own comment (src/vm.h) both are non-null *only* for a
  * method installed at runtime via ClassName.compile_method/
@@ -146,10 +142,8 @@ static void assert_methods_are_plain(const DiamondMethod *methods, size_t count)
     (void)methods; (void)count; /* silence unused-parameter in an NDEBUG build */
 }
 
-/* Writes only the *used* prefix of a class's own methods[]/
- * singleton_methods[]/fields[]/class_variables[] (each up to
- * DIAMOND_MAX_METHODS=256 or DIAMOND_MAX_FIELDS=64 slots, almost all
- * unused for any one class) -- see this file's own top comment. shapes[]
+/* Writes the used entries of a class's own methods[]/singleton_methods[]/
+ * fields[]/class_variables[] tables -- see this file's own top comment. shapes[]
  * is never written: always safely recomputed on the read side before
  * anything reads it. */
 static bool write_class(FILE *file, const DiamondClass *class) {
@@ -441,20 +435,24 @@ static bool read_class(const uint8_t **cursor, const uint8_t *end, DiamondClass 
     uint64_t field_count = 0;
     if (!read_u64(cursor, end, &field_count)) return false;
     if (field_count > DIAMOND_MAX_FIELDS) return false;
+    if (!diamond_class_reserve_fields(out, (size_t)field_count)) return false;
     out->field_count = (size_t)field_count;
     if (!read_bytes(cursor, end, out->fields, (size_t)field_count * sizeof out->fields[0])) return false;
     if (!read_bytes(cursor, end, out->field_type_status, (size_t)field_count * sizeof out->field_type_status[0])) return false;
     if (!read_bytes(cursor, end, out->field_known_class, (size_t)field_count * sizeof out->field_known_class[0])) return false;
     /* At this boundary all methods are compiled; final field facts also
      * supply receiver-dependent reader inference in the restored program. */
-    memcpy(out->discovered_field_type_status,out->field_type_status,
-        (size_t)field_count*sizeof out->field_type_status[0]);
-    memcpy(out->discovered_field_known_class,out->field_known_class,
-        (size_t)field_count*sizeof out->field_known_class[0]);
+    if (field_count > 0) {
+        memcpy(out->discovered_field_type_status,out->field_type_status,
+            (size_t)field_count*sizeof out->field_type_status[0]);
+        memcpy(out->discovered_field_known_class,out->field_known_class,
+            (size_t)field_count*sizeof out->field_known_class[0]);
+    }
 
     uint64_t class_variable_count = 0;
     if (!read_u64(cursor, end, &class_variable_count)) return false;
-    if (class_variable_count > DIAMOND_MAX_FIELDS) return false;
+    if (class_variable_count > DIAMOND_MAX_CLASS_VARIABLES) return false;
+    if (!diamond_class_reserve_class_variables(out, (size_t)class_variable_count)) return false;
     out->class_variable_count = (size_t)class_variable_count;
     if (!read_bytes(cursor, end, out->class_variables,
             (size_t)class_variable_count * sizeof out->class_variables[0])) return false;
@@ -491,6 +489,7 @@ static bool read_module(const uint8_t **cursor, const uint8_t *end, DiamondModul
     uint64_t field_count = 0;
     if (!read_u64(cursor, end, &field_count)) return false;
     if (field_count > DIAMOND_MAX_FIELDS) return false;
+    if (!diamond_module_reserve_fields(out, (size_t)field_count)) return false;
     out->field_count = (size_t)field_count;
     if (!read_bytes(cursor, end, out->fields, (size_t)field_count * sizeof out->fields[0])) return false;
 

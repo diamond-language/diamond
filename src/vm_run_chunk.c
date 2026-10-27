@@ -3091,13 +3091,10 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
              * owner_class matches), minus the arity-must-match check --
              * there is no existing method to match arity against, so the
              * new slot just takes the callable's own arity, the same way
-             * a `def` compiled directly into this class would. The fixed-
-             * size `methods[]` array already has DIAMOND_MAX_METHODS
-             * headroom regardless of how many compile-time methods a
-             * class declared, so "adding" a method is just populating the
-             * next unused slot and incrementing method_count -- no
-             * reallocation, no heap object, nothing for the GC to know
-             * about. Rejects a name that already exists (directing the
+             * a `def` compiled directly into this class would. A full
+             * method table grows (diamond_class_grow_methods_while_running
+             * keeps the old one alive for calls in flight); either way
+             * nothing new is a GC object. Rejects a name that already exists (directing the
              * caller to redefine_method instead) rather than silently
              * repointing it, keeping the two operations' contracts
              * separate and predictable. */

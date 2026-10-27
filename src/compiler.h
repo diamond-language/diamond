@@ -227,6 +227,11 @@ bool diamond_reserve_interface_methods(DiamondInterfaceMethod **methods,size_t *
                                        size_t count);
 bool diamond_reserve_discovered_methods(DiamondClass *class,size_t count);
 bool diamond_class_grow_methods_while_running(DiamondClass *class,size_t count);
+/* Field and class-variable tables, likewise (DIAMOND_MAX_FIELDS,
+ * DIAMOND_MAX_CLASS_VARIABLES). */
+bool diamond_class_reserve_fields(DiamondClass *class,size_t count);
+bool diamond_module_reserve_fields(DiamondModule *module,size_t count);
+bool diamond_class_reserve_class_variables(DiamondClass *class,size_t count);
 bool diamond_class_copy(DiamondClass *destination,const DiamondClass *source);
 bool diamond_module_copy(DiamondModule *destination,const DiamondModule *source);
 bool diamond_interface_copy(DiamondInterface *destination,const DiamondInterface *source);

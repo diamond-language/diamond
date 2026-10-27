@@ -433,7 +433,9 @@ static DiamondVmStatus program_builder_declare_class(DiamondVm *vm, DiamondProgr
     memcpy(class->name,cname->chars,cname->length);
     class->name[cname->length]='\0';
     class->superclass=parent==nullptr?DIAMOND_NO_CLASS:(uint16_t)superclass_index;
-    if(parent!=nullptr) {
+    if(parent!=nullptr&&parent->field_count>0) {
+        if(!diamond_class_reserve_fields(class,parent->field_count))
+            return DIAMOND_VM_OUT_OF_MEMORY;
         class->field_count=parent->field_count;
         memcpy(class->fields,parent->fields,
             parent->field_count*DIAMOND_MAX_FUNCTION_NAME);
@@ -536,7 +538,7 @@ static DiamondVmStatus program_builder_declare_field(DiamondVm *vm, DiamondProgr
            memcmp(class->fields[index],fname->chars,fname->length)==0) {
             *result=DIAMOND_INT((int64_t)index);return DIAMOND_VM_OK;
         }
-    if(class->field_count==DIAMOND_MAX_FIELDS) {
+    if(!diamond_class_reserve_fields(class,class->field_count+1)) {
         snprintf(vm->error,sizeof vm->error,"class has too many fields");
         return DIAMOND_VM_TYPE_ERROR;
     }
@@ -580,7 +582,7 @@ static DiamondVmStatus program_builder_declare_class_variable(DiamondVm *vm, Dia
            memcmp(class->class_variables[index],vname->chars,vname->length)==0) {
             *result=DIAMOND_INT((int64_t)index);return DIAMOND_VM_OK;
         }
-    if(class->class_variable_count==DIAMOND_MAX_FIELDS) {
+    if(!diamond_class_reserve_class_variables(class,class->class_variable_count+1)) {
         snprintf(vm->error,sizeof vm->error,"class has too many class variables");
         return DIAMOND_VM_TYPE_ERROR;
     }
@@ -611,7 +613,7 @@ static DiamondVmStatus program_builder_declare_module_field(DiamondProgram *buil
            memcmp(module->fields[index],name->chars,name->length)==0) {
             *result=DIAMOND_INT((int64_t)index);return DIAMOND_VM_OK;
         }
-    if(module->field_count==DIAMOND_MAX_FIELDS)return DIAMOND_VM_TYPE_ERROR;
+    if(!diamond_module_reserve_fields(module,module->field_count+1))return DIAMOND_VM_TYPE_ERROR;
     const int64_t index=(int64_t)module->field_count;
     memcpy(module->fields[module->field_count],name->chars,name->length);
     module->fields[module->field_count][name->length]='\0';
@@ -931,7 +933,7 @@ static DiamondVmStatus program_builder_include_module(DiamondProgram *built,
     if(class==nullptr||module_index<0||
        (uint64_t)module_index>=built->module_count)return DIAMOND_VM_TYPE_ERROR;
     const DiamondModule *module=built->modules[(size_t)module_index];
-    if(class->field_count+module->field_count>DIAMOND_MAX_FIELDS||
+    if(!diamond_class_reserve_fields(class,class->field_count+module->field_count)||
        !diamond_reserve_methods(&class->methods,&class->method_capacity,
            class->method_count+module->method_count))
         return DIAMOND_VM_TYPE_ERROR;
@@ -969,7 +971,7 @@ static DiamondVmStatus program_builder_include_module_in_module(DiamondProgram *
         return DIAMOND_VM_TYPE_ERROR;
     DiamondModule *target=built->modules[(size_t)target_index];
     const DiamondModule *source=built->modules[(size_t)source_index];
-    if(target->field_count+source->field_count>DIAMOND_MAX_FIELDS||
+    if(!diamond_module_reserve_fields(target,target->field_count+source->field_count)||
        !diamond_reserve_methods(&target->methods,&target->method_capacity,
            target->method_count+source->method_count))
         return DIAMOND_VM_TYPE_ERROR;

@@ -315,6 +315,51 @@ bool diamond_reserve_discovered_methods(DiamondClass *class,size_t count) {
     return ok;
 }
 
+bool diamond_class_reserve_fields(DiamondClass *class,size_t count) {
+    if(count<=class->field_capacity)return true;
+    /* Each table grows from the same old length; the shared capacity
+     * moves only once all five have room. */
+    size_t capacity=class->field_capacity;
+    bool ok;
+    class->fields=grow_table(class->fields,&capacity,count,sizeof *class->fields,
+        DIAMOND_MAX_FIELDS,&ok);
+    if(!ok)return false;
+    const size_t grown=capacity;
+    capacity=class->field_capacity;
+    class->field_type_status=grow_table(class->field_type_status,&capacity,grown,
+        sizeof *class->field_type_status,DIAMOND_MAX_FIELDS,&ok);
+    if(!ok)return false;
+    capacity=class->field_capacity;
+    class->field_known_class=grow_table(class->field_known_class,&capacity,grown,
+        sizeof *class->field_known_class,DIAMOND_MAX_FIELDS,&ok);
+    if(!ok)return false;
+    capacity=class->field_capacity;
+    class->discovered_field_type_status=grow_table(class->discovered_field_type_status,
+        &capacity,grown,sizeof *class->discovered_field_type_status,DIAMOND_MAX_FIELDS,&ok);
+    if(!ok)return false;
+    capacity=class->field_capacity;
+    class->discovered_field_known_class=grow_table(class->discovered_field_known_class,
+        &capacity,grown,sizeof *class->discovered_field_known_class,DIAMOND_MAX_FIELDS,&ok);
+    if(!ok)return false;
+    class->field_capacity=grown;
+    return true;
+}
+
+bool diamond_module_reserve_fields(DiamondModule *module,size_t count) {
+    bool ok;
+    module->fields=grow_table(module->fields,&module->field_capacity,count,
+        sizeof *module->fields,DIAMOND_MAX_FIELDS,&ok);
+    return ok;
+}
+
+bool diamond_class_reserve_class_variables(DiamondClass *class,size_t count) {
+    bool ok;
+    class->class_variables=grow_table(class->class_variables,
+        &class->class_variable_capacity,count,sizeof *class->class_variables,
+        DIAMOND_MAX_CLASS_VARIABLES,&ok);
+    return ok;
+}
+
 /* diamond_reserve_methods for a class whose program is already running
  * (ClassName.define_method): the outgrown table moves to retired_methods
  * instead of being freed, so a DiamondMethod pointer a call in flight
@@ -344,6 +389,12 @@ void diamond_class_free_tables(DiamondClass *class) {
     free(class->methods);
     free(class->singleton_methods);
     free(class->discovered_methods);
+    free(class->fields);
+    free(class->field_type_status);
+    free(class->field_known_class);
+    free(class->discovered_field_type_status);
+    free(class->discovered_field_known_class);
+    free(class->class_variables);
     for(size_t index=0;index<class->retired_method_count;index++)
         free(class->retired_methods[index]);
     free(class->retired_methods);
@@ -353,11 +404,18 @@ void diamond_class_free_tables(DiamondClass *class) {
     class->discovered_methods=nullptr;class->discovered_method_count=0;
     class->discovered_method_capacity=0;
     class->retired_methods=nullptr;class->retired_method_count=0;
+    class->fields=nullptr;class->field_type_status=nullptr;class->field_known_class=nullptr;
+    class->discovered_field_type_status=nullptr;class->discovered_field_known_class=nullptr;
+    class->field_count=0;class->field_capacity=0;
+    class->class_variables=nullptr;class->class_variable_count=0;
+    class->class_variable_capacity=0;
 }
 
 void diamond_module_free_tables(DiamondModule *module) {
     free(module->methods);
     free(module->singleton_methods);
+    free(module->fields);
+    module->fields=nullptr;module->field_count=0;module->field_capacity=0;
     module->methods=nullptr;module->method_count=0;module->method_capacity=0;
     module->singleton_methods=nullptr;module->singleton_method_count=0;
     module->singleton_method_capacity=0;
@@ -384,9 +442,30 @@ bool diamond_class_copy(DiamondClass *destination,const DiamondClass *source) {
         source->discovered_method_count,sizeof *source->discovered_methods);
     destination->discovered_method_capacity=source->discovered_method_count;
     destination->retired_methods=nullptr;destination->retired_method_count=0;
+    const size_t fields=source->field_count;
+    destination->fields=duplicate_table(source->fields,fields,sizeof *source->fields);
+    destination->field_type_status=duplicate_table(source->field_type_status,fields,
+        sizeof *source->field_type_status);
+    destination->field_known_class=duplicate_table(source->field_known_class,fields,
+        sizeof *source->field_known_class);
+    destination->discovered_field_type_status=duplicate_table(
+        source->discovered_field_type_status,fields,
+        sizeof *source->discovered_field_type_status);
+    destination->discovered_field_known_class=duplicate_table(
+        source->discovered_field_known_class,fields,
+        sizeof *source->discovered_field_known_class);
+    destination->field_capacity=fields;
+    destination->class_variables=duplicate_table(source->class_variables,
+        source->class_variable_count,sizeof *source->class_variables);
+    destination->class_variable_capacity=source->class_variable_count;
     if((source->method_count>0&&destination->methods==nullptr)||
        (source->singleton_method_count>0&&destination->singleton_methods==nullptr)||
-       (source->discovered_method_count>0&&destination->discovered_methods==nullptr)) {
+       (source->discovered_method_count>0&&destination->discovered_methods==nullptr)||
+       (fields>0&&(destination->fields==nullptr||destination->field_type_status==nullptr||
+                   destination->field_known_class==nullptr||
+                   destination->discovered_field_type_status==nullptr||
+                   destination->discovered_field_known_class==nullptr))||
+       (source->class_variable_count>0&&destination->class_variables==nullptr)) {
         diamond_class_free_tables(destination);
         return false;
     }
@@ -402,8 +481,12 @@ bool diamond_module_copy(DiamondModule *destination,const DiamondModule *source)
     destination->singleton_methods=duplicate_table(source->singleton_methods,
         source->singleton_method_count,sizeof *source->singleton_methods);
     destination->singleton_method_capacity=source->singleton_method_count;
+    destination->fields=duplicate_table(source->fields,source->field_count,
+        sizeof *source->fields);
+    destination->field_capacity=source->field_count;
     if((source->method_count>0&&destination->methods==nullptr)||
-       (source->singleton_method_count>0&&destination->singleton_methods==nullptr)) {
+       (source->singleton_method_count>0&&destination->singleton_methods==nullptr)||
+       (source->field_count>0&&destination->fields==nullptr)) {
         diamond_module_free_tables(destination);
         return false;
     }
@@ -610,20 +693,22 @@ void diamond_program_init_fresh(DiamondProgram *program) {
          * compiles now that the big memset below is gone. */
         zero_table(class->methods,class->method_capacity*sizeof class->methods[0]);
         zero_table(class->singleton_methods,class->singleton_method_capacity*sizeof class->singleton_methods[0]);
-        memset(class->field_type_status,0,sizeof class->field_type_status);
-        memset(class->field_known_class,0,sizeof class->field_known_class);
-        memset(class->discovered_field_type_status,0,
-            sizeof class->discovered_field_type_status);
-        memset(class->discovered_field_known_class,0,
-            sizeof class->discovered_field_known_class);
+        zero_table(class->field_type_status,class->field_capacity*sizeof class->field_type_status[0]);
+        zero_table(class->field_known_class,class->field_capacity*sizeof class->field_known_class[0]);
+        zero_table(class->discovered_field_type_status,class->field_capacity*sizeof class->discovered_field_type_status[0]);
+        zero_table(class->discovered_field_known_class,class->field_capacity*sizeof class->discovered_field_known_class[0]);
         class->discovered_method_count=0;
-        memset(class->class_variables,0,sizeof class->class_variables);
+        zero_table(class->class_variables,class->class_variable_capacity*sizeof class->class_variables[0]);
         class->method_count=0;
         class->singleton_method_count=0;
         class->class_variable_count=0;
         class->declared_by_discovery=false;
         (void)snprintf(class->name,sizeof class->name,"%s",builtins[index].name);
         class->superclass=builtins[index].superclass;
+        if(!diamond_class_reserve_fields(class,3)) {
+            (void)fputs("diamond: out of memory allocating the built-in classes\n",stderr);
+            abort();
+        }
         class->field_count=3;
         (void)snprintf(class->fields[0],DIAMOND_MAX_FUNCTION_NAME,"message");
         (void)snprintf(class->fields[1],DIAMOND_MAX_FUNCTION_NAME,"cause");

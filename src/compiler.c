@@ -2424,7 +2424,7 @@ int field_index(Compiler *compiler, DiamondSpan name, bool create) {
         if (name_equals(compiler, class->fields[index], name, true)) return (int)index;
     }
     if (!create) return -1;
-    if (class->field_count == DIAMOND_MAX_FIELDS) {
+    if (!diamond_class_reserve_fields(class,class->field_count+1)) {
         fail(compiler, name, "too many instance variables");
         return -1;
     }
@@ -2512,7 +2512,7 @@ int class_variable_index(Compiler *compiler, DiamondSpan name, bool create) {
             return (int)index;
     }
     if (!create) return -1;
-    if (class->class_variable_count == DIAMOND_MAX_FIELDS) {
+    if (!diamond_class_reserve_class_variables(class,class->class_variable_count+1)) {
         fail(compiler, name, "too many class variables");
         return -1;
     }
@@ -2536,7 +2536,7 @@ uint16_t module_field_name(Compiler *compiler,DiamondSpan name) {
         if(strlen(module->fields[field])==length&&
            memcmp(module->fields[field],compiler->source+name.start+1,length)==0)
             return add_string_range(compiler,name.start+1,length,name);
-    if(module->field_count==DIAMOND_MAX_FIELDS) {
+    if(!diamond_module_reserve_fields(module,module->field_count+1)) {
         fail(compiler,name,"too many module instance variables");return 0;
     }
     if(length>=DIAMOND_MAX_FUNCTION_NAME) {

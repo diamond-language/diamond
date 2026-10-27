@@ -96,7 +96,7 @@ static void compile_attribute_named(Compiler *compiler,bool writer,bool predicat
         for(size_t index=0;index<class->field_count;index++)
             if(strcmp(class->fields[index],field_name)==0)field=(uint8_t)index;
         if(field==UINT8_MAX) {
-            if(class->field_count==DIAMOND_MAX_FIELDS) {
+            if(!diamond_class_reserve_fields(class,class->field_count+1)) {
                 fail(compiler,name,"too many instance variables");return;
             }
             field=(uint8_t)class->field_count;
@@ -123,7 +123,7 @@ static void compile_attribute_named(Compiler *compiler,bool writer,bool predicat
         for(size_t index=0;index<module->field_count;index++)
             if(strcmp(module->fields[index],field_name)==0)present=true;
         if(!present) {
-            if(module->field_count==DIAMOND_MAX_FIELDS) {
+            if(!diamond_module_reserve_fields(module,module->field_count+1)) {
                 fail(compiler,name,"too many module instance variables");return;
             }
             (void)snprintf(module->fields[module->field_count++],
@@ -926,6 +926,17 @@ void compile_delegate(Compiler *compiler) {
     method->is_protected=compiler->methods_protected;
 }
 
+/* The real pass's field facts become the discovered ones (see
+ * DiamondClass.discovered_field_type_status). All five field tables share
+ * field_capacity, so the whole allocated length copies across. */
+static void copy_field_facts_to_discovered(DiamondClass *class) {
+    if(class->field_capacity==0)return;
+    memcpy(class->discovered_field_type_status,class->field_type_status,
+        class->field_capacity*sizeof class->field_type_status[0]);
+    memcpy(class->discovered_field_known_class,class->field_known_class,
+        class->field_capacity*sizeof class->field_known_class[0]);
+}
+
 /* The body of a `class`/`struct` block, from right after `compiler->
  * current_class`/`methods_private`/`methods_protected` are set up
  * through (not including) the closing `end` -- shared by compile_class
@@ -968,7 +979,7 @@ static void snapshot_ivar_known_classes(Compiler *compiler, DiamondClass *class)
         DiamondFunction *function =
             compiler->program->functions[class->methods[m].function_index];
         if (function->owner_class != class_index) continue;
-        for (size_t field = 0; field < DIAMOND_MAX_FIELDS; field++)
+        for (size_t field = 0; field < DIAMOND_MAX_JIT_KNOWN_FIELDS; field++)
             function->ivar_known_class[field] =
                 (field < class->field_count && class->field_type_status[field] == 1)
                     ? class->field_known_class[field] : DIAMOND_NO_CLASS;
@@ -1080,7 +1091,7 @@ static void compile_class_body(Compiler *compiler, DiamondClass *class) {
                     if(strcmp(class->fields[field],module->fields[source])==0)
                         present=true;
                 if(present)continue;
-                if(class->field_count==DIAMOND_MAX_FIELDS) {
+                if(!diamond_class_reserve_fields(class,class->field_count+1)) {
                     fail(compiler,include_span,
                          "included module adds too many fields");break;
                 }
@@ -1186,10 +1197,7 @@ uint16_t compile_class(Compiler *compiler) {
              * left the other pass's stale contents sitting in these
              * arrays for a claimed slot to silently accumulate on top
              * of. */
-            memcpy(class->discovered_field_type_status,class->field_type_status,
-                sizeof class->field_type_status);
-            memcpy(class->discovered_field_known_class,class->field_known_class,
-                sizeof class->field_known_class);
+            copy_field_facts_to_discovered(class);
             class->discovered_method_count=0;
             if(!diamond_reserve_discovered_methods(class,class->method_count)) {
                 fail(compiler,name,"out of memory declaring a class");return 0;
@@ -1200,10 +1208,10 @@ uint16_t compile_class(Compiler *compiler) {
                         class->methods[method].function_index;
             zero_table(class->methods,class->method_capacity*sizeof class->methods[0]);
             zero_table(class->singleton_methods,class->singleton_method_capacity*sizeof class->singleton_methods[0]);
-            memset(class->fields,0,sizeof class->fields);
-            memset(class->field_type_status,0,sizeof class->field_type_status);
-            memset(class->field_known_class,0,sizeof class->field_known_class);
-            memset(class->class_variables,0,sizeof class->class_variables);
+            zero_table(class->fields,class->field_capacity*sizeof class->fields[0]);
+            zero_table(class->field_type_status,class->field_capacity*sizeof class->field_type_status[0]);
+            zero_table(class->field_known_class,class->field_capacity*sizeof class->field_known_class[0]);
+            zero_table(class->class_variables,class->class_variable_capacity*sizeof class->class_variables[0]);
             class->method_count=0;
             class->singleton_method_count=0;
             class->field_count=0;
@@ -1241,15 +1249,13 @@ uint16_t compile_class(Compiler *compiler) {
          * that function's own comment (src/compiler.c). */
         zero_table(class->methods,class->method_capacity*sizeof class->methods[0]);
         zero_table(class->singleton_methods,class->singleton_method_capacity*sizeof class->singleton_methods[0]);
-        memset(class->fields,0,sizeof class->fields);
-        memset(class->field_type_status,0,sizeof class->field_type_status);
-        memset(class->field_known_class,0,sizeof class->field_known_class);
-        memset(class->discovered_field_type_status,0,
-            sizeof class->discovered_field_type_status);
-        memset(class->discovered_field_known_class,0,
-            sizeof class->discovered_field_known_class);
+        zero_table(class->fields,class->field_capacity*sizeof class->fields[0]);
+        zero_table(class->field_type_status,class->field_capacity*sizeof class->field_type_status[0]);
+        zero_table(class->field_known_class,class->field_capacity*sizeof class->field_known_class[0]);
+        zero_table(class->discovered_field_type_status,class->field_capacity*sizeof class->discovered_field_type_status[0]);
+        zero_table(class->discovered_field_known_class,class->field_capacity*sizeof class->discovered_field_known_class[0]);
         class->discovered_method_count=0;
-        memset(class->class_variables,0,sizeof class->class_variables);
+        zero_table(class->class_variables,class->class_variable_capacity*sizeof class->class_variables[0]);
         class->method_count=0;
         class->singleton_method_count=0;
         class->field_count=0;
@@ -1285,6 +1291,9 @@ uint16_t compile_class(Compiler *compiler) {
         if(!superclass_decided) {
             class->superclass=(uint16_t)parent;
             const DiamondClass *parent_class=compiler->program->classes[(size_t)parent];
+            if(!diamond_class_reserve_fields(class,parent_class->field_count)) {
+                fail(compiler,superclass_span,"out of memory declaring a class");return 0;
+            }
             class->field_count=parent_class->field_count;
             for(size_t field=0;field<parent_class->field_count;field++) {
                 for(size_t ch=0;ch<DIAMOND_MAX_FUNCTION_NAME;ch++)
@@ -1420,22 +1429,17 @@ static DiamondClass *declare_struct_class(Compiler *compiler, DiamondSpan name,
         index=(int)compiler->program->class_count++;
     }
     if(class->declared_by_discovery) {
-        memcpy(class->discovered_field_type_status,class->field_type_status,
-            sizeof class->field_type_status);
-        memcpy(class->discovered_field_known_class,class->field_known_class,
-            sizeof class->field_known_class);
+        copy_field_facts_to_discovered(class);
     } else {
-        memset(class->discovered_field_type_status,0,
-            sizeof class->discovered_field_type_status);
-        memset(class->discovered_field_known_class,0,
-            sizeof class->discovered_field_known_class);
+        zero_table(class->discovered_field_type_status,class->field_capacity*sizeof class->discovered_field_type_status[0]);
+        zero_table(class->discovered_field_known_class,class->field_capacity*sizeof class->discovered_field_known_class[0]);
     }
     zero_table(class->methods,class->method_capacity*sizeof class->methods[0]);
     zero_table(class->singleton_methods,class->singleton_method_capacity*sizeof class->singleton_methods[0]);
-    memset(class->fields,0,sizeof class->fields);
-    memset(class->field_type_status,0,sizeof class->field_type_status);
-    memset(class->field_known_class,0,sizeof class->field_known_class);
-    memset(class->class_variables,0,sizeof class->class_variables);
+    zero_table(class->fields,class->field_capacity*sizeof class->fields[0]);
+    zero_table(class->field_type_status,class->field_capacity*sizeof class->field_type_status[0]);
+    zero_table(class->field_known_class,class->field_capacity*sizeof class->field_known_class[0]);
+    zero_table(class->class_variables,class->class_variable_capacity*sizeof class->class_variables[0]);
     class->method_count=0;class->singleton_method_count=0;
     class->field_count=0;class->class_variable_count=0;
     class->declared_by_discovery=false;
@@ -1495,6 +1499,9 @@ static bool parse_struct_fields(Compiler *compiler, DiamondClass *class,
             }
             advance_token(compiler);
             const int type_set=parse_type_annotation(compiler);
+            if(!diamond_class_reserve_fields(class,class->field_count+1)) {
+                fail(compiler,field_span,"too many fields");break;
+            }
             (void)snprintf(class->fields[class->field_count],
                 DIAMOND_MAX_FUNCTION_NAME,"%s",field_name);
             field_name_spans[field_count]=field_span;
@@ -2229,7 +2236,7 @@ static DiamondModule *declare_module(Compiler *compiler,DiamondSpan name,
              * mirrors Compiler's own next_function_claim exactly (see
              * that field's own comment). */
             zero_table(module->methods,module->method_capacity*sizeof module->methods[0]);
-            memset(module->fields,0,sizeof module->fields);
+            zero_table(module->fields,module->field_capacity*sizeof module->fields[0]);
             module->method_count=0;
             module->field_count=0;
             module->next_singleton_claim=0;
@@ -2268,7 +2275,7 @@ static DiamondModule *declare_module(Compiler *compiler,DiamondSpan name,
          * (src/compiler.c) and CHANGELOG.md's "Performance". */
         zero_table(module->methods,module->method_capacity*sizeof module->methods[0]);
         zero_table(module->singleton_methods,module->singleton_method_capacity*sizeof module->singleton_methods[0]);
-        memset(module->fields,0,sizeof module->fields);
+        zero_table(module->fields,module->field_capacity*sizeof module->fields[0]);
         module->method_count=0;
         module->singleton_method_count=0;
         module->field_count=0;
@@ -2320,7 +2327,7 @@ static bool compile_module_include(Compiler *compiler,DiamondModule *module,int 
             if(strcmp(module->fields[field],source->fields[imported])==0)
                 present=true;
         if(present)continue;
-        if(module->field_count==DIAMOND_MAX_FIELDS) {
+        if(!diamond_module_reserve_fields(module,module->field_count+1)) {
             fail(compiler,include_span,
                  "included module adds too many fields");break;
         }

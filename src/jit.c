@@ -1812,16 +1812,13 @@ static int32_t register_new_class_or_move_src(const DiamondFunction *fn,
             }
             /* Phase 11: an ivar load is a second class-producing terminal,
              * alongside NEW below -- see DiamondFunction.ivar_known_class's
-             * own comment (src/vm.h) for why `field < DIAMOND_MAX_FIELDS`
-             * is a redundant-but-cheap belt-and-suspenders bounds check
-             * (compile_get_ivar, src/compiler.c, already rejects
-             * `field > UINT8_MAX` at compile time, and ivar_known_class is
-             * sized DIAMOND_MAX_FIELDS==64, well under that) rather than
-             * something this scan needs to actually defend against. */
+             * own comment (src/vm.h). ivar_known_class covers only the
+             * first DIAMOND_MAX_JIT_KNOWN_FIELDS fields; a later field just
+             * has no known class here. */
             case DIAMOND_OP_GET_IVAR: {
                 uint16_t a = 0, field = 0;
                 if (!decode_u16(fn, &pc, &a) || !decode_u16(fn, &pc, &field)) return -1;
-                if (writes_target && field < DIAMOND_MAX_FIELDS &&
+                if (writes_target && field < DIAMOND_MAX_JIT_KNOWN_FIELDS &&
                     fn->ivar_known_class[field] != DIAMOND_NO_CLASS)
                     new_class = (int32_t)fn->ivar_known_class[field];
                 break;

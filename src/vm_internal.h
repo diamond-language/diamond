@@ -1364,7 +1364,7 @@ static inline DiamondVmStatus get_cvar_helper(DiamondVm *vm,
         *out=DIAMOND_NIL;
         return DIAMOND_VM_OK;
     }
-    *out=vm->class_variables[(size_t)class_index*DIAMOND_MAX_FIELDS+slot];
+    *out=vm->class_variables[(size_t)class_index*DIAMOND_MAX_CLASS_VARIABLES+slot];
     return DIAMOND_VM_OK;
 }
 
@@ -1374,11 +1374,11 @@ static inline DiamondVmStatus set_cvar_helper(DiamondVm *vm,const DiamondChunk *
        slot>=chunk->classes[class_index]->class_variable_count)
         return DIAMOND_VM_INVALID_BYTECODE;
     if(vm->class_variables==nullptr) {
-        vm->class_variables=calloc((size_t)DIAMOND_MAX_CLASSES*DIAMOND_MAX_FIELDS,
+        vm->class_variables=calloc((size_t)DIAMOND_MAX_CLASSES*DIAMOND_MAX_CLASS_VARIABLES,
             sizeof(DiamondValue));
         if(vm->class_variables==nullptr) return DIAMOND_VM_OUT_OF_MEMORY;
     }
-    const size_t position=(size_t)class_index*DIAMOND_MAX_FIELDS+slot;
+    const size_t position=(size_t)class_index*DIAMOND_MAX_CLASS_VARIABLES+slot;
     vm->class_variables[position]=value;
     if(position>=vm->class_variable_extent)vm->class_variable_extent=position+1;
     return DIAMOND_VM_OK;
