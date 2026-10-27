@@ -1862,9 +1862,25 @@ static uint16_t parse_singleton_reference(Compiler *compiler,
             (uint16_t)receiver_class_index);
         emit_byte(compiler,method->needs_receiver?1:0);
         emit_type_argument_trailer(compiler,type_arguments,type_argument_count);
-    } else body_result=emit_singleton_call(compiler,method,
-        receiver_class_index,arguments,method->arity,namespace_name,
-        (uint8_t)type_argument_count,type_arguments);
+    } else {
+        /* An argument the reference wasn't called with is nil by now in
+         * this frame, so pass fewer instead and let the target's default
+         * run -- parse_bound_method_reference's ARGUMENT_PROVIDED chain. */
+        for(size_t count=method->required_arity;count<method->arity;count++) {
+            const uint16_t provided=allocate_register(compiler);
+            emit_instruction(compiler,DIAMOND_OP_ARGUMENT_PROVIDED,provided,
+                (uint16_t)count,0,2);
+            const size_t next=emit_jump(compiler,DIAMOND_OP_JUMP_IF_TRUE,provided);
+            const uint16_t partial=emit_singleton_call(compiler,method,
+                receiver_class_index,arguments,count,namespace_name,
+                (uint8_t)type_argument_count,type_arguments);
+            emit_instruction(compiler,DIAMOND_OP_RETURN,partial,0,0,1);
+            patch_jump(compiler,next,compiler->function->code_count);
+        }
+        body_result=emit_singleton_call(compiler,method,
+            receiver_class_index,arguments,method->arity,namespace_name,
+            (uint8_t)type_argument_count,type_arguments);
+    }
     emit_instruction(compiler,DIAMOND_OP_RETURN,body_result,0,0,1);
 
     function->register_count=compiler->next_register;

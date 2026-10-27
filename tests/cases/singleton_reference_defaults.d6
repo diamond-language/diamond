@@ -1,0 +1,20 @@
+# A `Owner.method` reference called without a defaulted argument runs the
+# method's own default instead of passing nil.
+class Greeter
+  def self.greet(name: String, greeting: String = "hello", mark: String = "!") -> String
+    greeting + " " + name + mark
+  end
+end
+
+module Shout
+  def self.say(text, times = 2) = text * times
+end
+
+greet = Greeter.greet
+puts(greet("a"))
+puts(greet("b", "hi"))
+puts(greet("c", "hey", "?"))
+say = Shout.say
+puts(say("ho"))
+puts(say("ha", 3))
+nil
