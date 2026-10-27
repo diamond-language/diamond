@@ -134,7 +134,7 @@ static uint16_t parse_module_singleton_call(Compiler *compiler, DiamondSpan name
         int module_index) {
     advance_token(compiler);
     const DiamondModule *module=
-        &compiler->program->modules[(size_t)module_index];
+        compiler->program->modules[(size_t)module_index];
     const DiamondMethod *method=nullptr;
     if(compiler->current.kind==DIAMOND_TOKEN_IDENTIFIER)
         for(size_t index=0;index<module->singleton_method_count;index++)

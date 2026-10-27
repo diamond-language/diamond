@@ -258,6 +258,23 @@ DiamondClass *diamond_program_class_slot(DiamondProgram *program,size_t index) {
     return program->classes[index];
 }
 
+/* Interfaces and modules use the same lazily allocated slots as classes:
+ * zeroed when first allocated, then owned by `program` until
+ * diamond_program_free. */
+DiamondInterface *diamond_program_interface_slot(DiamondProgram *program,size_t index) {
+    if(index>=DIAMOND_MAX_INTERFACES)return nullptr;
+    if(program->interfaces[index]==nullptr)
+        program->interfaces[index]=calloc(1,sizeof *program->interfaces[index]);
+    return program->interfaces[index];
+}
+
+DiamondModule *diamond_program_module_slot(DiamondProgram *program,size_t index) {
+    if(index>=DIAMOND_MAX_MODULES)return nullptr;
+    if(program->modules[index]==nullptr)
+        program->modules[index]=calloc(1,sizeof *program->modules[index]);
+    return program->modules[index];
+}
+
 void diamond_program_free(DiamondProgram *program) {
     if(program==nullptr)return;
     diamond_function_free_arrays(&program->entry);
@@ -274,6 +291,16 @@ void diamond_program_free(DiamondProgram *program) {
         program->classes[index]=nullptr;
     }
     program->class_count=0;
+    for(size_t index=0;index<DIAMOND_MAX_INTERFACES;index++) {
+        free(program->interfaces[index]);
+        program->interfaces[index]=nullptr;
+    }
+    program->interface_count=0;
+    for(size_t index=0;index<DIAMOND_MAX_MODULES;index++) {
+        free(program->modules[index]);
+        program->modules[index]=nullptr;
+    }
+    program->module_count=0;
     free(program->namespace_constants);
     free(program->namespace_constant_defined);
     program->namespace_constants=nullptr;
@@ -717,11 +744,17 @@ static bool seed_program_from_template(DiamondProgram *destination,
         copy->index=(uint16_t)index;
     }
     destination->class_count=template->class_count;
-    memcpy(destination->interfaces,template->interfaces,
-        template->interface_count*sizeof destination->interfaces[0]);
+    for(size_t index=0;index<template->interface_count;index++) {
+        DiamondInterface *copy=diamond_program_interface_slot(destination,index);
+        if(copy==nullptr)return false;
+        *copy=*template->interfaces[index];
+    }
     destination->interface_count=template->interface_count;
-    memcpy(destination->modules,template->modules,
-        template->module_count*sizeof destination->modules[0]);
+    for(size_t index=0;index<template->module_count;index++) {
+        DiamondModule *copy=diamond_program_module_slot(destination,index);
+        if(copy==nullptr)return false;
+        memcpy(copy,template->modules[index],sizeof *copy);
+    }
     destination->module_count=template->module_count;
     destination->range_class_index=template->range_class_index;
     for(size_t index=0;index<template->function_count;index++) {
@@ -740,41 +773,30 @@ static void adopt_discovered_tables(DiamondProgram *program,DiamondProgram *disc
      * (names, fields, methods -- everything but real bytecode) into the
      * second, real pass's own program, *before* that pass starts, so
      * every declaration is already known regardless of textual order.
-     * `classes`/`interfaces`/`modules` are plain, pointer-free embedded
-     * arrays (src/compiler.h) -- a byte copy is enough, no separate
-     * ownership to transfer. compile_class/compile_module/
-     * compile_interface's own claiming logic (see their comments) is
-     * what makes the second pass treat every copied entry as its own
-     * pre-reserved slot instead of a duplicate declaration. Safe to
-     * copy the *entire* array unconditionally even when `template`
-     * already seeded a prefix of it into both `program` and `discovery`
-     * moments ago: that prefix is byte-identical in both (the same
-     * template, copied the same way), so re-copying it here is
-     * redundant, not wrong -- unlike the function loop just below,
-     * where "copy again" means "append a second time". */
-    /* Only discovery's own *used* prefix -- see seed_program_from_
-     * template's own identical comment just above on why a full
-     * DIAMOND_MAX_CLASSES/_INTERFACES/_MODULES-sized copy here would be
-     * both far more expensive and no more correct (program was just
-     * diamond_program_init'd, so its own unused suffix is already zero,
-     * matching discovery's own zeroed suffix exactly). This path runs on
-     * *every* diamond_compile/diamond_compile_incremental call, template
-     * or not -- unlike seed_program_from_template, which only runs when
-     * a template is given. */
-    /* Hand the discovery pass's classes to `program` by swapping slot
-     * pointers: each side keeps owning exactly the slots it points at, and
-     * freeing `discovery` later releases whatever `program` held before. */
+     * compile_class/compile_module/compile_interface's own claiming logic
+     * (see their comments) is what makes the second pass treat every
+     * handed-over entry as its own pre-reserved slot instead of a
+     * duplicate declaration. Only discovery's used prefix moves, by
+     * swapping slot pointers: each side keeps owning exactly the slots it
+     * points at, and freeing `discovery` later releases whatever
+     * `program` held before. */
     for (size_t index = 0; index < discovery->class_count; index++) {
         DiamondClass *kept = program->classes[index];
         program->classes[index] = discovery->classes[index];
         discovery->classes[index] = kept;
     }
     program->class_count = discovery->class_count;
-    memcpy(program->interfaces, discovery->interfaces,
-        discovery->interface_count*sizeof program->interfaces[0]);
+    for (size_t index = 0; index < discovery->interface_count; index++) {
+        DiamondInterface *kept = program->interfaces[index];
+        program->interfaces[index] = discovery->interfaces[index];
+        discovery->interfaces[index] = kept;
+    }
     program->interface_count = discovery->interface_count;
-    memcpy(program->modules, discovery->modules,
-        discovery->module_count*sizeof program->modules[0]);
+    for (size_t index = 0; index < discovery->module_count; index++) {
+        DiamondModule *kept = program->modules[index];
+        program->modules[index] = discovery->modules[index];
+        discovery->modules[index] = kept;
+    }
     program->module_count = discovery->module_count;
     /* Only the names: each pass marks its own definitions. */
     if(diamond_program_reserve_namespace_constants(program,
@@ -812,7 +834,7 @@ static void mark_discovered_declarations(DiamondProgram *program,const DiamondPr
         program->classes[index]->declared_by_discovery=true;
     for(size_t index=template!=nullptr?template->module_count:0;
         index<program->module_count;index++)
-        program->modules[index].declared_by_discovery=true;
+        program->modules[index]->declared_by_discovery=true;
     /* A program can also reopen a template (prelude) class or module --
      * `class Range ... def middle() ... end`. Discovery added those methods
      * to its copy of the entry, and the real pass adds them again as it
@@ -834,8 +856,8 @@ static void mark_discovered_declarations(DiamondProgram *program,const DiamondPr
             class->template_class_variable_count=original->class_variable_count;
         }
         for(size_t index=0;index<template->module_count;index++) {
-            DiamondModule *module=&program->modules[index];
-            const DiamondModule *original=&template->modules[index];
+            DiamondModule *module=program->modules[index];
+            const DiamondModule *original=template->modules[index];
             if(module->method_count==original->method_count&&
                module->singleton_method_count==original->singleton_method_count&&
                module->field_count==original->field_count)continue;
@@ -948,7 +970,7 @@ bool diamond_compile_impl(const char *source, DiamondProgram *program,
     free(implicit_begins.offsets);
     if(compiled)
         for(size_t index=0;index<program->interface_count;index++)
-            program->interfaces[index].type_sets=program->entry.type_sets;
+            program->interfaces[index]->type_sets=program->entry.type_sets;
     /* See DiamondFunction.redefine_method_used_anywhere's own comment
      * (src/vm.h): a single whole-program fact, snapshotted onto every
      * function (including program->entry, the top-level program itself)

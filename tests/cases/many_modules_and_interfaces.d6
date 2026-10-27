@@ -1,0 +1,1041 @@
+# More modules (1,024 now; was 255) and interfaces (1,024; was 32) than the old
+# fixed tables held. The last ones still resolve, include, and type-check,
+# also from a thread (interfaces are cloned per thread).
+module M0
+  def self.id() = 0
+end
+module M1
+  def self.id() = 1
+end
+module M2
+  def self.id() = 2
+end
+module M3
+  def self.id() = 3
+end
+module M4
+  def self.id() = 4
+end
+module M5
+  def self.id() = 5
+end
+module M6
+  def self.id() = 6
+end
+module M7
+  def self.id() = 7
+end
+module M8
+  def self.id() = 8
+end
+module M9
+  def self.id() = 9
+end
+module M10
+  def self.id() = 10
+end
+module M11
+  def self.id() = 11
+end
+module M12
+  def self.id() = 12
+end
+module M13
+  def self.id() = 13
+end
+module M14
+  def self.id() = 14
+end
+module M15
+  def self.id() = 15
+end
+module M16
+  def self.id() = 16
+end
+module M17
+  def self.id() = 17
+end
+module M18
+  def self.id() = 18
+end
+module M19
+  def self.id() = 19
+end
+module M20
+  def self.id() = 20
+end
+module M21
+  def self.id() = 21
+end
+module M22
+  def self.id() = 22
+end
+module M23
+  def self.id() = 23
+end
+module M24
+  def self.id() = 24
+end
+module M25
+  def self.id() = 25
+end
+module M26
+  def self.id() = 26
+end
+module M27
+  def self.id() = 27
+end
+module M28
+  def self.id() = 28
+end
+module M29
+  def self.id() = 29
+end
+module M30
+  def self.id() = 30
+end
+module M31
+  def self.id() = 31
+end
+module M32
+  def self.id() = 32
+end
+module M33
+  def self.id() = 33
+end
+module M34
+  def self.id() = 34
+end
+module M35
+  def self.id() = 35
+end
+module M36
+  def self.id() = 36
+end
+module M37
+  def self.id() = 37
+end
+module M38
+  def self.id() = 38
+end
+module M39
+  def self.id() = 39
+end
+module M40
+  def self.id() = 40
+end
+module M41
+  def self.id() = 41
+end
+module M42
+  def self.id() = 42
+end
+module M43
+  def self.id() = 43
+end
+module M44
+  def self.id() = 44
+end
+module M45
+  def self.id() = 45
+end
+module M46
+  def self.id() = 46
+end
+module M47
+  def self.id() = 47
+end
+module M48
+  def self.id() = 48
+end
+module M49
+  def self.id() = 49
+end
+module M50
+  def self.id() = 50
+end
+module M51
+  def self.id() = 51
+end
+module M52
+  def self.id() = 52
+end
+module M53
+  def self.id() = 53
+end
+module M54
+  def self.id() = 54
+end
+module M55
+  def self.id() = 55
+end
+module M56
+  def self.id() = 56
+end
+module M57
+  def self.id() = 57
+end
+module M58
+  def self.id() = 58
+end
+module M59
+  def self.id() = 59
+end
+module M60
+  def self.id() = 60
+end
+module M61
+  def self.id() = 61
+end
+module M62
+  def self.id() = 62
+end
+module M63
+  def self.id() = 63
+end
+module M64
+  def self.id() = 64
+end
+module M65
+  def self.id() = 65
+end
+module M66
+  def self.id() = 66
+end
+module M67
+  def self.id() = 67
+end
+module M68
+  def self.id() = 68
+end
+module M69
+  def self.id() = 69
+end
+module M70
+  def self.id() = 70
+end
+module M71
+  def self.id() = 71
+end
+module M72
+  def self.id() = 72
+end
+module M73
+  def self.id() = 73
+end
+module M74
+  def self.id() = 74
+end
+module M75
+  def self.id() = 75
+end
+module M76
+  def self.id() = 76
+end
+module M77
+  def self.id() = 77
+end
+module M78
+  def self.id() = 78
+end
+module M79
+  def self.id() = 79
+end
+module M80
+  def self.id() = 80
+end
+module M81
+  def self.id() = 81
+end
+module M82
+  def self.id() = 82
+end
+module M83
+  def self.id() = 83
+end
+module M84
+  def self.id() = 84
+end
+module M85
+  def self.id() = 85
+end
+module M86
+  def self.id() = 86
+end
+module M87
+  def self.id() = 87
+end
+module M88
+  def self.id() = 88
+end
+module M89
+  def self.id() = 89
+end
+module M90
+  def self.id() = 90
+end
+module M91
+  def self.id() = 91
+end
+module M92
+  def self.id() = 92
+end
+module M93
+  def self.id() = 93
+end
+module M94
+  def self.id() = 94
+end
+module M95
+  def self.id() = 95
+end
+module M96
+  def self.id() = 96
+end
+module M97
+  def self.id() = 97
+end
+module M98
+  def self.id() = 98
+end
+module M99
+  def self.id() = 99
+end
+module M100
+  def self.id() = 100
+end
+module M101
+  def self.id() = 101
+end
+module M102
+  def self.id() = 102
+end
+module M103
+  def self.id() = 103
+end
+module M104
+  def self.id() = 104
+end
+module M105
+  def self.id() = 105
+end
+module M106
+  def self.id() = 106
+end
+module M107
+  def self.id() = 107
+end
+module M108
+  def self.id() = 108
+end
+module M109
+  def self.id() = 109
+end
+module M110
+  def self.id() = 110
+end
+module M111
+  def self.id() = 111
+end
+module M112
+  def self.id() = 112
+end
+module M113
+  def self.id() = 113
+end
+module M114
+  def self.id() = 114
+end
+module M115
+  def self.id() = 115
+end
+module M116
+  def self.id() = 116
+end
+module M117
+  def self.id() = 117
+end
+module M118
+  def self.id() = 118
+end
+module M119
+  def self.id() = 119
+end
+module M120
+  def self.id() = 120
+end
+module M121
+  def self.id() = 121
+end
+module M122
+  def self.id() = 122
+end
+module M123
+  def self.id() = 123
+end
+module M124
+  def self.id() = 124
+end
+module M125
+  def self.id() = 125
+end
+module M126
+  def self.id() = 126
+end
+module M127
+  def self.id() = 127
+end
+module M128
+  def self.id() = 128
+end
+module M129
+  def self.id() = 129
+end
+module M130
+  def self.id() = 130
+end
+module M131
+  def self.id() = 131
+end
+module M132
+  def self.id() = 132
+end
+module M133
+  def self.id() = 133
+end
+module M134
+  def self.id() = 134
+end
+module M135
+  def self.id() = 135
+end
+module M136
+  def self.id() = 136
+end
+module M137
+  def self.id() = 137
+end
+module M138
+  def self.id() = 138
+end
+module M139
+  def self.id() = 139
+end
+module M140
+  def self.id() = 140
+end
+module M141
+  def self.id() = 141
+end
+module M142
+  def self.id() = 142
+end
+module M143
+  def self.id() = 143
+end
+module M144
+  def self.id() = 144
+end
+module M145
+  def self.id() = 145
+end
+module M146
+  def self.id() = 146
+end
+module M147
+  def self.id() = 147
+end
+module M148
+  def self.id() = 148
+end
+module M149
+  def self.id() = 149
+end
+module M150
+  def self.id() = 150
+end
+module M151
+  def self.id() = 151
+end
+module M152
+  def self.id() = 152
+end
+module M153
+  def self.id() = 153
+end
+module M154
+  def self.id() = 154
+end
+module M155
+  def self.id() = 155
+end
+module M156
+  def self.id() = 156
+end
+module M157
+  def self.id() = 157
+end
+module M158
+  def self.id() = 158
+end
+module M159
+  def self.id() = 159
+end
+module M160
+  def self.id() = 160
+end
+module M161
+  def self.id() = 161
+end
+module M162
+  def self.id() = 162
+end
+module M163
+  def self.id() = 163
+end
+module M164
+  def self.id() = 164
+end
+module M165
+  def self.id() = 165
+end
+module M166
+  def self.id() = 166
+end
+module M167
+  def self.id() = 167
+end
+module M168
+  def self.id() = 168
+end
+module M169
+  def self.id() = 169
+end
+module M170
+  def self.id() = 170
+end
+module M171
+  def self.id() = 171
+end
+module M172
+  def self.id() = 172
+end
+module M173
+  def self.id() = 173
+end
+module M174
+  def self.id() = 174
+end
+module M175
+  def self.id() = 175
+end
+module M176
+  def self.id() = 176
+end
+module M177
+  def self.id() = 177
+end
+module M178
+  def self.id() = 178
+end
+module M179
+  def self.id() = 179
+end
+module M180
+  def self.id() = 180
+end
+module M181
+  def self.id() = 181
+end
+module M182
+  def self.id() = 182
+end
+module M183
+  def self.id() = 183
+end
+module M184
+  def self.id() = 184
+end
+module M185
+  def self.id() = 185
+end
+module M186
+  def self.id() = 186
+end
+module M187
+  def self.id() = 187
+end
+module M188
+  def self.id() = 188
+end
+module M189
+  def self.id() = 189
+end
+module M190
+  def self.id() = 190
+end
+module M191
+  def self.id() = 191
+end
+module M192
+  def self.id() = 192
+end
+module M193
+  def self.id() = 193
+end
+module M194
+  def self.id() = 194
+end
+module M195
+  def self.id() = 195
+end
+module M196
+  def self.id() = 196
+end
+module M197
+  def self.id() = 197
+end
+module M198
+  def self.id() = 198
+end
+module M199
+  def self.id() = 199
+end
+module M200
+  def self.id() = 200
+end
+module M201
+  def self.id() = 201
+end
+module M202
+  def self.id() = 202
+end
+module M203
+  def self.id() = 203
+end
+module M204
+  def self.id() = 204
+end
+module M205
+  def self.id() = 205
+end
+module M206
+  def self.id() = 206
+end
+module M207
+  def self.id() = 207
+end
+module M208
+  def self.id() = 208
+end
+module M209
+  def self.id() = 209
+end
+module M210
+  def self.id() = 210
+end
+module M211
+  def self.id() = 211
+end
+module M212
+  def self.id() = 212
+end
+module M213
+  def self.id() = 213
+end
+module M214
+  def self.id() = 214
+end
+module M215
+  def self.id() = 215
+end
+module M216
+  def self.id() = 216
+end
+module M217
+  def self.id() = 217
+end
+module M218
+  def self.id() = 218
+end
+module M219
+  def self.id() = 219
+end
+module M220
+  def self.id() = 220
+end
+module M221
+  def self.id() = 221
+end
+module M222
+  def self.id() = 222
+end
+module M223
+  def self.id() = 223
+end
+module M224
+  def self.id() = 224
+end
+module M225
+  def self.id() = 225
+end
+module M226
+  def self.id() = 226
+end
+module M227
+  def self.id() = 227
+end
+module M228
+  def self.id() = 228
+end
+module M229
+  def self.id() = 229
+end
+module M230
+  def self.id() = 230
+end
+module M231
+  def self.id() = 231
+end
+module M232
+  def self.id() = 232
+end
+module M233
+  def self.id() = 233
+end
+module M234
+  def self.id() = 234
+end
+module M235
+  def self.id() = 235
+end
+module M236
+  def self.id() = 236
+end
+module M237
+  def self.id() = 237
+end
+module M238
+  def self.id() = 238
+end
+module M239
+  def self.id() = 239
+end
+module M240
+  def self.id() = 240
+end
+module M241
+  def self.id() = 241
+end
+module M242
+  def self.id() = 242
+end
+module M243
+  def self.id() = 243
+end
+module M244
+  def self.id() = 244
+end
+module M245
+  def self.id() = 245
+end
+module M246
+  def self.id() = 246
+end
+module M247
+  def self.id() = 247
+end
+module M248
+  def self.id() = 248
+end
+module M249
+  def self.id() = 249
+end
+module M250
+  def self.id() = 250
+end
+module M251
+  def self.id() = 251
+end
+module M252
+  def self.id() = 252
+end
+module M253
+  def self.id() = 253
+end
+module M254
+  def self.id() = 254
+end
+module M255
+  def self.id() = 255
+end
+module M256
+  def self.id() = 256
+end
+module M257
+  def self.id() = 257
+end
+module M258
+  def self.id() = 258
+end
+module M259
+  def self.id() = 259
+end
+module M260
+  def self.id() = 260
+end
+module M261
+  def self.id() = 261
+end
+module M262
+  def self.id() = 262
+end
+module M263
+  def self.id() = 263
+end
+module M264
+  def self.id() = 264
+end
+module M265
+  def self.id() = 265
+end
+module M266
+  def self.id() = 266
+end
+module M267
+  def self.id() = 267
+end
+module M268
+  def self.id() = 268
+end
+module M269
+  def self.id() = 269
+end
+module M270
+  def self.id() = 270
+end
+module M271
+  def self.id() = 271
+end
+module M272
+  def self.id() = 272
+end
+module M273
+  def self.id() = 273
+end
+module M274
+  def self.id() = 274
+end
+module M275
+  def self.id() = 275
+end
+module M276
+  def self.id() = 276
+end
+module M277
+  def self.id() = 277
+end
+module M278
+  def self.id() = 278
+end
+module M279
+  def self.id() = 279
+end
+module M280
+  def self.id() = 280
+end
+module M281
+  def self.id() = 281
+end
+module M282
+  def self.id() = 282
+end
+module M283
+  def self.id() = 283
+end
+module M284
+  def self.id() = 284
+end
+module M285
+  def self.id() = 285
+end
+module M286
+  def self.id() = 286
+end
+module M287
+  def self.id() = 287
+end
+module M288
+  def self.id() = 288
+end
+module M289
+  def self.id() = 289
+end
+module M290
+  def self.id() = 290
+end
+module M291
+  def self.id() = 291
+end
+module M292
+  def self.id() = 292
+end
+module M293
+  def self.id() = 293
+end
+module M294
+  def self.id() = 294
+end
+module M295
+  def self.id() = 295
+end
+module M296
+  def self.id() = 296
+end
+module M297
+  def self.id() = 297
+end
+module M298
+  def self.id() = 298
+end
+module M299
+  def self.id() = 299
+end
+module Greets
+  def greet() = "hi from Greets"
+end
+interface Shape0
+  def area() -> Int
+end
+interface Shape1
+  def area() -> Int
+end
+interface Shape2
+  def area() -> Int
+end
+interface Shape3
+  def area() -> Int
+end
+interface Shape4
+  def area() -> Int
+end
+interface Shape5
+  def area() -> Int
+end
+interface Shape6
+  def area() -> Int
+end
+interface Shape7
+  def area() -> Int
+end
+interface Shape8
+  def area() -> Int
+end
+interface Shape9
+  def area() -> Int
+end
+interface Shape10
+  def area() -> Int
+end
+interface Shape11
+  def area() -> Int
+end
+interface Shape12
+  def area() -> Int
+end
+interface Shape13
+  def area() -> Int
+end
+interface Shape14
+  def area() -> Int
+end
+interface Shape15
+  def area() -> Int
+end
+interface Shape16
+  def area() -> Int
+end
+interface Shape17
+  def area() -> Int
+end
+interface Shape18
+  def area() -> Int
+end
+interface Shape19
+  def area() -> Int
+end
+interface Shape20
+  def area() -> Int
+end
+interface Shape21
+  def area() -> Int
+end
+interface Shape22
+  def area() -> Int
+end
+interface Shape23
+  def area() -> Int
+end
+interface Shape24
+  def area() -> Int
+end
+interface Shape25
+  def area() -> Int
+end
+interface Shape26
+  def area() -> Int
+end
+interface Shape27
+  def area() -> Int
+end
+interface Shape28
+  def area() -> Int
+end
+interface Shape29
+  def area() -> Int
+end
+interface Shape30
+  def area() -> Int
+end
+interface Shape31
+  def area() -> Int
+end
+interface Shape32
+  def area() -> Int
+end
+interface Shape33
+  def area() -> Int
+end
+interface Shape34
+  def area() -> Int
+end
+interface Shape35
+  def area() -> Int
+end
+interface Shape36
+  def area() -> Int
+end
+interface Shape37
+  def area() -> Int
+end
+interface Shape38
+  def area() -> Int
+end
+interface Shape39
+  def area() -> Int
+end
+class Square
+  include Greets
+  def initialize(side: Int)
+    @side = side
+  end
+  def area() -> Int = @side * @side
+end
+
+def check(shape) = shape is Shape39
+
+puts(M0.id() + M299.id())
+puts(Square.new(3).greet())
+puts(Square.new(4) is Shape39)
+puts(Thread.new(check, Square.new(2)).join())
+nil

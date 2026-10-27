@@ -1,4 +1,4 @@
-# 252 user modules plus four prelude modules exceed the limit.
+# 1,021 user modules plus four prelude modules exceed the limit.
 module M0
 end
 module M1
@@ -502,4 +502,1542 @@ end
 module M250
 end
 module M251
+end
+module M252
+end
+module M253
+end
+module M254
+end
+module M255
+end
+module M256
+end
+module M257
+end
+module M258
+end
+module M259
+end
+module M260
+end
+module M261
+end
+module M262
+end
+module M263
+end
+module M264
+end
+module M265
+end
+module M266
+end
+module M267
+end
+module M268
+end
+module M269
+end
+module M270
+end
+module M271
+end
+module M272
+end
+module M273
+end
+module M274
+end
+module M275
+end
+module M276
+end
+module M277
+end
+module M278
+end
+module M279
+end
+module M280
+end
+module M281
+end
+module M282
+end
+module M283
+end
+module M284
+end
+module M285
+end
+module M286
+end
+module M287
+end
+module M288
+end
+module M289
+end
+module M290
+end
+module M291
+end
+module M292
+end
+module M293
+end
+module M294
+end
+module M295
+end
+module M296
+end
+module M297
+end
+module M298
+end
+module M299
+end
+module M300
+end
+module M301
+end
+module M302
+end
+module M303
+end
+module M304
+end
+module M305
+end
+module M306
+end
+module M307
+end
+module M308
+end
+module M309
+end
+module M310
+end
+module M311
+end
+module M312
+end
+module M313
+end
+module M314
+end
+module M315
+end
+module M316
+end
+module M317
+end
+module M318
+end
+module M319
+end
+module M320
+end
+module M321
+end
+module M322
+end
+module M323
+end
+module M324
+end
+module M325
+end
+module M326
+end
+module M327
+end
+module M328
+end
+module M329
+end
+module M330
+end
+module M331
+end
+module M332
+end
+module M333
+end
+module M334
+end
+module M335
+end
+module M336
+end
+module M337
+end
+module M338
+end
+module M339
+end
+module M340
+end
+module M341
+end
+module M342
+end
+module M343
+end
+module M344
+end
+module M345
+end
+module M346
+end
+module M347
+end
+module M348
+end
+module M349
+end
+module M350
+end
+module M351
+end
+module M352
+end
+module M353
+end
+module M354
+end
+module M355
+end
+module M356
+end
+module M357
+end
+module M358
+end
+module M359
+end
+module M360
+end
+module M361
+end
+module M362
+end
+module M363
+end
+module M364
+end
+module M365
+end
+module M366
+end
+module M367
+end
+module M368
+end
+module M369
+end
+module M370
+end
+module M371
+end
+module M372
+end
+module M373
+end
+module M374
+end
+module M375
+end
+module M376
+end
+module M377
+end
+module M378
+end
+module M379
+end
+module M380
+end
+module M381
+end
+module M382
+end
+module M383
+end
+module M384
+end
+module M385
+end
+module M386
+end
+module M387
+end
+module M388
+end
+module M389
+end
+module M390
+end
+module M391
+end
+module M392
+end
+module M393
+end
+module M394
+end
+module M395
+end
+module M396
+end
+module M397
+end
+module M398
+end
+module M399
+end
+module M400
+end
+module M401
+end
+module M402
+end
+module M403
+end
+module M404
+end
+module M405
+end
+module M406
+end
+module M407
+end
+module M408
+end
+module M409
+end
+module M410
+end
+module M411
+end
+module M412
+end
+module M413
+end
+module M414
+end
+module M415
+end
+module M416
+end
+module M417
+end
+module M418
+end
+module M419
+end
+module M420
+end
+module M421
+end
+module M422
+end
+module M423
+end
+module M424
+end
+module M425
+end
+module M426
+end
+module M427
+end
+module M428
+end
+module M429
+end
+module M430
+end
+module M431
+end
+module M432
+end
+module M433
+end
+module M434
+end
+module M435
+end
+module M436
+end
+module M437
+end
+module M438
+end
+module M439
+end
+module M440
+end
+module M441
+end
+module M442
+end
+module M443
+end
+module M444
+end
+module M445
+end
+module M446
+end
+module M447
+end
+module M448
+end
+module M449
+end
+module M450
+end
+module M451
+end
+module M452
+end
+module M453
+end
+module M454
+end
+module M455
+end
+module M456
+end
+module M457
+end
+module M458
+end
+module M459
+end
+module M460
+end
+module M461
+end
+module M462
+end
+module M463
+end
+module M464
+end
+module M465
+end
+module M466
+end
+module M467
+end
+module M468
+end
+module M469
+end
+module M470
+end
+module M471
+end
+module M472
+end
+module M473
+end
+module M474
+end
+module M475
+end
+module M476
+end
+module M477
+end
+module M478
+end
+module M479
+end
+module M480
+end
+module M481
+end
+module M482
+end
+module M483
+end
+module M484
+end
+module M485
+end
+module M486
+end
+module M487
+end
+module M488
+end
+module M489
+end
+module M490
+end
+module M491
+end
+module M492
+end
+module M493
+end
+module M494
+end
+module M495
+end
+module M496
+end
+module M497
+end
+module M498
+end
+module M499
+end
+module M500
+end
+module M501
+end
+module M502
+end
+module M503
+end
+module M504
+end
+module M505
+end
+module M506
+end
+module M507
+end
+module M508
+end
+module M509
+end
+module M510
+end
+module M511
+end
+module M512
+end
+module M513
+end
+module M514
+end
+module M515
+end
+module M516
+end
+module M517
+end
+module M518
+end
+module M519
+end
+module M520
+end
+module M521
+end
+module M522
+end
+module M523
+end
+module M524
+end
+module M525
+end
+module M526
+end
+module M527
+end
+module M528
+end
+module M529
+end
+module M530
+end
+module M531
+end
+module M532
+end
+module M533
+end
+module M534
+end
+module M535
+end
+module M536
+end
+module M537
+end
+module M538
+end
+module M539
+end
+module M540
+end
+module M541
+end
+module M542
+end
+module M543
+end
+module M544
+end
+module M545
+end
+module M546
+end
+module M547
+end
+module M548
+end
+module M549
+end
+module M550
+end
+module M551
+end
+module M552
+end
+module M553
+end
+module M554
+end
+module M555
+end
+module M556
+end
+module M557
+end
+module M558
+end
+module M559
+end
+module M560
+end
+module M561
+end
+module M562
+end
+module M563
+end
+module M564
+end
+module M565
+end
+module M566
+end
+module M567
+end
+module M568
+end
+module M569
+end
+module M570
+end
+module M571
+end
+module M572
+end
+module M573
+end
+module M574
+end
+module M575
+end
+module M576
+end
+module M577
+end
+module M578
+end
+module M579
+end
+module M580
+end
+module M581
+end
+module M582
+end
+module M583
+end
+module M584
+end
+module M585
+end
+module M586
+end
+module M587
+end
+module M588
+end
+module M589
+end
+module M590
+end
+module M591
+end
+module M592
+end
+module M593
+end
+module M594
+end
+module M595
+end
+module M596
+end
+module M597
+end
+module M598
+end
+module M599
+end
+module M600
+end
+module M601
+end
+module M602
+end
+module M603
+end
+module M604
+end
+module M605
+end
+module M606
+end
+module M607
+end
+module M608
+end
+module M609
+end
+module M610
+end
+module M611
+end
+module M612
+end
+module M613
+end
+module M614
+end
+module M615
+end
+module M616
+end
+module M617
+end
+module M618
+end
+module M619
+end
+module M620
+end
+module M621
+end
+module M622
+end
+module M623
+end
+module M624
+end
+module M625
+end
+module M626
+end
+module M627
+end
+module M628
+end
+module M629
+end
+module M630
+end
+module M631
+end
+module M632
+end
+module M633
+end
+module M634
+end
+module M635
+end
+module M636
+end
+module M637
+end
+module M638
+end
+module M639
+end
+module M640
+end
+module M641
+end
+module M642
+end
+module M643
+end
+module M644
+end
+module M645
+end
+module M646
+end
+module M647
+end
+module M648
+end
+module M649
+end
+module M650
+end
+module M651
+end
+module M652
+end
+module M653
+end
+module M654
+end
+module M655
+end
+module M656
+end
+module M657
+end
+module M658
+end
+module M659
+end
+module M660
+end
+module M661
+end
+module M662
+end
+module M663
+end
+module M664
+end
+module M665
+end
+module M666
+end
+module M667
+end
+module M668
+end
+module M669
+end
+module M670
+end
+module M671
+end
+module M672
+end
+module M673
+end
+module M674
+end
+module M675
+end
+module M676
+end
+module M677
+end
+module M678
+end
+module M679
+end
+module M680
+end
+module M681
+end
+module M682
+end
+module M683
+end
+module M684
+end
+module M685
+end
+module M686
+end
+module M687
+end
+module M688
+end
+module M689
+end
+module M690
+end
+module M691
+end
+module M692
+end
+module M693
+end
+module M694
+end
+module M695
+end
+module M696
+end
+module M697
+end
+module M698
+end
+module M699
+end
+module M700
+end
+module M701
+end
+module M702
+end
+module M703
+end
+module M704
+end
+module M705
+end
+module M706
+end
+module M707
+end
+module M708
+end
+module M709
+end
+module M710
+end
+module M711
+end
+module M712
+end
+module M713
+end
+module M714
+end
+module M715
+end
+module M716
+end
+module M717
+end
+module M718
+end
+module M719
+end
+module M720
+end
+module M721
+end
+module M722
+end
+module M723
+end
+module M724
+end
+module M725
+end
+module M726
+end
+module M727
+end
+module M728
+end
+module M729
+end
+module M730
+end
+module M731
+end
+module M732
+end
+module M733
+end
+module M734
+end
+module M735
+end
+module M736
+end
+module M737
+end
+module M738
+end
+module M739
+end
+module M740
+end
+module M741
+end
+module M742
+end
+module M743
+end
+module M744
+end
+module M745
+end
+module M746
+end
+module M747
+end
+module M748
+end
+module M749
+end
+module M750
+end
+module M751
+end
+module M752
+end
+module M753
+end
+module M754
+end
+module M755
+end
+module M756
+end
+module M757
+end
+module M758
+end
+module M759
+end
+module M760
+end
+module M761
+end
+module M762
+end
+module M763
+end
+module M764
+end
+module M765
+end
+module M766
+end
+module M767
+end
+module M768
+end
+module M769
+end
+module M770
+end
+module M771
+end
+module M772
+end
+module M773
+end
+module M774
+end
+module M775
+end
+module M776
+end
+module M777
+end
+module M778
+end
+module M779
+end
+module M780
+end
+module M781
+end
+module M782
+end
+module M783
+end
+module M784
+end
+module M785
+end
+module M786
+end
+module M787
+end
+module M788
+end
+module M789
+end
+module M790
+end
+module M791
+end
+module M792
+end
+module M793
+end
+module M794
+end
+module M795
+end
+module M796
+end
+module M797
+end
+module M798
+end
+module M799
+end
+module M800
+end
+module M801
+end
+module M802
+end
+module M803
+end
+module M804
+end
+module M805
+end
+module M806
+end
+module M807
+end
+module M808
+end
+module M809
+end
+module M810
+end
+module M811
+end
+module M812
+end
+module M813
+end
+module M814
+end
+module M815
+end
+module M816
+end
+module M817
+end
+module M818
+end
+module M819
+end
+module M820
+end
+module M821
+end
+module M822
+end
+module M823
+end
+module M824
+end
+module M825
+end
+module M826
+end
+module M827
+end
+module M828
+end
+module M829
+end
+module M830
+end
+module M831
+end
+module M832
+end
+module M833
+end
+module M834
+end
+module M835
+end
+module M836
+end
+module M837
+end
+module M838
+end
+module M839
+end
+module M840
+end
+module M841
+end
+module M842
+end
+module M843
+end
+module M844
+end
+module M845
+end
+module M846
+end
+module M847
+end
+module M848
+end
+module M849
+end
+module M850
+end
+module M851
+end
+module M852
+end
+module M853
+end
+module M854
+end
+module M855
+end
+module M856
+end
+module M857
+end
+module M858
+end
+module M859
+end
+module M860
+end
+module M861
+end
+module M862
+end
+module M863
+end
+module M864
+end
+module M865
+end
+module M866
+end
+module M867
+end
+module M868
+end
+module M869
+end
+module M870
+end
+module M871
+end
+module M872
+end
+module M873
+end
+module M874
+end
+module M875
+end
+module M876
+end
+module M877
+end
+module M878
+end
+module M879
+end
+module M880
+end
+module M881
+end
+module M882
+end
+module M883
+end
+module M884
+end
+module M885
+end
+module M886
+end
+module M887
+end
+module M888
+end
+module M889
+end
+module M890
+end
+module M891
+end
+module M892
+end
+module M893
+end
+module M894
+end
+module M895
+end
+module M896
+end
+module M897
+end
+module M898
+end
+module M899
+end
+module M900
+end
+module M901
+end
+module M902
+end
+module M903
+end
+module M904
+end
+module M905
+end
+module M906
+end
+module M907
+end
+module M908
+end
+module M909
+end
+module M910
+end
+module M911
+end
+module M912
+end
+module M913
+end
+module M914
+end
+module M915
+end
+module M916
+end
+module M917
+end
+module M918
+end
+module M919
+end
+module M920
+end
+module M921
+end
+module M922
+end
+module M923
+end
+module M924
+end
+module M925
+end
+module M926
+end
+module M927
+end
+module M928
+end
+module M929
+end
+module M930
+end
+module M931
+end
+module M932
+end
+module M933
+end
+module M934
+end
+module M935
+end
+module M936
+end
+module M937
+end
+module M938
+end
+module M939
+end
+module M940
+end
+module M941
+end
+module M942
+end
+module M943
+end
+module M944
+end
+module M945
+end
+module M946
+end
+module M947
+end
+module M948
+end
+module M949
+end
+module M950
+end
+module M951
+end
+module M952
+end
+module M953
+end
+module M954
+end
+module M955
+end
+module M956
+end
+module M957
+end
+module M958
+end
+module M959
+end
+module M960
+end
+module M961
+end
+module M962
+end
+module M963
+end
+module M964
+end
+module M965
+end
+module M966
+end
+module M967
+end
+module M968
+end
+module M969
+end
+module M970
+end
+module M971
+end
+module M972
+end
+module M973
+end
+module M974
+end
+module M975
+end
+module M976
+end
+module M977
+end
+module M978
+end
+module M979
+end
+module M980
+end
+module M981
+end
+module M982
+end
+module M983
+end
+module M984
+end
+module M985
+end
+module M986
+end
+module M987
+end
+module M988
+end
+module M989
+end
+module M990
+end
+module M991
+end
+module M992
+end
+module M993
+end
+module M994
+end
+module M995
+end
+module M996
+end
+module M997
+end
+module M998
+end
+module M999
+end
+module M1000
+end
+module M1001
+end
+module M1002
+end
+module M1003
+end
+module M1004
+end
+module M1005
+end
+module M1006
+end
+module M1007
+end
+module M1008
+end
+module M1009
+end
+module M1010
+end
+module M1011
+end
+module M1012
+end
+module M1013
+end
+module M1014
+end
+module M1015
+end
+module M1016
+end
+module M1017
+end
+module M1018
+end
+module M1019
+end
+module M1020
 end

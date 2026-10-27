@@ -219,9 +219,9 @@ JsonValue *completion_compute_with_resolver(DiamondSourceOverride resolver,
     for(size_t index=0;okay&&!member&&index<chunk.class_count;index++)
         okay=push_item(items,chunk.classes[index]->name,COMPLETION_KIND_CLASS);
     for(size_t index=0;okay&&!member&&index<chunk.interface_count;index++)
-        okay=push_item(items,chunk.interfaces[index].name,COMPLETION_KIND_INTERFACE);
+        okay=push_item(items,chunk.interfaces[index]->name,COMPLETION_KIND_INTERFACE);
     for(size_t index=0;okay&&!member&&index<chunk.module_count;index++)
-        okay=push_item(items,chunk.modules[index].name,COMPLETION_KIND_MODULE);
+        okay=push_item(items,chunk.modules[index]->name,COMPLETION_KIND_MODULE);
     if(okay&&cursor_offset!=SIZE_MAX) {
         if(!member) {
             okay=push_scope_locals(items,&scratch->entry,cursor_offset);

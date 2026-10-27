@@ -301,7 +301,7 @@ JsonValue *hover_compute(const DocumentTable *documents,const char *uri,
         }
     }
     for(size_t index=0;!explicit_receiver&&index<chunk.interface_count;index++) {
-        if(strcmp(chunk.interfaces[index].name,name)==0) {
+        if(strcmp(chunk.interfaces[index]->name,name)==0) {
             char signature[96];
             (void)snprintf(signature,sizeof signature,"interface %s",name);
             free(combined);free(path);diamond_source_bundle_free(&bundle);
@@ -309,7 +309,7 @@ JsonValue *hover_compute(const DocumentTable *documents,const char *uri,
         }
     }
     for(size_t index=0;!explicit_receiver&&index<chunk.module_count;index++) {
-        if(strcmp(chunk.modules[index].name,name)==0) {
+        if(strcmp(chunk.modules[index]->name,name)==0) {
             char signature[96];
             (void)snprintf(signature,sizeof signature,"module %s",name);
             free(combined);free(path);diamond_source_bundle_free(&bundle);

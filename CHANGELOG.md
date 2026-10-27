@@ -14,6 +14,9 @@ authoritative fine-grained record.
   in class singleton methods, method references, and keyword calls with spreads and blocks.
 - A program may define up to 65,535 namespace constants (`Module::NAME`, class constants),
   up from 128 across the prelude, cuts and user code. The tables grow on demand.
+- A program may declare up to 1,024 modules (was 255) and 1,024 interfaces (was 32). Both
+  tables now allocate entries on demand, as classes already did, so `DiamondProgram` shrinks
+  by about 16 MB and a spawned thread copies only the interfaces it uses.
 
 ### Fixed
 

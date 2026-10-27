@@ -95,8 +95,8 @@ int create_vm_thread(pthread_t *handle,
  * (modules[]/namespace_constants[]/entry/entry_path) -- all purely
  * compile-time bookkeeping never read by run_chunk (confirmed by their
  * total absence from DiamondChunk itself), so leaving them at
- * diamond_program_init's own defaults is correct, not a gap. The three
- * fixed class/interface arrays are copied directly; independently allocated
+ * diamond_program_init's own defaults is correct, not a gap. Class and
+ * interface slots are copied one by one; independently allocated
  * function records keep thread-local method replacement isolated. Returns
  * nullptr only on allocation failure. */
 DiamondProgram *clone_program_from_chunk(const DiamondChunk *chunk) {
@@ -135,10 +135,15 @@ DiamondProgram *clone_program_from_chunk(const DiamondChunk *chunk) {
         copy->index=(uint16_t)index;
     }
     clone->class_count=chunk->class_count;
-    memcpy(clone->interfaces,chunk->interfaces,sizeof clone->interfaces);
+    for(size_t index=0;index<chunk->interface_count;index++) {
+        DiamondInterface *copy=diamond_program_interface_slot(clone,index);
+        if(copy==nullptr) {
+            diamond_program_free(clone);free(clone);return nullptr;
+        }
+        *copy=*chunk->interfaces[index];
+        copy->type_sets=clone->entry.type_sets;
+    }
     clone->interface_count=chunk->interface_count;
-    for(size_t index=0;index<clone->interface_count;index++)
-        clone->interfaces[index].type_sets=clone->entry.type_sets;
     clone->range_class_index=chunk->range_class_index;
     return clone;
 }

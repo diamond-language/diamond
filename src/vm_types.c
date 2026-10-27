@@ -231,7 +231,7 @@ bool value_matches_type(const DiamondChunk *chunk, DiamondValue value,
         const size_t interface_index=(size_t)(type-DIAMOND_TYPE_INTERFACE_BASE);
         if(interface_index>=chunk->interface_count||value.kind!=DIAMOND_VALUE_OBJECT)
             return false;
-        const DiamondInterface *interface=&chunk->interfaces[interface_index];
+        const DiamondInterface *interface=chunk->interfaces[interface_index];
         uint16_t builtin=DIAMOND_TYPE_NONE;
         if(value.as.object->kind==DIAMOND_OBJECT_STRING)builtin=DIAMOND_TYPE_STRING;
         else if(value.as.object->kind==DIAMOND_OBJECT_ARRAY)builtin=DIAMOND_TYPE_ARRAY;
@@ -357,7 +357,7 @@ static bool runtime_type_id_satisfies(const DiamondChunk *chunk,uint16_t known,
     if(expected>=DIAMOND_TYPE_INTERFACE_BASE) {
         const size_t interface_index=(size_t)(expected-DIAMOND_TYPE_INTERFACE_BASE);
         if(interface_index>=chunk->interface_count)return false;
-        const DiamondInterface *interface=&chunk->interfaces[interface_index];
+        const DiamondInterface *interface=chunk->interfaces[interface_index];
         if(known==DIAMOND_TYPE_STRING||known==DIAMOND_TYPE_ARRAY||
            known==DIAMOND_TYPE_HASH) {
             for(size_t required=0;required<interface->method_count;required++) {
@@ -490,7 +490,7 @@ static bool runtime_set_satisfies(const DiamondChunk *chunk,
  * and both resolve class/interface indexes against the same tables. */
 static bool constraint_already_implies(const DiamondChunk *chunk,
         const DiamondTypeSet *held_sets,size_t held_set_count,uint16_t held_set,
-        DiamondClass *const *held_classes,const DiamondInterface *held_interfaces,
+        DiamondClass *const *held_classes,DiamondInterface *const *held_interfaces,
         size_t held_type_variable_count,uint16_t wanted_set) {
     if(held_type_variable_count!=0||chunk->type_variable_count!=0)return false;
     if(held_classes!=chunk->classes||held_interfaces!=chunk->interfaces)return false;

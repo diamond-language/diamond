@@ -10,6 +10,9 @@ Past it, compilation stops with `too many classes`. A real application (Pheint, 
 only fits by turning its namespaces into `module`s (which do not count) and its tables into hash rows.
 Modules are capped too (255), and have the same storage problem.
 
+Modules and interfaces later moved to the same lazily allocated slot tables and are now capped at 1,024
+each (`DIAMOND_MAX_MODULES`, `DIAMOND_MAX_INTERFACES`); the 255 and 32 figures below are historical.
+
 This document is the plan for removing the limit. Stages 1-4 are implemented (the limit is now 1,024); stage 5 is
 still optional.
 

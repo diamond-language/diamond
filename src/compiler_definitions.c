@@ -787,7 +787,7 @@ static void register_definition_method(Compiler *compiler,DiamondFunction *funct
     } else if(compiler->current_module>=0&&!module_singleton&&
               !compiler->failed&&at_top_level) {
         DiamondModule *module=
-            &compiler->program->modules[(size_t)compiler->current_module];
+            compiler->program->modules[(size_t)compiler->current_module];
         for(size_t existing=0;existing<module->method_count;existing++)
             if(!module->methods[existing].included&&
                strcmp(module->methods[existing].name,function->name)==0) {
@@ -833,7 +833,7 @@ static void register_definition_method(Compiler *compiler,DiamondFunction *funct
     } else if(compiler->current_module>=0&&module_singleton&&
               !compiler->failed&&at_top_level) {
         DiamondModule *module=
-            &compiler->program->modules[(size_t)compiler->current_module];
+            compiler->program->modules[(size_t)compiler->current_module];
         /* Same positional claiming as compile_definition's own
          * module_function early-registration (see that site's comment,
          * and DiamondModule's next_singleton_claim field, for the full
@@ -1126,7 +1126,7 @@ static bool register_module_function_early(Compiler *compiler,DiamondFunction *f
     if(!compiler->failed && compiler->current_module>=0 && !module_singleton &&
        at_top_level && compiler->module_function_mode) {
         DiamondModule *early_module=
-            &compiler->program->modules[(size_t)compiler->current_module];
+            compiler->program->modules[(size_t)compiler->current_module];
         /* Deliberately NOT checking function->uses_instance_state here,
          * unlike the later (already-existing) registration site that
          * also checks it -- this flag only becomes accurate once the
@@ -1146,7 +1146,7 @@ static bool register_module_function_early(Compiler *compiler,DiamondFunction *f
          * is_odd. diamond_compile's own discovery pass already visits
          * every def in the module in source order and reaches this same
          * early-registration code, so every sibling's descriptor exists
-         * in discovery->modules[...].singleton_methods[] by the time
+         * in discovery->modules[...]->singleton_methods[] by the time
          * discovery finishes; that whole DiamondModule (a plain,
          * pointer-free embedded struct) gets bulk-memcpy'd into the real
          * pass's own program->modules before it starts (see

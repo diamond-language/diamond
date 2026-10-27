@@ -25,9 +25,9 @@ typedef struct DiamondProgram {
     size_t function_capacity;
     DiamondClass *classes[DIAMOND_MAX_CLASSES];
     size_t class_count;
-    DiamondInterface interfaces[DIAMOND_MAX_INTERFACES];
+    DiamondInterface *interfaces[DIAMOND_MAX_INTERFACES];
     size_t interface_count;
-    DiamondModule modules[DIAMOND_MAX_MODULES];
+    DiamondModule *modules[DIAMOND_MAX_MODULES];
     size_t module_count;
     /* Qualified namespace constant names (`Outer::NAME`), indexed by the
      * GET/SET_NAMESPACE_CONSTANT operand, and whether this compile pass has
@@ -217,6 +217,8 @@ size_t diamond_combined_buffer_line(const char *combined, size_t offset);
  * allocation failure. A slot stays allocated until diamond_program_free, so
  * a reused DiamondProgram keeps its slots, exactly as the inline array did. */
 DiamondClass *diamond_program_class_slot(DiamondProgram *program,size_t index);
+DiamondInterface *diamond_program_interface_slot(DiamondProgram *program,size_t index);
+DiamondModule *diamond_program_module_slot(DiamondProgram *program,size_t index);
 
 int diamond_reader_return_class(DiamondClass *const *classes,size_t class_count,
     const DiamondFunction *function,size_t receiver_class);
