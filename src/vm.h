@@ -105,7 +105,10 @@ enum {
      * actually declares. A variadic function's *effective* argument count
      * is unaffected by this cap either way -- see DIAMOND_MAX_ARGUMENTS. */
     DIAMOND_MAX_DECLARED_PARAMETERS = 32,
-    DIAMOND_MAX_METHODS = 256,
+    /* Per class, module or interface. Method tables grow on demand
+     * (diamond_reserve_methods); methods are found by name, so no
+     * bytecode operand limits this. */
+    DIAMOND_MAX_METHODS = 4096,
     DIAMOND_MAX_FIELDS = 64,
     /* Phase 15 (docs/internal/jit-design.md): per-function cap on
      * DiamondFunction.invoke_site_known_class below -- same scale as
@@ -915,8 +918,9 @@ typedef struct DiamondInterface {
     uint32_t declaration_line;
     uint32_t declaration_column;
     size_t declaration_start;
-    DiamondInterfaceMethod methods[DIAMOND_MAX_METHODS];
+    DiamondInterfaceMethod *methods;
     size_t method_count;
+    size_t method_capacity;
     const DiamondTypeSet *type_sets;
     /* True only for an entry seeded by diamond_compile's own throwaway
      * discovery pass and not yet "claimed" by the real second pass --
@@ -934,10 +938,14 @@ typedef struct DiamondModule {
     uint32_t declaration_line;
     uint32_t declaration_column;
     size_t declaration_start;
-    DiamondMethod methods[DIAMOND_MAX_METHODS];
+    /* Heap tables owned by this entry (diamond_program_free releases
+     * them); `*_capacity` is the allocated length. */
+    DiamondMethod *methods;
     size_t method_count;
-    DiamondMethod singleton_methods[DIAMOND_MAX_METHODS];
+    size_t method_capacity;
+    DiamondMethod *singleton_methods;
     size_t singleton_method_count;
+    size_t singleton_method_capacity;
     /* Mirrors Compiler's own next_function_claim (src/compiler.c), scoped
      * per-module instead of program-wide: how many of this module's
      * discovery-pass-populated singleton_methods[] entries (module_
@@ -1014,10 +1022,14 @@ struct DiamondClass {
      * module visible to a method defined above the `include` line. */
     uint16_t included_modules[DIAMOND_MAX_INCLUDED_MODULES];
     uint8_t included_module_count;
-    DiamondMethod methods[DIAMOND_MAX_METHODS];
+    /* Heap tables owned by this entry (diamond_program_free releases
+     * them); `*_capacity` is the allocated length. */
+    DiamondMethod *methods;
     size_t method_count;
-    DiamondMethod singleton_methods[DIAMOND_MAX_METHODS];
+    size_t method_capacity;
+    DiamondMethod *singleton_methods;
     size_t singleton_method_count;
+    size_t singleton_method_capacity;
     char fields[DIAMOND_MAX_FIELDS][DIAMOND_MAX_FUNCTION_NAME];
     size_t field_count;
     /* LSP-only conservative receiver metadata: 0 unseen, 1 every compiled
@@ -1033,8 +1045,14 @@ struct DiamondClass {
     /* The instance methods the discovery pass found (function indices),
      * kept when the real pass resets `methods`: a bare `name(...)` call
      * in one method can then resolve to a method defined further down. */
-    uint16_t discovered_methods[DIAMOND_MAX_METHODS];
+    uint16_t *discovered_methods;
     uint16_t discovered_method_count;
+    uint16_t discovered_method_capacity;
+    /* Method tables that ClassName.define_method outgrew while the
+     * program ran. Kept until diamond_program_free: a call already in
+     * flight may still hold a DiamondMethod pointer into one. */
+    DiamondMethod **retired_methods;
+    size_t retired_method_count;
     DiamondShape shapes[DIAMOND_MAX_FIELDS + 1];
     /* Class variable *names* only -- compile-time, pointer-free metadata
      * exactly like `fields` above, so it costs nothing extra in

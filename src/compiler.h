@@ -219,6 +219,20 @@ size_t diamond_combined_buffer_line(const char *combined, size_t offset);
 DiamondClass *diamond_program_class_slot(DiamondProgram *program,size_t index);
 DiamondInterface *diamond_program_interface_slot(DiamondProgram *program,size_t index);
 DiamondModule *diamond_program_module_slot(DiamondProgram *program,size_t index);
+/* Per-entry method tables (src/vm.h): reserve room for `count` entries
+ * (false past DIAMOND_MAX_METHODS or on allocation failure), deep-copy an
+ * entry, and release an entry's tables. */
+bool diamond_reserve_methods(DiamondMethod **methods,size_t *capacity,size_t count);
+bool diamond_reserve_interface_methods(DiamondInterfaceMethod **methods,size_t *capacity,
+                                       size_t count);
+bool diamond_reserve_discovered_methods(DiamondClass *class,size_t count);
+bool diamond_class_grow_methods_while_running(DiamondClass *class,size_t count);
+bool diamond_class_copy(DiamondClass *destination,const DiamondClass *source);
+bool diamond_module_copy(DiamondModule *destination,const DiamondModule *source);
+bool diamond_interface_copy(DiamondInterface *destination,const DiamondInterface *source);
+void diamond_class_free_tables(DiamondClass *class);
+void diamond_module_free_tables(DiamondModule *module);
+void diamond_interface_free_tables(DiamondInterface *interface);
 
 int diamond_reader_return_class(DiamondClass *const *classes,size_t class_count,
     const DiamondFunction *function,size_t receiver_class);

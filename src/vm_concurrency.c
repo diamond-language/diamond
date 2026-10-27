@@ -131,7 +131,9 @@ DiamondProgram *clone_program_from_chunk(const DiamondChunk *chunk) {
         if(copy==nullptr) {
             diamond_program_free(clone);free(clone);return nullptr;
         }
-        memcpy(copy,chunk->classes[index],sizeof *copy);
+        if(!diamond_class_copy(copy,chunk->classes[index])) {
+            diamond_program_free(clone);free(clone);return nullptr;
+        }
         copy->index=(uint16_t)index;
     }
     clone->class_count=chunk->class_count;
@@ -140,7 +142,9 @@ DiamondProgram *clone_program_from_chunk(const DiamondChunk *chunk) {
         if(copy==nullptr) {
             diamond_program_free(clone);free(clone);return nullptr;
         }
-        *copy=*chunk->interfaces[index];
+        if(!diamond_interface_copy(copy,chunk->interfaces[index])) {
+            diamond_program_free(clone);free(clone);return nullptr;
+        }
         copy->type_sets=clone->entry.type_sets;
     }
     clone->interface_count=chunk->interface_count;

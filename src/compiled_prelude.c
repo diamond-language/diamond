@@ -410,11 +410,12 @@ static void clear_method_pointers(DiamondMethod *methods, size_t count) {
 
 /* Inverse of write_class: rejects an oversized method_count/field_count/
  * class_variable_count up front (this build's own DIAMOND_MAX_METHODS/
- * DIAMOND_MAX_FIELDS budget) rather than overflowing `out`'s own
- * fixed-size arrays -- same defensive posture as
+ * DIAMOND_MAX_FIELDS budget) rather than allocating whatever a corrupt
+ * count asks for -- same defensive posture as
  * diamond_program_read_compiled's own class_count/interface_count/
  * module_count checks below. */
 static bool read_class(const uint8_t **cursor, const uint8_t *end, DiamondClass *out) {
+    diamond_class_free_tables(out);
     memset(out, 0, sizeof *out);
     if (!read_bytes(cursor, end, out->name, sizeof out->name)) return false;
     if (!read_bytes(cursor, end, &out->declaration_line, sizeof out->declaration_line)) return false;
@@ -426,6 +427,9 @@ static bool read_class(const uint8_t **cursor, const uint8_t *end, DiamondClass 
     if (!read_u64(cursor, end, &method_count)) return false;
     if (!read_u64(cursor, end, &singleton_method_count)) return false;
     if (method_count > DIAMOND_MAX_METHODS || singleton_method_count > DIAMOND_MAX_METHODS) return false;
+    if (!diamond_reserve_methods(&out->methods, &out->method_capacity, (size_t)method_count) ||
+        !diamond_reserve_methods(&out->singleton_methods, &out->singleton_method_capacity,
+            (size_t)singleton_method_count)) return false;
     out->method_count = (size_t)method_count;
     out->singleton_method_count = (size_t)singleton_method_count;
     if (!read_bytes(cursor, end, out->methods, (size_t)method_count * sizeof out->methods[0])) return false;
@@ -460,6 +464,7 @@ static bool read_class(const uint8_t **cursor, const uint8_t *end, DiamondClass 
 }
 
 static bool read_module(const uint8_t **cursor, const uint8_t *end, DiamondModule *out) {
+    diamond_module_free_tables(out);
     memset(out, 0, sizeof *out);
     if (!read_bytes(cursor, end, out->name, sizeof out->name)) return false;
     if (!read_bytes(cursor, end, &out->declaration_line, sizeof out->declaration_line)) return false;
@@ -470,6 +475,9 @@ static bool read_module(const uint8_t **cursor, const uint8_t *end, DiamondModul
     if (!read_u64(cursor, end, &method_count)) return false;
     if (!read_u64(cursor, end, &singleton_method_count)) return false;
     if (method_count > DIAMOND_MAX_METHODS || singleton_method_count > DIAMOND_MAX_METHODS) return false;
+    if (!diamond_reserve_methods(&out->methods, &out->method_capacity, (size_t)method_count) ||
+        !diamond_reserve_methods(&out->singleton_methods, &out->singleton_method_capacity,
+            (size_t)singleton_method_count)) return false;
     out->method_count = (size_t)method_count;
     out->singleton_method_count = (size_t)singleton_method_count;
     if (!read_bytes(cursor, end, out->methods, (size_t)method_count * sizeof out->methods[0])) return false;
@@ -493,6 +501,7 @@ static bool read_module(const uint8_t **cursor, const uint8_t *end, DiamondModul
 /* type_sets is left nullptr here -- diamond_program_read_compiled's own
  * tail fixes it up for every interface afterward, same as it always has. */
 static bool read_interface(const uint8_t **cursor, const uint8_t *end, DiamondInterface *out) {
+    diamond_interface_free_tables(out);
     memset(out, 0, sizeof *out);
     if (!read_bytes(cursor, end, out->name, sizeof out->name)) return false;
     if (!read_bytes(cursor, end, &out->declaration_line, sizeof out->declaration_line)) return false;
@@ -502,6 +511,8 @@ static bool read_interface(const uint8_t **cursor, const uint8_t *end, DiamondIn
     uint64_t method_count = 0;
     if (!read_u64(cursor, end, &method_count)) return false;
     if (method_count > DIAMOND_MAX_METHODS) return false;
+    if (!diamond_reserve_interface_methods(&out->methods, &out->method_capacity,
+            (size_t)method_count)) return false;
     out->method_count = (size_t)method_count;
     if (!read_bytes(cursor, end, out->methods, (size_t)method_count * sizeof out->methods[0])) return false;
 

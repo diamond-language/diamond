@@ -314,7 +314,9 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
         for (size_t method = 0; method < method_total; method++) {
             const uint8_t function_byte = fuzz_byte(&reader);
             const uint8_t arity = fuzz_byte(&reader) % 4;
-            if (function_count == 0 || class->method_count >= DIAMOND_MAX_METHODS) continue;
+            if (function_count == 0 ||
+                !diamond_reserve_methods(&class->methods, &class->method_capacity,
+                    class->method_count + 1)) continue;
             const size_t function_index = function_byte % function_count;
             DiamondMethod *entry = &class->methods[class->method_count++];
             *entry = (DiamondMethod){};
@@ -347,6 +349,8 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
         DiamondInterface *interface = program->interfaces[index];
         const size_t method_total = fuzz_byte(&reader) % 3;
         for (size_t method = 0; method < method_total; method++) {
+            if (!diamond_reserve_interface_methods(&interface->methods, &interface->method_capacity,
+                    interface->method_count + 1)) abort();
             DiamondInterfaceMethod *entry = &interface->methods[interface->method_count++];
             *entry = (DiamondInterfaceMethod){.arity = (uint8_t)(fuzz_byte(&reader) % 3),
                 .return_type_set = DIAMOND_NO_TYPE_SET};

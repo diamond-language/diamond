@@ -1320,12 +1320,6 @@ DiamondVmStatus outlined_define_method(DiamondVm *vm,const DiamondChunk *chunk,D
                 class->name,(int)name_string->length,name_string->chars);
             VM_RETURN(DIAMOND_VM_TYPE_ERROR);
         }
-    if(class->method_count>=DIAMOND_MAX_METHODS) {
-        snprintf(vm->error,sizeof vm->error,
-            "class '%s' already has the maximum number of methods (%d)",
-            class->name,DIAMOND_MAX_METHODS);
-        VM_RETURN(DIAMOND_VM_TYPE_ERROR);
-    }
     if(replacement->capture_count!=0) {
         snprintf(vm->error,sizeof vm->error,
                  "define_method callable must not capture any variables");
@@ -1357,6 +1351,15 @@ DiamondVmStatus outlined_define_method(DiamondVm *vm,const DiamondChunk *chunk,D
         snprintf(vm->error,sizeof vm->error,
                  "define_method callable must be a method of '%s'",class->name);
         VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+    }
+    if(!diamond_class_grow_methods_while_running(class,class->method_count+1)) {
+        if(class->method_count>=DIAMOND_MAX_METHODS) {
+            snprintf(vm->error,sizeof vm->error,
+                "class '%s' already has the maximum number of methods (%d)",
+                class->name,DIAMOND_MAX_METHODS);
+            VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+        }
+        VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
     }
     DiamondMethod *added=&class->methods[class->method_count];
     *added=(DiamondMethod){0};
