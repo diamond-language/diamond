@@ -1,6 +1,6 @@
 # Terminal task board
 
-A small command-line task board built with Mjolnir and SQLite. Create projects,
+A small interactive terminal and command-line task board built with Mjolnir and SQLite. Create projects,
 add and edit tasks, move them through `todo`, `doing` and `done`, and filter by
 project and status.
 
@@ -16,7 +16,35 @@ build/diamond applications/task_board/app.d6 list --project 1 --status doing
 # #1 [doing] Diamond / Ship a terminal board
 build/diamond applications/task_board/app.d6 edit 1 "Ship the board"
 build/diamond applications/task_board/app.d6 projects
+bash applications/task_board/board
 ```
+
+The interactive board shows `todo`, `doing`, and `done` side by side. It uses
+the same database and validated store as the CLI. Launch it in a POSIX terminal
+with Bash and `stty`; use `bash applications/task_board/board --db FILE` to
+choose a database. Terminal settings and the previous screen are restored on
+exit, errors, and handled signals.
+
+| Key | Action |
+| --- | --- |
+| Arrows or hjkl | Select a column/task |
+| Tab | Next column |
+| H / L | Move selected task to previous/next status |
+| p | Cycle projects, including all projects |
+| P | Create a project |
+| a | Add a task to the selected project and column |
+| e | Edit selected task's title |
+| Enter / Escape | Save / cancel an edit |
+| r | Reload tasks and pick up terminal size changes |
+| q / Ctrl-C / Ctrl-D | Quit |
+
+On an empty board, press `P` to create a project, then `p` to select it and `a`
+to add a task. Validation errors stay visible without discarding the edit.
+Long lists scroll with the selection. The board needs at least 60 columns and
+10 rows. UTF-8 titles are preserved; cell padding uses byte widths, so non-ASCII
+titles may have uneven column alignment. Control characters in stored text are neutralized.
+Title editing appends text and supports Backspace; Escape cancels the edit.
+The CLI remains available for pipes and scripts.
 
 Usage:
 
@@ -45,8 +73,12 @@ Exit codes: 0 for success, 64 for bad usage, IDs or filters, 65 for validation
 errors, 66 for a missing task, and 1 for a database error. Diagnostics go to
 stderr; results go to stdout.
 
-Run the store and CLI tests (with isolated temporary databases) using:
+Run the store, controller, and CLI tests (with isolated temporary databases) using:
 
 ```sh
 DIAMOND_BIN="$PWD/build/diamond" bash applications/task_board/test.sh
 ```
+
+When Python 3 is available, this also exercises the real launcher in a
+pseudo-terminal, checks persisted keyboard edits and resizing, and verifies
+terminal restoration after normal exit and SIGTERM.

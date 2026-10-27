@@ -3,7 +3,8 @@ require "./lib/store"
 def board_usage() =
   "usage: board [--db FILE] COMMAND\n" +
   "  project NAME | projects | add PROJECT TITLE | edit TASK TITLE\n" +
-  "  move TASK todo|doing|done | list [--project ID] [--status todo|doing|done]"
+  "  move TASK todo|doing|done | list [--project ID] [--status todo|doing|done]\n" +
+  "Interactive: bash applications/task_board/board [--db FILE]"
 
 def board_id(text)
   unless Regexp.new("\\A[1-9][0-9]*\\z").match?(text)

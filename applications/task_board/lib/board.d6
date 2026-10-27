@@ -1,0 +1,205 @@
+# The controller has no terminal dependencies: key handling and validated writes
+# can be exercised without a pseudo-terminal.
+class TaskBoard
+  def initialize(store)
+    @store = store
+    @column = 0
+    @row = 0
+    @project = 0
+    @mode = "board"
+    @input = ""
+    @message = ""
+    @running = true
+    @escape = false
+    @arrow = false
+    refresh()
+  end
+
+  def running?() = @running
+  def mode() = @mode
+  def input() = @input
+  def message() = @message
+  def column() = @column
+  def row() = @row
+  def statuses() = ["todo", "doing", "done"]
+  def projects() = @projects
+  def project_name() = if @project == 0 then "All projects" else @projects[@project - 1].name() end
+  def selected() = if @row < @columns[@column].length() then @columns[@column][@row] else nil end
+
+  def refresh()
+    @projects = @store.projects()
+    if @project > @projects.length() then @project = 0 end
+    id = if @project == 0 then nil else @projects[@project - 1].id() end
+    listed = @store.tasks(id)
+    @associations = listed[1]
+    @columns = statuses().map() do |status|
+      listed[0].select() do |task| task.status() == status end
+    end
+    clamp()
+  end
+
+  def clamp()
+    count = @columns[@column].length()
+    if @row >= count then @row = count - 1 end
+    if @row < 0 then @row = 0 end
+  end
+
+  def tasks(column) = @columns[column]
+  def project_for(task) = @associations[task.id()].name()
+
+  def result(value)
+    if value.err?()
+      errors = value.error().errors()
+      @message = errors.keys().map() do |field| "#{field}: #{errors[field].join(", ")}" end.join("; ")
+      return
+    end
+    entity = value.value()
+    @mode = "board"
+    @input = ""
+    @message = "Saved ##{entity.id()}"
+    refresh()
+    if entity.is_a?(BoardTask)
+      @column = statuses().index(entity.status())
+      @columns[@column].each_with_index() do |task, index|
+        if task.id() == entity.id() then @row = index end
+      end
+      clamp()
+    end
+  end
+
+  def submit()
+    case @mode
+    when "project"
+      result(@store.create_project({"name": @input}))
+    when "add"
+      result(@store.create_task({"project_id": @projects[@project - 1].id(),
+        "title": @input, "status": statuses()[@column]}))
+    when "edit"
+      result(@store.update_task(selected().id(), {"title": @input}))
+    end
+  end
+
+  def move(offset)
+    task = selected()
+    target = @column + offset
+    if task != nil && target >= 0 && target < 3
+      result(@store.update_task(task.id(), {"status": statuses()[target]}))
+    end
+  end
+
+  def key(key)
+    # Decode arrows without blocking on a lone Escape. Escape also cancels edits.
+    if key == "\e"
+      @mode = "board"
+      @input = ""
+      @escape = true
+      @arrow = false
+      return
+    end
+    if @escape
+      @escape = false
+      if key == "[" || key == "O"
+        @arrow = true
+        return
+      end
+    elsif @arrow
+      @arrow = false
+      key = {"A": "k", "B": "j", "C": "l", "D": "h"}.fetch(key, "")
+    end
+    if key == "\x03" || key == "\x04"
+      @running = false
+      return
+    end
+    if @mode != "board"
+      if key == "\r" || key == "\n"
+        submit()
+      elsif key == "\x7f" || key == "\x08"
+        @input = @input.gsub(Regexp.new("(?m).\\z"), "")
+      elsif !key.empty?() && key >= " " && key != "\x7f"
+        @input += key
+      end
+      return
+    end
+    @message = ""
+    case key
+    when "q" then @running = false
+    when "h" then @column = (@column + 2) % 3
+    when "l", "\t" then @column = (@column + 1) % 3
+    when "j" then @row += 1
+    when "k" then @row -= 1
+    when "H" then move(-1)
+    when "L" then move(1)
+    when "p"
+      @project = (@project + 1) % (@projects.length() + 1)
+      @row = 0
+      refresh()
+    when "r" then refresh()
+    when "P" then @mode = "project"
+    when "a"
+      if @projects.empty?()
+        @mode = "project"
+        @message = "Create a project first; then press p to select it."
+      elsif @project == 0
+        @message = "Press p to select a project before adding a task."
+      else
+        @mode = "add"
+      end
+    when "e"
+      if selected() != nil
+        @mode = "edit"
+        @input = selected().title()
+      end
+    end
+    clamp()
+  end
+end
+
+# Strip terminal control bytes from persisted/user text before rendering it.
+def board_safe(text) = text.gsub(Regexp.new("[\\x00-\\x1f\\x7f-\\x9f]"), "?")
+
+def board_cell(text, width)
+  text = board_safe(text)
+  if text.length() > width
+    cut = width - 1
+    while cut > 0 && text[cut].ord() >= 128 && text[cut].ord() < 192
+      cut -= 1
+    end
+    text = text.slice(0, cut) + "~"
+  end
+  text + " " * (width - text.length())
+end
+
+def board_frame(board, rows, columns)
+  if rows < 10 || columns < 60
+    return "Terminal too small: need 60 columns x 10 rows. Resize, or q to quit."
+  end
+  width = (columns - 7) / 3
+  lines = [board_cell("Task board | #{board.project_name()} | p: next project  P: new project", columns - 1)]
+  lines.push((0...3).map() do |column|
+    mark = if board.column() == column then ">" else " " end
+    board_cell("#{mark} #{board.statuses()[column]} (#{board.tasks(column).length()})", width)
+  end.join(" | "))
+  visible = rows - 7
+  start = if board.row() >= visible then board.row() - visible + 1 else 0 end
+  (0...visible).each() do |offset|
+    index = start + offset
+    lines.push((0...3).map() do |column|
+      tasks = board.tasks(column)
+      task = if index < tasks.length() then tasks[index] else nil end
+      text = ""
+      if task != nil
+        mark = if board.column() == column && board.row() == index then ">" else " " end
+        text = "#{mark}##{task.id()} #{task.title()}"
+      end
+      board_cell(text, width)
+    end.join(" | "))
+  end
+  task = board.selected()
+  detail = if task == nil then "Empty column" else "##{task.id()} #{board.project_for(task)} / #{task.title()}" end
+  lines.push(board_cell(detail, columns - 1))
+  lines.push(board_cell("arrows/hjkl: navigate  H/L: move  a: add  e: edit  r: refresh  q: quit", columns - 1))
+  lines.push(board_cell(board.message(), columns - 1))
+  prompt = if board.mode() == "board" then "" else "#{board.mode()}> #{board.input()}  [Enter: save, Esc: cancel]" end
+  lines.push(board_cell(prompt, columns - 1))
+  lines.join("\r\n")
+end

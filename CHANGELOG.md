@@ -10,6 +10,8 @@ authoritative fine-grained record.
 
 - A terminal task board under `applications/task_board`, with Mjolnir-validated
   project/task writes, status and project filters, and explicit batched association loading.
+  Its interactive three-column view adds keyboard navigation, quick add/edit,
+  project selection, and task moves while retaining the scriptable CLI.
 
 ### Changed
 

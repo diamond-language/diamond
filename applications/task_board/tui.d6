@@ -1,0 +1,49 @@
+require "./lib/store"
+require "./lib/board"
+
+def board_interactive(args)
+  if !IO.tty?(:stdin) || !IO.tty?(:stdout) || ENV["BOARD_TERMINAL_HELPER"] == nil
+    warn("board: launch interactive mode with applications/task_board/board")
+    return 64
+  end
+  path = ENV.fetch("BOARD_DATABASE_PATH", "task_board.db")
+  if args.length() == 2 && args[0] == "--db"
+    path = args[1]
+  elsif !args.empty?()
+    warn("usage: board [--db FILE]")
+    return 64
+  end
+  store = nil
+  terminal = nil
+  begin
+    store = BoardStore.new(SQLite3.open(path))
+    board = TaskBoard.new(store)
+    terminal = File.open("/dev/tty", "r")
+    while board.running?()
+      size = Process.run(["bash", ENV["BOARD_TERMINAL_HELPER"], "--size"])
+      dimensions = size.stdout().strip().split(" ")
+      rows = if dimensions.length() == 2 then dimensions[0].to_i() else 24 end
+      columns = if dimensions.length() == 2 then dimensions[1].to_i() else 80 end
+      puts("\e[H\e[2J" + board_frame(board, rows, columns))
+      key = terminal.read(1)
+      if key == "" then break end
+      # Complete a UTF-8 code point before rendering or editing the input.
+      byte = key.ord()
+      extra = if byte >= 240 then 3 elsif byte >= 224 then 2 elsif byte >= 192 then 1 else 0 end
+      if extra > 0 then key += terminal.read(extra) end
+      board.key(key)
+    end
+    0
+  rescue error: SQLite3Error
+    warn("board: #{error.message()}")
+    1
+  rescue error: IOError
+    warn("board: #{error.message()}")
+    1
+  ensure
+    if terminal != nil then terminal.close() end
+    if store != nil then store.close() end
+  end
+end
+
+exit(board_interactive(ARGV))

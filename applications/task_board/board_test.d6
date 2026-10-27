@@ -1,0 +1,73 @@
+require "./lib/store"
+require "./lib/board"
+require "../../lib/minitest"
+
+suite = Minitest.new()
+suite.test("keyboard flows validate writes and retain selection after moving") do
+  store = BoardStore.new(SQLite3.open(":memory:"))
+  board = TaskBoard.new(store)
+  board.key("a")
+  Minitest.assert_equal("project", board.mode())
+  "Diamond".split("").each() do |key| board.key(key) end
+  board.key("\r")
+  board.key("p")
+  board.key("a")
+  board.key("\r")
+  Minitest.assert_equal("add", board.mode())
+  Minitest.assert(!board.message().empty?())
+  "Ship board".split("").each() do |key| board.key(key) end
+  board.key("\r")
+  Minitest.assert_equal("board", board.mode())
+  Minitest.assert_equal("Ship board", board.selected().title())
+  board.key("L")
+  Minitest.assert_equal(1, board.column())
+  Minitest.assert_equal("doing", store.task(1).status())
+  board.key("e")
+  board.key("!")
+  board.key("\r")
+  Minitest.assert_equal("Ship board!", store.task(1).title())
+  board.key("e")
+  board.key("x")
+  board.key("\e")
+  Minitest.assert_equal("Ship board!", store.task(1).title())
+  board.key("e")
+  board.key("é")
+  board.key("\x7f")
+  Minitest.assert_equal("Ship board!", board.input())
+  board.key("\e")
+  board.key("\e")
+  board.key("[")
+  board.key("C")
+  Minitest.assert_equal(2, board.column())
+  board.key("L")
+  board.key("j")
+  Minitest.assert_equal(0, board.row())
+  board.key("h")
+  board.key("H")
+  Minitest.assert_equal("todo", store.task(1).status())
+  board.key("q")
+  Minitest.assert(!board.running?())
+  store.close()
+end
+
+suite.test("rendering clips unsafe text, scrolls, and handles small terminals") do
+  store = BoardStore.new(SQLite3.open(":memory:"))
+  store.create_project({"name": "Diamond\e[2J"})
+  (1..20).each() do |number|
+    store.create_task({"project_id": 1, "title": "Task #{number}"})
+  end
+  board = TaskBoard.new(store)
+  (1..19).each() do |_| board.key("j") end
+  frame = board_frame(board, 12, 80)
+  Minitest.assert(frame.include?("#20 Task 20"), "selected task visible")
+  Minitest.assert(!frame.include?("\e"), "control sequences removed")
+  Minitest.assert(frame.split("\r\n").all?() do |line| line.length() < 80 end, "rows fit terminal")
+  Minitest.assert(board_frame(board, 5, 20).include?("too small"))
+  Minitest.assert_equal("é~ ", board_cell("ééé", 4))
+  board.key("p")
+  Minitest.assert_equal("Diamond\e[2J", board.project_name())
+  board.key("p")
+  Minitest.assert_equal("All projects", board.project_name())
+  store.close()
+end
+suite.run!()
