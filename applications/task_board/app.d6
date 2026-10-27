@@ -30,7 +30,7 @@ def board_result(result, kind)
   0
 end
 
-def board_list(store, options)
+def board_list(store: BoardStore, options)
   filters = {}
   index = 0
   while index < options.length()
@@ -51,7 +51,7 @@ def board_list(store, options)
   0
 end
 
-def board_run(store, args)
+def board_run(store: BoardStore, args)
   case args
   when ["project", name]
     board_result(store.create_project({"name": name}), "project")

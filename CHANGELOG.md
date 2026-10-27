@@ -8,6 +8,8 @@ authoritative fine-grained record.
 
 ### Added
 
+- Constructor completion and go-to-definition in the language server, including
+  imported/inherited initializers and default or generated struct constructors.
 - A terminal task board under `applications/task_board`, with Mjolnir-validated
   project/task writes, status and project filters, and explicit batched association loading.
   Its interactive three-column view adds keyboard navigation, quick add/edit,

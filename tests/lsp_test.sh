@@ -389,6 +389,88 @@ response="$(read_message)"
 [[ "$response" == *'"start":{"line":1,"character":6}'* ]]
 count=$((count + 1))
 
+# Constructor navigation crosses an import just like ordinary instance calls.
+cat > "$work/board_store.d6" <<'EOF'
+class BoardStore
+  def initialize(path: String)
+    @path = path
+  end
+  def close() = @path
+end
+class ChildStore < BoardStore
+end
+class EmptyStore
+end
+sealed class StoreBase
+  def self.label() = "base"
+end
+class StoreController
+  def initialize(store: BoardStore)
+    @store = store
+  end
+  def finish() = @store.close()
+end
+struct StoreRow(id: Int)
+end
+module Stores
+  class Empty
+  end
+end
+EOF
+board_uri="file://$work/board.d6"
+send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$board_uri"'","text":"require \"board_store\"\nstore = BoardStore.new(\"board.db\")\nstore.close()\nchild = ChildStore.new(\"child.db\")\nempty = EmptyStore.new()\nStoreBase.label()\ndef finish(store: BoardStore) = store.close()\ndef unknown(store) = store.close()\nrow = StoreRow.new(1)\nnested = Stores::Empty.new()"}}}'
+response="$(read_message)"
+[[ "$response" == *'"diagnostics":[]'* ]]
+count=$((count + 1))
+for position in '1,19' '3,19' '4,19'; do
+    line="${position%,*}"; character="${position#*,}"
+    send '{"jsonrpc":"2.0","id":2100,"method":"textDocument/completion","params":{"textDocument":{"uri":"'"$board_uri"'"},"position":{"line":'"$line"',"character":'"$character"'}}}'
+    response="$(read_message)"
+    [[ "$response" == *'"label":"new","kind":3'* ]]
+    count=$((count + 1))
+done
+for line in 1 3; do
+    send '{"jsonrpc":"2.0","id":2101,"method":"textDocument/definition","params":{"textDocument":{"uri":"'"$board_uri"'"},"position":{"line":'"$line"',"character":20}}}'
+    response="$(read_message)"
+    [[ "$response" == *"\"uri\":\"file://$work/board_store.d6\""* ]]
+    [[ "$response" == *'"start":{"line":1,"character":6}'* ]]
+    [[ "$response" == *'"end":{"line":1,"character":16}'* ]]
+    count=$((count + 1))
+done
+send '{"jsonrpc":"2.0","id":2102,"method":"textDocument/definition","params":{"textDocument":{"uri":"'"$board_uri"'"},"position":{"line":4,"character":20}}}'
+response="$(read_message)"
+[[ "$response" == *"\"uri\":\"file://$work/board_store.d6\""* ]]
+[[ "$response" == *'"start":{"line":8,"character":6}'* ]]
+count=$((count + 1))
+send '{"jsonrpc":"2.0","id":2103,"method":"textDocument/completion","params":{"textDocument":{"uri":"'"$board_uri"'"},"position":{"line":5,"character":10}}}'
+response="$(read_message)"
+[[ "$response" != *'"label":"new"'* ]]
+count=$((count + 1))
+for position in '2,6' '6,39'; do
+    line="${position%,*}"; character="${position#*,}"
+    send '{"jsonrpc":"2.0","id":2104,"method":"textDocument/definition","params":{"textDocument":{"uri":"'"$board_uri"'"},"position":{"line":'"$line"',"character":'"$character"'}}}'
+    response="$(read_message)"
+    [[ "$response" == *"\"uri\":\"file://$work/board_store.d6\""* ]]
+    [[ "$response" == *'"start":{"line":4,"character":6}'* ]]
+    count=$((count + 1))
+done
+send '{"jsonrpc":"2.0","id":2105,"method":"textDocument/definition","params":{"textDocument":{"uri":"'"$board_uri"'"},"position":{"line":7,"character":28}}}'
+response="$(read_message)"
+[[ "$response" == *'"result":null'* ]]
+count=$((count + 1))
+send '{"jsonrpc":"2.0","id":2106,"method":"textDocument/definition","params":{"textDocument":{"uri":"'"$board_uri"'"},"position":{"line":8,"character":16}}}'
+response="$(read_message)"
+[[ "$response" == *"\"uri\":\"file://$work/board_store.d6\""* ]]
+[[ "$response" == *'"start":{"line":19,"character":7}'* ]]
+count=$((count + 1))
+send '{"jsonrpc":"2.0","id":2107,"method":"textDocument/definition","params":{"textDocument":{"uri":"'"$board_uri"'"},"position":{"line":9,"character":24}}}'
+response="$(read_message)"
+[[ "$response" == *"\"uri\":\"file://$work/board_store.d6\""* ]]
+[[ "$response" == *'"start":{"line":22,"character":8},"end":{"line":22,"character":13}'* ]]
+count=$((count + 1))
+send '{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"'"$board_uri"'"}}}'
+read_message >/dev/null
+
 receiver_import_uri="file://$work/receiver_import.d6"
 receiver_dependency_uri="file://$work/receiver_dependency.d6"
 send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$receiver_import_uri"'","text":"require \"receiver_dependency\"\ndef inspect_imported()\n  pet = build_imported_pet()\n  pet.bark()\n  branch = ImportedFactory.build()\n  leaf = branch.leaf()\n  leaf.ping()\nend"}}}'

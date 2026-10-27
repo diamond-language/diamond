@@ -197,8 +197,28 @@ JsonValue *definition_compute(const DocumentTable *documents,const char *uri,
                   class_indices,DIAMOND_MAX_UNION_TYPES,&is_singleton)
             : 0;
         for(size_t index=0;index<candidate_count;index++) {
-            const DiamondMethod *method=
-                receiver_lookup_method(&chunk,class_indices[index],is_singleton,name,name_length);
+            const bool constructor=is_singleton&&name_length==3&&memcmp(name,"new",3)==0;
+            const DiamondMethod *method=constructor
+                ? receiver_lookup_method(&chunk,class_indices[index],false,"initialize",10)
+                : receiver_lookup_method(&chunk,class_indices[index],is_singleton,name,name_length);
+            /* Constructors call the inherited instance initializer. A class
+             * with no source initializer (including generated structs) instead
+             * selects its class declaration, never a synthetic source range. */
+            if(constructor&&(method==nullptr||
+               chunk.functions[method->function_index]->declaration_start<user_offset)) {
+                const DiamondClass *class=chunk.classes[class_indices[index]];
+                if(class->declaration_start<user_offset)continue;
+                declaration_line=class->declaration_line;
+                declaration_column=class->declaration_column;
+                declaration_start=class->declaration_start;
+                /* A nested class's stored name includes its namespace, but
+                 * the declaration may contain only the final identifier. */
+                DiamondLexer lexer;
+                diamond_lexer_init(&lexer,combined+class->declaration_start);
+                declaration_name_length=diamond_lexer_next(&lexer).span.length;
+                matched_functions[match_count++]=nullptr;
+                continue;
+            }
             if(method==nullptr)continue;
             const DiamondFunction *function=chunk.functions[method->function_index];
             if(function->declaration_start<user_offset)continue;

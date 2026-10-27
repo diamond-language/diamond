@@ -69,6 +69,11 @@ task unchanged; missing projects and duplicate project names become field
 errors. Task lists filter in SQL and explicitly preload their projects in a
 batch. There are no lazy association queries.
 
+The controller imports its store directly and annotates its `BoardStore`
+parameter, as do the CLI helpers. These explicit boundaries let editor
+completion and go-to-definition follow store calls across the imported files;
+opening the controller alone also resolves its entity types.
+
 Exit codes: 0 for success, 64 for bad usage, IDs or filters, 65 for validation
 errors, 66 for a missing task, and 1 for a database error. Diagnostics go to
 stderr; results go to stdout.

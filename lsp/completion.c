@@ -84,6 +84,9 @@ static bool follows_member_dot(const char *source,size_t offset) {
  * don't dedupe against each other either. */
 static bool push_class_methods(JsonValue *items,const DiamondChunk *chunk,
         size_t class_index,bool is_singleton) {
+    /* `new` is an intrinsic constructor, not a singleton_methods entry. */
+    if(is_singleton&&!chunk->classes[class_index]->sealed&&
+       !push_item(items,"new",COMPLETION_KIND_FUNCTION))return false;
     size_t current=class_index;
     while(current!=DIAMOND_NO_CLASS) {
         const DiamondClass *class=chunk->classes[current];

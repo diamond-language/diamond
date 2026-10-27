@@ -102,6 +102,12 @@ search over a real (if scoped) lexical symbol table:
     didOpen away). `range`/`selectionRange` are identical for each
     entry (just the name token — nothing tracks a declaration's full
     extent).
+  - Class member completion includes the intrinsic `new` constructor, except
+    for sealed classes. Go-to-definition on `ClassName.new(...)` selects the
+    instance `initialize` method, including an inherited or imported one.
+    Constructors without a source initializer (including generated struct
+    constructors) select the class declaration. Nested class targets select
+    the identifier written at that declaration, not the qualified lookup name.
   - All three also fall back to `lsp/receiver.c` for a method name
     reached through `receiver.method(...)`, for the receiver forms
     resolvable without real type inference: a literal class name
