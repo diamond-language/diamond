@@ -722,10 +722,13 @@ static uint16_t runtime_value_type(const DiamondChunk *chunk,DiamondValue value)
     if(value.kind==DIAMOND_VALUE_BOOL)return DIAMOND_TYPE_BOOL;
     if(value.kind==DIAMOND_VALUE_INT)return DIAMOND_TYPE_INT;
     if(value.kind==DIAMOND_VALUE_FLOAT)return DIAMOND_TYPE_FLOAT;
+    /* A class value (`self` in a class singleton) carries no object. */
+    if(value.kind!=DIAMOND_VALUE_OBJECT)return DIAMOND_TYPE_NONE;
     if(value.as.object->kind==DIAMOND_OBJECT_STRING)return DIAMOND_TYPE_STRING;
     if(value.as.object->kind==DIAMOND_OBJECT_ARRAY)return DIAMOND_TYPE_ARRAY;
     if(value.as.object->kind==DIAMOND_OBJECT_HASH)return DIAMOND_TYPE_HASH;
     if(value.as.object->kind==DIAMOND_OBJECT_CLOSURE)return DIAMOND_TYPE_CALLABLE;
+    if(value.as.object->kind!=DIAMOND_OBJECT_INSTANCE)return DIAMOND_TYPE_NONE;
     const DiamondClass *class=((DiamondInstance *)value.as.object)->class;
     for(size_t index=0;index<chunk->class_count;index++)
         if(chunk->classes[index]==class)return (uint16_t)(DIAMOND_TYPE_CLASS_BASE+index);
@@ -747,6 +750,9 @@ static DiamondBoundTypeMember *binding_member(DiamondTypeBinding *binding,
 static void bind_value_graph(const DiamondChunk *chunk,DiamondTypeBinding *binding,
                              uint8_t node,DiamondValue value) {
     const uint16_t type=runtime_value_type(chunk,value);
+    /* A value with no type id (a native object, a class value) leaves the
+     * variable unconstrained rather than binding it to nothing at all. */
+    if(type==DIAMOND_TYPE_NONE)return;
     DiamondBoundTypeMember *member=binding_member(binding,node,type);
     if(member==nullptr)return;
     if(type==DIAMOND_TYPE_ARRAY) {

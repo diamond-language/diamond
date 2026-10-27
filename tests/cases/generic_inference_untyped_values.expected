@@ -1,0 +1,7 @@
+Foo
+#<Channel>
+#<Range start=1, end=3, exclusive=false>
+[1, 2]
+2
+expected Int, got Channel
+nil

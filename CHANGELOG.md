@@ -8,6 +8,10 @@ authoritative fine-grained record.
 
 ### Fixed
 
+- A generic function no longer crashes when a type variable is inferred from a class value
+  (`self` returned from a class singleton method), and no longer rejects a native object
+  (`id(Channel.new(1))` failed with "expected <invalid type>"): such values leave the type
+  variable unconstrained.
 - A variadic function called with more arguments than it has parameters no longer sees the
   extra arguments in its temporaries: `block == nil` in `def f(*args, &block)` was true for
   `f(1, 2, 3) do ... end` because a spilled argument landed in the register that `nil`
