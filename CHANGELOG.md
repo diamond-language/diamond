@@ -8,6 +8,8 @@ authoritative fine-grained record.
 
 ### Added
 
+- Live search and task details with persistent multiline notes in the terminal
+  task board, with automatic database upgrades and matching CLI commands.
 - Constructor completion and go-to-definition in the language server, including
   imported/inherited initializers and default or generated struct constructors.
 - A terminal task board under `applications/task_board`, with Mjolnir-validated

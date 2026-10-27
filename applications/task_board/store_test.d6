@@ -47,4 +47,28 @@ suite.test("bad project references and duplicate names become validation errors"
   store.close()
 end
 
+suite.test("notes validate independently and literal search combines with filters") do
+  store = BoardStore.new(SQLite3.open(":memory:"))
+  project = store.create_project({"name": "Diamond"}).value()
+  other = store.create_project({"name": "Other"}).value()
+  task = store.create_task({"project_id": project.id(), "title": "Ship [board]"}).value()
+  Minitest.assert_equal("", task.notes())
+  notes = "First line\nMeasure latency: é\n100%_done"
+  updated = store.update_task(task.id(), {"notes": notes}).value()
+  Minitest.assert_equal(notes, updated.notes())
+  Minitest.assert_equal("", task.notes())
+  store.create_task({"project_id": other.id(), "title": "Other", "notes": "latency", "status": "done"})
+  Minitest.assert_equal(2, store.tasks(nil, nil, "LATENCY")[0].length())
+  Minitest.assert_equal([task.id()], store.tasks(project.id(), "todo", "latency")[0].map() do |t| t.id() end)
+  Minitest.assert_equal(1, store.tasks(nil, nil, "[board]")[0].length())
+  Minitest.assert_equal(1, store.tasks(nil, nil, "%_")[0].length())
+  Minitest.assert_equal(1, store.tasks(nil, nil, "DIAMOND")[0].length())
+  Minitest.assert_equal([], store.tasks(nil, "doing", "latency")[0])
+  Minitest.assert(store.update_task(task.id(), {"notes": "x" * 10001}).err?())
+  Minitest.assert(store.update_task(task.id(), {"notes": nil}).err?())
+  Minitest.assert_equal(notes, store.task(task.id()).notes())
+  Minitest.assert_equal("", store.update_task(task.id(), {"notes": ""}).value().notes())
+  store.close()
+end
+
 suite.run!()

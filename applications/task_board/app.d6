@@ -3,7 +3,8 @@ require "./lib/store"
 def board_usage() =
   "usage: board [--db FILE] COMMAND\n" +
   "  project NAME | projects | add PROJECT TITLE | edit TASK TITLE\n" +
-  "  move TASK todo|doing|done | list [--project ID] [--status todo|doing|done]\n" +
+  "  move TASK todo|doing|done | notes TASK TEXT | show TASK\n" +
+  "  list [--project ID] [--status todo|doing|done] [--search TEXT]\n" +
   "Interactive: bash applications/task_board/board [--db FILE]"
 
 def board_id(text)
@@ -35,14 +36,14 @@ def board_list(store: BoardStore, options)
   index = 0
   while index < options.length()
     flag = options[index]
-    if !["--project", "--status"].include?(flag) || index + 1 >= options.length() || filters.has_key?(flag)
-      raise ArgumentError.new("list expects --project ID and/or --status todo|doing|done")
+    if !["--project", "--status", "--search"].include?(flag) || index + 1 >= options.length() || filters.has_key?(flag)
+      raise ArgumentError.new("list expects --project ID, --status todo|doing|done, and/or --search TEXT")
     end
     filters[flag] = options[index + 1]
     index += 2
   end
   project_id = if filters.has_key?("--project") then board_id(filters["--project"]) else nil end
-  listed = store.tasks(project_id, filters["--status"])
+  listed = store.tasks(project_id, filters["--status"], filters.fetch("--search", ""))
   if listed[0].empty?() then puts("No tasks.") end
   listed[0].each() do |task|
     project = listed[1][task.id()]
@@ -62,13 +63,22 @@ def board_run(store: BoardStore, args)
     0
   when ["add", project_id, title]
     board_result(store.create_task({"project_id": board_id(project_id), "title": title}), "task")
-  when ["edit", task_id, title], ["move", task_id, title]
+  when ["show", task_id]
+    task = store.task(board_id(task_id))
+    if task == nil
+      warn("task ##{task_id} not found")
+      return 66
+    end
+    puts("task ##{task.id()} [#{task.status()}]: #{task.title()}")
+    puts("Notes:\n#{task.notes()}")
+    0
+  when ["edit", task_id, title], ["move", task_id, title], ["notes", task_id, title]
     id = board_id(task_id)
     if store.task(id) == nil
       warn("task ##{id} not found")
       return 66
     end
-    field = if args[0] == "edit" then "title" else "status" end
+    field = {"edit": "title", "move": "status", "notes": "notes"}[args[0]]
     board_result(store.update_task(id, {field: title}), "task")
   when ["list", *options]
     board_list(store, options)

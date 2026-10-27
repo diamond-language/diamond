@@ -84,6 +84,25 @@ session([
     (b"L", b"doing (1)"),
     (b"e", b"edit> Real terminal task"),
     (b"!\r", b"Saved #1"),
+    (b"\r", b"Task #1 [doing]"),
+    (b"n", b"Ctrl-S: save"),
+    (b"Remember the benchmark\rSecond line\x13", b"Saved #1"),
+    (b"q", b"Task board"),
+    (b"/", b"search>"),
+    (b"zz_missing", b"No task selected"),
+    (b"\x1b", b"Search: (all tasks)"),
+    (b"/", b"search>"),
+    (b"BENCHMARK\r\r", b"Task #1 [doing]"),
+    (b"n", b"Ctrl-S: save"),
+    (b"\x15Discard this\x1b", b"Remember the benchmark"),
+    (b"q", b"Task board"),
+    (b"/", b"search>"),
+    (b"\x15\r", b"Search: (all tasks)"),
+])
+session([
+    (b"/", b"search>"),
+    (b"SECOND LINE\r\r", b"Task #1 [doing]"),
+    (b"q", b"Task board"),
 ])
 session([], signal.SIGTERM)
 session([], exit_key=b"\x03")
@@ -92,4 +111,9 @@ result = subprocess.run(
      "--db", str(database), "list"], capture_output=True, text=True, check=True,
 )
 assert result.stdout.strip() == "#1 [doing] PTY project / Real terminal task!", result.stdout
+result = subprocess.run(
+    [os.environ["DIAMOND_BIN"], str(root / "applications/task_board/app.d6"),
+     "--db", str(database), "show", "1"], capture_output=True, text=True, check=True,
+)
+assert result.stdout.strip().endswith("Notes:\nRemember the benchmark\nSecond line"), result.stdout
 print("task board PTY checks passed")
