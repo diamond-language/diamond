@@ -12,6 +12,10 @@ authoritative fine-grained record.
   extra arguments in its temporaries: `block == nil` in `def f(*args, &block)` was true for
   `f(1, 2, 3) do ... end` because a spilled argument landed in the register that `nil`
   compiles to.
+- The bytecode verifier (`ProgramBuilder#run`, `--dump-bytecode`) accepts keyword calls that
+  pass a block: it checked the block register at the wrong offset, rejected a block with no
+  keywords, and misread the block flag on `Class.method(key: value) do ... end`, which
+  silently cut `--dump-bytecode` output short at that call.
 
 ## 0.20.2 — 2026-10-26
 

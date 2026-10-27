@@ -650,6 +650,16 @@ static bool disassemble_calls(DisassemblyWalk *walk) {
     return true;
 }
 
+/* The count byte of a keyword-call trailer that may carry a block
+ * (CALL_CLOSURE_KEYWORDS, CALL_SINGLETON_KEYWORDS, NEW_KEYWORDS,
+ * INVOKE_KEYWORDS): the keyword count, with 0x80 set when a block register
+ * follows. As in the VM, a block may come with no keywords at all --
+ * `Class.new(*args) do ... end` compiles to that. */
+static bool keyword_trailer_count_valid(uint8_t encoded) {
+    const uint8_t count=encoded&0x7fu;
+    return (count>0||(encoded&0x80u)!=0)&&count<=DIAMOND_MAX_DECLARED_PARAMETERS;
+}
+
 /* Opcode group: spread and keyword calls to functions and closures, and BUILD_SPREAD_ARGS. Returns false, leaving
  * the walk untouched, when the opcode at the current offset belongs to another group. */
 static bool disassemble_spread_calls(DisassemblyWalk *walk) {
@@ -706,7 +716,7 @@ static bool disassemble_spread_calls(DisassemblyWalk *walk) {
             const size_t keyword_end=8+(size_t)keyword_count*3;
             const bool typed=(DiamondOpCode)opcode==
                 DIAMOND_OP_CALL_TYPED_KEYWORD_SPREAD;
-            if(keyword_count==0||keyword_count>16||
+            if(keyword_count==0||keyword_count>DIAMOND_MAX_DECLARED_PARAMETERS||
                !require_bytes(stream,chunk,offset,keyword_end+(typed?1:0))) {
                 valid=false;offset=chunk->code_count;break;
             }
@@ -753,7 +763,7 @@ static bool disassemble_spread_calls(DisassemblyWalk *walk) {
             const bool has_block=(encoded_keyword_count&0x80u)!=0;
             const uint8_t keyword_count=encoded_keyword_count&0x7fu;
             const size_t total=8+(size_t)keyword_count*4+(has_block?2u:0u);
-            if(keyword_count==0||keyword_count>16||
+            if(!keyword_trailer_count_valid(encoded_keyword_count)||
                !require_bytes(stream,chunk,offset,total)) {
                 valid=false;offset=chunk->code_count;break;
             }
@@ -770,7 +780,7 @@ static bool disassemble_spread_calls(DisassemblyWalk *walk) {
                     read_operand(chunk,entry+2),&valid);
             }
             if(has_block)(void)checked_register(chunk,stream,
-                read_operand(chunk,total-2),&valid);
+                read_operand(chunk,offset+total-2),&valid);
             offset+=total;break;
         }
         case DIAMOND_OP_BUILD_SPREAD_ARGS: {
@@ -836,7 +846,7 @@ static bool disassemble_spread_invokes(DisassemblyWalk *walk) {
                 (has_block?2u:0u);
             const bool typed=(DiamondOpCode)opcode==
                 DIAMOND_OP_INVOKE_TYPED_KEYWORDS;
-            if(keyword_count==0||keyword_count>16||
+            if(!keyword_trailer_count_valid(encoded_keyword_count)||
                !require_bytes(stream,chunk,offset,keyword_end+(typed?1:0))) {
                 valid=false;offset=chunk->code_count;break;
             }
@@ -855,7 +865,7 @@ static bool disassemble_spread_invokes(DisassemblyWalk *walk) {
                     read_operand(chunk,entry+2),&valid);
             }
             if(has_block)(void)checked_register(chunk,stream,
-                read_operand(chunk,keyword_end-2),&valid);
+                read_operand(chunk,offset+keyword_end-2),&valid);
             if(!typed) {offset+=keyword_end;break;}
             const uint8_t type_count=chunk->code[offset+keyword_end];
             if(type_count>8||!require_bytes(stream,chunk,offset,
@@ -926,7 +936,7 @@ static bool disassemble_spread_constructors(DisassemblyWalk *walk) {
             const bool has_block=(encoded_keyword_count&0x80u)!=0;
             const uint8_t keyword_count=encoded_keyword_count&0x7fu;
             const size_t total=8+(size_t)keyword_count*4+(has_block?2u:0u);
-            if(keyword_count==0||keyword_count>16||
+            if(!keyword_trailer_count_valid(encoded_keyword_count)||
                !require_bytes(stream,chunk,offset,total)) {valid=false;offset=chunk->code_count;break;}
             fprintf(stream,"%-18s r%u, c%u, r%u, %u keywords\n","NEW_KEYWORDS",
                 checked_register(chunk,stream,read_operand(chunk,offset+1),&valid),class_index,
@@ -938,7 +948,7 @@ static bool disassemble_spread_constructors(DisassemblyWalk *walk) {
                 (void)checked_register(chunk,stream,read_operand(chunk,entry+2),&valid);
             }
             if(has_block)(void)checked_register(chunk,stream,
-                read_operand(chunk,total-2),&valid);
+                read_operand(chunk,offset+total-2),&valid);
             offset+=total;break;
         }
         case DIAMOND_OP_CALL_SINGLETON_SPREAD: {
@@ -990,10 +1000,13 @@ static bool disassemble_spread_constructors(DisassemblyWalk *walk) {
         case DIAMOND_OP_CALL_TYPED_SINGLETON_KEYWORDS: {
             if(!require_bytes(stream,chunk,offset,11)) {valid=false;offset=chunk->code_count;break;}
             const size_t function_index=read_operand(chunk,offset+3);
-            const uint8_t keyword_count=chunk->code[offset+10];
-            const size_t keyword_end=11+(size_t)keyword_count*4;
+            const uint8_t encoded_keyword_count=chunk->code[offset+10];
+            const bool has_block=(encoded_keyword_count&0x80u)!=0;
+            const uint8_t keyword_count=encoded_keyword_count&0x7fu;
+            const size_t keyword_end=11+(size_t)keyword_count*4+
+                (has_block?2u:0u);
             const bool typed=(DiamondOpCode)opcode==DIAMOND_OP_CALL_TYPED_SINGLETON_KEYWORDS;
-            if(keyword_count==0||keyword_count>16||
+            if(!keyword_trailer_count_valid(encoded_keyword_count)||
                !require_bytes(stream,chunk,offset,keyword_end+(typed?1:0))) {
                 valid=false;offset=chunk->code_count;break;
             }
@@ -1008,6 +1021,8 @@ static bool disassemble_spread_constructors(DisassemblyWalk *walk) {
                 if((size_t)read_operand(chunk,entry)>=chunk->string_count)valid=false;
                 (void)checked_register(chunk,stream,read_operand(chunk,entry+2),&valid);
             }
+            if(has_block)(void)checked_register(chunk,stream,
+                read_operand(chunk,offset+keyword_end-2),&valid);
             if(!typed) {offset+=keyword_end;break;}
             const uint8_t type_count=chunk->code[offset+keyword_end];
             if(type_count>8||!require_bytes(stream,chunk,offset,
