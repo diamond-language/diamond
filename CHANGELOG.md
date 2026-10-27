@@ -12,6 +12,8 @@ authoritative fine-grained record.
   (`self` returned from a class singleton method), and no longer rejects a native object
   (`id(Channel.new(1))` failed with "expected <invalid type>"): such values leave the type
   variable unconstrained.
+- An `Owner.method` reference (`greet = Greeter.greet`) called without a defaulted argument
+  runs the method's default instead of passing nil.
 - A variadic function called with more arguments than it has parameters no longer sees the
   extra arguments in its temporaries: `block == nil` in `def f(*args, &block)` was true for
   `f(1, 2, 3) do ... end` because a spilled argument landed in the register that `nil`
