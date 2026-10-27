@@ -733,7 +733,7 @@ static void register_definition_method(Compiler *compiler,DiamondFunction *funct
             class->method_count--;
             duplicate=false;
         }
-        if(class->method_count==DIAMOND_MAX_METHODS||duplicate) {
+        if(!diamond_reserve_methods(&class->methods,&class->method_capacity,class->method_count+1)||duplicate) {
             fail(compiler, name, "duplicate or excessive method definition");
         } else {
             DiamondMethod *method = &class->methods[class->method_count++];
@@ -761,7 +761,7 @@ static void register_definition_method(Compiler *compiler,DiamondFunction *funct
                 prescanned=method;
             else duplicate=true;
         }
-        if(duplicate||(prescanned==nullptr&&class->singleton_method_count==DIAMOND_MAX_METHODS))
+        if(duplicate||(prescanned==nullptr&&!diamond_reserve_methods(&class->singleton_methods,&class->singleton_method_capacity,class->singleton_method_count+1)))
             fail(compiler,name,"duplicate or excessive class singleton method");
         else {
             DiamondMethod *method=prescanned!=nullptr?prescanned:
@@ -794,7 +794,7 @@ static void register_definition_method(Compiler *compiler,DiamondFunction *funct
                 fail(compiler,name,"duplicate module method");break;
             }
         if(!compiler->failed) {
-            if(module->method_count==DIAMOND_MAX_METHODS)
+            if(!diamond_reserve_methods(&module->methods,&module->method_capacity,module->method_count+1))
                 fail(compiler,name,"too many module methods");
             else {
                 DiamondMethod *method=&module->methods[module->method_count++];
@@ -817,7 +817,7 @@ static void register_definition_method(Compiler *compiler,DiamondFunction *funct
                          * marking side effect remains to do here. */
                         method->is_private=true;method->is_protected=false;
                     }
-                    else if(module->singleton_method_count==DIAMOND_MAX_METHODS)
+                    else if(!diamond_reserve_methods(&module->singleton_methods,&module->singleton_method_capacity,module->singleton_method_count+1))
                         fail(compiler,name,"too many module singleton functions");
                     else {
                         method->is_private=true;method->is_protected=false;
@@ -866,7 +866,7 @@ static void register_definition_method(Compiler *compiler,DiamondFunction *funct
                 if(strcmp(module->singleton_methods[existing].name,
                           function->name)==0)duplicate=true;
         if(prescanned==module->singleton_method_count&&!claiming&&
-           (duplicate||module->singleton_method_count==DIAMOND_MAX_METHODS))
+           (duplicate||!diamond_reserve_methods(&module->singleton_methods,&module->singleton_method_capacity,module->singleton_method_count+1)))
             fail(compiler,name,"duplicate or excessive module singleton function");
         else {
             DiamondMethod *method=prescanned<module->singleton_method_count?
@@ -1198,7 +1198,7 @@ static bool register_module_function_early(Compiler *compiler,DiamondFunction *f
         const bool early_claiming=!compiler->discovery_pass&&
             early_module->next_singleton_claim<early_module->singleton_method_count;
         if(prescanned==early_module->singleton_method_count&&!early_claiming&&
-           early_module->singleton_method_count==DIAMOND_MAX_METHODS) {
+           !diamond_reserve_methods(&early_module->singleton_methods,&early_module->singleton_method_capacity,early_module->singleton_method_count+1)) {
             fail(compiler,name,"too many module singleton functions");
         } else {
             DiamondMethod exported={0};

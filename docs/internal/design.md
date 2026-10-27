@@ -811,12 +811,12 @@ dispatch sites correctly reflect the change on their very next call.
 
 `ClassName.define_method(name, callable)` is the same mechanism's
 add-a-new-slot counterpart, recognized at the same call site and compiled to
-its own dedicated opcode. `DiamondClass.methods` is a fixed-size array
-(`DIAMOND_MAX_METHODS`, currently 256) that a class's compile-time method
-count rarely fills, so "adding" a method at runtime is just writing a new
-`DiamondMethod` entry into the next unused slot and incrementing
-`method_count` — no reallocation, no new heap object, nothing for the GC to
-track. It shares three of `redefine_method`'s four checks (String name,
+its own dedicated opcode. Adding a method at runtime writes a new
+`DiamondMethod` entry into the class's method table and increments
+`method_count`. A full table grows (up to `DIAMOND_MAX_METHODS`, currently
+4,096); the outgrown table is kept until the program is freed, because a call
+already in flight may still hold a pointer into it. Nothing new is a GC
+object. It shares three of `redefine_method`'s four checks (String name,
 capture-free callable, `owner_class` equal to the target class) but rejects
 a name that *already* exists instead of requiring one, and drops the arity
 check entirely — a brand-new method has no prior arity to match, so it just

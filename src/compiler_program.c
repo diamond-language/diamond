@@ -258,6 +258,254 @@ DiamondClass *diamond_program_class_slot(DiamondProgram *program,size_t index) {
     return program->classes[index];
 }
 
+/* Grows `items` (allocated length *capacity) to hold `count` entries of
+ * `item_size` bytes, at most `limit`, zeroing the new entries. Sets *ok
+ * and returns the possibly moved table; on failure returns `items`
+ * unchanged with *ok false. */
+static void *grow_table(void *items,size_t *capacity,size_t count,size_t item_size,
+                        size_t limit,bool *ok) {
+    *ok=true;
+    if(count<=*capacity)return items;
+    *ok=false;
+    if(count>limit)return items;
+    size_t grown=*capacity<8?8:*capacity*2;
+    if(grown<count)grown=count;
+    if(grown>limit)grown=limit;
+    unsigned char *table=realloc(items,grown*item_size);
+    if(table==nullptr)return items;
+    memset(table+*capacity*item_size,0,(grown-*capacity)*item_size);
+    *capacity=grown;
+    *ok=true;
+    return table;
+}
+
+/* A fresh copy of the first `count` entries, or nullptr when count is 0
+ * (or on allocation failure, which the caller tells apart by count). */
+static void *duplicate_table(const void *items,size_t count,size_t item_size) {
+    if(count==0)return nullptr;
+    void *copy=malloc(count*item_size);
+    if(copy!=nullptr)memcpy(copy,items,count*item_size);
+    return copy;
+}
+
+bool diamond_reserve_methods(DiamondMethod **methods,size_t *capacity,size_t count) {
+    bool ok;
+    DiamondMethod *table=grow_table(*methods,capacity,count,sizeof **methods,
+        DIAMOND_MAX_METHODS,&ok);
+    *methods=table;
+    return ok;
+}
+
+bool diamond_reserve_interface_methods(DiamondInterfaceMethod **methods,size_t *capacity,
+                                       size_t count) {
+    bool ok;
+    DiamondInterfaceMethod *table=grow_table(*methods,capacity,count,sizeof **methods,
+        DIAMOND_MAX_METHODS,&ok);
+    *methods=table;
+    return ok;
+}
+
+bool diamond_reserve_discovered_methods(DiamondClass *class,size_t count) {
+    size_t capacity=class->discovered_method_capacity;
+    bool ok;
+    uint16_t *table=grow_table(class->discovered_methods,&capacity,count,
+        sizeof *class->discovered_methods,DIAMOND_MAX_METHODS,&ok);
+    class->discovered_methods=table;
+    class->discovered_method_capacity=(uint16_t)capacity;
+    return ok;
+}
+
+bool diamond_class_reserve_fields(DiamondClass *class,size_t count) {
+    if(count<=class->field_capacity)return true;
+    /* Each table grows from the same old length; the shared capacity
+     * moves only once all five have room. */
+    size_t capacity=class->field_capacity;
+    bool ok;
+    class->fields=grow_table(class->fields,&capacity,count,sizeof *class->fields,
+        DIAMOND_MAX_FIELDS,&ok);
+    if(!ok)return false;
+    const size_t grown=capacity;
+    capacity=class->field_capacity;
+    class->field_type_status=grow_table(class->field_type_status,&capacity,grown,
+        sizeof *class->field_type_status,DIAMOND_MAX_FIELDS,&ok);
+    if(!ok)return false;
+    capacity=class->field_capacity;
+    class->field_known_class=grow_table(class->field_known_class,&capacity,grown,
+        sizeof *class->field_known_class,DIAMOND_MAX_FIELDS,&ok);
+    if(!ok)return false;
+    capacity=class->field_capacity;
+    class->discovered_field_type_status=grow_table(class->discovered_field_type_status,
+        &capacity,grown,sizeof *class->discovered_field_type_status,DIAMOND_MAX_FIELDS,&ok);
+    if(!ok)return false;
+    capacity=class->field_capacity;
+    class->discovered_field_known_class=grow_table(class->discovered_field_known_class,
+        &capacity,grown,sizeof *class->discovered_field_known_class,DIAMOND_MAX_FIELDS,&ok);
+    if(!ok)return false;
+    class->field_capacity=grown;
+    return true;
+}
+
+bool diamond_module_reserve_fields(DiamondModule *module,size_t count) {
+    bool ok;
+    module->fields=grow_table(module->fields,&module->field_capacity,count,
+        sizeof *module->fields,DIAMOND_MAX_FIELDS,&ok);
+    return ok;
+}
+
+bool diamond_class_reserve_class_variables(DiamondClass *class,size_t count) {
+    bool ok;
+    class->class_variables=grow_table(class->class_variables,
+        &class->class_variable_capacity,count,sizeof *class->class_variables,
+        DIAMOND_MAX_CLASS_VARIABLES,&ok);
+    return ok;
+}
+
+/* diamond_reserve_methods for a class whose program is already running
+ * (ClassName.define_method): the outgrown table moves to retired_methods
+ * instead of being freed, so a DiamondMethod pointer a call in flight
+ * still holds stays valid. Callers invalidate the method caches. */
+bool diamond_class_grow_methods_while_running(DiamondClass *class,size_t count) {
+    if(count<=class->method_capacity)return true;
+    DiamondMethod **retired=realloc(class->retired_methods,
+        (class->retired_method_count+1)*sizeof *retired);
+    if(retired==nullptr)return false;
+    class->retired_methods=retired;
+    size_t wanted=class->method_capacity*2;
+    if(wanted>DIAMOND_MAX_METHODS)wanted=DIAMOND_MAX_METHODS;
+    if(wanted<count)wanted=count;
+    DiamondMethod *grown=nullptr;
+    size_t capacity=0;
+    if(!diamond_reserve_methods(&grown,&capacity,wanted))return false;
+    if(class->method_count>0)
+        memcpy(grown,class->methods,class->method_count*sizeof *grown);
+    if(class->methods!=nullptr)
+        retired[class->retired_method_count++]=class->methods;
+    class->methods=grown;
+    class->method_capacity=capacity;
+    return true;
+}
+
+void diamond_class_free_tables(DiamondClass *class) {
+    free(class->methods);
+    free(class->singleton_methods);
+    free(class->discovered_methods);
+    free(class->fields);
+    free(class->field_type_status);
+    free(class->field_known_class);
+    free(class->discovered_field_type_status);
+    free(class->discovered_field_known_class);
+    free(class->class_variables);
+    for(size_t index=0;index<class->retired_method_count;index++)
+        free(class->retired_methods[index]);
+    free(class->retired_methods);
+    class->methods=nullptr;class->method_count=0;class->method_capacity=0;
+    class->singleton_methods=nullptr;class->singleton_method_count=0;
+    class->singleton_method_capacity=0;
+    class->discovered_methods=nullptr;class->discovered_method_count=0;
+    class->discovered_method_capacity=0;
+    class->retired_methods=nullptr;class->retired_method_count=0;
+    class->fields=nullptr;class->field_type_status=nullptr;class->field_known_class=nullptr;
+    class->discovered_field_type_status=nullptr;class->discovered_field_known_class=nullptr;
+    class->field_count=0;class->field_capacity=0;
+    class->class_variables=nullptr;class->class_variable_count=0;
+    class->class_variable_capacity=0;
+}
+
+void diamond_module_free_tables(DiamondModule *module) {
+    free(module->methods);
+    free(module->singleton_methods);
+    free(module->fields);
+    module->fields=nullptr;module->field_count=0;module->field_capacity=0;
+    module->methods=nullptr;module->method_count=0;module->method_capacity=0;
+    module->singleton_methods=nullptr;module->singleton_method_count=0;
+    module->singleton_method_capacity=0;
+}
+
+void diamond_interface_free_tables(DiamondInterface *interface) {
+    free(interface->methods);
+    interface->methods=nullptr;interface->method_count=0;interface->method_capacity=0;
+}
+
+/* Replaces `destination`'s contents (releasing its own tables) with a deep
+ * copy of `source`. Copied tables hold exactly the used entries. False on
+ * allocation failure, leaving `destination` with empty tables. */
+bool diamond_class_copy(DiamondClass *destination,const DiamondClass *source) {
+    diamond_class_free_tables(destination);
+    memcpy(destination,source,sizeof *destination);
+    destination->methods=duplicate_table(source->methods,source->method_count,
+        sizeof *source->methods);
+    destination->method_capacity=source->method_count;
+    destination->singleton_methods=duplicate_table(source->singleton_methods,
+        source->singleton_method_count,sizeof *source->singleton_methods);
+    destination->singleton_method_capacity=source->singleton_method_count;
+    destination->discovered_methods=duplicate_table(source->discovered_methods,
+        source->discovered_method_count,sizeof *source->discovered_methods);
+    destination->discovered_method_capacity=source->discovered_method_count;
+    destination->retired_methods=nullptr;destination->retired_method_count=0;
+    const size_t fields=source->field_count;
+    destination->fields=duplicate_table(source->fields,fields,sizeof *source->fields);
+    destination->field_type_status=duplicate_table(source->field_type_status,fields,
+        sizeof *source->field_type_status);
+    destination->field_known_class=duplicate_table(source->field_known_class,fields,
+        sizeof *source->field_known_class);
+    destination->discovered_field_type_status=duplicate_table(
+        source->discovered_field_type_status,fields,
+        sizeof *source->discovered_field_type_status);
+    destination->discovered_field_known_class=duplicate_table(
+        source->discovered_field_known_class,fields,
+        sizeof *source->discovered_field_known_class);
+    destination->field_capacity=fields;
+    destination->class_variables=duplicate_table(source->class_variables,
+        source->class_variable_count,sizeof *source->class_variables);
+    destination->class_variable_capacity=source->class_variable_count;
+    if((source->method_count>0&&destination->methods==nullptr)||
+       (source->singleton_method_count>0&&destination->singleton_methods==nullptr)||
+       (source->discovered_method_count>0&&destination->discovered_methods==nullptr)||
+       (fields>0&&(destination->fields==nullptr||destination->field_type_status==nullptr||
+                   destination->field_known_class==nullptr||
+                   destination->discovered_field_type_status==nullptr||
+                   destination->discovered_field_known_class==nullptr))||
+       (source->class_variable_count>0&&destination->class_variables==nullptr)) {
+        diamond_class_free_tables(destination);
+        return false;
+    }
+    return true;
+}
+
+bool diamond_module_copy(DiamondModule *destination,const DiamondModule *source) {
+    diamond_module_free_tables(destination);
+    memcpy(destination,source,sizeof *destination);
+    destination->methods=duplicate_table(source->methods,source->method_count,
+        sizeof *source->methods);
+    destination->method_capacity=source->method_count;
+    destination->singleton_methods=duplicate_table(source->singleton_methods,
+        source->singleton_method_count,sizeof *source->singleton_methods);
+    destination->singleton_method_capacity=source->singleton_method_count;
+    destination->fields=duplicate_table(source->fields,source->field_count,
+        sizeof *source->fields);
+    destination->field_capacity=source->field_count;
+    if((source->method_count>0&&destination->methods==nullptr)||
+       (source->singleton_method_count>0&&destination->singleton_methods==nullptr)||
+       (source->field_count>0&&destination->fields==nullptr)) {
+        diamond_module_free_tables(destination);
+        return false;
+    }
+    return true;
+}
+
+bool diamond_interface_copy(DiamondInterface *destination,const DiamondInterface *source) {
+    diamond_interface_free_tables(destination);
+    *destination=*source;
+    destination->methods=duplicate_table(source->methods,source->method_count,
+        sizeof *source->methods);
+    destination->method_capacity=source->method_count;
+    if(source->method_count>0&&destination->methods==nullptr) {
+        diamond_interface_free_tables(destination);
+        return false;
+    }
+    return true;
+}
+
 /* Interfaces and modules use the same lazily allocated slots as classes:
  * zeroed when first allocated, then owned by `program` until
  * diamond_program_free. */
@@ -287,16 +535,22 @@ void diamond_program_free(DiamondProgram *program) {
     program->function_count=0;
     program->function_capacity=0;
     for(size_t index=0;index<DIAMOND_MAX_CLASSES;index++) {
+        if(program->classes[index]!=nullptr)
+            diamond_class_free_tables(program->classes[index]);
         free(program->classes[index]);
         program->classes[index]=nullptr;
     }
     program->class_count=0;
     for(size_t index=0;index<DIAMOND_MAX_INTERFACES;index++) {
+        if(program->interfaces[index]!=nullptr)
+            diamond_interface_free_tables(program->interfaces[index]);
         free(program->interfaces[index]);
         program->interfaces[index]=nullptr;
     }
     program->interface_count=0;
     for(size_t index=0;index<DIAMOND_MAX_MODULES;index++) {
+        if(program->modules[index]!=nullptr)
+            diamond_module_free_tables(program->modules[index]);
         free(program->modules[index]);
         program->modules[index]=nullptr;
     }
@@ -437,22 +691,24 @@ void diamond_program_init_fresh(DiamondProgram *program) {
          * branch reset of a claimed slot, for the same reason: nothing
          * else ever clears a builtin class's own tables between
          * compiles now that the big memset below is gone. */
-        memset(class->methods,0,sizeof class->methods);
-        memset(class->singleton_methods,0,sizeof class->singleton_methods);
-        memset(class->field_type_status,0,sizeof class->field_type_status);
-        memset(class->field_known_class,0,sizeof class->field_known_class);
-        memset(class->discovered_field_type_status,0,
-            sizeof class->discovered_field_type_status);
-        memset(class->discovered_field_known_class,0,
-            sizeof class->discovered_field_known_class);
+        zero_table(class->methods,class->method_capacity*sizeof class->methods[0]);
+        zero_table(class->singleton_methods,class->singleton_method_capacity*sizeof class->singleton_methods[0]);
+        zero_table(class->field_type_status,class->field_capacity*sizeof class->field_type_status[0]);
+        zero_table(class->field_known_class,class->field_capacity*sizeof class->field_known_class[0]);
+        zero_table(class->discovered_field_type_status,class->field_capacity*sizeof class->discovered_field_type_status[0]);
+        zero_table(class->discovered_field_known_class,class->field_capacity*sizeof class->discovered_field_known_class[0]);
         class->discovered_method_count=0;
-        memset(class->class_variables,0,sizeof class->class_variables);
+        zero_table(class->class_variables,class->class_variable_capacity*sizeof class->class_variables[0]);
         class->method_count=0;
         class->singleton_method_count=0;
         class->class_variable_count=0;
         class->declared_by_discovery=false;
         (void)snprintf(class->name,sizeof class->name,"%s",builtins[index].name);
         class->superclass=builtins[index].superclass;
+        if(!diamond_class_reserve_fields(class,3)) {
+            (void)fputs("diamond: out of memory allocating the built-in classes\n",stderr);
+            abort();
+        }
         class->field_count=3;
         (void)snprintf(class->fields[0],DIAMOND_MAX_FUNCTION_NAME,"message");
         (void)snprintf(class->fields[1],DIAMOND_MAX_FUNCTION_NAME,"cause");
@@ -740,20 +996,20 @@ static bool seed_program_from_template(DiamondProgram *destination,
     for(size_t index=0;index<template->class_count;index++) {
         DiamondClass *copy=diamond_program_class_slot(destination,index);
         if(copy==nullptr)return false;
-        memcpy(copy,template->classes[index],sizeof *copy);
+        if(!diamond_class_copy(copy,template->classes[index]))return false;
         copy->index=(uint16_t)index;
     }
     destination->class_count=template->class_count;
     for(size_t index=0;index<template->interface_count;index++) {
         DiamondInterface *copy=diamond_program_interface_slot(destination,index);
         if(copy==nullptr)return false;
-        *copy=*template->interfaces[index];
+        if(!diamond_interface_copy(copy,template->interfaces[index]))return false;
     }
     destination->interface_count=template->interface_count;
     for(size_t index=0;index<template->module_count;index++) {
         DiamondModule *copy=diamond_program_module_slot(destination,index);
         if(copy==nullptr)return false;
-        memcpy(copy,template->modules[index],sizeof *copy);
+        if(!diamond_module_copy(copy,template->modules[index]))return false;
     }
     destination->module_count=template->module_count;
     destination->range_class_index=template->range_class_index;

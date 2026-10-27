@@ -105,8 +105,20 @@ enum {
      * actually declares. A variadic function's *effective* argument count
      * is unaffected by this cap either way -- see DIAMOND_MAX_ARGUMENTS. */
     DIAMOND_MAX_DECLARED_PARAMETERS = 32,
-    DIAMOND_MAX_METHODS = 256,
-    DIAMOND_MAX_FIELDS = 64,
+    /* Per class, module or interface. Method tables grow on demand
+     * (diamond_reserve_methods); methods are found by name, so no
+     * bytecode operand limits this. */
+    DIAMOND_MAX_METHODS = 4096,
+    /* Instance variables per class (or module). The bytecode operand is
+     * 16-bit, but DiamondShape.field_count and the JIT's ivar helpers
+     * hold a field index in a byte. */
+    DIAMOND_MAX_FIELDS = UINT8_MAX,
+    /* Class variables per class: DiamondVm.class_variables is a
+     * class-by-slot grid of this width. */
+    DIAMOND_MAX_CLASS_VARIABLES = 64,
+    /* Fields covered by DiamondFunction.ivar_known_class; the JIT treats
+     * a higher field as having no known class. */
+    DIAMOND_MAX_JIT_KNOWN_FIELDS = 64,
     /* Phase 15 (docs/internal/jit-design.md): per-function cap on
      * DiamondFunction.invoke_site_known_class below -- same scale as
      * DIAMOND_MAX_FIELDS/DIAMOND_MAX_LOCALS. Silently stops recording
@@ -305,10 +317,9 @@ typedef enum DiamondOpCode : uint8_t {
     DIAMOND_OP_MYSQL_OPEN,
     /* `ClassName.define_method(name, callable)` -- redefine_method's
      * add-a-new-slot counterpart: appends a new DiamondMethod entry
-     * (DIAMOND_MAX_METHODS headroom already exists in the fixed-size
-     * `methods[]` array; this is the first opcode to grow method_count
-     * itself rather than just repointing an existing entry's
-     * function_index). Same four safety checks as REDEFINE_METHOD
+     * (growing the class's method table if it is full; this is the first
+     * opcode to grow method_count itself rather than just repointing an
+     * existing entry's function_index). Same four safety checks as REDEFINE_METHOD
      * (String name, Callable value, zero captures, owner_class matches),
      * minus the arity-must-match check (nothing to match against yet) --
      * see vm.c's own handler comment. */
@@ -915,8 +926,9 @@ typedef struct DiamondInterface {
     uint32_t declaration_line;
     uint32_t declaration_column;
     size_t declaration_start;
-    DiamondInterfaceMethod methods[DIAMOND_MAX_METHODS];
+    DiamondInterfaceMethod *methods;
     size_t method_count;
+    size_t method_capacity;
     const DiamondTypeSet *type_sets;
     /* True only for an entry seeded by diamond_compile's own throwaway
      * discovery pass and not yet "claimed" by the real second pass --
@@ -934,10 +946,14 @@ typedef struct DiamondModule {
     uint32_t declaration_line;
     uint32_t declaration_column;
     size_t declaration_start;
-    DiamondMethod methods[DIAMOND_MAX_METHODS];
+    /* Heap tables owned by this entry (diamond_program_free releases
+     * them); `*_capacity` is the allocated length. */
+    DiamondMethod *methods;
     size_t method_count;
-    DiamondMethod singleton_methods[DIAMOND_MAX_METHODS];
+    size_t method_capacity;
+    DiamondMethod *singleton_methods;
     size_t singleton_method_count;
+    size_t singleton_method_capacity;
     /* Mirrors Compiler's own next_function_claim (src/compiler.c), scoped
      * per-module instead of program-wide: how many of this module's
      * discovery-pass-populated singleton_methods[] entries (module_
@@ -949,8 +965,9 @@ typedef struct DiamondModule {
      * singleton_methods, unlike methods[]/fields[], is never wiped on
      * reopen. Reset to 0 exactly once, alongside that reopen. */
     size_t next_singleton_claim;
-    char fields[DIAMOND_MAX_FIELDS][DIAMOND_MAX_FUNCTION_NAME];
+    char (*fields)[DIAMOND_MAX_FUNCTION_NAME];
     size_t field_count;
+    size_t field_capacity;
     /* Modules this module `include`s directly; see DiamondClass's copy. */
     uint16_t included_modules[DIAMOND_MAX_INCLUDED_MODULES];
     uint8_t included_module_count;
@@ -1014,41 +1031,55 @@ struct DiamondClass {
      * module visible to a method defined above the `include` line. */
     uint16_t included_modules[DIAMOND_MAX_INCLUDED_MODULES];
     uint8_t included_module_count;
-    DiamondMethod methods[DIAMOND_MAX_METHODS];
+    /* Heap tables owned by this entry (diamond_program_free releases
+     * them); `*_capacity` is the allocated length. */
+    DiamondMethod *methods;
     size_t method_count;
-    DiamondMethod singleton_methods[DIAMOND_MAX_METHODS];
+    size_t method_capacity;
+    DiamondMethod *singleton_methods;
     size_t singleton_method_count;
-    char fields[DIAMOND_MAX_FIELDS][DIAMOND_MAX_FUNCTION_NAME];
+    size_t singleton_method_capacity;
+    /* fields and the four per-field fact tables below share one
+     * allocated length, field_capacity (diamond_class_reserve_fields). */
+    char (*fields)[DIAMOND_MAX_FUNCTION_NAME];
     size_t field_count;
+    size_t field_capacity;
     /* LSP-only conservative receiver metadata: 0 unseen, 1 every compiled
      * assignment agreed on field_known_class, 2 unknown/conflicting. */
-    uint8_t field_type_status[DIAMOND_MAX_FIELDS];
-    uint16_t field_known_class[DIAMOND_MAX_FIELDS];
+    uint8_t *field_type_status;
+    uint16_t *field_known_class;
     /* Final field facts from the declaration-discovery pass. Unlike the
      * real pass's table above, these are complete before any real method
      * body is emitted, so GET_IVAR can safely publish a receiver class for
      * later call-return chaining without depending on source order. */
-    uint8_t discovered_field_type_status[DIAMOND_MAX_FIELDS];
-    uint16_t discovered_field_known_class[DIAMOND_MAX_FIELDS];
+    uint8_t *discovered_field_type_status;
+    uint16_t *discovered_field_known_class;
     /* The instance methods the discovery pass found (function indices),
      * kept when the real pass resets `methods`: a bare `name(...)` call
      * in one method can then resolve to a method defined further down. */
-    uint16_t discovered_methods[DIAMOND_MAX_METHODS];
+    uint16_t *discovered_methods;
     uint16_t discovered_method_count;
+    uint16_t discovered_method_capacity;
+    /* Method tables that ClassName.define_method outgrew while the
+     * program ran. Kept until diamond_program_free: a call already in
+     * flight may still hold a DiamondMethod pointer into one. */
+    DiamondMethod **retired_methods;
+    size_t retired_method_count;
+    /* Inline, unlike the tables above: instances and inline caches point
+     * at these entries, so they must never move. */
     DiamondShape shapes[DIAMOND_MAX_FIELDS + 1];
-    /* Class variable *names* only -- compile-time, pointer-free metadata
-     * exactly like `fields` above, so it costs nothing extra in
-     * Thread.new's whole-DiamondProgram memcpy clone (see docs/threads.md).
-     * The actual per-variable *values* are runtime, per-VM state and live
-     * on DiamondVm instead (see its own class_variables field below) --
-     * same split `namespace_constants` already uses between this
-     * class's own name table and DiamondVm's namespace_constants[]
-     * value array, and for the same reason: a DiamondValue can hold a
-     * GC object pointer, and DiamondProgram's tables are raw-memcpy'd
-     * across a Thread boundary into a completely separate heap, so no
-     * DiamondValue can ever live in them. */
-    char class_variables[DIAMOND_MAX_FIELDS][DIAMOND_MAX_FUNCTION_NAME];
+    /* Class variable *names* only -- compile-time metadata like `fields`
+     * above, deep-copied with the class (diamond_class_copy). The actual
+     * per-variable *values* are runtime, per-VM state and live on
+     * DiamondVm instead (see its own class_variables field below) -- same
+     * split `namespace_constants` already uses between the program's name
+     * table and DiamondVm's value array, and for the same reason: a
+     * DiamondValue can hold a GC object pointer, and a Thread.new clone of
+     * the program lands in a completely separate heap, so no DiamondValue
+     * can ever live in these tables. */
+    char (*class_variables)[DIAMOND_MAX_FUNCTION_NAME];
     size_t class_variable_count;
+    size_t class_variable_capacity;
     /* See DiamondInterface's own copy of this field (this file, above). */
     bool declared_by_discovery;
     /* A template (prelude) class this program reopens: the real pass
@@ -1225,7 +1256,7 @@ typedef struct DiamondFunction {
      * Never mutated after this snapshot; diamond_function_copy's whole-
      * struct assignment carries it across a Thread.new/gremlin_serve clone
      * for free, same as every other fixed-size DiamondFunction field. */
-    uint16_t ivar_known_class[DIAMOND_MAX_FIELDS];
+    uint16_t ivar_known_class[DIAMOND_MAX_JIT_KNOWN_FIELDS];
     /* JIT-only (src/jit.c, Phase 12, docs/internal/jit-design.md): the
      * third class-producing terminal alongside DIAMOND_OP_NEW (Phase 10)
      * and DIAMOND_OP_GET_IVAR (Phase 11) -- for a DIAMOND_OP_INVOKE/

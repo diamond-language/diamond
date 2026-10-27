@@ -433,7 +433,9 @@ static DiamondVmStatus program_builder_declare_class(DiamondVm *vm, DiamondProgr
     memcpy(class->name,cname->chars,cname->length);
     class->name[cname->length]='\0';
     class->superclass=parent==nullptr?DIAMOND_NO_CLASS:(uint16_t)superclass_index;
-    if(parent!=nullptr) {
+    if(parent!=nullptr&&parent->field_count>0) {
+        if(!diamond_class_reserve_fields(class,parent->field_count))
+            return DIAMOND_VM_OUT_OF_MEMORY;
         class->field_count=parent->field_count;
         memcpy(class->fields,parent->fields,
             parent->field_count*DIAMOND_MAX_FUNCTION_NAME);
@@ -536,7 +538,7 @@ static DiamondVmStatus program_builder_declare_field(DiamondVm *vm, DiamondProgr
            memcmp(class->fields[index],fname->chars,fname->length)==0) {
             *result=DIAMOND_INT((int64_t)index);return DIAMOND_VM_OK;
         }
-    if(class->field_count==DIAMOND_MAX_FIELDS) {
+    if(!diamond_class_reserve_fields(class,class->field_count+1)) {
         snprintf(vm->error,sizeof vm->error,"class has too many fields");
         return DIAMOND_VM_TYPE_ERROR;
     }
@@ -580,7 +582,7 @@ static DiamondVmStatus program_builder_declare_class_variable(DiamondVm *vm, Dia
            memcmp(class->class_variables[index],vname->chars,vname->length)==0) {
             *result=DIAMOND_INT((int64_t)index);return DIAMOND_VM_OK;
         }
-    if(class->class_variable_count==DIAMOND_MAX_FIELDS) {
+    if(!diamond_class_reserve_class_variables(class,class->class_variable_count+1)) {
         snprintf(vm->error,sizeof vm->error,"class has too many class variables");
         return DIAMOND_VM_TYPE_ERROR;
     }
@@ -611,7 +613,7 @@ static DiamondVmStatus program_builder_declare_module_field(DiamondProgram *buil
            memcmp(module->fields[index],name->chars,name->length)==0) {
             *result=DIAMOND_INT((int64_t)index);return DIAMOND_VM_OK;
         }
-    if(module->field_count==DIAMOND_MAX_FIELDS)return DIAMOND_VM_TYPE_ERROR;
+    if(!diamond_module_reserve_fields(module,module->field_count+1))return DIAMOND_VM_TYPE_ERROR;
     const int64_t index=(int64_t)module->field_count;
     memcpy(module->fields[module->field_count],name->chars,name->length);
     module->fields[module->field_count][name->length]='\0';
@@ -657,7 +659,7 @@ static DiamondVmStatus program_builder_declare_method(DiamondVm *vm, DiamondProg
             snprintf(vm->error,sizeof vm->error,"method is already defined");
             return DIAMOND_VM_TYPE_ERROR;
         }
-    if(class->method_count==DIAMOND_MAX_METHODS) {
+    if(!diamond_reserve_methods(&class->methods,&class->method_capacity,class->method_count+1)) {
         snprintf(vm->error,sizeof vm->error,"class has too many methods");
         return DIAMOND_VM_TYPE_ERROR;
     }
@@ -717,7 +719,7 @@ static DiamondVmStatus program_builder_declare_module_method(DiamondVm *vm, Diam
             snprintf(vm->error,sizeof vm->error,"method is already defined");
             return DIAMOND_VM_TYPE_ERROR;
         }
-    if(module->method_count==DIAMOND_MAX_METHODS)return DIAMOND_VM_TYPE_ERROR;
+    if(!diamond_reserve_methods(&module->methods,&module->method_capacity,module->method_count+1))return DIAMOND_VM_TYPE_ERROR;
     DiamondMethod *method=&module->methods[module->method_count++];
     *method=(DiamondMethod){};
     memcpy(method->name,name->chars,name->length);
@@ -784,7 +786,7 @@ static DiamondVmStatus program_builder_declare_class_singleton_method(DiamondVm 
                 "duplicate or excessive class singleton method");
             return DIAMOND_VM_TYPE_ERROR;
         }
-    if(class->singleton_method_count==DIAMOND_MAX_METHODS) {
+    if(!diamond_reserve_methods(&class->singleton_methods,&class->singleton_method_capacity,class->singleton_method_count+1)) {
         snprintf(vm->error,sizeof vm->error,
             "duplicate or excessive class singleton method");
         return DIAMOND_VM_TYPE_ERROR;
@@ -854,7 +856,7 @@ static DiamondVmStatus program_builder_declare_module_singleton_method(DiamondVm
                 "duplicate or excessive module singleton function");
             return DIAMOND_VM_TYPE_ERROR;
         }
-    if(module->singleton_method_count==DIAMOND_MAX_METHODS) {
+    if(!diamond_reserve_methods(&module->singleton_methods,&module->singleton_method_capacity,module->singleton_method_count+1)) {
         snprintf(vm->error,sizeof vm->error,
             "duplicate or excessive module singleton function");
         return DIAMOND_VM_TYPE_ERROR;
@@ -931,8 +933,9 @@ static DiamondVmStatus program_builder_include_module(DiamondProgram *built,
     if(class==nullptr||module_index<0||
        (uint64_t)module_index>=built->module_count)return DIAMOND_VM_TYPE_ERROR;
     const DiamondModule *module=built->modules[(size_t)module_index];
-    if(class->field_count+module->field_count>DIAMOND_MAX_FIELDS||
-       class->method_count+module->method_count>DIAMOND_MAX_METHODS)
+    if(!diamond_class_reserve_fields(class,class->field_count+module->field_count)||
+       !diamond_reserve_methods(&class->methods,&class->method_capacity,
+           class->method_count+module->method_count))
         return DIAMOND_VM_TYPE_ERROR;
     for(size_t field=0;field<module->field_count;field++) {
         bool present=false;
@@ -968,8 +971,9 @@ static DiamondVmStatus program_builder_include_module_in_module(DiamondProgram *
         return DIAMOND_VM_TYPE_ERROR;
     DiamondModule *target=built->modules[(size_t)target_index];
     const DiamondModule *source=built->modules[(size_t)source_index];
-    if(target->field_count+source->field_count>DIAMOND_MAX_FIELDS||
-       target->method_count+source->method_count>DIAMOND_MAX_METHODS)
+    if(!diamond_module_reserve_fields(target,target->field_count+source->field_count)||
+       !diamond_reserve_methods(&target->methods,&target->method_capacity,
+           target->method_count+source->method_count))
         return DIAMOND_VM_TYPE_ERROR;
     for(size_t field=0;field<source->field_count;field++) {
         bool present=false;
@@ -1101,11 +1105,11 @@ static DiamondVmStatus program_builder_alias_class_method(DiamondVm *vm, Diamond
             snprintf(vm->error,sizeof vm->error,"alias name is already defined");
             return DIAMOND_VM_TYPE_ERROR;
         }
-    if(class->method_count==DIAMOND_MAX_METHODS) {
+    DiamondMethod copied=*source;
+    if(!diamond_reserve_methods(&class->methods,&class->method_capacity,class->method_count+1)) {
         snprintf(vm->error,sizeof vm->error,"too many methods");
         return DIAMOND_VM_TYPE_ERROR;
     }
-    DiamondMethod copied=*source;
     memcpy(copied.name,alias_name->chars,alias_name->length);
     copied.name[alias_name->length]='\0';copied.included=false;
     class->methods[class->method_count++]=copied;
@@ -1153,11 +1157,11 @@ static DiamondVmStatus program_builder_alias_module_method(DiamondVm *vm, Diamon
             snprintf(vm->error,sizeof vm->error,"alias name is already defined");
             return DIAMOND_VM_TYPE_ERROR;
         }
-    if(module->method_count==DIAMOND_MAX_METHODS) {
+    DiamondMethod copied=*source;
+    if(!diamond_reserve_methods(&module->methods,&module->method_capacity,module->method_count+1)) {
         snprintf(vm->error,sizeof vm->error,"too many methods");
         return DIAMOND_VM_TYPE_ERROR;
     }
-    DiamondMethod copied=*source;
     memcpy(copied.name,alias_name->chars,alias_name->length);
     copied.name[alias_name->length]='\0';copied.included=false;
     module->methods[module->method_count++]=copied;
@@ -1195,7 +1199,7 @@ static DiamondVmStatus program_builder_export_module_method(DiamondVm *vm, Diamo
                 "module singleton function is already defined");
             return DIAMOND_VM_TYPE_ERROR;
         }
-    if(module->singleton_method_count==DIAMOND_MAX_METHODS)
+    if(!diamond_reserve_methods(&module->singleton_methods,&module->singleton_method_capacity,module->singleton_method_count+1))
         return DIAMOND_VM_TYPE_ERROR;
     source->is_private=true;source->is_protected=false;
     DiamondMethod exported=*source;
@@ -1657,7 +1661,8 @@ static DiamondVmStatus program_builder_inherit_interface(DiamondVm *vm, DiamondP
        target_index==base_index)return DIAMOND_VM_TYPE_ERROR;
     DiamondInterface *target=built->interfaces[(size_t)target_index];
     const DiamondInterface *source=built->interfaces[(size_t)base_index];
-    if(target->method_count+source->method_count>DIAMOND_MAX_METHODS)
+    if(!diamond_reserve_interface_methods(&target->methods,&target->method_capacity,
+           target->method_count+source->method_count))
         return DIAMOND_VM_TYPE_ERROR;
     for(size_t method=0;method<source->method_count;method++) {
         for(size_t existing=0;existing<target->method_count;existing++)
@@ -1696,7 +1701,7 @@ static DiamondVmStatus program_builder_declare_interface_method(DiamondProgram *
        (return_set>=0&&(uint64_t)return_set>=built->entry.type_set_count))
         return DIAMOND_VM_TYPE_ERROR;
     DiamondInterface *interface=built->interfaces[(size_t)interface_index];
-    if(interface->method_count==DIAMOND_MAX_METHODS)return DIAMOND_VM_TYPE_ERROR;
+    if(!diamond_reserve_interface_methods(&interface->methods,&interface->method_capacity,interface->method_count+1))return DIAMOND_VM_TYPE_ERROR;
     DiamondInterfaceMethod *method=&interface->methods[interface->method_count++];
     *method=(DiamondInterfaceMethod){.arity=(uint8_t)arity,
         .return_type_set=return_set<0?DIAMOND_NO_TYPE_SET:(uint16_t)return_set};

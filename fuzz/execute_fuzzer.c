@@ -306,15 +306,19 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
         if (superclass_byte < class_index) {
             const DiamondClass *parent = program->classes[superclass_byte];
             class->superclass = superclass_byte;
+            if (!diamond_class_reserve_fields(class, parent->field_count)) return 0;
             class->field_count = parent->field_count;
-            memcpy(class->fields, parent->fields, parent->field_count * sizeof class->fields[0]);
+            if (parent->field_count != 0)
+                memcpy(class->fields, parent->fields, parent->field_count * sizeof class->fields[0]);
         }
-        for (size_t field = 0; field < field_total && class->field_count < DIAMOND_MAX_FIELDS; field++)
+        for (size_t field = 0; field < field_total && diamond_class_reserve_fields(class, class->field_count + 1); field++)
             (void)snprintf(class->fields[class->field_count++], sizeof class->fields[0], "f%zu", field);
         for (size_t method = 0; method < method_total; method++) {
             const uint8_t function_byte = fuzz_byte(&reader);
             const uint8_t arity = fuzz_byte(&reader) % 4;
-            if (function_count == 0 || class->method_count >= DIAMOND_MAX_METHODS) continue;
+            if (function_count == 0 ||
+                !diamond_reserve_methods(&class->methods, &class->method_capacity,
+                    class->method_count + 1)) continue;
             const size_t function_index = function_byte % function_count;
             DiamondMethod *entry = &class->methods[class->method_count++];
             *entry = (DiamondMethod){};
@@ -347,6 +351,8 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
         DiamondInterface *interface = program->interfaces[index];
         const size_t method_total = fuzz_byte(&reader) % 3;
         for (size_t method = 0; method < method_total; method++) {
+            if (!diamond_reserve_interface_methods(&interface->methods, &interface->method_capacity,
+                    interface->method_count + 1)) abort();
             DiamondInterfaceMethod *entry = &interface->methods[interface->method_count++];
             *entry = (DiamondInterfaceMethod){.arity = (uint8_t)(fuzz_byte(&reader) % 3),
                 .return_type_set = DIAMOND_NO_TYPE_SET};

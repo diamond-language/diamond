@@ -1281,6 +1281,32 @@ void patch_jump(Compiler *compiler, size_t operand, size_t target) {
  * DiamondMethod's own function_index field and
  * DIAMOND_UNRESOLVED_SINGLETON_FUNCTION for the sentinel this exists to
  * eventually replace. */
+/* A pending singleton method's identity that survives its table growing:
+ * the owner's table field (a class or module slot never moves) plus the
+ * entry's index. A raw DiamondMethod pointer would go stale when a later
+ * append reallocates the table. */
+static PendingSingletonKey pending_singleton_key(const Compiler *compiler,
+        const DiamondMethod *method) {
+    const uintptr_t address = (uintptr_t)method;
+    for (size_t index = 0; index < compiler->program->class_count; index++) {
+        DiamondClass *class = compiler->program->classes[index];
+        const uintptr_t start = (uintptr_t)class->singleton_methods;
+        if (class->singleton_method_count > 0 && address >= start &&
+            address < start + class->singleton_method_count * sizeof *method)
+            return (PendingSingletonKey){&class->singleton_methods,
+                (address - start) / sizeof *method};
+    }
+    for (size_t index = 0; index < compiler->program->module_count; index++) {
+        DiamondModule *module = compiler->program->modules[index];
+        const uintptr_t start = (uintptr_t)module->singleton_methods;
+        if (module->singleton_method_count > 0 && address >= start &&
+            address < start + module->singleton_method_count * sizeof *method)
+            return (PendingSingletonKey){&module->singleton_methods,
+                (address - start) / sizeof *method};
+    }
+    return (PendingSingletonKey){nullptr, address};
+}
+
 void emit_pending_singleton_function_index(Compiler *compiler,
         DiamondSpan span, const DiamondMethod *method) {
     const size_t operand = compiler->function->code_count;
@@ -1296,7 +1322,7 @@ void emit_pending_singleton_function_index(Compiler *compiler,
     const size_t slot = compiler->pending_singleton_fixup_count++;
     compiler->pending_singleton_fixups[slot].function = compiler->function;
     compiler->pending_singleton_fixups[slot].operand = operand;
-    compiler->pending_singleton_fixups[slot].method = method;
+    compiler->pending_singleton_fixups[slot].method = pending_singleton_key(compiler, method);
 }
 
 /* Patches every pending call site recorded by
@@ -1307,8 +1333,10 @@ void emit_pending_singleton_function_index(Compiler *compiler,
  * every other fixed-capacity array removal in this file. */
 void resolve_pending_singleton_fixups(Compiler *compiler,
         const DiamondMethod *method, size_t function_index) {
+    const PendingSingletonKey key = pending_singleton_key(compiler, method);
     for (size_t index = 0; index < compiler->pending_singleton_fixup_count; ) {
-        if (compiler->pending_singleton_fixups[index].method == method) {
+        const PendingSingletonKey pending = compiler->pending_singleton_fixups[index].method;
+        if (pending.table == key.table && pending.index == key.index) {
             DiamondFunction *target = compiler->pending_singleton_fixups[index].function;
             const size_t operand = compiler->pending_singleton_fixups[index].operand;
             target->code[operand] = (uint8_t)(function_index >> 8);
@@ -2396,7 +2424,7 @@ int field_index(Compiler *compiler, DiamondSpan name, bool create) {
         if (name_equals(compiler, class->fields[index], name, true)) return (int)index;
     }
     if (!create) return -1;
-    if (class->field_count == DIAMOND_MAX_FIELDS) {
+    if (!diamond_class_reserve_fields(class,class->field_count+1)) {
         fail(compiler, name, "too many instance variables");
         return -1;
     }
@@ -2484,7 +2512,7 @@ int class_variable_index(Compiler *compiler, DiamondSpan name, bool create) {
             return (int)index;
     }
     if (!create) return -1;
-    if (class->class_variable_count == DIAMOND_MAX_FIELDS) {
+    if (!diamond_class_reserve_class_variables(class,class->class_variable_count+1)) {
         fail(compiler, name, "too many class variables");
         return -1;
     }
@@ -2508,7 +2536,7 @@ uint16_t module_field_name(Compiler *compiler,DiamondSpan name) {
         if(strlen(module->fields[field])==length&&
            memcmp(module->fields[field],compiler->source+name.start+1,length)==0)
             return add_string_range(compiler,name.start+1,length,name);
-    if(module->field_count==DIAMOND_MAX_FIELDS) {
+    if(!diamond_module_reserve_fields(module,module->field_count+1)) {
         fail(compiler,name,"too many module instance variables");return 0;
     }
     if(length>=DIAMOND_MAX_FUNCTION_NAME) {

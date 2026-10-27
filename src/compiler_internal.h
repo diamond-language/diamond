@@ -12,6 +12,7 @@
 #include "compiler.h"
 #include "jit.h"
 #include <stdint.h>
+#include <string.h>
 
 #define DIAMOND_INTERNAL __attribute__((visibility("hidden")))
 
@@ -138,6 +139,12 @@ typedef struct TailCallCandidate {
     size_t offset;
     uint16_t callee;
 } TailCallCandidate;
+
+/* See pending_singleton_key (src/compiler.c). */
+typedef struct PendingSingletonKey {
+    DiamondMethod *const *table;
+    size_t index;
+} PendingSingletonKey;
 
 typedef struct Compiler {
     const char *source;
@@ -410,7 +417,7 @@ typedef struct Compiler {
     struct {
         DiamondFunction *function;
         size_t operand;
-        const DiamondMethod *method;
+        PendingSingletonKey method;
     } pending_singleton_fixups[64];
     size_t pending_singleton_fixup_count;
 } Compiler;
@@ -689,6 +696,11 @@ DIAMOND_INTERNAL int find_class_name(const Compiler *compiler,const char *name);
 DIAMOND_INTERNAL int find_class_qualified_or_scoped(const Compiler *compiler,const char *name);
 DIAMOND_INTERNAL int find_interface_name(const Compiler *compiler,const char *name);
 DIAMOND_INTERNAL int find_module_name(const Compiler *compiler,const char *name);
+/* Zeroes a heap table's allocated length (`bytes`); a table that was never
+ * allocated (bytes 0, items null) is left alone. */
+static inline void zero_table(void *items,size_t bytes) {
+    if(bytes>0)memset(items,0,bytes);
+}
 DIAMOND_INTERNAL bool record_included_module(uint16_t *list,uint8_t *count,uint16_t module_index);
 DIAMOND_INTERNAL int find_lexical_constant_name(const Compiler *compiler,const char *name);
 DIAMOND_INTERNAL int find_qualified_inherited_constant(const Compiler *compiler,
@@ -909,8 +921,8 @@ DIAMOND_INTERNAL uint16_t compile_definition(Compiler *compiler, bool captures_s
 DIAMOND_INTERNAL void compile_delegate(Compiler *compiler);
 DIAMOND_INTERNAL uint16_t compile_class(Compiler *compiler);
 DIAMOND_INTERNAL uint16_t compile_struct(Compiler *compiler);
-DIAMOND_INTERNAL void prescan_singleton_signatures(Compiler *compiler,
-        DiamondMethod *methods,size_t *method_count,bool class_scope);
+DIAMOND_INTERNAL void prescan_singleton_signatures(Compiler *compiler,DiamondMethod **methods,
+        size_t *method_count,size_t *method_capacity,bool class_scope);
 DIAMOND_INTERNAL uint16_t compile_module(Compiler *compiler);
 DIAMOND_INTERNAL uint16_t compile_interface(Compiler *compiler);
 DIAMOND_INTERNAL uint16_t compile_assignment_store(Compiler *compiler, DiamondSpan name,
