@@ -1,0 +1,20 @@
+# A generic parameter inferred from a value with no type id -- a class value
+# (`self` in a class singleton) or a native object -- leaves the type
+# variable unconstrained instead of crashing or rejecting the value.
+class Foo
+  def self.make() = self
+end
+
+def id[T](value: T) -> T = value
+def pair[T](first: T, second: T) -> Array[T] = [first, second]
+
+p(id(Foo.make()))
+p(id(Channel.new(1)))
+p(id(1..3))
+p(pair(1, 2))
+p(pair(Channel.new(1), Channel.new(2)).length())
+begin
+  pair(Channel.new(1), 2)
+rescue error: TypeError
+  puts(error.message())
+end
