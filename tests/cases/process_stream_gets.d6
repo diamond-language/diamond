@@ -3,6 +3,9 @@ out = child.stdout()
 p(out.gets())
 p(out.gets())
 p(out.gets())
+# read() never waits (WouldBlockError when nothing is ready), and "rest" may
+# arrive in a later write than the lines before it.
+IO.poll([out], [], -1)
 p(out.read(100))
 p(out.gets())
 child.wait()
