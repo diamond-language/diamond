@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+# Keep terminal ownership outside the VM so errors and signals restore it too.
+set -euo pipefail
+root="$(cd "$(dirname "$0")/../.." && pwd)"
+if [[ "${1:-}" == --size ]]; then
+  stty size </dev/tty
+  exit
+fi
+if [[ ! -t 0 || ! -t 1 || "${TERM:-dumb}" == dumb ]]; then
+  echo 'board: interactive mode needs a terminal (use app.d6 for CLI commands)' >&2
+  exit 64
+fi
+saved="$(stty -g </dev/tty)"
+child=""
+restore() {
+  if [[ -n "$child" ]]; then
+    kill "$child" 2>/dev/null || true
+    wait "$child" 2>/dev/null || true
+  fi
+  stty "$saved" </dev/tty
+  printf '\033[?25h\033[?1049l'
+}
+trap restore EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+trap 'exit 129' HUP
+trap 'exit 131' QUIT
+stty raw -echo </dev/tty
+printf '\033[?1049h\033[?25l'
+export BOARD_TERMINAL_HELPER="$root/applications/task_board/board"
+"${DIAMOND_BIN:-$root/build/diamond}" "$root/applications/task_board/tui.d6" "$@" </dev/tty &
+child=$!
+status=0
+wait "$child" || status=$?
+child=""
+exit "$status"
