@@ -1,0 +1,7 @@
+struct Result[T](value: T, error: String | Nil)
+end
+result = Result.new(42, nil)
+puts(result.value())
+puts(result == Result[Int].new(value: 42, error: nil))
+puts(Result[String].new("text", nil).value())
+nil

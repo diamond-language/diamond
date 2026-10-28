@@ -1,0 +1,2 @@
+struct Item[T, U](value: T)
+end

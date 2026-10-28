@@ -1,0 +1,3 @@
+struct Item[T](value: T)
+end
+Item[String].new(42)

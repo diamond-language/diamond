@@ -1,0 +1,6 @@
+struct Payload[T](value: T)
+end
+def worker(payload) = payload
+payload = Thread.new(worker, Payload[Int].new(42)).join()
+puts(payload.value())
+payload.value()
