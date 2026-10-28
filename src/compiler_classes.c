@@ -1276,7 +1276,32 @@ uint16_t compile_class(Compiler *compiler) {
     class->declaration_start=name.start;
     (void)snprintf(class->name,sizeof class->name,"%s",stored_name);
     advance_token(compiler);
+    if(compiler->current.kind==DIAMOND_TOKEN_LEFT_BRACKET) {
+        if(superclass_decided) {
+            fail(compiler,name,"generic classes cannot be reopened");return 0;
+        }
+        advance_token(compiler);
+        if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER||
+           compiler->current.span.length>=sizeof class->type_parameter) {
+            fail(compiler,compiler->current.span,"expected generic class type parameter");
+            return 0;
+        }
+        memcpy(class->type_parameter,compiler->source+compiler->current.span.start,
+            compiler->current.span.length);
+        class->type_parameter[compiler->current.span.length]='\0';
+        advance_token(compiler);
+        if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_BRACKET) {
+            fail(compiler,compiler->current.span,"generic classes require exactly one type parameter");
+            return 0;
+        }
+        advance_token(compiler);
+    } else if(class->type_parameter[0]!='\0') {
+        fail(compiler,name,"generic classes cannot be reopened");return 0;
+    }
     if(compiler->current.kind==DIAMOND_TOKEN_LESS) {
+        if(class->type_parameter[0]!='\0') {
+            fail(compiler,name,"generic class inheritance is not supported");return 0;
+        }
         advance_token(compiler);
         if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER) {
             fail(compiler,compiler->current.span,"expected superclass name after '<'"); return 0;
@@ -1288,6 +1313,9 @@ uint16_t compile_class(Compiler *compiler) {
         }
         const int parent=find_class_qualified_or_scoped(compiler,superclass_name);
         if(parent<0) { fail(compiler,superclass_span,"undefined superclass"); return 0; }
+        if(compiler->program->classes[parent]->type_parameter[0]!='\0') {
+            fail(compiler,superclass_span,"generic class inheritance is not supported");return 0;
+        }
         if(!superclass_decided) {
             class->superclass=(uint16_t)parent;
             const DiamondClass *parent_class=compiler->program->classes[(size_t)parent];

@@ -816,7 +816,7 @@ static void infer_contextual_type_set(Compiler *compiler,
 static void infer_contextual_argument(Compiler *compiler,
         const DiamondFunction *target,size_t parameter,uint16_t argument,
         uint16_t *bindings) {
-    if(parameter>=DIAMOND_MAX_DECLARED_PARAMETERS)return;
+    if(target->class_type_variable||parameter>=DIAMOND_MAX_DECLARED_PARAMETERS)return;
     const uint16_t expected=target->parameter_type_sets[parameter];
     if(expected==DIAMOND_NO_TYPE_SET||expected>=target->type_set_count)return;
     int32_t actual=compiler->known_type_sets[argument];
@@ -1687,7 +1687,7 @@ static uint16_t emit_singleton_call(Compiler *compiler,const DiamondMethod *meth
 bool infer_reference_type_arguments(Compiler *compiler,
         const DiamondFunction *target,size_t parameter_offset,size_t arity,
         uint16_t *bindings) {
-    if(target==nullptr||target->type_variable_count==0||
+    if(target==nullptr||target->class_type_variable||target->type_variable_count==0||
        compiler->expected_expression_type_set<0||
        (size_t)compiler->expected_expression_type_set>=
            compiler->function->type_set_count)return false;

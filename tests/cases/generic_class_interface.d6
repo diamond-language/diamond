@@ -1,0 +1,12 @@
+interface IntBox
+  def value() -> Int
+end
+class Box[T]
+  def initialize(value: T)
+    @value = value
+  end
+  def value() -> T = @value
+end
+def conforms(box) = box is IntBox
+puts(conforms(Box.new("wrong")))
+conforms(Box.new(42))

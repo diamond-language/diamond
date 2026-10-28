@@ -1,0 +1,7 @@
+class Box[T]
+  def initialize(value: T)
+    @value = value
+  end
+  def value() -> T = "wrong"
+end
+Box.new(42).value()

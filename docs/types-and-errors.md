@@ -23,6 +23,46 @@ annotations, pipe-separated unions, generics (`Array[T]`, `Hash[K, V]`),
 `is` for runtime type tests, and structural interfaces (`Sized`,
 `Callable[n]`-style).
 
+Classes can declare one constructor-inferred type parameter:
+
+```ruby
+class Box[T]
+  def initialize(value: T)
+    @value = value
+  end
+  def value() -> T = @value
+  def replace(value: T)
+    @value = value
+  end
+end
+
+box = Box.new(42)
+box.replace(43)
+puts(box.value())
+box.replace("wrong")  # TypeError: expected Int, got String
+```
+
+Construction infers `T` from the supplied, annotated constructor arguments,
+including nested `Array[T]` and `Hash[String, T]` parameters. Multiple values
+contributing to `T` form a union, as for generic functions. The resulting binding
+belongs to that instance: every annotated instance-method argument and return
+uses it, including through method references, `dup()`, and thread copies.
+Another instance can bind a different type. Unannotated fields and methods keep
+their usual dynamic behavior.
+
+This first slice supports one class parameter, in instance-method signatures.
+The constructor must supply enough type information to infer it; omitted
+defaults, empty collections without a usable element type, and values without
+a runtime type binding cannot infer `T`. A class cannot be reopened or take part
+in inheritance, and its instance methods cannot declare additional generic
+parameters. Explicit `Box[Int]` construction and annotations, generic structs,
+structural-interface conformance, and referring to the class parameter from
+nested definitions are future work.
+Use plain `Box` when an annotation only needs the class identity. Explicit
+method type arguments cannot override the instance's binding. Calls retain
+runtime checks while compiler and editor propagation of the instance type
+argument remains future work.
+
 ```ruby
 interface Named
   def name() -> String

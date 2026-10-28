@@ -97,7 +97,27 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
      * all eight here cost about 3 KB of memset at the top of every call,
      * generic or not. */
     DiamondTypeBinding bindings[8];
-    if(chunk->type_variable_count>0&&chunk->type_variable_bindings!=nullptr)
+    if(chunk->class_type_variable) {
+        /* A class parameter belongs to the receiver, never to this call's
+         * arguments or explicit method type arguments. */
+        if(chunk->type_variable_bindings!=nullptr) {
+            snprintf(vm->error,sizeof vm->error,
+                "generic class type arguments are fixed by construction");
+            return DIAMOND_VM_TYPE_ERROR;
+        }
+        if(chunk->type_variable_count!=1||
+           argument_count==0||!value_is_native_kind(arguments[0],DIAMOND_OBJECT_INSTANCE))
+            return DIAMOND_VM_TYPE_ERROR;
+        const DiamondInstance *self=(const DiamondInstance *)arguments[0].as.object;
+        if(self->type_binding==nullptr||self->type_binding->node_count==0)
+            return DIAMOND_VM_TYPE_ERROR;
+        bindings[0]=*self->type_binding;
+        execution=*chunk;
+        execution.type_variable_bindings=bindings;
+        chunk=&execution;
+    }
+    if(!chunk->class_type_variable&&chunk->type_variable_count>0&&
+       chunk->type_variable_bindings!=nullptr)
         memcpy(bindings,chunk->type_variable_bindings,
                chunk->type_variable_count*sizeof(DiamondTypeBinding));
     if(chunk->type_variable_count>0&&chunk->parameter_type_sets!=nullptr&&
@@ -1460,7 +1480,18 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                      * entry, so the next iteration may bind different types. */
                     if (chunk != &execution) execution = *chunk;
                     memset(bindings, 0, chunk->type_variable_count * sizeof(DiamondTypeBinding));
+                    if(chunk->class_type_variable) {
+                        if(argument_count==0||
+                           !value_is_native_kind(arguments[0],DIAMOND_OBJECT_INSTANCE))
+                            VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                        const DiamondInstance *self=
+                            (const DiamondInstance *)arguments[0].as.object;
+                        if(self->type_binding==nullptr)
+                            VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                        bindings[0]=*self->type_binding;
+                    }
                     for (size_t parameter = 0;
+                         !chunk->class_type_variable&&
                          parameter < DIAMOND_MAX_DECLARED_PARAMETERS &&
                          parameter + chunk->parameter_offset < argument_count;
                          parameter++) {
@@ -1525,6 +1556,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     .interface_count=chunk->interface_count,
                     .parameter_type_sets=function->parameter_type_sets,
                     .type_variable_count=function->type_variable_count,
+                    .class_type_variable=function->class_type_variable,
                     .parameter_offset=function->owner_class==DIAMOND_OWNER_NONE?0:1,
                     .type_variable_bindings=explicit_bindings,
                     .register_count=function->register_count,
@@ -1850,7 +1882,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 uint8_t code[10]={DIAMOND_OP_NEW_SPREAD,0,1,
                     (uint8_t)(class_index>>8),(uint8_t)(class_index&UINT8_MAX),0,0,
                     DIAMOND_OP_RETURN,0,1};uint32_t locations[10]={0};
-                DiamondChunk synthetic=*chunk;synthetic.name="<keyword new>";
+                DiamondChunk synthetic=*chunk;synthetic.class_type_variable=false;synthetic.name="<keyword new>";
                 synthetic.code=code;synthetic.lines=locations;
                 synthetic.columns=locations;synthetic.code_count=10;
                 synthetic.register_count=2;

@@ -258,6 +258,7 @@ bool value_matches_type(const DiamondChunk *chunk, DiamondValue value,
             bool found=false;
             const DiamondClass *class=((DiamondInstance *)value.as.object)->class;
             while(class!=nullptr&&!found) {
+                if(class->type_parameter[0]!='\0')return false;
                 for(size_t method=0;method<class->method_count;method++)
                     if(strcmp(class->methods[method].name,
                               interface->methods[required].name)==0&&
@@ -382,6 +383,7 @@ static bool runtime_type_id_satisfies(const DiamondChunk *chunk,uint16_t known,
             bool found=false;size_t index=(size_t)(known-DIAMOND_TYPE_CLASS_BASE);
             while(index<chunk->class_count&&!found) {
                 const DiamondClass *class=chunk->classes[index];
+                if(class->type_parameter[0]!='\0')return false;
                 for(size_t method=0;method<class->method_count;method++)
                     if(strcmp(class->methods[method].name,
                               interface->methods[required].name)==0&&

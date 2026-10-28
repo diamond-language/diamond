@@ -1,0 +1,3 @@
+class Box[T]
+  def identity[U](value: U) -> U = value
+end

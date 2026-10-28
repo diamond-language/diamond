@@ -559,6 +559,7 @@ static void diamond_fiber_trampoline(void) {
           .interfaces=self->program_tables.interfaces,.interface_count=self->program_tables.interface_count,
           .parameter_type_sets=fn->parameter_type_sets,
           .type_variable_count=fn->type_variable_count,
+          .class_type_variable=fn->class_type_variable,
           .parameter_offset=fn->owner_class==DIAMOND_OWNER_NONE?0:1,
           .register_count=fn->register_count};
         self->status=run_chunk(&child,self->vm,nullptr,0,0,self->entry_closure,&self->result);
@@ -883,11 +884,16 @@ DiamondSymbol *allocate_symbol(DiamondVm *vm, const char *chars,
 DiamondInstance *allocate_instance(DiamondVm *vm,const DiamondClass *class,
                                           const DiamondChunk *chunk) {
     if (!maybe_collect(vm)) return nullptr;
-    const size_t size=sizeof(DiamondInstance)+class->field_count*sizeof(DiamondValue);
+    const bool generic=class->type_parameter[0]!='\0';
+    const size_t size=sizeof(DiamondInstance)+class->field_count*sizeof(DiamondValue)+
+        (generic?sizeof(DiamondTypeBinding):0);
     DiamondInstance *instance=malloc(size); if(instance==nullptr)return nullptr;
     instance->object=(DiamondObject){.next=vm->young_objects,.kind=DIAMOND_OBJECT_INSTANCE};
     instance->class=class; instance->shape=&class->shapes[0]; instance->owner=chunk;
     instance->field_count=class->field_count;
+    instance->type_binding=generic?
+        (DiamondTypeBinding *)(instance->fields+instance->field_count):nullptr;
+    if(generic)*instance->type_binding=(DiamondTypeBinding){};
     for(size_t i=0;i<instance->field_count;i++) instance->fields[i]=DIAMOND_NIL;
     vm->young_objects=&instance->object; vm->bytes_allocated+=size; return instance;
 }

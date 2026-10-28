@@ -1,0 +1,11 @@
+class Box[T]
+  def initialize(value: T)
+    @value = value
+  end
+  def replace(value: T)
+    @value = value
+  end
+end
+box = Box.new(42)
+setter = box.replace
+setter("wrong")
