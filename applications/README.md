@@ -7,6 +7,3 @@ package or framework feature.
 - [`pheint.dia`](pheint.dia/) — a GraphQL-only API for a separate React frontend.
 
 - [`registry`](registry/) — the cut registry HTTP read and publish service.
-
-- [`task_board`](task_board/) — a terminal task board with Mjolnir changesets
-  and explicit association loading.

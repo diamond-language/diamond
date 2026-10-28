@@ -6,11 +6,11 @@ work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 bash "$root/tools/install_local_cuts.sh" "$work" >/dev/null
 cd "$work"
-"$diamond" "$root/applications/task_board/store_test.d6"
-"$diamond" "$root/applications/task_board/editor_test.d6"
-"$diamond" "$root/applications/task_board/board_test.d6"
-"$diamond" "$root/applications/task_board/migration_test.d6" "$work/legacy.db"
-run() { "$diamond" "$root/applications/task_board/app.d6" --db "$work/board.db" "$@"; }
+"$diamond" "$root/examples/task_board/store_test.d6"
+"$diamond" "$root/examples/task_board/editor_test.d6"
+"$diamond" "$root/examples/task_board/board_test.d6"
+"$diamond" "$root/examples/task_board/migration_test.d6" "$work/legacy.db"
+run() { "$diamond" "$root/examples/task_board/app.d6" --db "$work/board.db" "$@"; }
 [[ "$(run project Diamond)" == 'project #1: Diamond' ]]
 [[ "$(run project Other)" == 'project #2: Other' ]]
 [[ "$(run add 1 'Ship a board')" == 'task #1 [todo]: Ship a board' ]]
@@ -58,15 +58,15 @@ run notes 1 '' >/dev/null
 BOARD_DATABASE_PATH="$work/unused.db" run projects >"$work/projects"
 [[ ! -e "$work/unused.db" ]]
 grep -q '#1 Diamond' "$work/projects"
-"$diamond" "$root/applications/task_board/app.d6" --db "$work/help.db" --help >"$work/help"
+"$diamond" "$root/examples/task_board/app.d6" --db "$work/help.db" --help >"$work/help"
 [[ ! -e "$work/help.db" ]]
 grep -q '^usage:' "$work/help"
 status=0
-bash "$root/applications/task_board/board" --db "$work/no-terminal.db" </dev/null >"$work/out" 2>"$work/err" || status=$?
+bash "$root/examples/task_board/board" --db "$work/no-terminal.db" </dev/null >"$work/out" 2>"$work/err" || status=$?
 [[ "$status" == 64 && ! -e "$work/no-terminal.db" ]]
 grep -q 'needs a terminal' "$work/err"
 if command -v python3 >/dev/null 2>&1; then
-  python3 "$root/applications/task_board/terminal_test.py" "$work/terminal.db"
+  python3 "$root/examples/task_board/terminal_test.py" "$work/terminal.db"
 else
   echo 'PTY checks skipped (python3 unavailable); controller checks passed above'
 fi

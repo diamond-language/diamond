@@ -5,7 +5,7 @@ def board_usage() =
   "  project NAME | projects | add PROJECT TITLE | edit TASK TITLE\n" +
   "  move TASK todo|doing|done | notes TASK TEXT | show TASK\n" +
   "  list [--project ID] [--status todo|doing|done] [--search TEXT]\n" +
-  "Interactive: bash applications/task_board/board [--db FILE]"
+  "Interactive: bash examples/task_board/board [--db FILE]"
 
 def board_id(text)
   unless Regexp.new("\\A[1-9][0-9]*\\z").match?(text)

@@ -118,8 +118,10 @@ sandbox.
   (the type system), `kvstore` (TCP and IO.poll), `ledger`
   (the object model), `markdown` (strings and Regexp), `models`
   (metaprogramming), `parallel`
-  (threads, channels, supervisors), `taskrun` (processes), and `vault`
-  (crypto and encoding); `make test-examples` runs their tests
+  (threads, channels, supervisors), `task_board` (a Mjolnir-backed terminal board),
+  `taskrun` (processes), and `vault`
+  (crypto and encoding); `make test-examples` runs the standalone tours, and
+  `make test-task-board` checks the task board
 - `fuzz/`: compiler, bytecode-execution and differential (interpreter vs JIT)
   fuzz targets
 - `wasm/`: WebAssembly build script, REPL driver and browser module

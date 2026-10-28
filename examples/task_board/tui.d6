@@ -3,7 +3,7 @@ require "./lib/board"
 
 def board_interactive(args)
   if !IO.tty?(:stdin) || !IO.tty?(:stdout) || ENV["BOARD_TERMINAL_HELPER"] == nil
-    warn("board: launch interactive mode with applications/task_board/board")
+    warn("board: launch interactive mode with examples/task_board/board")
     return 64
   end
   path = ENV.fetch("BOARD_DATABASE_PATH", "task_board.db")

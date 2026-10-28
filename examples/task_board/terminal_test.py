@@ -31,7 +31,7 @@ def timed_read():
         fcntl.ioctl(0, termios.TIOCSCTTY, 0)
 
     process = subprocess.Popen(
-        [os.environ["DIAMOND_BIN"], str(root / "applications/task_board/terminal_read_test.d6")],
+        [os.environ["DIAMOND_BIN"], str(root / "examples/task_board/terminal_read_test.d6")],
         stdin=slave, stdout=slave, stderr=slave, preexec_fn=terminal,
     )
     output = b""
@@ -62,7 +62,7 @@ def session(keys, stop_signal=None, exit_key=b"q"):
 
     env = dict(os.environ, TERM="xterm")
     process = subprocess.Popen(
-        ["bash", str(root / "applications/task_board/board"), "--db", str(database)],
+        ["bash", str(root / "examples/task_board/board"), "--db", str(database)],
         stdin=slave, stdout=slave, stderr=slave, preexec_fn=terminal, env=env,
     )
     output = bytearray()
@@ -203,12 +203,12 @@ session([
 session([], signal.SIGTERM)
 session([], exit_key=b"\x03")
 result = subprocess.run(
-    [os.environ["DIAMOND_BIN"], str(root / "applications/task_board/app.d6"),
+    [os.environ["DIAMOND_BIN"], str(root / "examples/task_board/app.d6"),
      "--db", str(database), "list"], capture_output=True, text=True, check=True,
 )
 assert result.stdout.strip() == "#1 [doing] PTY project / Real terminal app!", result.stdout
 result = subprocess.run(
-    [os.environ["DIAMOND_BIN"], str(root / "applications/task_board/app.d6"),
+    [os.environ["DIAMOND_BIN"], str(root / "examples/task_board/app.d6"),
      "--db", str(database), "show", "1"], capture_output=True, text=True, check=True,
 )
 assert result.stdout.strip().endswith("Notes:\nKeep: Remember the benchmark\nUpdated line!"), result.stdout
