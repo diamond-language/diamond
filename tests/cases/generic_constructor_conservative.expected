@@ -1,0 +1,7 @@
+union checked
+subclass checked
+nested binding checked
+42
+unknown input checked
+dynamic spread checked
+nil

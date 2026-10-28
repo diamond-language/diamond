@@ -149,34 +149,154 @@ static uint16_t parse_module_singleton_call(Compiler *compiler, DiamondSpan name
     return parse_singleton_call(compiler,method,name,-1);
 }
 
+typedef struct ConstructorInference {
+    uint16_t bindings[8];
+    bool complete;
+    bool exact;
+} ConstructorInference;
+
+static ConstructorInference constructor_inference(void) {
+    ConstructorInference inference={.complete=true,.exact=true};
+    for(size_t index=0;index<8;index++)inference.bindings[index]=DIAMOND_NO_TYPE_SET;
+    return inference;
+}
+
+static void infer_constructor_input(Compiler *compiler,const DiamondFunction *initializer,
+        ConstructorInference *inference,size_t parameter,uint16_t argument) {
+    if(!infer_constructor_argument(compiler,initializer,parameter,argument,
+            inference->bindings,&inference->exact))inference->complete=false;
+}
+
+/* Consume the parser's positional layout before compiling a block can replace
+ * that scratch metadata. A dynamic spread has no provable slot layout. */
+static void infer_constructor_positionals(Compiler *compiler,
+        const DiamondFunction *initializer,ConstructorInference *inference) {
+    const size_t prefix=compiler->positional_spread_index;
+    const size_t fixed=compiler->positional_spread_fixed_count;
+    if(!compiler->positional_spread_literal&&prefix!=fixed) {
+        inference->complete=false;return;
+    }
+    /* A spread with no fixed suffix can also be dynamic. Its index is zero
+     * for `*[...]` and for `*values`; the literal flag distinguishes them.
+     * Callers with a spread mark incomplete separately below. */
+    for(size_t index=0;index<prefix;index++)
+        infer_constructor_input(compiler,initializer,inference,index,
+            compiler->positional_spread_fixed[index]);
+    if(compiler->positional_spread_literal) {
+        for(size_t index=0;index<compiler->positional_spread_count;index++)
+            infer_constructor_input(compiler,initializer,inference,prefix+index,
+                compiler->positional_spread_elements[index]);
+        for(size_t index=prefix;index<fixed;index++)
+            infer_constructor_input(compiler,initializer,inference,
+                compiler->positional_spread_count+index,
+                compiler->positional_spread_fixed[index]);
+    }
+}
+
+static uint16_t compile_constructor_block(Compiler *compiler,
+        const DiamondFunction *initializer,const ConstructorInference *inference,
+        uint16_t explicit_type) {
+    uint16_t context[8];memcpy(context,inference->bindings,sizeof context);
+    if(explicit_type!=DIAMOND_NO_TYPE_SET)context[0]=explicit_type;
+    else if(initializer!=nullptr&&initializer->class_type_variable&&
+            initializer->type_variable_count==1&&
+            (!inference->complete||!inference->exact))context[0]=DIAMOND_NO_TYPE_SET;
+    /* A proved scalar binding can type an unannotated block. Broader
+     * constructor contributions can still join at runtime. */
+    return compile_contextual_typed_block(compiler,initializer,
+        initializer==nullptr||initializer->arity<=1?0:initializer->arity-2,
+        context,initializer==nullptr?0:initializer->type_variable_count);
+}
+
+/* Runtime value inference erases a user instance's own generic argument and
+ * a Callable's signature. Preserve that rule in advisory constructor graphs. */
+static uint16_t constructor_value_hint(Compiler *compiler,uint16_t source,size_t depth) {
+    if(depth>32||source>=compiler->function->type_set_count)return DIAMOND_NO_TYPE_SET;
+    DiamondTypeSet set=compiler->function->type_sets[source];
+    for(size_t index=0;index<set.count;index++) {
+        DiamondTypeMember *member=&set.members[index];
+        if(member->id>=DIAMOND_TYPE_CLASS_BASE||member->id==DIAMOND_TYPE_CALLABLE) {
+            member->argument_set=DIAMOND_NO_TYPE_SET;
+            member->second_argument_set=DIAMOND_NO_TYPE_SET;
+            member->callable_arity=UINT8_MAX;member->callable_parameters_typed=false;
+            member->callable_return_set=DIAMOND_NO_TYPE_SET;
+        } else {
+            if(member->argument_set!=DIAMOND_NO_TYPE_SET) {
+                member->argument_set=constructor_value_hint(compiler,member->argument_set,depth+1);
+                if(member->argument_set==DIAMOND_NO_TYPE_SET)return DIAMOND_NO_TYPE_SET;
+            }
+            if(member->second_argument_set!=DIAMOND_NO_TYPE_SET) {
+                member->second_argument_set=constructor_value_hint(compiler,member->second_argument_set,depth+1);
+                if(member->second_argument_set==DIAMOND_NO_TYPE_SET)return DIAMOND_NO_TYPE_SET;
+            }
+        }
+    }
+    if(!reserve_type_sets(compiler,1))return DIAMOND_NO_TYPE_SET;
+    const uint16_t result=(uint16_t)compiler->function->type_set_count++;
+    compiler->function->type_sets[result]=set;
+    return result;
+}
+
+static void publish_constructor_type(Compiler *compiler,uint16_t reg,int class_index,
+        const ConstructorInference *inference,uint16_t explicit_type) {
+    compiler->known_types[reg]=(uint16_t)(DIAMOND_TYPE_CLASS_BASE+class_index);
+    if(compiler->program->classes[class_index]->type_parameter[0]=='\0')return;
+    uint16_t argument=explicit_type;
+    if(argument==DIAMOND_NO_TYPE_SET) {
+        if(!inference->complete)return;
+        argument=inference->bindings[0];
+        if(argument>=compiler->function->type_set_count||type_set_contains_variable(compiler,argument))return;
+        if(!inference->exact)argument=constructor_value_hint(compiler,argument,0);
+        else {
+            /* This scalar was proved exact for construction. Do not change
+             * the cached literal set, whose inferred flag serves other uses. */
+            DiamondTypeSet exact=compiler->function->type_sets[argument];
+            exact.inferred=false;
+            if(!reserve_type_sets(compiler,1))return;
+            argument=(uint16_t)compiler->function->type_set_count++;
+            compiler->function->type_sets[argument]=exact;
+        }
+    }
+    if(argument==DIAMOND_NO_TYPE_SET||!reserve_type_sets(compiler,1))return;
+    const uint16_t set=(uint16_t)compiler->function->type_set_count++;
+    compiler->function->type_sets[set]=(DiamondTypeSet){.count=1,.members={{
+        .id=(uint16_t)(DIAMOND_TYPE_CLASS_BASE+class_index),
+        .argument_set=argument,.second_argument_set=DIAMOND_NO_TYPE_SET,
+        .callable_arity=UINT8_MAX,.callable_return_set=DIAMOND_NO_TYPE_SET}}};
+    if(explicit_type!=DIAMOND_NO_TYPE_SET||inference->exact)
+        publish_known_type_set(compiler,reg,set);
+    else compiler->tooling_type_sets[reg]=(int32_t)set;
+}
+
 /* `Class.new(...)` whose arguments include a keyword argument: the current
  * token is the first argument. */
 static uint16_t parse_class_new_keywords(Compiler *compiler, int class_index,
         const DiamondFunction *initializer,uint16_t explicit_type) {
+    const bool has_spread=call_arguments_have_spread(compiler);
     DiamondSpan keyword_names[DIAMOND_MAX_DECLARED_PARAMETERS];uint16_t keyword_values[DIAMOND_MAX_DECLARED_PARAMETERS];
     size_t keyword_count=0;
     const uint16_t positional=parse_dynamic_keyword_arguments(compiler,
         keyword_names,keyword_values,&keyword_count,initializer);
+    ConstructorInference inference=constructor_inference();
+    infer_constructor_positionals(compiler,initializer,&inference);
+    if(has_spread&&!compiler->positional_spread_literal)inference.complete=false;
+    if(initializer!=nullptr)
+        for(size_t keyword=0;keyword<keyword_count;keyword++)
+            for(size_t parameter=0;parameter<initializer->arity&&parameter<DIAMOND_MAX_DECLARED_PARAMETERS;parameter++)
+                if(name_equals(compiler,initializer->parameter_names[parameter],keyword_names[keyword],false))
+                    infer_constructor_input(compiler,initializer,&inference,parameter,keyword_values[keyword]);
     bool has_block=false;uint16_t block=0;
     if(compiler->current.kind==DIAMOND_TOKEN_DO) {
-        uint16_t inferred_arguments[8];
-        infer_contextual_spread_arguments(compiler,initializer,
-            positional,initializer==nullptr||initializer->arity<=1?0:
-                initializer->arity-2,inferred_arguments);
-        infer_contextual_keyword_arguments(compiler,initializer,
-            keyword_names,keyword_values,keyword_count,
-            inferred_arguments);
-        if(explicit_type!=DIAMOND_NO_TYPE_SET)inferred_arguments[0]=explicit_type;
+        if(explicit_type!=DIAMOND_NO_TYPE_SET)inference.bindings[0]=explicit_type;
         for(size_t index=0;index<keyword_count;index++) {
             const uint16_t snapshot=allocate_register(compiler);
             emit_instruction(compiler,DIAMOND_OP_MOVE,snapshot,
                 keyword_values[index],0,2);
             keyword_values[index]=snapshot;
         }
-        block=compile_contextual_typed_block(compiler,initializer,
-            initializer==nullptr||initializer->arity<=1?0:
-                initializer->arity-2,inferred_arguments,
-            initializer==nullptr?0:initializer->type_variable_count);
+        block=compile_constructor_block(compiler,initializer,&inference,explicit_type);
+        if(initializer!=nullptr&&initializer->arity>1)
+            infer_constructor_input(compiler,initializer,&inference,initializer->arity-2,block);
         has_block=true;
     }
     const uint16_t destination=allocate_register(compiler);
@@ -192,16 +312,7 @@ static uint16_t parse_class_new_keywords(Compiler *compiler, int class_index,
         emit_register(compiler,keyword_values[index]);
     }
     if(has_block)emit_register(compiler,block);
-    compiler->known_types[destination]=
-        (uint16_t)(DIAMOND_TYPE_CLASS_BASE+class_index);
-    if(explicit_type!=DIAMOND_NO_TYPE_SET&&reserve_type_sets(compiler,1)) {
-        const uint16_t set=(uint16_t)compiler->function->type_set_count++;
-        compiler->function->type_sets[set]=(DiamondTypeSet){.count=1,.members={{
-            .id=(uint16_t)(DIAMOND_TYPE_CLASS_BASE+class_index),
-            .argument_set=explicit_type,.second_argument_set=DIAMOND_NO_TYPE_SET,
-            .callable_arity=UINT8_MAX,.callable_return_set=DIAMOND_NO_TYPE_SET}}};
-        publish_known_type_set(compiler,destination,set);
-    }
+    publish_constructor_type(compiler,destination,class_index,&inference,explicit_type);
     return destination;
 }
 
@@ -213,29 +324,24 @@ static uint16_t parse_class_new_spread(Compiler *compiler, int class_index,
         nullptr,nullptr,nullptr,initializer,
         initializer==nullptr||initializer->arity==0?0:
             initializer->arity-1);
+    ConstructorInference inference=constructor_inference();
+    infer_constructor_positionals(compiler,initializer,&inference);
+    if(!compiler->positional_spread_literal)inference.complete=false;
     if(compiler->current.kind==DIAMOND_TOKEN_DO) {
-        uint16_t inferred_arguments[8];
-        const size_t inferred_count=infer_contextual_spread_arguments(
-            compiler,initializer,spread,
-            initializer==nullptr||initializer->arity<=1?0:
-                initializer->arity-2,inferred_arguments);
         const uint16_t spread_snapshot=allocate_register(compiler);
         emit_instruction(compiler,DIAMOND_OP_MOVE,spread_snapshot,
             spread,0,2);
         spread=spread_snapshot;
-        const uint16_t block=compile_contextual_typed_block(compiler,
-            initializer,
-            initializer==nullptr||initializer->arity<=1?0:
-                initializer->arity-2,inferred_arguments,
-            inferred_count);
+        const uint16_t block=compile_constructor_block(compiler,initializer,&inference,DIAMOND_NO_TYPE_SET);
+        if(initializer!=nullptr&&initializer->arity>1)
+            infer_constructor_input(compiler,initializer,&inference,initializer->arity-2,block);
         const uint16_t destination=allocate_register(compiler);
         emit_opcode(compiler,DIAMOND_OP_NEW_KEYWORDS);
         emit_register(compiler,destination);
         emit_register(compiler,(uint16_t)class_index);
         emit_register(compiler,spread);emit_byte(compiler,0x80u);
         emit_register(compiler,block);
-        compiler->known_types[destination]=
-            (uint16_t)(DIAMOND_TYPE_CLASS_BASE+class_index);
+        publish_constructor_type(compiler,destination,class_index,&inference,DIAMOND_NO_TYPE_SET);
         return destination;
     }
     const uint16_t destination=allocate_register(compiler);
@@ -243,8 +349,7 @@ static uint16_t parse_class_new_spread(Compiler *compiler, int class_index,
     emit_register(compiler,destination);
     emit_register(compiler,(uint16_t)class_index);
     emit_register(compiler,spread);
-    compiler->known_types[destination]=
-        (uint16_t)(DIAMOND_TYPE_CLASS_BASE+class_index);
+    publish_constructor_type(compiler,destination,class_index,&inference,DIAMOND_NO_TYPE_SET);
     return destination;
 }
 
@@ -277,24 +382,22 @@ static uint16_t parse_class_new_call(Compiler *compiler, int class_index) {
         fail(compiler, compiler->current.span, "expected ')' after arguments"); return 0;
     }
     advance_token(compiler);
+    ConstructorInference inference=constructor_inference();
+    for(size_t index=0;index<count;index++)
+        infer_constructor_input(compiler,initializer,&inference,index,args[index]);
     if(compiler->current.kind==DIAMOND_TOKEN_DO) {
         if(count==DIAMOND_MAX_ARGUMENTS) {
             fail(compiler,compiler->current.span,"too many arguments");return 0;
         }
-        uint16_t inferred_arguments[8];
-        const size_t inferred_count=infer_contextual_type_arguments(
-            compiler,initializer,args,count,inferred_arguments);
         for(size_t index=0;index<count;index++) {
             const uint16_t snapshot=allocate_register(compiler);
             emit_instruction(compiler,DIAMOND_OP_MOVE,snapshot,args[index],0,2);
             args[index]=snapshot;
         }
-        const uint16_t block=compile_contextual_typed_block(compiler,
-            initializer,
-            initializer==nullptr||initializer->arity<=1?0:
-                initializer->arity-2,inferred_arguments,inferred_count);
+        const uint16_t block=compile_constructor_block(compiler,initializer,&inference,DIAMOND_NO_TYPE_SET);
         const size_t block_slot=initializer==nullptr||initializer->arity<=1?
             0:(size_t)initializer->arity-2;
+        infer_constructor_input(compiler,initializer,&inference,block_slot,block);
         if(count<block_slot) {
             const uint16_t positional=emit_argument_array(compiler,args,count);
             const uint16_t destination=allocate_register(compiler);
@@ -303,8 +406,7 @@ static uint16_t parse_class_new_call(Compiler *compiler, int class_index) {
             emit_register(compiler,(uint16_t)class_index);
             emit_register(compiler,positional);emit_byte(compiler,0x80u);
             emit_register(compiler,block);
-            compiler->known_types[destination]=
-                (uint16_t)(DIAMOND_TYPE_CLASS_BASE+class_index);
+            publish_constructor_type(compiler,destination,class_index,&inference,DIAMOND_NO_TYPE_SET);
             return destination;
         }
         args[count++]=block;
@@ -317,7 +419,7 @@ static uint16_t parse_class_new_call(Compiler *compiler, int class_index) {
     emit_opcode(compiler, DIAMOND_OP_NEW); emit_register(compiler,dest);
     emit_register(compiler,(uint16_t)class_index); emit_register(compiler,base);
     emit_byte(compiler, (uint8_t)count);
-    compiler->known_types[dest]=(uint16_t)(DIAMOND_TYPE_CLASS_BASE+class_index);
+    publish_constructor_type(compiler,dest,class_index,&inference,DIAMOND_NO_TYPE_SET);
     return dest;
 }
 

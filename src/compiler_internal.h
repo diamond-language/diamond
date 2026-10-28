@@ -746,6 +746,9 @@ DIAMOND_INTERNAL uint16_t parse_expected_argument(Compiler *compiler,
 DIAMOND_INTERNAL size_t infer_contextual_type_arguments(Compiler *compiler,
         const DiamondFunction *target,const uint16_t *arguments,
         size_t argument_count,uint16_t *bindings);
+DIAMOND_INTERNAL bool infer_constructor_argument(Compiler *compiler,
+        const DiamondFunction *target,size_t parameter,uint16_t argument,
+        uint16_t *bindings,bool *exact);
 DIAMOND_INTERNAL size_t infer_contextual_spread_arguments(Compiler *compiler,
         const DiamondFunction *target,uint16_t spread,size_t parameter_count,
         uint16_t *bindings);

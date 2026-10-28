@@ -831,6 +831,81 @@ static void infer_contextual_argument(Compiler *compiler,
             bindings);
 }
 
+static bool constructor_parameter_binds_class(const DiamondFunction *target,
+        uint16_t index,size_t depth) {
+    if(depth>32||index>=target->type_set_count)return false;
+    const DiamondTypeSet *set=&target->type_sets[index];
+    for(size_t member=0;member<set->count;member++) {
+        const DiamondTypeMember type=set->members[member];
+        if(type.id==DIAMOND_TYPE_VARIABLE_BASE)return true;
+        if(constructor_parameter_binds_class(target,type.argument_set,depth+1)||
+           constructor_parameter_binds_class(target,type.second_argument_set,depth+1)||
+           constructor_parameter_binds_class(target,type.callable_return_set,depth+1))return true;
+        if(type.callable_parameters_typed)
+            for(size_t parameter=0;parameter<type.callable_arity;parameter++)
+                if(constructor_parameter_binds_class(target,
+                        type.callable_parameter_sets[parameter],depth+1))return true;
+    }
+    return false;
+}
+
+static bool constructor_input_complete(const Compiler *compiler,
+        const DiamondFunction *target,uint16_t expected,uint16_t actual,size_t depth) {
+    if(!constructor_parameter_binds_class(target,expected,0))return true;
+    if(depth>32||actual>=compiler->function->type_set_count)return false;
+    const DiamondTypeSet *wanted=&target->type_sets[expected];
+    const DiamondTypeSet *known=&compiler->function->type_sets[actual];
+    if(wanted->count!=1||known->count==0)return false;
+    const DiamondTypeMember type=wanted->members[0];
+    if(type.id==DIAMOND_TYPE_VARIABLE_BASE)
+        return !type_set_contains_variable(compiler,actual);
+    if(known->count!=1||known->members[0].id!=type.id)return false;
+    const DiamondTypeMember value=known->members[0];
+    if(!constructor_input_complete(compiler,target,type.argument_set,value.argument_set,depth+1)||
+       !constructor_input_complete(compiler,target,type.second_argument_set,value.second_argument_set,depth+1)||
+       !constructor_input_complete(compiler,target,type.callable_return_set,value.callable_return_set,depth+1))return false;
+    if(type.callable_parameters_typed)
+        for(size_t parameter=0;parameter<type.callable_arity;parameter++)
+            if(!value.callable_parameters_typed||type.callable_arity!=value.callable_arity||
+               !constructor_input_complete(compiler,target,type.callable_parameter_sets[parameter],
+                   value.callable_parameter_sets[parameter],depth+1))return false;
+    return true;
+}
+
+/* Constructor inference observes actual values, not upper bounds. Only a
+ * direct T fed by a closed scalar proves an invariant binding. Structural
+ * arguments can still describe an editor result, without eliding checks. */
+bool infer_constructor_argument(Compiler *compiler,const DiamondFunction *target,
+        size_t parameter,uint16_t argument,uint16_t *bindings,bool *exact) {
+    if(target==nullptr||parameter>=DIAMOND_MAX_DECLARED_PARAMETERS)return true;
+    if(!target->class_type_variable) {
+        infer_contextual_argument(compiler,target,parameter,argument,bindings);
+        return true;
+    }
+    const uint16_t expected=target->parameter_type_sets[parameter];
+    if(!constructor_parameter_binds_class(target,expected,0)) {
+        infer_contextual_argument(compiler,target,parameter,argument,bindings);
+        return true;
+    }
+    int32_t actual=compiler->known_type_sets[argument];
+    if(actual<0&&compiler->known_types[argument]!=TYPE_UNKNOWN&&
+       compiler->known_types[argument]<DIAMOND_TYPE_VARIABLE_BASE)
+        actual=(int32_t)concrete_type_set(compiler,compiler->known_types[argument]);
+    if(actual<0) {
+        actual=compiler->tooling_type_sets[argument];*exact=false;
+    }
+    if(actual<0||(size_t)actual>=compiler->function->type_set_count)return false;
+    if(!constructor_input_complete(compiler,target,expected,(uint16_t)actual,0))return false;
+    const DiamondTypeSet *wanted=&target->type_sets[expected];
+    const DiamondTypeSet *known=&compiler->function->type_sets[actual];
+    if(wanted->count!=1||wanted->members[0].id!=DIAMOND_TYPE_VARIABLE_BASE||
+       known->count!=1||
+       !(known->members[0].id<=DIAMOND_TYPE_NIL||known->members[0].id==DIAMOND_TYPE_SYMBOL))
+        *exact=false;
+    infer_contextual_type_set(compiler,target,expected,(uint16_t)actual,bindings);
+    return true;
+}
+
 /* Parses one argument while exposing its declared parameter contract to the
  * expression itself. This is deliberately a one-expression conduit: generic
  * method references can consume it bidirectionally, while every nested or

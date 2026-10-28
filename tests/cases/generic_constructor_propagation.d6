@@ -1,0 +1,44 @@
+class Box[T]
+  def initialize(value: T)
+    @value = value
+  end
+  def value() -> T = @value
+  def map[U](f: Callable[[T], U]) -> Box[U] = Box[U].new(f(self.value()))
+end
+def as_string(value: Int) -> String = value.to_s()
+def same(value: String) -> String = value
+def boxed(value: Int) -> Box[Int] = Box.new(value)
+box = Box.new(42)
+text = box.map(as_string)
+puts(text.value().upcase())
+puts(Box.new(42).map(as_string).map(same).value())
+puts(Box.new(value: 42).map(as_string).value())
+puts(Box.new(*[42]).map(as_string).value())
+puts(boxed(42).value())
+class DefaultBox[T]
+  def initialize(value: T, tag: String = "default")
+    @value = value
+  end
+  def value() -> T = @value
+end
+puts(DefaultBox.new(value: 42).value())
+class NestedBox[T]
+  def initialize(values: Array[T])
+    @values = values
+  end
+  def first() -> T = @values[0]
+end
+puts(NestedBox.new([42]).first())
+class Mapped[T]
+  def initialize(value: T, tag: String = "default", &transform: Callable[[T], T])
+    @value = transform(value)
+  end
+  def value() -> T = @value
+end
+mapped = Mapped.new(40) do |value| value + 2 end
+keyword_mapped = Mapped.new(value: 40) do |value| value + 2 end
+spread_mapped = Mapped.new(*[40]) do |value| value + 2 end
+puts(mapped.value())
+puts(keyword_mapped.value())
+puts(spread_mapped.value())
+nil
