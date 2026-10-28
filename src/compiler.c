@@ -991,10 +991,10 @@ void publish_callable_return_type(Compiler *compiler,uint16_t reg,
     publish_known_type_set(compiler,reg,return_set);
 }
 
-void publish_call_return_type(Compiler *compiler,uint16_t reg,
+static void publish_resolved_call_return_type(Compiler *compiler,uint16_t reg,
         const DiamondFunction *target,const uint16_t *bindings,
-        size_t binding_count) {
-    if(target==nullptr||target->class_type_variable)return;
+        size_t binding_count,bool tooling_only) {
+    if(target==nullptr)return;
     if(target->return_type_set==DIAMOND_NO_TYPE_SET&&
        target->declared_by_discovery&&compiler->tooling_forward_calls!=nullptr) {
         compiler->tooling_forward_calls->forward_calls=true;
@@ -1046,7 +1046,23 @@ void publish_call_return_type(Compiler *compiler,uint16_t reg,
     } else return_set=target==compiler->function?
         target->return_type_set:clone_type_set_into_current(compiler,
             target->type_sets,target->type_set_count,target->return_type_set);
-    publish_known_type_set(compiler,reg,return_set);
+    if(tooling_only) {
+        if(return_set!=DIAMOND_NO_TYPE_SET)
+            compiler->tooling_type_sets[reg]=(int32_t)return_set;
+    } else publish_known_type_set(compiler,reg,return_set);
+}
+
+void publish_call_return_type(Compiler *compiler,uint16_t reg,
+        const DiamondFunction *target,const uint16_t *bindings,
+        size_t binding_count) {
+    if(target==nullptr||target->class_type_variable)return;
+    publish_resolved_call_return_type(compiler,reg,target,bindings,binding_count,false);
+}
+
+void publish_bound_instance_return_type(Compiler *compiler,uint16_t reg,
+        const DiamondFunction *target,const uint16_t *bindings,
+        size_t binding_count,bool tooling_only) {
+    publish_resolved_call_return_type(compiler,reg,target,bindings,binding_count,tooling_only);
 }
 
 void publish_function_callable_type(Compiler *compiler,uint16_t reg,
