@@ -14,7 +14,7 @@ authoritative fine-grained record.
   task board, with automatic database upgrades and matching CLI commands.
 - Constructor completion and go-to-definition in the language server, including
   imported/inherited initializers and default or generated struct constructors.
-- A terminal task board under `applications/task_board`, with Mjolnir-validated
+- A terminal task board under `examples/task_board`, with Mjolnir-validated
   project/task writes, status and project filters, and explicit batched association loading.
   Its interactive three-column view adds keyboard navigation, quick add/edit,
   project selection, and task moves while retaining the scriptable CLI.

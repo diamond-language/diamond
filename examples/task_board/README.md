@@ -9,21 +9,21 @@ From the repository root:
 ```sh
 make debug facet
 bash tools/install_local_cuts.sh .
-build/diamond applications/task_board/app.d6 project Diamond
-build/diamond applications/task_board/app.d6 add 1 "Ship a terminal board"
-build/diamond applications/task_board/app.d6 move 1 doing
-build/diamond applications/task_board/app.d6 list --project 1 --status doing
+build/diamond examples/task_board/app.d6 project Diamond
+build/diamond examples/task_board/app.d6 add 1 "Ship a terminal board"
+build/diamond examples/task_board/app.d6 move 1 doing
+build/diamond examples/task_board/app.d6 list --project 1 --status doing
 # #1 [doing] Diamond / Ship a terminal board
-build/diamond applications/task_board/app.d6 edit 1 "Ship the board"
-build/diamond applications/task_board/app.d6 projects
-build/diamond applications/task_board/app.d6 notes 1 "Keep benchmark results here"
-build/diamond applications/task_board/app.d6 show 1
-bash applications/task_board/board
+build/diamond examples/task_board/app.d6 edit 1 "Ship the board"
+build/diamond examples/task_board/app.d6 projects
+build/diamond examples/task_board/app.d6 notes 1 "Keep benchmark results here"
+build/diamond examples/task_board/app.d6 show 1
+bash examples/task_board/board
 ```
 
 The interactive board shows `todo`, `doing`, and `done` side by side. It uses
 the same database and validated store as the CLI. Launch it in a POSIX terminal
-with Bash and `stty`; use `bash applications/task_board/board --db FILE` to
+with Bash and `stty`; use `bash examples/task_board/board --db FILE` to
 choose a database. Terminal settings and the previous screen are restored on
 exit, errors, and handled signals.
 
@@ -119,7 +119,7 @@ stderr; results go to stdout.
 Run the store, controller, and CLI tests (with isolated temporary databases) using:
 
 ```sh
-DIAMOND_BIN="$PWD/build/diamond" bash applications/task_board/test.sh
+DIAMOND_BIN="$PWD/build/diamond" bash examples/task_board/test.sh
 ```
 
 When Python 3 is available, this also exercises the real launcher in a

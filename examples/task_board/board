@@ -27,8 +27,8 @@ trap 'exit 129' HUP
 trap 'exit 131' QUIT
 stty raw -echo min 0 time 1 </dev/tty
 printf '\033[?1049h\033[?25l'
-export BOARD_TERMINAL_HELPER="$root/applications/task_board/board"
-"${DIAMOND_BIN:-$root/build/diamond}" "$root/applications/task_board/tui.d6" "$@" </dev/tty &
+export BOARD_TERMINAL_HELPER="$root/examples/task_board/board"
+"${DIAMOND_BIN:-$root/build/diamond}" "$root/examples/task_board/tui.d6" "$@" </dev/tty &
 child=$!
 status=0
 wait "$child" || status=$?

@@ -950,7 +950,7 @@ test-example-apps: $(TARGET)
 
 .PHONY: test-task-board
 test-task-board: $(TARGET)
-	DIAMOND_BIN=$(CURDIR)/$(BUILD_DIR)/diamond bash applications/task_board/test.sh
+	DIAMOND_BIN=$(CURDIR)/$(BUILD_DIR)/diamond bash examples/task_board/test.sh
 
 # The ```ruby examples in the docs and the published cuts' READMEs: `# =>` claims
 # must hold and every block must parse -- see tools/check_doc_examples.d6.
