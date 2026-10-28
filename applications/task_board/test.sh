@@ -8,6 +8,7 @@ bash "$root/tools/install_local_cuts.sh" "$work" >/dev/null
 cd "$work"
 "$diamond" "$root/applications/task_board/store_test.d6"
 "$diamond" "$root/applications/task_board/board_test.d6"
+"$diamond" "$root/applications/task_board/migration_test.d6" "$work/legacy.db"
 run() { "$diamond" "$root/applications/task_board/app.d6" --db "$work/board.db" "$@"; }
 [[ "$(run project Diamond)" == 'project #1: Diamond' ]]
 [[ "$(run project Other)" == 'project #2: Other' ]]
@@ -36,12 +37,23 @@ reject 64 add 1oops Nope
 reject 64 list --project
 reject 64 list --status unknown
 reject 64 list --status todo --status done
+reject 64 list --search
+reject 64 list --search one --search two
+reject 66 notes 999 Missing
+reject 66 show 999
 reject 64 nonsense
 # Each command opens a fresh process. Rejected edits preserve stored values.
 [[ "$(run list --project 1)" == '#1 [doing] Diamond / Terminal board' ]]
 [[ "$(run move 1 done)" == 'task #1 [done]: Terminal board' ]]
 [[ "$(run list --status doing)" == 'No tasks.' ]]
 [[ "$(run list --project 1)" == '#1 [done] Diamond / Terminal board' ]]
+[[ "$(run notes 1 $'Remember benchmarks\nKeep results')" == 'task #1 [done]: Terminal board' ]]
+[[ "$(run show 1)" == $'task #1 [done]: Terminal board\nNotes:\nRemember benchmarks\nKeep results' ]]
+[[ "$(run list --project 1 --status done --search BENCHMARKS)" == '#1 [done] Diamond / Terminal board' ]]
+[[ "$(run list --search Diamond)" == '#1 [done] Diamond / Terminal board' ]]
+[[ "$(run list --search '[missing]')" == 'No tasks.' ]]
+run notes 1 '' >/dev/null
+[[ "$(run list --search benchmarks)" == 'No tasks.' ]]
 BOARD_DATABASE_PATH="$work/unused.db" run projects >"$work/projects"
 [[ ! -e "$work/unused.db" ]]
 grep -q '#1 Diamond' "$work/projects"

@@ -3,11 +3,11 @@ require_cut "mjolnir"
 struct BoardProject(id: Int, name: String)
 end
 
-struct BoardTask(id: Int, project_id: Int, title: String, status: String)
+struct BoardTask(id: Int, project_id: Int, title: String, status: String, notes: String)
 end
 
 def build_board_project(row) = BoardProject.new(row["id"], row["name"])
-def build_board_task(row) = BoardTask.new(row["id"], row["project_id"], row["title"], row["status"])
+def build_board_task(row) = BoardTask.new(row["id"], row["project_id"], row["title"], row["status"], row["notes"])
 
 # Entities are frozen values. Only this repository boundary reads or writes SQL.
 class BoardStore
@@ -15,17 +15,35 @@ class BoardStore
     @db = db
     @db.execute("PRAGMA foreign_keys = ON")
     @db.execute("PRAGMA busy_timeout = 5000")
-    @db.execute("CREATE TABLE IF NOT EXISTS projects (id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE)")
-    @db.execute("CREATE TABLE IF NOT EXISTS tasks (id INTEGER PRIMARY KEY,
-      project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-      title TEXT NOT NULL, status TEXT NOT NULL CHECK (status IN ('todo', 'doing', 'done')))")
-    @db.execute("CREATE INDEX IF NOT EXISTS tasks_project_status ON tasks(project_id, status)")
+    prepare_schema()
     @repo = Mjolnir::Repo.new(db)
     @projects = Mjolnir::Schema.new("projects", {"id": :int, "name": :string}, build_board_project)
     @tasks = Mjolnir::Schema.new("tasks",
-      {"id": :int, "project_id": :int, "title": :string, "status": :string}, build_board_task)
+      {"id": :int, "project_id": :int, "title": :string, "status": :string, "notes": :string}, build_board_task)
     @projects.has_many("tasks", @tasks, "project_id")
     @tasks.belongs_to("project", @projects, "project_id")
+  end
+
+  def prepare_schema()
+    # Serialize the check and ALTER so two CLI/terminal processes can open an
+    # older database together without racing to add the same column.
+    @db.execute("BEGIN IMMEDIATE")
+    begin
+      @db.execute("CREATE TABLE IF NOT EXISTS projects (id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE)")
+      @db.execute("CREATE TABLE IF NOT EXISTS tasks (id INTEGER PRIMARY KEY,
+        project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        title TEXT NOT NULL, status TEXT NOT NULL CHECK (status IN ('todo', 'doing', 'done')),
+        notes TEXT NOT NULL DEFAULT '')")
+      @db.execute("CREATE INDEX IF NOT EXISTS tasks_project_status ON tasks(project_id, status)")
+      has_notes = @db.query("PRAGMA table_info(tasks)").any?() do |field| field["name"] == "notes" end
+      unless has_notes
+        @db.execute("ALTER TABLE tasks ADD COLUMN notes TEXT NOT NULL DEFAULT ''")
+      end
+      @db.execute("COMMIT")
+    rescue error: SQLite3Error
+      @db.execute("ROLLBACK")
+      raise error
+    end
   end
 
   def create_project(attrs)
@@ -38,12 +56,21 @@ class BoardStore
   def task(id) = @repo.get(@tasks, id)
 
   def task_changeset(entity, attrs)
-    changeset = Mjolnir::Changeset.cast(@tasks, entity, attrs, ["project_id", "title", "status"])
+    changeset = Mjolnir::Changeset.cast(@tasks, entity, attrs, ["project_id", "title", "status", "notes"])
     if entity == nil && !attrs.has_key?("status")
       changeset = changeset.put_change("status", "todo")
     end
-    changeset = changeset.validate_required(["project_id", "title", "status"])
-      .validate_length("title", 1, 160).validate_inclusion("status", ["todo", "doing", "done"])
+    if entity == nil && !attrs.has_key?("notes")
+      changeset = changeset.put_change("notes", "")
+    end
+    # Mjolnir casts blank strings to nil; here an empty string deliberately
+    # clears optional note text while an explicit nil remains invalid.
+    if attrs.has_key?("notes") && attrs["notes"] == ""
+      changeset = changeset.put_change("notes", "")
+    end
+    changeset = changeset.validate_required(["project_id", "title", "status", "notes"])
+      .validate_length("title", 1, 160).validate_length("notes", 0, 10000)
+      .validate_inclusion("status", ["todo", "doing", "done"])
     project_id = changeset.get_field("project_id")
     if project_id != nil && !changeset.errors().has_key?("project_id") && @repo.get(@projects, project_id) == nil
       changeset = changeset.add_error("project_id", "does not exist")
@@ -59,9 +86,9 @@ class BoardStore
     @repo.update(task_changeset(entity, attrs))
   end
 
-  # Filtering happens in SQL; every task's project is loaded in one explicit
-  # batch rather than a hidden query per row. The caller receives both values.
-  def tasks(project_id = nil, status = nil)
+  # Project/status filters happen in SQL. Literal text search uses the rows
+  # and their explicitly preloaded projects, without extra queries per task.
+  def tasks(project_id = nil, status = nil, search = "")
     if status != nil && !["todo", "doing", "done"].include?(status)
       raise ArgumentError.new("status must be todo, doing, or done")
     end
@@ -69,7 +96,16 @@ class BoardStore
     if project_id != nil then query = query.where({"project_id": project_id}) end
     if status != nil then query = query.where({"status": status}) end
     entities = @repo.all(query)
-    [entities, @repo.preload(@tasks, entities, "project")]
+    associations = @repo.preload(@tasks, entities, "project")
+    needle = search.downcase()
+    if !needle.empty?()
+      entities = entities.select() do |task|
+        [task.title(), task.notes(), associations[task.id()].name()].any?() do |text|
+          text.downcase().include?(needle)
+        end
+      end
+    end
+    [entities, associations]
   end
 
   def close() = @db.close()

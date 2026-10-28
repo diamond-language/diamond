@@ -16,6 +16,8 @@ build/diamond applications/task_board/app.d6 list --project 1 --status doing
 # #1 [doing] Diamond / Ship a terminal board
 build/diamond applications/task_board/app.d6 edit 1 "Ship the board"
 build/diamond applications/task_board/app.d6 projects
+build/diamond applications/task_board/app.d6 notes 1 "Keep benchmark results here"
+build/diamond applications/task_board/app.d6 show 1
 bash applications/task_board/board
 ```
 
@@ -34,9 +36,15 @@ exit, errors, and handled signals.
 | P | Create a project |
 | a | Add a task to the selected project and column |
 | e | Edit selected task's title |
-| Enter / Escape | Save / cancel an edit |
+| / | Search titles, notes, and project names as you type |
+| Enter | Open task details; accept a search or title edit |
+| n (in details) | Edit multiline notes |
+| Ctrl-S (in notes) | Save notes and return to details |
+| Escape | Cancel an edit/search, or return from details |
+| Ctrl-U (while editing/searching) | Clear the input |
 | r | Reload tasks and pick up terminal size changes |
-| q / Ctrl-C / Ctrl-D | Quit |
+| q | Return from details, or quit from the board |
+| Ctrl-C / Ctrl-D | Quit |
 
 On an empty board, press `P` to create a project, then `p` to select it and `a`
 to add a task. Validation errors stay visible without discarding the edit.
@@ -44,6 +52,17 @@ Long lists scroll with the selection. The board needs at least 60 columns and
 10 rows. UTF-8 titles are preserved; cell padding uses byte widths, so non-ASCII
 titles may have uneven column alignment. Control characters in stored text are neutralized.
 Title editing appends text and supports Backspace; Escape cancels the edit.
+Search is a literal, case-insensitive substring match within the selected
+project. Enter keeps the filter; Escape restores the previous filter and
+selection. Use `/`, Ctrl-U, Enter to clear an active filter. Search is local
+view state and starts empty on each launch.
+
+Enter opens the selected task's full title and notes, with `j`/`k` or arrows to
+scroll. In details, `n` edits notes: type or use Backspace, Enter inserts a
+newline, Ctrl-S saves, and Escape discards the edit. Editing appends at the end;
+Ctrl-U clears the text. Blank notes are allowed; notes are limited to 10,000
+bytes. Long lines wrap in the detail view. Titles, notes, and status changes
+persist in the same SQLite database, including changes made through the CLI.
 The CLI remains available for pipes and scripts.
 
 Usage:
@@ -54,7 +73,9 @@ board [--db FILE] projects
 board [--db FILE] add PROJECT_ID TITLE
 board [--db FILE] edit TASK_ID TITLE
 board [--db FILE] move TASK_ID todo|doing|done
-board [--db FILE] list [--project ID] [--status todo|doing|done]
+board [--db FILE] notes TASK_ID TEXT
+board [--db FILE] show TASK_ID
+board [--db FILE] list [--project ID] [--status todo|doing|done] [--search TEXT]
 ```
 
 Quote names and titles containing spaces. `--db FILE`, recognized before the
@@ -62,12 +83,15 @@ command, overrides `BOARD_DATABASE_PATH`; otherwise the database defaults to
 `task_board.db` in the working directory. Tables are created if missing;
 commands never reset existing data. Each invocation opens and closes its own
 connection, so tasks persist between commands.
+Existing databases automatically gain an empty `notes` column on first open;
+the upgrade is transactional and preserves projects, task IDs, and statuses.
+Use `notes TASK_ID ""` to clear notes from a script.
 
 Entities are frozen structs without persistence methods. The store casts and
 validates attributes with Mjolnir changesets. Invalid edits leave the stored
 task unchanged; missing projects and duplicate project names become field
-errors. Task lists filter in SQL and explicitly preload their projects in a
-batch. There are no lazy association queries.
+errors. Project/status filters run in SQL and projects are explicitly preloaded
+in a batch. Text search uses those rows and associations without extra queries.
 
 The controller imports its store directly and annotates its `BoardStore`
 parameter, as do the CLI helpers. These explicit boundaries let editor
@@ -85,5 +109,5 @@ DIAMOND_BIN="$PWD/build/diamond" bash applications/task_board/test.sh
 ```
 
 When Python 3 is available, this also exercises the real launcher in a
-pseudo-terminal, checks persisted keyboard edits and resizing, and verifies
+pseudo-terminal, checks search, detail navigation, saved/cancelled notes, and resizing, and verifies
 terminal restoration after normal exit and SIGTERM.

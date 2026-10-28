@@ -1,0 +1,26 @@
+require "./lib/store"
+require "../../lib/minitest"
+
+# Start with the exact pre-notes schema and data, in a file that is reopened
+# through the current store. Migration must preserve IDs, associations and edits.
+db = SQLite3.open(ARGV[0])
+db.execute("CREATE TABLE projects (id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE)")
+db.execute("CREATE TABLE tasks (id INTEGER PRIMARY KEY,
+  project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  title TEXT NOT NULL, status TEXT NOT NULL CHECK (status IN ('todo', 'doing', 'done')))")
+db.execute("INSERT INTO projects VALUES (7, 'Legacy')")
+db.execute("INSERT INTO tasks VALUES (42, 7, 'Keep this task', 'doing')")
+db.close()
+store = BoardStore.new(SQLite3.open(ARGV[0]))
+Minitest.assert_equal("", store.task(42).notes())
+Minitest.assert_equal("Keep this task", store.task(42).title())
+Minitest.assert_equal("doing", store.task(42).status())
+Minitest.assert_equal("Legacy", store.tasks()[1][42].name())
+Minitest.assert(store.update_task(42, {"notes": "Preserved\nafter reopen"}).ok?())
+store.close()
+db = SQLite3.open(ARGV[0])
+store = BoardStore.new(db)
+Minitest.assert_equal("Preserved\nafter reopen", store.task(42).notes())
+Minitest.assert_equal(1, db.query("PRAGMA table_info(tasks)").count() do |field| field["name"] == "notes" end)
+store.close()
+puts("task board database migration checks passed")
