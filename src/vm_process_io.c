@@ -1735,6 +1735,12 @@ DiamondVmStatus file_invoke_helper(DiamondVm *vm,
             clearerr(target_file->stream);
             return DIAMOND_VM_IO_ERROR;
         }
+        /* A noncanonical terminal with VMIN=0 can return zero bytes on
+         * timeout. stdio marks that as EOF, but later keys are still valid;
+         * do not make this transient result sticky. Real file/socket EOF
+         * retains its usual behavior. */
+        if(feof(target_file->stream)&&isatty(fileno(target_file->stream)))
+            clearerr(target_file->stream);
         DiamondString *string=allocate_string(vm,builder.chars,builder.length);
         free(builder.chars);
         if(string==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;

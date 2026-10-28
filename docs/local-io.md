@@ -184,6 +184,10 @@ compiling to a single
   known `Content-Length`, as the `packages/http` package does) without
   also blocking on or consuming whatever the other side sends next on a
   still-open connection.
+  On a noncanonical terminal configured with `VMIN=0` and a read timeout,
+  an empty result can mean the timeout expired. Later reads on the same
+  handle still accept input; this transient result does not stick as EOF.
+  Ordinary file and socket EOF behavior is unchanged.
 - `.gets()` reads one line, sharing the exact `read_line` helper stdin's
   global `gets()` uses (same EOF/`nil`, CRLF-stripping, and no-line-
   length-cap behavior).

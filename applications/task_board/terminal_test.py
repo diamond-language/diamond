@@ -5,6 +5,7 @@ import fcntl
 import os
 from pathlib import Path
 import pty
+import re
 import select
 import signal
 import struct
@@ -15,6 +16,39 @@ import time
 
 root = Path(__file__).resolve().parents[2]
 database = Path(sys.argv[1])
+
+
+def timed_read():
+    master, slave = pty.openpty()
+    settings = termios.tcgetattr(slave)
+    settings[3] &= ~(termios.ICANON | termios.ECHO)
+    settings[6][termios.VMIN] = 0
+    settings[6][termios.VTIME] = 1
+    termios.tcsetattr(slave, termios.TCSANOW, settings)
+
+    def terminal():
+        os.setsid()
+        fcntl.ioctl(0, termios.TIOCSCTTY, 0)
+
+    process = subprocess.Popen(
+        [os.environ["DIAMOND_BIN"], str(root / "applications/task_board/terminal_read_test.d6")],
+        stdin=slave, stdout=slave, stderr=slave, preexec_fn=terminal,
+    )
+    output = b""
+    try:
+        deadline = time.monotonic() + 10
+        while b"timed out; send a key" not in output:
+            assert time.monotonic() < deadline, output
+            if select.select([master], [], [], .1)[0]:
+                output += os.read(master, 65536)
+        os.write(master, b"x")
+        assert process.wait(timeout=5) == 0, output
+    finally:
+        if process.poll() is None:
+            process.kill()
+            process.wait()
+        os.close(master)
+        os.close(slave)
 
 
 def session(keys, stop_signal=None, exit_key=b"q"):
@@ -48,22 +82,45 @@ def session(keys, stop_signal=None, exit_key=b"q"):
                 assert chunk, bytes(output[-4000:])
                 output.extend(chunk)
 
+    def frame_fits(rows, columns):
+        deadline = time.monotonic() + 15
+        while True:
+            while select.select([master], [], [], .03)[0]:
+                output.extend(os.read(master, 65536))
+            frame = bytes(output).rsplit(b"\x1b[2J", 1)[-1]
+            frame = re.sub(rb"\x1b\[[0-?]*[ -/]*[@-~]", b"", frame)
+            lines = frame.split(b"\r\n")
+            if len(lines) == rows - 1 and all(len(line) < columns for line in lines):
+                return frame
+            # A frame queried just before the resize can still be in flight.
+            assert time.monotonic() < deadline, (rows, columns, frame)
+            if select.select([master], [], [], .1)[0]:
+                output.extend(os.read(master, 65536))
+
     try:
         until(b"Task board")
         for key, marker in keys:
             if isinstance(key, tuple):
                 fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", *key, 0, 0))
-                os.write(master, b"\x00")  # redraw without changing the draft
             else:
                 os.write(master, key)
+            if marker is None:
+                time.sleep(.25)  # leave a partial UTF-8 character across idle reads
+                continue
             until(marker)
-        # A resize is picked up on the next input event.
+            if isinstance(key, tuple):
+                frame_fits(*key)
+        # Resizing the actual board within its usable range must change both
+        # grid dimensions while idle, with every primary shortcut still visible.
+        fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 14, 70, 0, 0))
+        until(b"P project | p switch")
+        assert b"q quit" in frame_fits(14, 70)
+        # No key is sent: idle resize must redraw by itself.
         fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 8, 40, 0, 0))
-        os.write(master, b"r")
         until(b"Terminal too small")
         fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 24, 100, 0, 0))
-        os.write(master, b"r")
-        until(b"Task board")
+        until(b"P project | p switch")
+        frame_fits(24, 100)
         if stop_signal:
             process.send_signal(stop_signal)
         else:
@@ -78,12 +135,19 @@ def session(keys, stop_signal=None, exit_key=b"q"):
         os.close(slave)
 
 
+timed_read()
 session([
-    (b"P", b"project>"),
-    (b"PTY project\r", b"Saved #1"),
-    (b"p", b"Task board | PTY project"),
-    (b"a", b"add>"),
+    (b"p", b"== New project =="),
+    (b"PTY project\r", b"Created project PTY project"),
+    ((12, 60), b"Created project PTY project"),
+    (b"a", b"== Add task =="),
+    ((24, 100), b"== Add task =="),
     (b"\r", b"title:"),
+    (b"\xc3", None),
+    ((12, 60), b"== Add task =="),
+    (b"\xa9", "add> é".encode()),
+    (b"\x7f", b"\x1b[6;6H\x1b[?25h"),
+    ((24, 100), b"== Add task =="),
     (b"Real terminal task\r", b"Saved #1"),
     (b"L", b"doing (1)"),
     (b"e", b"edit> Real terminal task"),
@@ -93,7 +157,7 @@ session([
     (b"Remember the benchmark\rSecond line\x13", b"Saved #1"),
     (b"q", b"Task board"),
     (b"/", b"search>"),
-    (b"zz_missing", b"No task selected"),
+    (b"zz_missing", b"No matching tasks"),
     (b"\x1b", b"Search: (all tasks)"),
     (b"/", b"search>"),
     (b"BENCHMARK\r\r", b"Task #1 [doing]"),
@@ -108,9 +172,9 @@ session([
     (b"SECOND LINE\r\r", b"Task #1 [doing]"),
     (b"q", b"Task board"),
     (b"e", b"edit> Real terminal task!"),
-    (b"\x1b[H", b"\x1b[23;7H\x1b[?25h"),
+    (b"\x1b[H", b"\x1b[6;7H\x1b[?25h"),
     (b"\x1b[C" * 14 + b"\x1b[3~" * 4 + b"app", b"edit> Real terminal app!"),
-    (b"\x1b[F", b"\x1b[23;25H\x1b[?25h"),
+    (b"\x1b[F", b"\x1b[6;25H\x1b[?25h"),
     (b"\r", b"Saved #1"),
     (b"\r", b"Task #1 [doing]"),
     (b"n", b"Ctrl-S: save"),
