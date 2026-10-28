@@ -21,25 +21,43 @@ def board_interactive(args)
     board = TaskBoard.new(store)
     terminal = File.open("/dev/tty", "r")
     output = File.open("/dev/tty", "w")
+    previous_size = []
+    dirty = true
+    pending = ""
+    expected = 1
     while board.running?()
       size = Process.run(["bash", ENV["BOARD_TERMINAL_HELPER"], "--size"])
       dimensions = size.stdout().strip().split(" ")
       rows = if dimensions.length() == 2 then dimensions[0].to_i() else 24 end
       columns = if dimensions.length() == 2 then dimensions[1].to_i() else 80 end
-      frame = "\e[?25l\e[H\e[2J" + board_frame(board, rows, columns)
-      caret = board.screen_caret()
-      if caret != nil
-        frame += "\e[#{caret[0] + 1};#{caret[1] + 1}H\e[?25h"
+      if dirty || previous_size != [rows, columns]
+        frame = "\e[?25l\e[H\e[2J" + board_frame(board, rows, columns)
+        caret = board.screen_caret()
+        if caret != nil
+          frame += "\e[#{caret[0] + 1};#{caret[1] + 1}H\e[?25h"
+        end
+        output.write(frame)
+        output.flush()
+        previous_size = [rows, columns]
+        dirty = false
       end
-      output.write(frame)
-      output.flush()
       key = terminal.read(1)
-      if key == "" then break end
-      # Complete a UTF-8 code point before rendering or editing the input.
-      byte = key.ord()
-      extra = if byte >= 240 then 3 elsif byte >= 224 then 2 elsif byte >= 192 then 1 else 0 end
-      if extra > 0 then key += terminal.read(extra) end
-      board.key(key)
+      # VMIN=0/VTIME=1 wakes us on idle timeouts as well as keys, allowing
+      # resize redraws without injecting a key or interrupting a draft.
+      if key == ""
+        if board.finish_key() then dirty = true end
+        next
+      end
+      if pending.empty?()
+        byte = key.ord()
+        expected = if byte >= 240 then 4 elsif byte >= 224 then 3 elsif byte >= 192 then 2 else 1 end
+      end
+      pending += key
+      if pending.length() == expected
+        board.key(pending)
+        pending = ""
+        dirty = !board.key_pending?()
+      end
     end
     0
   rescue error: SQLite3Error

@@ -21,6 +21,10 @@ authoritative fine-grained record.
 
 ### Changed
 
+- The terminal task board redraws on idle resize, shows focused project/task
+  forms, selects newly created projects, and keeps escape-prefixed shortcuts
+  from cancelling or flashing the active form. Timed terminal reads resume
+  accepting input after an empty timeout result.
 - The self-hosted compiler runs 1,166 of the 1,488 test programs (up from 1,035): it now
   handles destructuring and splats, case patterns and exhaustiveness, structs and sealed
   classes, `&block` parameters and block forwarding, `break`/`next`/`return` in blocks, `self`

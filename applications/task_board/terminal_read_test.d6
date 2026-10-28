@@ -1,0 +1,15 @@
+# A VMIN=0 timed terminal read returns an empty string without closing the
+# terminal. Later keystrokes must still be readable on the same File handle.
+terminal = File.open("/dev/tty", "r")
+empty = terminal.read(1)
+if empty != "" then raise RuntimeError.new("expected a timed-out read") end
+puts("timed out; send a key")
+key = ""
+attempts = 0
+while key.empty?() && attempts < 20
+  key = terminal.read(1)
+  attempts += 1
+end
+terminal.close()
+if key != "x" then raise RuntimeError.new("terminal stopped accepting input after timeout") end
+puts("terminal timed read recovered")

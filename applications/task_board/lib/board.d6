@@ -23,6 +23,11 @@ class TaskBoard
     @escape = false
     @sequence = ""
     refresh()
+    if @projects.length() == 1
+      @project = 1
+      refresh()
+    end
+    focus_first_task()
   end
 
   def running?() = @running
@@ -78,20 +83,24 @@ class TaskBoard
   def tasks(column) = @columns[column]
   def project_for(task) = @associations[task.id()].name()
 
+  def focus_first_task()
+    if selected() != nil then return end
+    index = 0
+    while index < 3
+      if !@columns[index].empty?()
+        @column = index
+        @row = 0
+        break
+      end
+      index += 1
+    end
+  end
+
   def search_input()
     @query = input()
     @row = 0
     refresh()
-    if @columns[@column].empty?()
-      index = 0
-      while index < 3
-        if !@columns[index].empty?()
-          @column = index
-          break
-        end
-        index += 1
-      end
-    end
+    focus_first_task()
   end
 
   def cancel()
@@ -117,6 +126,13 @@ class TaskBoard
     @message = ""
   end
 
+  def start_project()
+    @mode = "project"
+    @return_mode = "board"
+    @editor = BoardEditor.new()
+    @message = ""
+  end
+
   def result(value)
     if value.err?()
       errors = value.error().errors()
@@ -128,7 +144,15 @@ class TaskBoard
     @editor = BoardEditor.new()
     @message = "Saved ##{entity.id()}"
     refresh()
-    if entity.is_a?(BoardTask)
+    if entity.is_a?(BoardProject)
+      @projects.each_with_index() do |project, index|
+        if project.id() == entity.id() then @project = index + 1 end
+      end
+      @query = ""
+      @row = 0
+      refresh()
+      @message = "Created project #{entity.name()}. Press a to add a task."
+    elsif entity.is_a?(BoardTask)
       if @detail != nil && @detail.id() == entity.id() then @detail = entity end
       @column = statuses().index(entity.status())
       @columns[@column].each_with_index() do |task, index|
@@ -165,16 +189,29 @@ class TaskBoard
     end
   end
 
+  def key_pending?() = @escape || !@sequence.empty?()
+
+  # Called after an idle input timeout. A lone Escape cancels; an incomplete
+  # terminal sequence is discarded without changing the focused form.
+  def finish_key()
+    if @escape
+      @escape = false
+      cancel()
+      return true
+    end
+    @sequence = ""
+    false
+  end
+
   def key(key)
     if key == "\x03" || key == "\x04"
       @running = false
       return
     end
-    # A lone Escape cancels immediately. If it starts an arrow sequence,
-    # restore the view/edit before handling that arrow instead.
+    # Defer a lone Escape briefly so arrow/Home/Delete sequences never
+    # cancel the form or flash the board between their individual bytes.
     if key == "\e"
-      @escape_state = [@mode, @editor, @query, @column, @row, @message, @return_mode]
-      cancel()
+      if @escape then cancel() end
       @escape = true
       @sequence = ""
       return
@@ -182,17 +219,10 @@ class TaskBoard
     if @escape
       @escape = false
       if key == "[" || key == "O"
-        @mode = @escape_state[0]
-        @editor = @escape_state[1]
-        @query = @escape_state[2]
-        @column = @escape_state[3]
-        @row = @escape_state[4]
-        @message = @escape_state[5]
-        @return_mode = @escape_state[6]
-        refresh()
         @sequence = key
         return
       end
+      cancel()
     elsif !@sequence.empty?()
       @sequence += key
       # CSI parameters end in a letter or '~'; consume unknown sequences
@@ -260,9 +290,14 @@ class TaskBoard
     when "H" then move(-1)
     when "L" then move(1)
     when "p"
-      @project = (@project + 1) % (@projects.length() + 1)
-      @row = 0
-      refresh()
+      if @projects.empty?()
+        start_project()
+      else
+        @project = (@project + 1) % (@projects.length() + 1)
+        @row = 0
+        refresh()
+        focus_first_task()
+      end
     when "r" then refresh()
     when "/"
       @search_before = @query
@@ -276,11 +311,11 @@ class TaskBoard
         @detail_offset = 0
         @mode = "detail"
       end
-    when "P" then @mode = "project"
+    when "P" then start_project()
     when "a"
       if @projects.empty?()
-        @mode = "project"
-        @message = "Create a project first; then press p to select it."
+        start_project()
+        @message = "Create a project first; then add your task."
       elsif @project == 0
         @message = "Press p to select a project before adding a task."
       else
@@ -346,8 +381,7 @@ def board_detail_frame(board, rows, columns)
   end
   lines.push(board_cell("Esc/q: back  j/k: scroll  n: notes  e: title  H/L: move", width))
   lines.push(board_cell(board.message(), width))
-  prompt = if board.mode() == "edit" then board_editor_prompt(board, width, lines.length()) else "" end
-  lines.push(if prompt.empty?() then board_cell("", width) else prompt end)
+  lines.push(board_cell("", width))
   lines.join("\r\n")
 end
 
@@ -384,21 +418,40 @@ def board_notes_frame(board, rows, columns)
   lines.join("\r\n")
 end
 
+def board_form_frame(board, rows, columns)
+  width = columns - 1
+  title = {"project": "New project", "add": "Add task", "edit": "Edit task title"}[board.mode()]
+  action = if board.mode() == "project" then "create project" else "save" end
+  lines = [board_cell("Task board | Project: #{board.project_name()}", width), "",
+    board_cell("== #{title} ==", width),
+    board_cell("Enter: #{action} | Esc: cancel | Ctrl-U: clear", width), ""]
+  lines.push(board_editor_prompt(board, width, lines.length()))
+  lines.push(board_cell(board.message(), width))
+  lines.push(board_cell("Arrows: move caret | Home/End | Backspace/Delete", width))
+  while lines.length() < rows - 1
+    lines.push("")
+  end
+  lines.join("\r\n")
+end
+
 def board_frame(board, rows, columns)
   board.hide_caret()
   if rows < 10 || columns < 60
     return "Terminal too small: need 60 columns x 10 rows. Resize, or q to quit."
   end
+  if ["project", "add", "edit"].include?(board.mode())
+    return board_form_frame(board, rows, columns)
+  end
   if board.detail_view?() then return board_detail_frame(board, rows, columns) end
   width = (columns - 7) / 3
-  lines = [board_cell("Task board | #{board.project_name()} | p: next project  P: new project", columns - 1)]
+  lines = [board_cell("Task board | Project: #{board.project_name()}", columns - 1)]
   search = if board.query().empty?() then "(all tasks)" else board.query() end
   lines.push(board_cell("Search: #{search} | /: change  Ctrl-U in search: clear", columns - 1))
   lines.push((0...3).map() do |column|
     mark = if board.column() == column then ">" else " " end
     board_cell("#{mark} #{board.statuses()[column]} (#{board.tasks(column).length()})", width)
   end.join(" | "))
-  visible = rows - 8
+  visible = rows - 9
   start = if board.row() >= visible then board.row() - visible + 1 else 0 end
   (0...visible).each() do |offset|
     index = start + offset
@@ -414,9 +467,18 @@ def board_frame(board, rows, columns)
     end.join(" | "))
   end
   task = board.selected()
-  detail = if task == nil then "No task selected" else "##{task.id()} #{board.project_for(task)} / #{task.title()}" end
+  detail = if task != nil
+    "##{task.id()} #{board.project_for(task)} / #{task.title()}"
+  elsif board.projects().empty?()
+    "No projects yet. Press P to create one."
+  elsif !board.query().empty?() && board.tasks(0).empty?() && board.tasks(1).empty?() && board.tasks(2).empty?()
+    "No matching tasks. Press / to change the search."
+  else
+    "Empty column. Press a to add a task, or Left/Right to switch."
+  end
   lines.push(board_cell(detail, columns - 1))
-  lines.push(board_cell("/: search  Enter: details  a: add  e: edit  H/L: move  q: quit", columns - 1))
+  lines.push(board_cell("Arrows select | Enter details | H/L move | e edit", columns - 1))
+  lines.push(board_cell("P project | p switch | a add | / search | r reload | q quit", columns - 1))
   lines.push(board_cell(board.message(), columns - 1))
   prompt = if board.mode() == "board" then "" else board_editor_prompt(board, columns - 1, lines.length()) end
   lines.push(if prompt.empty?() then board_cell("", columns - 1) else prompt end)
