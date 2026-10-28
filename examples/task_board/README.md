@@ -113,6 +113,9 @@ reads return `T | Nil`. Its `map[U]` checks a projection's callback and returns
 `Array[U]` while retaining the repository's model `T`. The CLI project list uses
 `map[String]` to format project rows. The underlying Mjolnir schema/query API
 remains dynamic; a query returning the wrong model fails at the typed boundary.
+The compiler retains those model and projection arguments through assigned
+results and chained calls, so `records.all(query)[0]` keeps its model type and
+`records.map[String](query, formatter)[0]` keeps `String` for editor completion.
 
 The controller imports its store directly and annotates its `BoardStore`
 parameter, as do the CLI helpers. These explicit boundaries let editor

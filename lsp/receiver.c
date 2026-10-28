@@ -178,11 +178,21 @@ typedef struct ReceiverTypeBinding {
     size_t classes[DIAMOND_MAX_UNION_TYPES];
     size_t class_count;
     uint8_t array_depth;
+    uint16_t builtin_type;
+    bool has_builtin;
 } ReceiverTypeBinding;
+
+static bool binding_present(const ReceiverTypeBinding *binding) {
+    return binding->class_count>0||binding->has_builtin;
+}
+
+static const DiamondFunction *find_plain_function(const DiamondChunk *chunk,
+        const char *name,size_t length);
+static bool is_builtin_value_type(uint16_t type);
 
 static bool binding_matches_classes(const ReceiverTypeBinding *binding,
         const size_t *classes,size_t count) {
-    if(binding->class_count!=count||binding->array_depth!=0)return false;
+    if(binding->has_builtin||binding->class_count!=count||binding->array_depth!=0)return false;
     for(size_t index=0;index<count;index++) {
         bool found=false;
         for(size_t known=0;known<binding->class_count;known++)
@@ -195,12 +205,46 @@ static bool binding_matches_classes(const ReceiverTypeBinding *binding,
 static bool bind_classes(ReceiverTypeBinding *binding,const size_t *classes,
         size_t count) {
     if(count==0||count>DIAMOND_MAX_UNION_TYPES)return false;
+    if(binding->has_builtin)return false;
     if(binding->class_count!=0)return binding_matches_classes(binding,classes,count);
     for(size_t index=0;index<count;index++)
         binding->class_count=append_class(binding->classes,binding->class_count,
             DIAMOND_MAX_UNION_TYPES,classes[index]);
     binding->array_depth=0;
     return binding->class_count==count;
+}
+
+/* Keep the same narrow class/Array graph as the receiver resolver, with
+ * primitive leaves for methods returning a bound T or U. */
+static bool binding_from_set(const DiamondChunk *chunk,const DiamondTypeSet *sets,
+        size_t set_count,uint16_t index,const ReceiverTypeBinding *outer,
+        size_t outer_count,ReceiverTypeBinding *binding,unsigned depth) {
+    if(depth>32||index>=set_count)return false;
+    const DiamondTypeSet *set=&sets[index];
+    *binding=(ReceiverTypeBinding){};
+    if(set->count==1) {
+        const DiamondTypeMember member=set->members[0];
+        if(member.id>=DIAMOND_TYPE_VARIABLE_BASE&&member.id<DIAMOND_TYPE_INTERFACE_BASE) {
+            const size_t variable=(size_t)(member.id-DIAMOND_TYPE_VARIABLE_BASE);
+            if(variable>=outer_count)return false;
+            *binding=outer[variable];return binding_present(binding);
+        }
+        if(member.id==DIAMOND_TYPE_ARRAY&&member.argument_set!=DIAMOND_NO_TYPE_SET) {
+            if(!binding_from_set(chunk,sets,set_count,member.argument_set,outer,
+                    outer_count,binding,depth+1)||binding->array_depth==UINT8_MAX)return false;
+            binding->array_depth++;return true;
+        }
+        if(is_builtin_value_type(member.id)) {
+            binding->has_builtin=true;binding->builtin_type=member.id;return true;
+        }
+    }
+    for(size_t member=0;member<set->count;member++) {
+        size_t class_index;
+        if(!decode_class_type(chunk,set->members[member].id,&class_index))return false;
+        binding->class_count=append_class(binding->classes,binding->class_count,
+            DIAMOND_MAX_UNION_TYPES,class_index);
+    }
+    return binding_present(binding);
 }
 
 static size_t function_return_classes_bound(const DiamondChunk *chunk,
@@ -246,6 +290,15 @@ static bool parse_explicit_type_binding(const DiamondChunk *chunk,
     if(*index>end||tokens[*index].kind!=DIAMOND_TOKEN_IDENTIFIER)return false;
     const char *name=source+tokens[*index].span.start;
     const size_t length=tokens[*index].span.length;
+    static const struct {const char *name;uint16_t type;} builtins[]={
+        {"Int",DIAMOND_TYPE_INT},{"String",DIAMOND_TYPE_STRING},
+        {"Bool",DIAMOND_TYPE_BOOL},{"Float",DIAMOND_TYPE_FLOAT}};
+    for(size_t candidate=0;candidate<sizeof builtins/sizeof builtins[0];candidate++)
+        if(strlen(builtins[candidate].name)==length&&
+           memcmp(builtins[candidate].name,name,length)==0) {
+            binding->has_builtin=true;binding->builtin_type=builtins[candidate].type;
+            (*index)++;return true;
+        }
     if(length==5&&memcmp(name,"Array",5)==0) {
         (*index)++;
         if(*index>end||tokens[*index].kind!=DIAMOND_TOKEN_LEFT_BRACKET)return false;
@@ -273,13 +326,14 @@ static bool parse_explicit_type_binding_union(const DiamondChunk *chunk,
     while(*index<=end&&tokens[*index].kind==DIAMOND_TOKEN_PIPE) {
         ReceiverTypeBinding member={};(*index)++;
         if(!parse_explicit_type_binding(chunk,source,tokens,index,end,&member)||
-           member.array_depth!=binding->array_depth)return false;
+           member.array_depth!=binding->array_depth||
+           member.has_builtin||binding->has_builtin)return false;
         for(size_t candidate=0;candidate<member.class_count;candidate++)
             binding->class_count=append_class(binding->classes,
                 binding->class_count,DIAMOND_MAX_UNION_TYPES,
                 member.classes[candidate]);
     }
-    return binding->class_count>0;
+    return binding_present(binding);
 }
 
 static size_t explicit_type_bindings(const DiamondChunk *chunk,
@@ -298,6 +352,7 @@ static size_t explicit_type_bindings(const DiamondChunk *chunk,
 }
 
 typedef struct ReceiverCallSyntax {
+    size_t start;
     size_t left;
     size_t callee_index;
     ReceiverTypeBinding bindings[8];
@@ -310,7 +365,7 @@ typedef struct ReceiverCallSyntax {
 static bool parse_receiver_call_syntax(const DiamondChunk *chunk,
         const char *source,const DiamondToken *tokens,size_t start,size_t close,
         ReceiverCallSyntax *call) {
-    *call=(ReceiverCallSyntax){};
+    *call=(ReceiverCallSyntax){.start=start};
     size_t nesting=0;call->left=close;
     for(size_t index=close+1;index>start;index--) {
         const DiamondTokenKind kind=tokens[index-1].kind;
@@ -466,18 +521,23 @@ static bool infer_structural_class_bindings(const DiamondChunk *chunk,
     if(expected->count==1&&
        expected->members[0].id>=DIAMOND_TYPE_VARIABLE_BASE&&
        expected->members[0].id<DIAMOND_TYPE_INTERFACE_BASE) {
-        size_t classes[DIAMOND_MAX_UNION_TYPES];size_t class_count=0;
-        for(size_t index=0;index<actual->count;index++) {
-            size_t class_index;
-            if(!decode_class_type(chunk,actual->members[index].id,&class_index))
-                return false;
-            class_count=append_class(classes,class_count,
-                DIAMOND_MAX_UNION_TYPES,class_index);
-        }
         const size_t variable=(size_t)(expected->members[0].id-
             DIAMOND_TYPE_VARIABLE_BASE);
         if(variable>=binding_count)return false;
-        return bind_classes(&bindings[variable],classes,class_count);
+        ReceiverTypeBinding inferred;
+        if(!binding_from_set(chunk,actual_sets,actual_count,actual_index,
+                nullptr,0,&inferred,depth+1))return false;
+        if(!binding_present(&bindings[variable])) {
+            bindings[variable]=inferred;return true;
+        }
+        if(inferred.has_builtin)
+            return bindings[variable].has_builtin&&
+                bindings[variable].builtin_type==inferred.builtin_type&&
+                bindings[variable].array_depth==inferred.array_depth;
+        return bindings[variable].array_depth==inferred.array_depth&&
+            bindings[variable].class_count==inferred.class_count&&
+            memcmp(bindings[variable].classes,inferred.classes,
+                inferred.class_count*sizeof inferred.classes[0])==0;
     }
     if(expected->count!=1||actual->count!=1||
        expected->members[0].id!=actual->members[0].id)return false;
@@ -495,6 +555,20 @@ static bool infer_structural_class_bindings(const DiamondChunk *chunk,
                wanted->second_argument_set,actual_sets,actual_count,
                known->second_argument_set,bindings,binding_count,depth+1))
             return false;
+    }
+    if(wanted->id==DIAMOND_TYPE_CALLABLE&&wanted->callable_parameters_typed) {
+        if(!known->callable_parameters_typed||wanted->callable_arity!=known->callable_arity)
+            return false;
+        for(size_t parameter=0;parameter<wanted->callable_arity;parameter++)
+            if(wanted->callable_parameter_sets[parameter]!=DIAMOND_NO_TYPE_SET&&
+               !infer_structural_class_bindings(chunk,expected_sets,expected_count,
+                   wanted->callable_parameter_sets[parameter],actual_sets,actual_count,
+                   known->callable_parameter_sets[parameter],bindings,binding_count,depth+1))
+                return false;
+        if(wanted->callable_return_set!=DIAMOND_NO_TYPE_SET&&
+           !infer_structural_class_bindings(chunk,expected_sets,expected_count,
+               wanted->callable_return_set,actual_sets,actual_count,
+               known->callable_return_set,bindings,binding_count,depth+1))return false;
     }
     return true;
 }
@@ -591,84 +665,48 @@ static bool resolve_array_base_graph(const DiamondProgram *program,
 
 /* Follow one method's return graph in its own table. No classes escape unless
  * every indexing layer ends at a representable class union. */
-static size_t resolve_indexed_candidate(const DiamondProgram *program,
+static bool resolve_indexed_binding(const DiamondProgram *program,
         const DiamondChunk *chunk,const char *source,const DiamondToken *tokens,
         size_t start,size_t end,size_t first_index,size_t candidate,
-        size_t *candidate_count,size_t *classes,size_t capacity,unsigned depth) {
-    const DiamondTypeSet *type_sets=nullptr;size_t type_set_count=0;
-    int32_t known_set=-1;
+        size_t *candidate_count,ReceiverTypeBinding *result,unsigned depth) {
+    const DiamondTypeSet *sets=nullptr;size_t set_count=0;
+    int32_t set_index=-1;
     ReceiverTypeBinding bindings[8]={};size_t binding_count=0;
     if(!resolve_array_base_graph(program,chunk,source,tokens,start,first_index-1,
-            &type_sets,&type_set_count,&known_set,bindings,&binding_count,
-            candidate,candidate_count,depth))
-        return 0;
-    if(known_set<0||(size_t)known_set>=type_set_count)return 0;
+            &sets,&set_count,&set_index,bindings,&binding_count,
+            candidate,candidate_count,depth)||set_index<0||
+       !binding_from_set(chunk,sets,set_count,(uint16_t)set_index,bindings,
+           binding_count,result,depth+1))return false;
     size_t token=first_index;
-    int active_binding=-1;
     while(token<=end) {
-        if(tokens[token].kind!=DIAMOND_TOKEN_LEFT_BRACKET)return 0;
+        if(tokens[token].kind!=DIAMOND_TOKEN_LEFT_BRACKET||result->array_depth==0)
+            return false;
         size_t nesting=0,close=token;
         for(size_t index=token;index<=end;index++) {
             if(tokens[index].kind==DIAMOND_TOKEN_LEFT_BRACKET)nesting++;
             else if(tokens[index].kind==DIAMOND_TOKEN_RIGHT_BRACKET&&
                     --nesting==0) {close=index;break;}
         }
-        if(close==token)return 0;
-        if(active_binding>=0) {
-            if(bindings[(size_t)active_binding].array_depth==0)return 0;
-            bindings[(size_t)active_binding].array_depth--;
-        } else {
-            const DiamondTypeSet *outer=&type_sets[(size_t)known_set];
-            if(outer->count==1&&
-               outer->members[0].id>=DIAMOND_TYPE_VARIABLE_BASE&&
-               outer->members[0].id<DIAMOND_TYPE_INTERFACE_BASE) {
-                const size_t variable=(size_t)(outer->members[0].id-
-                    DIAMOND_TYPE_VARIABLE_BASE);
-                if(variable>=binding_count||bindings[variable].array_depth==0)
-                    return 0;
-                bindings[variable].array_depth--;active_binding=(int)variable;
-            } else {
-                if(outer->count!=1||outer->members[0].id!=DIAMOND_TYPE_ARRAY||
-                   outer->members[0].argument_set==DIAMOND_NO_TYPE_SET||
-                   outer->members[0].argument_set>=type_set_count)return 0;
-                known_set=(int32_t)outer->members[0].argument_set;
-            }
-        }
-        token=close+1;
+        if(close==token)return false;
+        result->array_depth--;token=close+1;
     }
-    if(active_binding>=0) {
-        const ReceiverTypeBinding binding=bindings[(size_t)active_binding];
-        if(binding.array_depth!=0)return 0;
-        size_t count=0;
-        for(size_t index=0;index<binding.class_count;index++)
-            count=append_class(classes,count,capacity,binding.classes[index]);
-        return count;
-    }
-    const DiamondTypeSet *elements=&type_sets[(size_t)known_set];
+    return result->array_depth==0;
+}
+
+static size_t resolve_indexed_candidate(const DiamondProgram *program,
+        const DiamondChunk *chunk,const char *source,const DiamondToken *tokens,
+        size_t start,size_t end,size_t first_index,size_t candidate,
+        size_t *candidate_count,size_t *classes,size_t capacity,unsigned depth) {
+    ReceiverTypeBinding binding;
+    if(!resolve_indexed_binding(program,chunk,source,tokens,start,end,first_index,
+            candidate,candidate_count,&binding,depth))return 0;
     size_t count=0;
-    for(size_t index=0;index<elements->count;index++) {
-        size_t class_index;
-        const uint16_t type=elements->members[index].id;
-        if(type>=DIAMOND_TYPE_VARIABLE_BASE&&type<DIAMOND_TYPE_INTERFACE_BASE) {
-            const size_t variable=(size_t)(type-DIAMOND_TYPE_VARIABLE_BASE);
-            if(variable>=binding_count)return 0;
-            if(bindings[variable].array_depth!=0)return 0;
-            if(bindings[variable].class_count==0)return 0;
-            for(size_t member=0;member<bindings[variable].class_count;member++)
-                count=append_class(classes,count,capacity,
-                    bindings[variable].classes[member]);
-            continue;
-        } else if(!decode_class_type(chunk,type,&class_index))return 0;
-        count=append_class(classes,count,capacity,class_index);
-    }
+    for(size_t index=0;index<binding.class_count;index++)
+        count=append_class(classes,count,capacity,binding.classes[index]);
     return count;
 }
 
-static size_t resolve_indexed_expression(const DiamondProgram *program,
-        const DiamondChunk *chunk,const char *source,const DiamondToken *tokens,
-        size_t start,size_t end,size_t *classes,size_t capacity,
-        bool *is_singleton,unsigned depth) {
-    if(tokens[start].kind!=DIAMOND_TOKEN_IDENTIFIER)return 0;
+static size_t first_receiver_index(const DiamondToken *tokens,size_t start,size_t end) {
     size_t first_index=end,paren_depth=0;
     for(size_t index=start+1;index<=end;index++) {
         const DiamondTokenKind kind=tokens[index].kind;
@@ -689,6 +727,15 @@ static size_t resolve_indexed_expression(const DiamondProgram *program,
             first_index=index;break;
         }
     }
+    return first_index;
+}
+
+static size_t resolve_indexed_expression(const DiamondProgram *program,
+        const DiamondChunk *chunk,const char *source,const DiamondToken *tokens,
+        size_t start,size_t end,size_t *classes,size_t capacity,
+        bool *is_singleton,unsigned depth) {
+    if(tokens[start].kind!=DIAMOND_TOKEN_IDENTIFIER)return 0;
+    const size_t first_index=first_receiver_index(tokens,start,end);
     if(tokens[first_index].kind!=DIAMOND_TOKEN_LEFT_BRACKET)return 0;
 
     size_t count=0,candidate_count=1;
@@ -716,6 +763,9 @@ static size_t infer_class_bindings(const DiamondProgram *program,
         size_t start,size_t end,const DiamondFunction *function,
         ReceiverTypeBinding *bindings,unsigned depth) {
     if(start>end||function->type_variable_count==0)return 0;
+    if(end>=start+3&&tokens[start].kind==DIAMOND_TOKEN_STAR&&
+       tokens[start+1].kind==DIAMOND_TOKEN_LEFT_BRACKET&&
+       tokens[end].kind==DIAMOND_TOKEN_RIGHT_BRACKET) {start+=2;end--;}
     for(size_t index=0;index<function->type_variable_count;index++)
         bindings[index]=(ReceiverTypeBinding){};
     size_t argument_start=start,parameter=0,paren_depth=0,bracket_depth=0;
@@ -728,6 +778,16 @@ static size_t infer_class_bindings(const DiamondProgram *program,
         else if(!at_end&&kind==DIAMOND_TOKEN_RIGHT_BRACKET&&bracket_depth>0)
             bracket_depth--;
         if(kind!=DIAMOND_TOKEN_COMMA||paren_depth!=0||bracket_depth!=0)continue;
+        if(argument_start+2<index&&tokens[argument_start].kind==DIAMOND_TOKEN_IDENTIFIER&&
+           tokens[argument_start+1].kind==DIAMOND_TOKEN_COLON) {
+            const DiamondToken keyword=tokens[argument_start];
+            parameter=DIAMOND_MAX_DECLARED_PARAMETERS;
+            for(size_t slot=0;slot<function->arity&&slot<DIAMOND_MAX_DECLARED_PARAMETERS;slot++)
+                if(strlen(function->parameter_names[slot])==keyword.span.length&&
+                   memcmp(function->parameter_names[slot],source+keyword.span.start,
+                       keyword.span.length)==0) {parameter=slot;break;}
+            argument_start+=2;
+        }
         if(parameter<DIAMOND_MAX_DECLARED_PARAMETERS&&argument_start<index) {
             const uint16_t expected_index=function->parameter_type_sets[parameter];
             if(expected_index!=DIAMOND_NO_TYPE_SET&&
@@ -747,12 +807,27 @@ static size_t infer_class_bindings(const DiamondProgram *program,
                             &known_type,&actual,&tooling);
                         (void)known_type;
                         if(actual<0)actual=tooling;
-                        if(actual>=0&&(size_t)actual<owner->type_set_count)
+                        if(actual>=0&&(size_t)actual<owner->type_set_count) {
                             inferred_structurally=infer_structural_class_bindings(
                                 chunk,function->type_sets,function->type_set_count,
                                 expected_index,owner->type_sets,
                                 owner->type_set_count,(uint16_t)actual,bindings,
                                 function->type_variable_count,0);
+                            if(!inferred_structurally)return 0;
+                        }
+                    } else if(local==nullptr&&expected->count==1&&
+                              expected->members[0].id==DIAMOND_TYPE_CALLABLE) {
+                        const DiamondFunction *callback=find_plain_function(chunk,
+                            source+argument.span.start,argument.span.length);
+                        const uint16_t wanted=expected->members[0].callable_return_set;
+                        if(callback!=nullptr&&callback->type_variable_count==0&&
+                           wanted!=DIAMOND_NO_TYPE_SET&&callback->return_type_set!=DIAMOND_NO_TYPE_SET) {
+                            inferred_structurally=infer_structural_class_bindings(chunk,
+                                function->type_sets,function->type_set_count,wanted,
+                                callback->type_sets,callback->type_set_count,
+                                callback->return_type_set,bindings,function->type_variable_count,0);
+                            if(!inferred_structurally)return 0;
+                        }
                     }
                 }
                 if(!inferred_structurally&&expected->count==1&&
@@ -772,8 +847,8 @@ static size_t infer_class_bindings(const DiamondProgram *program,
         }
         parameter++;argument_start=index+1;
     }
-    for(size_t index=0;index<function->type_variable_count;index++)
-        if(bindings[index].class_count==0)return 0;
+    for(size_t index=function->class_type_variable?1u:0u;index<function->type_variable_count;index++)
+        if(!binding_present(&bindings[index]))return 0;
     return function->type_variable_count;
 }
 
@@ -786,6 +861,55 @@ static bool resolve_target_bindings(const DiamondProgram *program,
     *binding_count=call->binding_count;
     if(function->type_variable_count==0)
         return !call->has_explicit_bindings;
+    if(function->class_type_variable) {
+        if(depth>32||function->type_variable_count>8)return false;
+        if(call->has_explicit_bindings) {
+            if(call->binding_count+1!=function->type_variable_count)return false;
+            memmove(bindings+1,bindings,call->binding_count*sizeof bindings[0]);
+        } else {
+            /* Inference reserves slot zero for the receiver; it must not
+             * require that slot to appear among the public arguments. */
+            if(function->type_variable_count>1&&
+               infer_class_bindings(program,chunk,source,tokens,argument_start,
+                   argument_end,function,bindings,depth)!=function->type_variable_count)
+                return false;
+        }
+        bindings[0]=(ReceiverTypeBinding){};
+        if(call->callee_index<call->start+2)return false;
+        const size_t receiver_end=call->callee_index-2;
+        const DiamondTypeSet *sets=nullptr;size_t set_count=0,candidates=0;
+        int32_t set_index=-1;ReceiverTypeBinding outer[8]={};size_t outer_count=0;
+        if(!resolve_array_base_graph(program,chunk,source,tokens,call->start,
+                receiver_end,&sets,&set_count,&set_index,outer,&outer_count,
+                0,&candidates,depth+1)||candidates!=1||set_index<0||
+           (size_t)set_index>=set_count) {
+            /* A directly specialized constructor has no function return
+             * table: its class argument is written on the receiver. */
+            ReceiverCallSyntax constructor;ReceiverCallTargets targets;
+            if(tokens[receiver_end].kind!=DIAMOND_TOKEN_RIGHT_PAREN||
+               !parse_receiver_call_syntax(chunk,source,tokens,call->start,receiver_end,&constructor)||
+               !resolve_call_targets(program,chunk,source,tokens,call->start,&constructor,
+                   depth+1,&targets)||!targets.constructor||targets.receiver_count!=1||
+               targets.receiver_classes[0]!=function->owner_class||
+               constructor.callee_index<call->start+4||
+               tokens[call->start+1].kind!=DIAMOND_TOKEN_LEFT_BRACKET||
+               tokens[constructor.callee_index-2].kind!=DIAMOND_TOKEN_RIGHT_BRACKET||
+               explicit_type_bindings(chunk,source,tokens,call->start+2,
+                   constructor.callee_index-3,&bindings[0],1)!=1)return false;
+        } else {
+            const DiamondTypeSet *set=&sets[set_index];
+            if(set->count!=1||set->members[0].id!=
+               DIAMOND_TYPE_CLASS_BASE+function->owner_class)return false;
+            uint16_t argument=set->members[0].argument_set;
+            if(argument==DIAMOND_NO_TYPE_SET||argument>=set_count)return false;
+            if(!binding_from_set(chunk,sets,set_count,argument,outer,outer_count,
+                    &bindings[0],depth+1))return false;
+        }
+        *binding_count=function->type_variable_count;
+        for(size_t index=0;index<*binding_count;index++)
+            if(!binding_present(&bindings[index]))return false;
+        return true;
+    }
     if(!call->has_explicit_bindings)
         *binding_count=infer_class_bindings(program,chunk,source,tokens,
             argument_start,argument_end,function,bindings,depth);
@@ -879,6 +1003,17 @@ static size_t resolve_expression(const DiamondProgram *program,const DiamondChun
         const char *source,const DiamondToken *tokens,size_t start,size_t end,
         size_t *classes,size_t capacity,bool *is_singleton,unsigned depth) {
     if(start>end||capacity==0||depth>32)return 0;
+    if(end>=start+3&&tokens[start].kind==DIAMOND_TOKEN_IDENTIFIER&&
+       tokens[start+1].kind==DIAMOND_TOKEN_LEFT_BRACKET&&
+       tokens[end].kind==DIAMOND_TOKEN_RIGHT_BRACKET) {
+        ReceiverTypeBinding argument={};bool singleton=false;
+        const size_t count=resolve_name(program,chunk,source,tokens[start],
+            classes,capacity,&singleton);
+        if(count==1&&singleton&&chunk->classes[classes[0]]->type_parameter[0]!='\0'&&
+           explicit_type_bindings(chunk,source,tokens,start+2,end-1,&argument,1)==1) {
+            *is_singleton=true;return count;
+        }
+    }
     /* Grouping parentheses do not change the receiver. Only unwrap when the
      * opening token's matching close is this range's final token; otherwise
      * the trailing `)` belongs to a call and resolve_call must inspect it. */
@@ -1184,15 +1319,48 @@ static bool builtin_type_of(const DiamondProgram *program,const DiamondChunk *ch
         if(!is_builtin_value_type(found))return false;
         *type=found;return true;
     }
-    /* [..] / {..} spanning the whole range is an Array / Hash literal; after
-     * something else it is an index, whose element type is not known. */
+    /* [..] / {..} spanning the whole range is an Array / Hash literal;
+     * indexing a typed expression follows its element graph below. */
     if(tokens[end].kind==DIAMOND_TOKEN_RIGHT_BRACKET&&
        matching_open(tokens,start,end,DIAMOND_TOKEN_LEFT_BRACKET,
            DIAMOND_TOKEN_RIGHT_BRACKET)==start) {*type=DIAMOND_TYPE_ARRAY;return true;}
     if(tokens[end].kind==DIAMOND_TOKEN_RIGHT_BRACE&&
        matching_open(tokens,start,end,DIAMOND_TOKEN_LEFT_BRACE,
            DIAMOND_TOKEN_RIGHT_BRACE)==start) {*type=DIAMOND_TYPE_HASH;return true;}
+    if(tokens[end].kind==DIAMOND_TOKEN_RIGHT_BRACKET) {
+        const size_t first=first_receiver_index(tokens,start,end);
+        size_t candidates=1;uint16_t shared=DIAMOND_TYPE_NONE;
+        for(size_t candidate=0;candidate<candidates;candidate++) {
+            ReceiverTypeBinding result;
+            if(first==start||tokens[first].kind!=DIAMOND_TOKEN_LEFT_BRACKET||
+               !resolve_indexed_binding(program,chunk,source,tokens,start,end,first,
+                   candidate,&candidates,&result,depth+1)||!result.has_builtin||
+               (candidate>0&&shared!=result.builtin_type))return false;
+            shared=result.builtin_type;
+        }
+        *type=shared;return true;
+    }
     if(tokens[end].kind!=DIAMOND_TOKEN_RIGHT_PAREN)return false;
+    ReceiverCallSyntax generic_call;ReceiverCallTargets generic_targets;
+    if(parse_receiver_call_syntax(chunk,source,tokens,start,end,&generic_call)&&
+       resolve_call_targets(program,chunk,source,tokens,start,&generic_call,
+           depth+1,&generic_targets)&&!generic_targets.constructor&&
+       generic_targets.function_count>0) {
+        bool complete=true;uint16_t shared=DIAMOND_TYPE_NONE;
+        for(size_t candidate=0;candidate<generic_targets.function_count;candidate++) {
+            const DiamondFunction *function=generic_targets.functions[candidate];
+            ReceiverTypeBinding bindings[8]={},returned={};size_t count=0;
+            if(function->type_variable_count==0||
+               !resolve_target_bindings(program,chunk,source,tokens,generic_call.left+1,
+                   end-1,function,&generic_call,bindings,&count,depth+1)||
+               !binding_from_set(chunk,function->type_sets,function->type_set_count,
+                   receiver_return_set(function),bindings,count,&returned,depth+1)||
+               !returned.has_builtin||returned.array_depth!=0||
+               (candidate>0&&returned.builtin_type!=shared)) {complete=false;break;}
+            shared=returned.builtin_type;
+        }
+        if(complete) {*type=shared;return true;}
+    }
     const size_t open=matching_open(tokens,start,end,DIAMOND_TOKEN_LEFT_PAREN,
         DIAMOND_TOKEN_RIGHT_PAREN);
     if(open==start||tokens[open-1].kind!=DIAMOND_TOKEN_IDENTIFIER)return false;

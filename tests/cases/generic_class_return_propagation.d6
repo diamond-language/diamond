@@ -1,0 +1,26 @@
+class Records[T]
+  def initialize(value: T)
+    @value = value
+  end
+  def value() -> T = @value
+  def all() -> Array[T] = [@value]
+  def map[U](transform: Callable[[T], U]) -> Records[U] = Records[U].new(transform(self.value()))
+  def project[U](transform: Callable[[T], U]) -> Array[U] = [transform(self.value())]
+  def keep[U](value: T, other: U) -> T = value
+end
+def label(value: Int) -> String = value.to_s()
+def identity(value: String) -> String = value
+rows = Records[Int].new(42)
+mapped = rows.map[String](label)
+puts(mapped.value().upcase())
+puts(rows.map(label).map(identity).value())
+puts(rows.map(transform: label).value())
+puts(rows.map(*[label]).value())
+puts(rows.project[String](label)[0].upcase())
+puts(rows.all()[0] + 1)
+puts(rows.keep[String](44, "other") + 1)
+contextual = rows.map[String]() do |value|
+  value.to_s()
+end
+puts(contextual.value())
+nil

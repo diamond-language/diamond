@@ -656,6 +656,9 @@ DIAMOND_INTERNAL void publish_known_type_set(Compiler *compiler,uint16_t reg,
 DIAMOND_INTERNAL void publish_call_return_type(Compiler *compiler,uint16_t reg,
         const DiamondFunction *target,const uint16_t *bindings,
         size_t binding_count);
+DIAMOND_INTERNAL void publish_bound_instance_return_type(Compiler *compiler,uint16_t reg,
+        const DiamondFunction *target,const uint16_t *bindings,
+        size_t binding_count,bool tooling_only);
 DIAMOND_INTERNAL void publish_function_callable_type(Compiler *compiler,uint16_t reg,
         const DiamondFunction *target);
 DIAMOND_INTERNAL uint16_t add_string_range(Compiler *compiler,size_t start,size_t length,

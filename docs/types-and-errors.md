@@ -98,8 +98,14 @@ parameter from nested definitions remain future work. Native objects and
 Callable types are not yet supported as explicit class type arguments. Unions
 combining a type variable with other members, repeated outer types with different
 arguments, and contracts beyond the runtime binding graph's capacity are also
-rejected rather than weakened. Calls retain runtime checks while compiler and
-editor propagation of the instance type argument remains future work.
+rejected rather than weakened. Calls retain runtime checks. On a receiver with a
+known class argument, declared method returns substitute that argument and the
+method's own explicit or inferred arguments: `Box[Int].new(42).map[String](...)` carries
+`Box[String]` through assignments and chained calls, and record projections retain
+`Array[Model]` or `Array[String]`. The editor follows representable class and Array
+graphs and primitive bound returns; missing or conflicting bindings remain
+conservative. Inferred receiver facts remain editor-only and never remove runtime
+checks.
 
 ```ruby
 interface Named

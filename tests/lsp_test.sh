@@ -3317,6 +3317,41 @@ response="$(read_message)"
 [[ "$response" == *'"severity":1'* && "$response" == *'"start":{"line":0,"character":11}'* ]]
 count=$((count + 1))
 
+# Generic class/method return substitutions survive an imported declaration.
+cat > "$work/generic_records.d6" <<'EOF'
+class RecordModel
+  def title() -> String = "project"
+end
+class TypedRecords[T]
+  def initialize(value: T)
+    @value = value
+  end
+  def value() -> T = @value
+  def all() -> Array[T] = [@value]
+  def map[U](f: Callable[[T], U]) -> TypedRecords[U] = TypedRecords[U].new(f(self.value()))
+end
+def record_title(value: RecordModel) -> String = value.title()
+EOF
+generic_records_uri="file://$work/use_generic_records.d6"
+send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$generic_records_uri"'","text":"require \"generic_records\"\ndef inspect_records()\n  rows = TypedRecords[RecordModel].new(RecordModel.new())\n  rows.all()[0].title()\n  labels = rows.map[String](record_title)\n  labels.value().upcase()\nend\n"}}}'
+response="$(read_message)"
+[[ "$response" == *'"diagnostics":[]'* ]]
+count=$((count + 1))
+send '{"jsonrpc":"2.0","id":3100,"method":"textDocument/completion","params":{"textDocument":{"uri":"'"$generic_records_uri"'"},"position":{"line":3,"character":16}}}'
+response="$(read_message)"
+[[ "$response" == *'"label":"title"'* ]]
+count=$((count + 1))
+send '{"jsonrpc":"2.0","id":3101,"method":"textDocument/completion","params":{"textDocument":{"uri":"'"$generic_records_uri"'"},"position":{"line":5,"character":17}}}'
+response="$(read_message)"
+[[ "$response" == *'"label":"upcase"'* ]]
+count=$((count + 1))
+send '{"jsonrpc":"2.0","id":3102,"method":"textDocument/definition","params":{"textDocument":{"uri":"'"$generic_records_uri"'"},"position":{"line":3,"character":18}}}'
+response="$(read_message)"
+[[ "$response" == *'"uri":"file://'*'/generic_records.d6"'* ]]
+count=$((count + 1))
+send '{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"'"$generic_records_uri"'"}}}'
+read_message >/dev/null
+
 # --- shutdown then exit: clean exit code 0 ---
 
 send '{"jsonrpc":"2.0","id":3,"method":"shutdown"}'

@@ -1739,6 +1739,28 @@ void publish_instance_return_type(Compiler *compiler,uint16_t reg,
     if(forward_target!=nullptr)matching_target=forward_target;
     if(publish_reader_return_type(compiler,reg,receiver,receiver_set_index,name)) {
         /* Only advisory scope metadata was published. */
+    } else if(matching_target!=nullptr&&matching_target->class_type_variable) {
+        if(matching_target->type_variable_count==0||
+           matching_target->type_variable_count>8)return;
+        uint16_t resolved[8];
+        for(size_t index=0;index<8;index++)resolved[index]=DIAMOND_NO_TYPE_SET;
+        /* Explicit arguments omit T; inferred argument arrays already reserve
+         * its slot. The receiver, never a method argument, supplies T. */
+        const size_t offset=binding_count==matching_target->type_variable_count?0u:1u;
+        for(size_t index=0;index<binding_count&&index+offset<8;index++)
+            resolved[index+offset]=bindings[index];
+        resolved[0]=DIAMOND_NO_TYPE_SET;
+        int32_t receiver_set=receiver_set_index;
+        const bool tooling_only=receiver_set<0;
+        if(tooling_only)receiver_set=compiler->tooling_type_sets[receiver];
+        if(receiver_set>=0&&(size_t)receiver_set<compiler->function->type_set_count) {
+            const DiamondTypeSet *set=&compiler->function->type_sets[receiver_set];
+            if(set->count==1&&set->members[0].id==
+               DIAMOND_TYPE_CLASS_BASE+matching_target->owner_class)
+                resolved[0]=set->members[0].argument_set;
+        }
+        publish_bound_instance_return_type(compiler,reg,matching_target,resolved,
+            matching_target->type_variable_count,tooling_only);
     } else if(matching_target!=nullptr)
         publish_call_return_type(compiler,reg,matching_target,bindings,
             binding_count);

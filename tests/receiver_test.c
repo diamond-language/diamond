@@ -127,6 +127,44 @@ static int check_builtin(const DiamondProgram *program,const DiamondChunk *chunk
     return 1;
 }
 
+static int check_generic_return_rejections(void) {
+    static const char prefix[]=
+        "class Box[T]\n"
+        "  def initialize(value: T)\n    @value = value\n  end\n"
+        "  def value() -> T = @value\n"
+        "  def map[U](f: Callable[[T], U]) -> Box[U] = Box[U].new(f(self.value()))\n"
+        "  def all() -> Array[T] = [@value]\n"
+        "end\n"
+        "def label(value: Int) -> String = value.to_s()\n"
+        "def only_int(value: Int) -> Int = value\n";
+    static const char *const bodies[]={
+        "def valid(box: Box[Int]) -> Int = box.value()\n",
+        "def wrong() -> Int = Box[String].new(\"text\").value()\n",
+        "def wrong(box: Box[Int]) -> String = box.value()\n",
+        "def wrong(box: Box[Int]) -> Box[Int] = box.map[String](label)\n",
+        "def wrong(box: Box[Int]) -> Box[Int] = box.map(label)\n",
+        "def wrong(box: Box[Int]) -> Box[Int] = box.map(f: label)\n",
+        "def wrong(box: Box[Int]) -> Box[Int] = box.map(*[label])\n",
+        "def wrong(box: Box[Int]) -> Array[String] = box.all()\n",
+        "def wrong(box: Box[String]) = only_int(box.value())\n"
+    };
+    int failed=0;
+    for(size_t index=0;index<sizeof bodies/sizeof bodies[0];index++) {
+        char source[2048];snprintf(source,sizeof source,"%s%s",prefix,bodies[index]);
+        DiamondProgram *program=calloc(1,sizeof *program);
+        if(program==nullptr)return 1;
+        DiamondDiagnostic diagnostic;
+        const bool compiled=diamond_compile(source,program,&diagnostic);
+        if(compiled!=(index==0)) {
+            fprintf(stderr,"unexpected generic return compile result %zu: %s\n",
+                index,compiled?"accepted incompatible return":diagnostic.message);
+            failed=1;
+        }
+        diamond_program_free(program);free(program);
+    }
+    return failed;
+}
+
 int main(void) {
 #define REPEAT_16(text) text text text text text text text text text text text text text text text text
     static const char source[] =
@@ -140,6 +178,49 @@ int main(void) {
         "    1\n"
         "  end\n"
         "end\n"
+        "class GenericRecords[T]\n"
+        "  def initialize(value: T)\n"
+        "    @value = value\n"
+        "  end\n"
+        "  def value() -> T = @value\n"
+        "  def all() -> Array[T] = [@value]\n"
+        "  def map[U](transform: Callable[[T], U]) -> GenericRecords[U] = GenericRecords[U].new(transform(self.value()))\n"
+        "  def project[U](transform: Callable[[T], U]) -> Array[U] = [transform(self.value())]\n"
+        "  def choose[U](left: U, right: U) -> U = left\n"
+        "end\n"
+        "def generic_leaf(value: Pet) -> Leaf = Leaf.new()\n"
+        "def inferred_records() = GenericRecords[Pet].new(Pet.new())\n"
+        "def generic_label(value: Int) -> String = value.to_s()\n"
+        "def generic_record_receivers()\n"
+        "  rows = GenericRecords[Pet].new(Pet.new())\n"
+        "  rows.value().bark()\n"
+        "  rows.all()[0].bark()\n"
+        "  mapped_rows = rows.map[Leaf](generic_leaf)\n"
+        "  mapped_rows.value().ping()\n"
+        "  rows.map(generic_leaf).value().ping()\n"
+        "  rows.map(transform: generic_leaf).value().ping()\n"
+        "  rows.map(*[generic_leaf]).value().ping()\n"
+        "  rows.project[Leaf](generic_leaf)[0].ping()\n"
+        "  blocked_rows = rows.map[Leaf]() do |pet| Leaf.new() end\n"
+        "  blocked_rows.value().ping()\n"
+        "  inferred_rows = inferred_records()\n"
+        "  inferred_rows.value().bark()\n"
+        "  GenericRecords[Pet].new(Pet.new()).value().bark()\n"
+        "  strings = GenericRecords[String].new(\"text\")\n"
+        "  strings.value().upcase()\n"
+        "  integers = GenericRecords[Int].new(42)\n"
+        "  integers.value().to_s()\n"
+        "  integers.map[String](generic_label).value().upcase()\n"
+        "  integers.map(generic_label).value().upcase()\n"
+        "  integers.project[String](generic_label)[0].upcase()\n"
+        "end\n"
+        "def unbound_record_receiver(rows: GenericRecords)\n"
+        "  rows.value().bark()\n"
+        "end\n"
+        "def conflicting_record_receiver(rows: GenericRecords[Pet])\n"
+        "  rows.choose(Pet.new(), Leaf.new()).bark()\n"
+        "end\n"
+        "def checked_generic_return() -> Leaf = inferred_records().value()\n"
         "class SchemaHolder\n"
         "  attr_reader pet\n"
         "  def initialize()\n"
@@ -995,7 +1076,31 @@ int main(void) {
         free(combined);free(program);return 1;
     }
     const DiamondChunk chunk=diamond_program_chunk(program);
-    int failed=0;
+    int failed=check_generic_return_rejections();
+    failed|=check_receiver(program,&chunk,combined,"rows.value().","Pet",false);
+    failed|=check_receiver(program,&chunk,combined,"rows.all()[0].","Pet",false);
+    failed|=check_receiver(program,&chunk,combined,"mapped_rows.value().","Leaf",false);
+    failed|=check_receiver(program,&chunk,combined,"rows.map(generic_leaf).value().","Leaf",false);
+    failed|=check_receiver(program,&chunk,combined,"rows.map(transform: generic_leaf).value().","Leaf",false);
+    failed|=check_receiver(program,&chunk,combined,"rows.map(*[generic_leaf]).value().","Leaf",false);
+    failed|=check_receiver(program,&chunk,combined,"rows.project[Leaf](generic_leaf)[0].","Leaf",false);
+    failed|=check_receiver(program,&chunk,combined,"blocked_rows.value().","Leaf",false);
+    failed|=check_receiver(program,&chunk,combined,"inferred_rows.value().","Pet",false);
+    failed|=check_receiver(program,&chunk,combined,
+        "GenericRecords[Pet].new(Pet.new()).value().","Pet",false);
+    failed|=check_builtin(program,&chunk,combined,"strings.value().",true,DIAMOND_TYPE_STRING);
+    failed|=check_builtin(program,&chunk,combined,"integers.value().",true,DIAMOND_TYPE_INT);
+    failed|=check_builtin(program,&chunk,combined,
+        "integers.map[String](generic_label).value().",true,DIAMOND_TYPE_STRING);
+    failed|=check_builtin(program,&chunk,combined,
+        "integers.map(generic_label).value().",true,DIAMOND_TYPE_STRING);
+    failed|=check_builtin(program,&chunk,combined,
+        "integers.project[String](generic_label)[0].",true,DIAMOND_TYPE_STRING);
+    failed|=check_receiver_after(program,&chunk,combined,"def unbound_record_receiver",
+        "rows.value().",nullptr,false);
+    failed|=check_receiver(program,&chunk,combined,
+        "rows.choose(Pet.new(), Leaf.new()).",nullptr,false);
+    failed|=check_return_contract(&chunk,"checked_generic_return");
     failed|=check_receiver(program,&chunk,combined,"LateSchemaHolder.new().pet().","Pet",false);
     failed|=check_receiver(program,&chunk,combined,"MutableHolder.new().pet().",nullptr,false);
     failed|=check_receiver(program,&chunk,combined,"ConflictingHolder.new().pet().",nullptr,false);
