@@ -51,7 +51,11 @@ def session(keys, stop_signal=None, exit_key=b"q"):
     try:
         until(b"Task board")
         for key, marker in keys:
-            os.write(master, key)
+            if isinstance(key, tuple):
+                fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", *key, 0, 0))
+                os.write(master, b"\x00")  # redraw without changing the draft
+            else:
+                os.write(master, key)
             until(marker)
         # A resize is picked up on the next input event.
         fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 8, 40, 0, 0))
@@ -103,6 +107,34 @@ session([
     (b"/", b"search>"),
     (b"SECOND LINE\r\r", b"Task #1 [doing]"),
     (b"q", b"Task board"),
+    (b"e", b"edit> Real terminal task!"),
+    (b"\x1b[H", b"\x1b[23;7H\x1b[?25h"),
+    (b"\x1b[C" * 14 + b"\x1b[3~" * 4 + b"app", b"edit> Real terminal app!"),
+    (b"\x1b[F", b"\x1b[23;25H\x1b[?25h"),
+    (b"\r", b"Saved #1"),
+    (b"\r", b"Task #1 [doing]"),
+    (b"n", b"Ctrl-S: save"),
+    (b"\x1b[7~" + b"\x1b[3~" * 6 + b"Updated", b"Updated line"),
+    (b"\x1b[A\x1bOHKeep: ", b"Keep: Remember the benchmark"),
+    (b"\x1bOF\x1b[B", b"\x1b[5;13H\x1b[?25h"),
+    (b"!\x13", b"Saved #1"),
+    (b"n", b"Ctrl-S: save"),
+    (b"\x1b[1;5H", b"\x1b[4;1H\x1b[?25h"),
+    (b"\x1b[3~DROP\x1b", b"Keep: Remember the benchmark"),
+    (b"q", b"Task board"),
+])
+session([
+    (b"/", b"search>"),
+    (b"terminal app\r\r", b"Task #1 [doing]"),
+    (b"n", b"Ctrl-S: save"),
+    (b"\x15" + b"\r".join(f"line{number:02}".encode() for number in range(30)), b"line29"),
+    (b"\x1b[1;5H", b"\x1b[4;1H\x1b[?25h"),
+    (b"\x1b[1;5F", b"\x1b[20;7H\x1b[?25h"),
+    ((12, 60), b"\x1b[8;7H\x1b[?25h"),
+    (b"\x1b[1;5H", b"\x1b[4;1H\x1b[?25h"),
+    (b"\x1b[1;5F", b"\x1b[8;7H\x1b[?25h"),
+    (b"\x1b", b"Keep: Remember the benchmark"),
+    (b"q", b"Task board"),
 ])
 session([], signal.SIGTERM)
 session([], exit_key=b"\x03")
@@ -110,10 +142,10 @@ result = subprocess.run(
     [os.environ["DIAMOND_BIN"], str(root / "applications/task_board/app.d6"),
      "--db", str(database), "list"], capture_output=True, text=True, check=True,
 )
-assert result.stdout.strip() == "#1 [doing] PTY project / Real terminal task!", result.stdout
+assert result.stdout.strip() == "#1 [doing] PTY project / Real terminal app!", result.stdout
 result = subprocess.run(
     [os.environ["DIAMOND_BIN"], str(root / "applications/task_board/app.d6"),
      "--db", str(database), "show", "1"], capture_output=True, text=True, check=True,
 )
-assert result.stdout.strip().endswith("Notes:\nRemember the benchmark\nSecond line"), result.stdout
+assert result.stdout.strip().endswith("Notes:\nKeep: Remember the benchmark\nUpdated line!"), result.stdout
 print("task board PTY checks passed")

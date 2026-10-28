@@ -7,6 +7,7 @@ trap 'rm -rf "$work"' EXIT
 bash "$root/tools/install_local_cuts.sh" "$work" >/dev/null
 cd "$work"
 "$diamond" "$root/applications/task_board/store_test.d6"
+"$diamond" "$root/applications/task_board/editor_test.d6"
 "$diamond" "$root/applications/task_board/board_test.d6"
 "$diamond" "$root/applications/task_board/migration_test.d6" "$work/legacy.db"
 run() { "$diamond" "$root/applications/task_board/app.d6" --db "$work/board.db" "$@"; }

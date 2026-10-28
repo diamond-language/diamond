@@ -29,7 +29,7 @@ exit, errors, and handled signals.
 
 | Key | Action |
 | --- | --- |
-| Arrows or hjkl | Select a column/task |
+| Arrows or hjkl (outside edits) | Select a column/task |
 | Tab | Next column |
 | H / L | Move selected task to previous/next status |
 | p | Cycle projects, including all projects |
@@ -42,6 +42,11 @@ exit, errors, and handled signals.
 | Ctrl-S (in notes) | Save notes and return to details |
 | Escape | Cancel an edit/search, or return from details |
 | Ctrl-U (while editing/searching) | Clear the input |
+| Left / Right (while editing) | Move the caret; typing inserts at that position |
+| Up / Down (in notes) | Move between wrapped rows, retaining the desired column |
+| Home / End or Ctrl-A / Ctrl-E | Start / end of the current logical line |
+| Ctrl-Home / Ctrl-End | Start / end of the entire text |
+| Backspace / Delete | Remove the previous / next UTF-8 code point |
 | r | Reload tasks and pick up terminal size changes |
 | q | Return from details, or quit from the board |
 | Ctrl-C / Ctrl-D | Quit |
@@ -49,18 +54,21 @@ exit, errors, and handled signals.
 On an empty board, press `P` to create a project, then `p` to select it and `a`
 to add a task. Validation errors stay visible without discarding the edit.
 Long lists scroll with the selection. The board needs at least 60 columns and
-10 rows. UTF-8 titles are preserved; cell padding uses byte widths, so non-ASCII
-titles may have uneven column alignment. Control characters in stored text are neutralized.
-Title editing appends text and supports Backspace; Escape cancels the edit.
+10 rows. UTF-8 text is preserved and edits never split a code point. Editor
+carets assume one terminal column per code point; wide or combining characters
+can still misalign visually. Read-only cells use byte-width padding. Control
+characters in stored text are neutralized. Text fields show a terminal caret
+and scroll to keep it visible. Escape discards the edit.
 Search is a literal, case-insensitive substring match within the selected
 project. Enter keeps the filter; Escape restores the previous filter and
 selection. Use `/`, Ctrl-U, Enter to clear an active filter. Search is local
 view state and starts empty on each launch.
 
 Enter opens the selected task's full title and notes, with `j`/`k` or arrows to
-scroll. In details, `n` edits notes: type or use Backspace, Enter inserts a
-newline, Ctrl-S saves, and Escape discards the edit. Editing appends at the end;
-Ctrl-U clears the text. Blank notes are allowed; notes are limited to 10,000
+scroll. In details, `n` edits notes: move the caret with arrows, type to insert,
+and use Backspace or Delete to remove text. Enter inserts a newline, Ctrl-S
+saves, and Escape discards the edit. Ctrl-U clears the text. Blank notes are
+allowed; notes are limited to 10,000
 bytes. Long lines wrap in the detail view. Titles, notes, and status changes
 persist in the same SQLite database, including changes made through the CLI.
 The CLI remains available for pipes and scripts.
@@ -109,5 +117,6 @@ DIAMOND_BIN="$PWD/build/diamond" bash applications/task_board/test.sh
 ```
 
 When Python 3 is available, this also exercises the real launcher in a
-pseudo-terminal, checks search, detail navigation, saved/cancelled notes, and resizing, and verifies
+pseudo-terminal, checks caret positions, middle-of-text edits, search,
+saved/cancelled notes, and resizing, and verifies
 terminal restoration after normal exit and SIGTERM.

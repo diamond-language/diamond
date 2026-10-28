@@ -15,16 +15,24 @@ def board_interactive(args)
   end
   store = nil
   terminal = nil
+  output = nil
   begin
     store = BoardStore.new(SQLite3.open(path))
     board = TaskBoard.new(store)
     terminal = File.open("/dev/tty", "r")
+    output = File.open("/dev/tty", "w")
     while board.running?()
       size = Process.run(["bash", ENV["BOARD_TERMINAL_HELPER"], "--size"])
       dimensions = size.stdout().strip().split(" ")
       rows = if dimensions.length() == 2 then dimensions[0].to_i() else 24 end
       columns = if dimensions.length() == 2 then dimensions[1].to_i() else 80 end
-      puts("\e[H\e[2J" + board_frame(board, rows, columns))
+      frame = "\e[?25l\e[H\e[2J" + board_frame(board, rows, columns)
+      caret = board.screen_caret()
+      if caret != nil
+        frame += "\e[#{caret[0] + 1};#{caret[1] + 1}H\e[?25h"
+      end
+      output.write(frame)
+      output.flush()
       key = terminal.read(1)
       if key == "" then break end
       # Complete a UTF-8 code point before rendering or editing the input.
@@ -42,6 +50,7 @@ def board_interactive(args)
     1
   ensure
     if terminal != nil then terminal.close() end
+    if output != nil then output.close() end
     if store != nil then store.close() end
   end
 end
