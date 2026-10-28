@@ -57,7 +57,9 @@ jobs:
     # zombies from an *earlier*, unrelated test, not its own).
     container:
       image: ${{ matrix.os.container }}
-      options: --init
+      # TSan may need personality(ADDR_NO_RANDOMIZE) to retry its address layout.
+      # Docker's default seccomp profile blocks that process-local ASLR change.
+      options: ${{ matrix.suite == 'test-builds' && '--init --security-opt seccomp=unconfined' || '--init' }}
     steps:
       - name: Install dependencies (Fedora)
         if: matrix.os.name == 'fedora'
@@ -183,7 +185,7 @@ jobs:
     timeout-minutes: 45
     container:
       image: ubuntu:26.04
-      options: --init
+      options: --init --security-opt seccomp=unconfined
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -320,7 +322,7 @@ jobs:
     timeout-minutes: 45
     container:
       image: ubuntu:26.04
-      options: --init
+      options: --init --security-opt seccomp=unconfined
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:

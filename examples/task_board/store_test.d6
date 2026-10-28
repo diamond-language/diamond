@@ -3,6 +3,34 @@ require "../../lib/minitest"
 
 suite = Minitest.new()
 
+def board_test_project_name(project: BoardProject) -> String = project.name()
+def board_test_project_id(project: BoardProject) -> Int = project.id()
+
+suite.test("model bindings survive projections and reject mismatched rows") do
+  db = SQLite3.open(":memory:")
+  store = BoardStore.new(db)
+  project = store.create_project({"name": "Typed"}).value()
+  records = store.project_records()
+  query = records.query().order_by("id")
+  Minitest.assert_equal(["Typed"], records.map[String](query, board_test_project_name))
+  Minitest.assert_equal([project.id()], records.map[Int](query, board_test_project_id))
+  Minitest.assert_equal([project.id()], records.all(query).map(board_test_project_id))
+  Minitest.assert_equal(project.id(), records.get(project.id()).id())
+  Minitest.assert_equal(nil, records.get(999))
+  Minitest.assert_raises[TypeError]() do
+    records.map[String](query, board_test_project_id)
+  end
+  schema = Mjolnir::Schema.new("projects", {"id": :int, "name": :string}, build_board_project)
+  wrong = BoardRecords[BoardTask].new(Mjolnir::Repo.new(db), schema)
+  Minitest.assert_raises[TypeError]() do
+    wrong.all(wrong.query())
+  end
+  Minitest.assert_raises[TypeError]() do
+    wrong.get(project.id())
+  end
+  store.close()
+end
+
 suite.test("validated edits preserve stored values and ignore unpermitted IDs") do
   store = BoardStore.new(SQLite3.open(":memory:"))
   project = store.create_project({"name": "Diamond"}).value()

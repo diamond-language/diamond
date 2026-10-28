@@ -1,0 +1,7 @@
+class Box[T]
+  def initialize(value: T)
+    @value = value
+  end
+  def wrong[U](value: U) -> U = 42
+end
+Box[Int].new(42).wrong[String]("wrong")

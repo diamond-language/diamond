@@ -697,8 +697,9 @@ enum { DIAMOND_CACHE_MAGIC_LENGTH = 8 };
  *    type-id bases moved, so every instruction that names a class is a byte
  *    longer and every stored type id has a different value.
  * 9: classes store a type parameter; methods distinguish its instance binding.
- * 10: NEW_TYPED constructs explicitly specialized generic instances. */
-enum { DIAMOND_CACHE_FORMAT_VERSION = 10 };
+ * 10: NEW_TYPED constructs explicitly specialized generic instances.
+ * 11: generic class methods bind method variables after the receiver slot. */
+enum { DIAMOND_CACHE_FORMAT_VERSION = 11 };
 
 /* A checksum of the compiler's own sources and prelude (every .c and .h
  * file under src/, plus lib/core.d6 and lib/core/), passed in by the

@@ -97,6 +97,7 @@ static void check_generic_class_round_trip(const DiamondProgram *template) {
         "  def initialize(value: T)\n    @value = value\n  end\n"
         "  def value() -> T = @value\n"
         "  def wrong() -> T = \"wrong\"\n"
+        "  def echo[U](value: U) -> U = value\n"
         "end\nBox[Int].new(42).value()\n";
     DiamondProgram *program=alloc_program();
     DiamondDiagnostic diagnostic;
@@ -126,6 +127,14 @@ static void check_generic_class_round_trip(const DiamondProgram *template) {
                     char rendered[64];
                     check(run_and_get_string(use,rendered,sizeof rendered)&&
                         strcmp(rendered,"42")==0,"restored generic class retains binding");
+                }
+                const bool method=diamond_compile_incremental(
+                    "Box[Int].new(42).echo[String](\"abc\").length()\n",use,copy,&diagnostic);
+                check(method,"restored generic class accepts method-owned type argument");
+                if(method) {
+                    char rendered[64];
+                    check(run_and_get_string(use,rendered,sizeof rendered)&&strcmp(rendered,"3")==0,
+                        "restored method keeps class and method bindings separate");
                 }
                 const bool bad=diamond_compile_incremental("Box.new(42).wrong()\n",
                     use,copy,&diagnostic);

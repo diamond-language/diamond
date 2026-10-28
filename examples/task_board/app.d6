@@ -1,5 +1,7 @@
 require "./lib/store"
 
+def board_project_line(project: BoardProject) -> String = "##{project.id()} #{project.name()}"
+
 def board_usage() =
   "usage: board [--db FILE] COMMAND\n" +
   "  project NAME | projects | add PROJECT TITLE | edit TASK TITLE\n" +
@@ -57,9 +59,10 @@ def board_run(store: BoardStore, args)
   when ["project", name]
     board_result(store.create_project({"name": name}), "project")
   when ["projects"]
-    projects = store.projects()
-    if projects.empty?() then puts("No projects.") end
-    projects.each() do |project| puts("##{project.id()} #{project.name()}") end
+    records = store.project_records()
+    lines = records.map[String](records.query().order_by("id"), board_project_line)
+    if lines.empty?() then puts("No projects.") end
+    lines.each() do |line| puts(line) end
     0
   when ["add", project_id, title]
     board_result(store.create_task({"project_id": board_id(project_id), "title": title}), "task")
