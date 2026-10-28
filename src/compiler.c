@@ -374,7 +374,7 @@ static bool type_member_satisfies(const Compiler *compiler,
                            expected.second_argument_set);
 }
 
-static bool type_set_contains_variable(const Compiler *compiler,uint16_t set_index) {
+bool type_set_contains_variable(const Compiler *compiler,uint16_t set_index) {
     const DiamondTypeSet *set=&compiler->function->type_sets[set_index];
     for(size_t index=0;index<set->count;index++) {
         const DiamondTypeMember member=set->members[index];

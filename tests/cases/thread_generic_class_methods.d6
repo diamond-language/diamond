@@ -1,0 +1,16 @@
+class Box[T]
+  def initialize(value: T)
+    @value = value
+  end
+  def value() -> T = @value
+  def echo[U](value: U) -> U = value
+  def map[U](transform: Callable[[T], U]) -> Box[U] = Box[U].new(transform(self.value()))
+end
+def as_string(value: Int) -> String = value.to_s()
+def worker(box)
+  box.map[String](as_string)
+end
+box = Thread.new(worker, Box[Int].new(42)).join()
+puts(box.value())
+puts(box.echo[Int](43))
+box.value()

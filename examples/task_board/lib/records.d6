@@ -1,0 +1,14 @@
+require_cut "mjolnir"
+
+# Checked model rows over Mjolnir's dynamic schema/query API. A projection
+# binds its own U for that call while the repository keeps its model T.
+class BoardRecords[T]
+  def initialize(repo: Mjolnir::Repo, schema: Mjolnir::Schema)
+    @repo = repo
+    @schema = schema
+  end
+  def query() -> Mjolnir::Query = @schema.query()
+  def all(query: Mjolnir::Query) -> Array[T] = @repo.all(query)
+  def get(id) -> T | Nil = @repo.get(@schema, id)
+  def map[U](query: Mjolnir::Query, transform: Callable[[T], U]) -> Array[U] = self.all(query).map(transform)
+end

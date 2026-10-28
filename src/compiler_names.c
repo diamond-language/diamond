@@ -194,6 +194,14 @@ static uint16_t parse_class_new_keywords(Compiler *compiler, int class_index,
     if(has_block)emit_register(compiler,block);
     compiler->known_types[destination]=
         (uint16_t)(DIAMOND_TYPE_CLASS_BASE+class_index);
+    if(explicit_type!=DIAMOND_NO_TYPE_SET&&reserve_type_sets(compiler,1)) {
+        const uint16_t set=(uint16_t)compiler->function->type_set_count++;
+        compiler->function->type_sets[set]=(DiamondTypeSet){.count=1,.members={{
+            .id=(uint16_t)(DIAMOND_TYPE_CLASS_BASE+class_index),
+            .argument_set=explicit_type,.second_argument_set=DIAMOND_NO_TYPE_SET,
+            .callable_arity=UINT8_MAX,.callable_return_set=DIAMOND_NO_TYPE_SET}}};
+        publish_known_type_set(compiler,destination,set);
+    }
     return destination;
 }
 
@@ -380,6 +388,18 @@ static bool specialized_constructor_ahead(Compiler *compiler) {
         name_equals(compiler,"new",member.span,false);
 }
 
+static bool generic_self_call_ahead(Compiler *compiler) {
+    DiamondLexer lexer=compiler->lexer;
+    size_t brackets=1;
+    while(brackets>0) {
+        const DiamondToken token=diamond_lexer_next(&lexer);
+        if(token.kind==DIAMOND_TOKEN_EOF||token.kind==DIAMOND_TOKEN_ERROR)return false;
+        if(token.kind==DIAMOND_TOKEN_LEFT_BRACKET)brackets++;
+        else if(token.kind==DIAMOND_TOKEN_RIGHT_BRACKET)brackets--;
+    }
+    return diamond_lexer_next(&lexer).kind==DIAMOND_TOKEN_LEFT_PAREN;
+}
+
 uint16_t parse_name(Compiler *compiler) {
     const DiamondSpan name = compiler->previous.span;
     int class_index=find_class(compiler,name);
@@ -488,7 +508,8 @@ uint16_t parse_name(Compiler *compiler) {
         return parse_class_member_call(compiler,name,class_index);
     if (compiler->current.kind == DIAMOND_TOKEN_LEFT_PAREN||
         (compiler->current.kind==DIAMOND_TOKEN_LEFT_BRACKET&&
-         find_local(compiler,name)<0&&find_function(compiler,name)>=0)) {
+         find_local(compiler,name)<0&&(find_function(compiler,name)>=0||
+          (compiler->in_method&&compiler->current_class>=0&&generic_self_call_ahead(compiler))))) {
         return parse_call(compiler, name);
     }
     /* Discovery may encounter a constant or class before its declaration.
@@ -1563,8 +1584,29 @@ static uint16_t compile_instance_contextual_block(Compiler *compiler,
         const DiamondFunction *target,size_t parameter_index,
         const uint16_t *type_arguments,size_t type_argument_count,
         int32_t receiver_set,int32_t tooling_receiver_set,DiamondSpan name) {
-    if(target!=nullptr)return compile_contextual_typed_block(compiler,target,
-        parameter_index,type_arguments,type_argument_count);
+    if(target!=nullptr) {
+        if(target->class_type_variable) {
+            if(target->type_variable_count==0||target->type_variable_count>8) {
+                fail(compiler,name,"invalid generic method metadata");return 0;
+            }
+            uint16_t bindings[8];
+            for(size_t i=0;i<8;i++)bindings[i]=DIAMOND_NO_TYPE_SET;
+            const size_t offset=type_argument_count==target->type_variable_count?0u:1u;
+            for(size_t i=0;i<type_argument_count&&i+offset<8;i++)
+                bindings[i+offset]=type_arguments[i];
+            bindings[0]=DIAMOND_NO_TYPE_SET;
+            if(receiver_set>=0&&(size_t)receiver_set<compiler->function->type_set_count) {
+                const DiamondTypeSet *known=&compiler->function->type_sets[receiver_set];
+                if(known->count==1&&known->members[0].id==
+                   DIAMOND_TYPE_CLASS_BASE+target->owner_class)
+                    bindings[0]=known->members[0].argument_set;
+            }
+            return compile_contextual_typed_block(compiler,target,parameter_index,
+                bindings,target->type_variable_count);
+        }
+        return compile_contextual_typed_block(compiler,target,
+            parameter_index,type_arguments,type_argument_count);
+    }
     compiler->has_contextual_block_types=false;
     compiler->contextual_block_arity=0;
     compiler->contextual_block_return_set=-1;
@@ -1746,6 +1788,11 @@ static uint16_t parse_bound_method_reference(Compiler *compiler,uint16_t receive
         size_t type_argument_count) {
     const DiamondFunction *target=
         instance_call_signature(compiler,receiver,method_name,true);
+    for(size_t i=0;i<type_argument_count;i++)
+        if(type_set_contains_variable(compiler,type_arguments[i])) {
+            fail(compiler,method_name,"bound method references require concrete type arguments");
+            return 0;
+        }
     uint16_t inferred_arguments[8];
     if(target!=nullptr&&target->type_variable_count>0&&
        type_argument_count==0&&infer_reference_type_arguments(compiler,target,
@@ -1753,9 +1800,26 @@ static uint16_t parse_bound_method_reference(Compiler *compiler,uint16_t receive
         type_arguments=inferred_arguments;
         type_argument_count=target->type_variable_count;
     }
+    uint16_t class_bindings[8];
+    const uint16_t *contract_arguments=type_arguments;
+    size_t contract_count=type_argument_count;
+    if(target!=nullptr&&target->class_type_variable) {
+        for(size_t i=0;i<8;i++)class_bindings[i]=DIAMOND_NO_TYPE_SET;
+        const int32_t receiver_set=compiler->known_type_sets[receiver];
+        if(receiver_set>=0) {
+            const DiamondTypeSet *known=&compiler->function->type_sets[receiver_set];
+            if(known->count==1&&known->members[0].id==DIAMOND_TYPE_CLASS_BASE+target->owner_class)
+                class_bindings[0]=known->members[0].argument_set;
+        }
+        for(size_t i=0;i<type_argument_count&&i+1<8;i++)class_bindings[i+1]=type_arguments[i];
+        contract_arguments=class_bindings;contract_count=target->type_variable_count;
+    }
     const bool typed_wrapper=target!=nullptr&&target->arity>0&&
+        target->type_variable_count<=8&&
+        (!target->class_type_variable||(!target->has_variadic&&target->type_variable_count>0))&&
         (target->type_variable_count==0||
-         type_argument_count==target->type_variable_count);
+         type_argument_count==target->type_variable_count-(target->class_type_variable?1u:0u));
+    const bool checked_class_reference=typed_wrapper&&target->class_type_variable;
     uint16_t parameter_sets[DIAMOND_MAX_DECLARED_PARAMETERS];
     for(size_t index=0;index<DIAMOND_MAX_DECLARED_PARAMETERS;index++)
         parameter_sets[index]=DIAMOND_NO_TYPE_SET;
@@ -1769,17 +1833,23 @@ static uint16_t parse_bound_method_reference(Compiler *compiler,uint16_t receive
             if(source==DIAMOND_NO_TYPE_SET)continue;
             parameter_sets[parameter]=target->type_variable_count>0?
                 clone_substituted_type_set(compiler,target,source,
-                    type_arguments,type_argument_count,&resolved):
+                    contract_arguments,contract_count,&resolved):
                 clone_type_set_into_current(compiler,target->type_sets,
                     target->type_set_count,source);
         }
         if(target->return_type_set!=DIAMOND_NO_TYPE_SET)
             return_set=target->type_variable_count>0?
                 clone_substituted_type_set(compiler,target,
-                    target->return_type_set,type_arguments,type_argument_count,
+                    target->return_type_set,contract_arguments,contract_count,
                     &resolved):clone_type_set_into_current(compiler,
                     target->type_sets,target->type_set_count,
                     target->return_type_set);
+        if(target->class_type_variable) {
+            for(size_t i=0;i<DIAMOND_MAX_DECLARED_PARAMETERS;i++)
+                if(parameter_sets[i]!=DIAMOND_NO_TYPE_SET&&
+                   type_set_contains_variable(compiler,parameter_sets[i]))resolved=false;
+            if(return_set!=DIAMOND_NO_TYPE_SET&&type_set_contains_variable(compiler,return_set))resolved=false;
+        }
         if(!resolved) {
             compiler->function->type_set_count=original_count;
             return_set=DIAMOND_NO_TYPE_SET;
@@ -1848,6 +1918,21 @@ static uint16_t parse_bound_method_reference(Compiler *compiler,uint16_t receive
         emit_instruction(compiler,DIAMOND_OP_COLLECT_VARIADIC,
             arguments[fixed_count],(uint16_t)fixed_count,0,3);
     }
+    if(checked_class_reference) {
+        /* The wrapper advertises these concrete contracts even if the
+         * forwarded method is subsequently replaced. Check them here. */
+        for(size_t index=0;index<argument_count;index++) {
+            if(parameter_sets[index]==DIAMOND_NO_TYPE_SET)continue;
+            size_t skip=SIZE_MAX;
+            if(index>=wrapper->required_arity) {
+                const uint16_t provided=allocate_register(compiler);
+                emit_instruction(compiler,DIAMOND_OP_ARGUMENT_PROVIDED,provided,(uint16_t)index,0,2);
+                skip=emit_jump(compiler,DIAMOND_OP_JUMP_IF_FALSE,provided);
+            }
+            emit_instruction(compiler,DIAMOND_OP_CHECK_TYPE,arguments[index],parameter_sets[index],0,2);
+            if(skip!=SIZE_MAX)patch_jump(compiler,skip,compiler->function->code_count);
+        }
+    }
     const uint16_t bound_receiver=allocate_register(compiler);
     emit_instruction(compiler,DIAMOND_OP_GET_CAPTURE,bound_receiver,0,0,2);
     uint16_t body;
@@ -1862,6 +1947,8 @@ static uint16_t parse_bound_method_reference(Compiler *compiler,uint16_t receive
             const uint16_t partial=emit_invoke_call(compiler,bound_receiver,
                 method_name,false,type_arguments,type_argument_count,
                 arguments,count);
+            if(checked_class_reference&&return_set!=DIAMOND_NO_TYPE_SET)
+                emit_instruction(compiler,DIAMOND_OP_CHECK_TYPE,partial,return_set,0,2);
             emit_instruction(compiler,DIAMOND_OP_RETURN,partial,0,0,1);
             patch_jump(compiler,next,compiler->function->code_count);
         }
@@ -1893,6 +1980,8 @@ static uint16_t parse_bound_method_reference(Compiler *compiler,uint16_t receive
             spread,type_arguments,type_argument_count);
     } else body=emit_invoke_call(compiler,bound_receiver,method_name,false,
         type_arguments,type_argument_count,arguments,argument_count);
+    if(checked_class_reference&&return_set!=DIAMOND_NO_TYPE_SET)
+        emit_instruction(compiler,DIAMOND_OP_CHECK_TYPE,body,return_set,0,2);
     emit_instruction(compiler,DIAMOND_OP_RETURN,body,0,0,1);
     wrapper->register_count=compiler->next_register;
 

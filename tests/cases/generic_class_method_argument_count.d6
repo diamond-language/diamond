@@ -1,0 +1,7 @@
+class Box[T]
+  def initialize(value: T)
+    @value = value
+  end
+  def echo[U](value: U) -> U = value
+end
+Box[Int].new(42).echo[Int, String]("wrong")

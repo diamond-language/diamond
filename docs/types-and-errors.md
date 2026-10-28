@@ -34,6 +34,7 @@ class Box[T]
   def replace(value: T)
     @value = value
   end
+  def map[U](transform: Callable[[T], U]) -> Box[U] = Box[U].new(transform(self.value()))
 end
 
 box = Box.new(42)
@@ -75,9 +76,24 @@ retains that class's identity rather than its own type argument. Explicit method
 type arguments cannot override an instance's binding. `is Box` likewise tests
 the class identity; parameterized `is` tests are not supported.
 
+Instance methods can introduce their own parameters after the class parameter:
+`map[U]` uses the receiver's fixed `T` and binds a new `U` for each call. For
+example, `Box[Int].new(42).map[String](as_string)` returns a `Box[String]` when
+`as_string` has signature `(Int) -> String`; the original box remains a
+`Box[Int]`. Omit `[String]` when a typed argument or callback signature can infer
+`U`. An unannotated trailing block can use an explicit method argument:
+`box.map[String]() do |value| value.to_s() end`. Explicitly specialized receivers
+also supply their class argument to contextual block typing.
+
+Explicit method arguments bind only method parameters. They cannot replace `T`,
+and a method cannot redeclare its class's parameter name. The total budget is
+eight variables: one class parameter and up to seven method parameters. Bound
+method references support concrete explicit arguments; references that would
+capture an enclosing type variable are rejected instead of losing that binding.
+
 This native-compiler slice supports one class parameter in directly declared
-instance methods. Generic structs, inheritance, reopening, additional method
-type parameters, structural-interface conformance, and referring to the class
+instance methods. Generic structs, inheritance, reopening,
+structural-interface conformance, and referring to the class
 parameter from nested definitions remain future work. Native objects and
 Callable types are not yet supported as explicit class type arguments. Unions
 combining a type variable with other members, repeated outer types with different

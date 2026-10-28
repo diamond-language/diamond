@@ -1,4 +1,5 @@
 require_cut "mjolnir"
+require "./records"
 
 struct BoardProject(id: Int, name: String)
 end
@@ -22,6 +23,8 @@ class BoardStore
       {"id": :int, "project_id": :int, "title": :string, "status": :string, "notes": :string}, build_board_task)
     @projects.has_many("tasks", @tasks, "project_id")
     @tasks.belongs_to("project", @projects, "project_id")
+    @project_records = BoardRecords[BoardProject].new(@repo, @projects)
+    @task_records = BoardRecords[BoardTask].new(@repo, @tasks)
   end
 
   def prepare_schema()
@@ -52,8 +55,9 @@ class BoardStore
     @repo.insert(changeset)
   end
 
-  def projects() = @repo.all(@projects.query().order_by("id"))
-  def task(id) = @repo.get(@tasks, id)
+  def project_records() -> BoardRecords[BoardProject] = @project_records
+  def projects() -> Array[BoardProject] = @project_records.all(@projects.query().order_by("id"))
+  def task(id) -> BoardTask | Nil = @task_records.get(id)
 
   def task_changeset(entity, attrs)
     changeset = Mjolnir::Changeset.cast(@tasks, entity, attrs, ["project_id", "title", "status", "notes"])
@@ -95,7 +99,7 @@ class BoardStore
     query = @tasks.query().order_by("id")
     if project_id != nil then query = query.where({"project_id": project_id}) end
     if status != nil then query = query.where({"status": status}) end
-    entities = @repo.all(query)
+    entities = @task_records.all(query)
     associations = @repo.preload(@tasks, entities, "project")
     needle = search.downcase()
     if !needle.empty?()

@@ -1,3 +1,39 @@
 class Box[T]
-  def identity[U](value: U) -> U = value
+  def initialize(value: T)
+    @value = value
+  end
+  def value() -> T = @value
+  def map[U](transform: Callable[[T], U]) -> Box[U] = Box[U].new(transform(self.value()))
+  def build[U](value: U, transform: Callable[[T], U]) -> Box[U] = Box[U].new(transform(self.value()))
+  def forward[U](value: U) -> U = echo[U](value)
+  def echo[U](value: U) -> U = value
+  def keep[U](value: T, other: U) -> T = value
+  def maximum[A, B, C, D, E, F, G](value: G) -> G = value
 end
+def as_string(value: Int) -> String = value.to_s()
+def plus_one(value: Int) -> Int = value + 1
+box = Box[Int].new(42)
+puts(box.map(as_string).value())
+puts(box.map[String](as_string).value())
+puts(box.map[String](transform: as_string).value())
+puts(box.map[String](*[as_string]).value())
+puts(box.map(plus_one).value())
+puts(box.echo[String]("independent"))
+puts(box.echo(43))
+puts(box.keep[String](44, "other"))
+reference = box.map[String]
+puts(reference(as_string).value())
+mapped = box.map[String]() do |value|
+  value.to_s()
+end
+puts(mapped.value())
+puts(box.value())
+def apply(transform: Callable[[String], String]) -> String = transform("checked")
+puts(apply(box.echo[String]))
+puts(box.maximum[Int, Int, Int, Int, Int, Int, String]("last"))
+puts(box.forward[String]("forward"))
+contextual = box.build("context") do |value|
+  value.to_s()
+end
+puts(contextual.value())
+nil

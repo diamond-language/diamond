@@ -957,6 +957,7 @@ DIAMOND_INTERNAL bool diamond_compile(const char *source, DiamondProgram *progra
 DIAMOND_INTERNAL bool type_members_satisfy_across(const Compiler *compiler,
     const DiamondTypeSet *known_sets,DiamondTypeMember known,
     const DiamondTypeSet *expected_sets,DiamondTypeMember expected);
+DIAMOND_INTERNAL bool type_set_contains_variable(const Compiler *compiler,uint16_t set_index);
 DIAMOND_INTERNAL bool type_sets_satisfy_across(const Compiler *compiler,
     const DiamondTypeSet *known_sets,uint16_t known_index,
     const DiamondTypeSet *expected_sets,uint16_t expected_index);

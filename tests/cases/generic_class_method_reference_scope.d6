@@ -1,0 +1,4 @@
+class Box[T]
+  def echo[U](value: U) -> U = value
+end
+def reference[U](box) = box.echo[U]

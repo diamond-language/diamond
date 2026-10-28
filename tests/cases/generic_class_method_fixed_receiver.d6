@@ -1,0 +1,7 @@
+class Box[T]
+  def initialize(value: T)
+    @value = value
+  end
+  def choose[U](value: T, other: U) -> T = value
+end
+Box[Int].new(42).choose("wrong", "other")

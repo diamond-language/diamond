@@ -1823,10 +1823,6 @@ uint16_t compile_definition(Compiler *compiler, bool captures_self) {
         function->type_variable_count=1;
         (void)snprintf(function->type_variables[0],sizeof function->type_variables[0],
             "%s",compiler->program->classes[compiler->current_class]->type_parameter);
-        if(compiler->current.kind==DIAMOND_TOKEN_LEFT_BRACKET) {
-            fail(compiler,name,"generic class methods cannot declare additional type parameters");
-            return 0;
-        }
     }
     parse_generic_type_parameters(compiler,function);
     if (compiler->current.kind != DIAMOND_TOKEN_LEFT_PAREN) {

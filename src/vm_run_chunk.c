@@ -100,17 +100,27 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
     if(chunk->class_type_variable) {
         /* A class parameter belongs to the receiver, never to this call's
          * arguments or explicit method type arguments. */
-        if(chunk->type_variable_bindings!=nullptr) {
-            snprintf(vm->error,sizeof vm->error,
-                "generic class type arguments are fixed by construction");
-            return DIAMOND_VM_TYPE_ERROR;
-        }
-        if(chunk->type_variable_count!=1||
+        if(chunk->type_variable_count==0||chunk->type_variable_count>8||
            argument_count==0||!value_is_native_kind(arguments[0],DIAMOND_OBJECT_INSTANCE))
             return DIAMOND_VM_TYPE_ERROR;
         const DiamondInstance *self=(const DiamondInstance *)arguments[0].as.object;
         if(self->type_binding==nullptr||self->type_binding->node_count==0)
             return DIAMOND_VM_TYPE_ERROR;
+        if(chunk->type_variable_bindings!=nullptr)
+            memcpy(bindings,chunk->type_variable_bindings,
+                chunk->type_variable_count*sizeof(DiamondTypeBinding));
+        else {
+            memset(bindings,0,chunk->type_variable_count*sizeof(DiamondTypeBinding));
+            for(size_t parameter=0;chunk->type_variable_count>1&&chunk->parameter_type_sets!=nullptr&&
+                parameter<DIAMOND_MAX_DECLARED_PARAMETERS&&
+                parameter+chunk->parameter_offset<argument_count;parameter++) {
+                if(arguments[parameter+chunk->parameter_offset].kind==DIAMOND_VALUE_UNDEFINED)continue;
+                const uint16_t set=chunk->parameter_type_sets[parameter];
+                if(set!=DIAMOND_NO_TYPE_SET&&set<chunk->type_set_count)
+                    infer_from_value(chunk,arguments[parameter+chunk->parameter_offset],
+                        chunk->type_sets,set,bindings);
+            }
+        }
         bindings[0]=*self->type_binding;
         execution=*chunk;
         execution.type_variable_bindings=bindings;
@@ -1491,7 +1501,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                         bindings[0]=*self->type_binding;
                     }
                     for (size_t parameter = 0;
-                         !chunk->class_type_variable&&
+                         (!chunk->class_type_variable||chunk->type_variable_count>1)&&
                          parameter < DIAMOND_MAX_DECLARED_PARAMETERS &&
                          parameter + chunk->parameter_offset < argument_count;
                          parameter++) {
@@ -1503,6 +1513,8 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                                 arguments[parameter + chunk->parameter_offset],
                                 chunk->type_sets, set, bindings);
                     }
+                    if(chunk->class_type_variable)
+                        bindings[0]=*((const DiamondInstance *)arguments[0].as.object)->type_binding;
                     execution.type_variable_bindings = bindings;
                     chunk = &execution;
                     frame.chunk = chunk;

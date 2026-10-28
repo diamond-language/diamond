@@ -2646,21 +2646,28 @@ DiamondVmStatus outlined_invoke_spread(DiamondVm *vm,const DiamondChunk *chunk,D
         method->source_chunk!=nullptr?method->source_chunk:owner;
     const DiamondFunction *fn=
         function_chunk->functions[method->function_index];
-    if(type_argument_count>0&&
-       type_argument_count!=fn->type_variable_count) {
+    const size_t class_offset=fn->class_type_variable?1u:0u;
+    if(type_argument_count>0&&(fn->type_variable_count>8||
+       fn->type_variable_count<class_offset||
+       type_argument_count!=fn->type_variable_count-class_offset)) {
+        if(fn->class_type_variable&&fn->type_variable_count==1)
+            snprintf(vm->error,sizeof vm->error,
+                "generic class type arguments are fixed by construction");
         free(args);VM_RETURN(DIAMOND_VM_TYPE_ERROR);
     }
     /* Only the first type_argument_count entries are ever read (below,
      * and through .type_variable_bindings); zeroing all eight cost about
      * 3 KB of memset on every call, typed or not. */
     DiamondTypeBinding explicit_bindings[8];
+    if(type_argument_count>0&&class_offset!=0)explicit_bindings[0]=(DiamondTypeBinding){};
     for(size_t index=0;index<type_argument_count;index++) {
-        explicit_bindings[index]=(DiamondTypeBinding){};
+        DiamondTypeBinding *binding=&explicit_bindings[index+class_offset];
+        *binding=(DiamondTypeBinding){};
         if((size_t)type_arguments[index]>=chunk->type_set_count) {
             free(args);VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
         }
-        (void)binding_node(&explicit_bindings[index]);
-        bind_context_set(&explicit_bindings[index],0,chunk,
+        (void)binding_node(binding);
+        bind_context_set(binding,0,chunk,
             chunk->type_sets,type_arguments[index]);
     }
     DiamondChunk child={.name=fn->name,.code=fn->code,

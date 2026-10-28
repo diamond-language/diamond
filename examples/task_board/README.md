@@ -107,6 +107,13 @@ task unchanged; missing projects and duplicate project names become field
 errors. Project/status filters run in SQL and projects are explicitly preloaded
 in a batch. Text search uses those rows and associations without extra queries.
 
+`BoardRecords[T]` checks model rows at the Mjolnir read boundary: projects use
+`BoardRecords[BoardProject]`, tasks use `BoardRecords[BoardTask]`, and single-row
+reads return `T | Nil`. Its `map[U]` checks a projection's callback and returns
+`Array[U]` while retaining the repository's model `T`. The CLI project list uses
+`map[String]` to format project rows. The underlying Mjolnir schema/query API
+remains dynamic; a query returning the wrong model fails at the typed boundary.
+
 The controller imports its store directly and annotates its `BoardStore`
 parameter, as do the CLI helpers. These explicit boundaries let editor
 completion and go-to-definition follow store calls across the imported files;
