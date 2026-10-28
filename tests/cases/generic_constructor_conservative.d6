@@ -1,0 +1,47 @@
+class Box[T]
+  def initialize(value: T)
+    @value = value
+  end
+  def value() -> T = @value
+end
+class Parent
+end
+class Child < Parent
+end
+class Pair[T]
+  def initialize(first: T, second: T)
+    @first = first
+  end
+end
+def from_union(value: Int | String) -> Box[Int] = Box.new(value)
+def from_parent(value: Parent) -> Box[Parent] = Box.new(value)
+def from_nested(value: Box[Int]) -> Box[Box[Int]] = Box.new(value)
+def from_unknown(value) -> Pair[Int] = Pair.new(42, value)
+def from_spread(values) -> Box[Int] = Box.new(*values)
+begin
+  from_union("text")
+rescue error: TypeError
+  puts("union checked")
+end
+begin
+  from_parent(Child.new())
+rescue error: TypeError
+  puts("subclass checked")
+end
+begin
+  from_nested(Box[Int].new(42))
+rescue error: TypeError
+  puts("nested binding checked")
+end
+puts(from_union(42).value())
+begin
+  from_unknown("text")
+rescue error: TypeError
+  puts("unknown input checked")
+end
+begin
+  from_spread(["text"])
+rescue error: TypeError
+  puts("dynamic spread checked")
+end
+nil

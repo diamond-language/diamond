@@ -28,7 +28,7 @@ static DiamondProgram *round_trip(const DiamondProgram *program) {
 }
 
 /* An editor-only guard must not elide the checked return contract. */
-static int check_return_contract(const DiamondChunk *chunk,const char *name) {
+static int check_type_check_count(const DiamondChunk *chunk,const char *name,size_t expected) {
     FILE *file=tmpfile();
     if(file==nullptr)return 1;
     if(!diamond_disassemble(file,"receiver-test",chunk)) {fclose(file);return 1;}
@@ -52,9 +52,13 @@ static int check_return_contract(const DiamondChunk *chunk,const char *name) {
     }
     const bool found=body!=nullptr;
     free(text);
-    if(read==(size_t)length&&found&&checks==1)return 0;
+    if(read==(size_t)length&&found&&checks==expected)return 0;
     fprintf(stderr,"%s lost its checked return contract: %zu checks\n",name,checks);
     return 1;
+}
+
+static int check_return_contract(const DiamondChunk *chunk,const char *name) {
+    return check_type_check_count(chunk,name,1);
 }
 
 static int check_receiver_after(const DiamondProgram *program,const DiamondChunk *chunk,
@@ -146,7 +150,12 @@ static int check_generic_return_rejections(void) {
         "def wrong(box: Box[Int]) -> Box[Int] = box.map(f: label)\n",
         "def wrong(box: Box[Int]) -> Box[Int] = box.map(*[label])\n",
         "def wrong(box: Box[Int]) -> Array[String] = box.all()\n",
-        "def wrong(box: Box[String]) = only_int(box.value())\n"
+        "def wrong(box: Box[String]) = only_int(box.value())\n",
+        "def wrong() -> Box[String] = Box.new(42)\n",
+        "def wrong() -> String = Box.new(42).value()\n",
+        "def wrong() -> String = Box.new(value: 42).value()\n",
+        "def wrong() -> String = Box.new(*[42]).value()\n",
+        "def wrong() = only_int(Box.new(\"text\").value())\n"
     };
     int failed=0;
     for(size_t index=0;index<sizeof bodies/sizeof bodies[0];index++) {
@@ -221,6 +230,32 @@ int main(void) {
         "  rows.choose(Pet.new(), Leaf.new()).bark()\n"
         "end\n"
         "def checked_generic_return() -> Leaf = inferred_records().value()\n"
+        "class GenericPair[T]\n"
+        "  def initialize(first: T, second: T)\n"
+        "    @first = first\n"
+        "  end\n"
+        "  def first() -> T = @first\n"
+        "end\n"
+        "def inferred_constructor_receivers(unknown)\n"
+        "  inferred_model = GenericRecords.new(Pet.new())\n"
+        "  inferred_model.value().bark()\n"
+        "  GenericRecords.new(Pet.new()).value().bark()\n"
+        "  GenericRecords.new(value: Pet.new()).value().bark()\n"
+        "  GenericRecords.new(*[Pet.new()]).value().bark()\n"
+        "  GenericRecords.new(42).map(generic_label).value().upcase()\n"
+        "  GenericRecords.new(42).value().to_s()\n"
+        "  array_model = GenericRecords.new([Pet.new()])\n"
+        "  array_model.value()[0].bark()\n"
+        "  incomplete_pair = GenericPair.new(Pet.new(), unknown)\n"
+        "  incomplete_pair.first().bark()\n"
+        "  conflicting_pair = GenericPair.new(Pet.new(), Leaf.new())\n"
+        "  conflicting_pair.first().bark()\n"
+        "  nested_model = GenericRecords.new(GenericRecords[Pet].new(Pet.new()))\n"
+        "  nested_model.value().value().bark()\n"
+        "end\n"
+        "def checked_constructor_union(value: Int | String) -> GenericRecords[Int] = GenericRecords.new(value)\n"
+        "def checked_constructor_parent(value: Pet) -> GenericRecords[Pet] = GenericRecords.new(value)\n"
+        "def checked_constructor_unknown(value) -> GenericPair[Pet] = GenericPair.new(Pet.new(), value)\n"
         "class SchemaHolder\n"
         "  attr_reader pet\n"
         "  def initialize()\n"
@@ -1101,6 +1136,21 @@ int main(void) {
     failed|=check_receiver(program,&chunk,combined,
         "rows.choose(Pet.new(), Leaf.new()).",nullptr,false);
     failed|=check_return_contract(&chunk,"checked_generic_return");
+    failed|=check_receiver(program,&chunk,combined,"inferred_model.value().","Pet",false);
+    failed|=check_receiver(program,&chunk,combined,"GenericRecords.new(Pet.new()).value().","Pet",false);
+    failed|=check_receiver(program,&chunk,combined,"GenericRecords.new(value: Pet.new()).value().","Pet",false);
+    failed|=check_receiver(program,&chunk,combined,"GenericRecords.new(*[Pet.new()]).value().","Pet",false);
+    failed|=check_builtin(program,&chunk,combined,
+        "GenericRecords.new(42).map(generic_label).value().",true,DIAMOND_TYPE_STRING);
+    failed|=check_builtin(program,&chunk,combined,
+        "GenericRecords.new(42).value().",true,DIAMOND_TYPE_INT);
+    failed|=check_receiver(program,&chunk,combined,"array_model.value()[0].","Pet",false);
+    failed|=check_receiver(program,&chunk,combined,"incomplete_pair.first().",nullptr,false);
+    failed|=check_receiver(program,&chunk,combined,"conflicting_pair.first().",nullptr,false);
+    failed|=check_receiver(program,&chunk,combined,"nested_model.value().value().",nullptr,false);
+    failed|=check_type_check_count(&chunk,"checked_constructor_union",2);
+    failed|=check_type_check_count(&chunk,"checked_constructor_parent",2);
+    failed|=check_return_contract(&chunk,"checked_constructor_unknown");
     failed|=check_receiver(program,&chunk,combined,"LateSchemaHolder.new().pet().","Pet",false);
     failed|=check_receiver(program,&chunk,combined,"MutableHolder.new().pet().",nullptr,false);
     failed|=check_receiver(program,&chunk,combined,"ConflictingHolder.new().pet().",nullptr,false);

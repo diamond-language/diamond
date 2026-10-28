@@ -3352,6 +3352,31 @@ count=$((count + 1))
 send '{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"'"$generic_records_uri"'"}}}'
 read_message >/dev/null
 
+# Inferred constructors carry the same imported model and scalar receivers.
+inferred_records_uri="file://$work/use_inferred_records.d6"
+send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$inferred_records_uri"'","text":"require \"generic_records\"\ndef inspect_inferred_records()\n  rows = TypedRecords.new(RecordModel.new())\n  rows.value().title()\n  labels = rows.map[String](record_title)\n  labels.value().upcase()\n  TypedRecords.new(\"text\").value().upcase()\nend\n"}}}'
+response="$(read_message)"
+[[ "$response" == *'"diagnostics":[]'* ]]
+count=$((count + 1))
+send '{"jsonrpc":"2.0","id":3110,"method":"textDocument/completion","params":{"textDocument":{"uri":"'"$inferred_records_uri"'"},"position":{"line":3,"character":15}}}'
+response="$(read_message)"
+[[ "$response" == *'"label":"title"'* ]]
+count=$((count + 1))
+send '{"jsonrpc":"2.0","id":3111,"method":"textDocument/completion","params":{"textDocument":{"uri":"'"$inferred_records_uri"'"},"position":{"line":5,"character":17}}}'
+response="$(read_message)"
+[[ "$response" == *'"label":"upcase"'* ]]
+count=$((count + 1))
+send '{"jsonrpc":"2.0","id":3112,"method":"textDocument/completion","params":{"textDocument":{"uri":"'"$inferred_records_uri"'"},"position":{"line":6,"character":35}}}'
+response="$(read_message)"
+[[ "$response" == *'"label":"upcase"'* ]]
+count=$((count + 1))
+send '{"jsonrpc":"2.0","id":3113,"method":"textDocument/definition","params":{"textDocument":{"uri":"'"$inferred_records_uri"'"},"position":{"line":3,"character":17}}}'
+response="$(read_message)"
+[[ "$response" == *'"uri":"file://'*'/generic_records.d6"'* ]]
+count=$((count + 1))
+send '{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"'"$inferred_records_uri"'"}}}'
+read_message >/dev/null
+
 # --- shutdown then exit: clean exit code 0 ---
 
 send '{"jsonrpc":"2.0","id":3,"method":"shutdown"}'

@@ -51,6 +51,14 @@ uses it, including through method references, `dup()`, and thread copies.
 Another instance can bind a different type. Unannotated fields and methods keep
 their usual dynamic behavior.
 
+The compiler retains an exact scalar constructor binding: `Box.new(42)` carries
+`Box[Int]` through assignments and chained calls, so `box.map(as_string)` retains
+`Box[String]` when the callback is typed. Keyword arguments and literal spreads
+also preserve these facts. Broader input types, user-class values, and structural
+collection inference provide editor hints where representable, while keeping
+runtime checks for the invariant binding. Unknown contributing arguments,
+conflicting inferred shapes, and dynamic spreads stay conservative.
+
 `Box[Int].new(42)` supplies the binding before `initialize` runs. It works
 with positional, spread, keyword, defaulted, and trailing-block arguments.
 An explicit binding also permits construction when there is no value to infer
