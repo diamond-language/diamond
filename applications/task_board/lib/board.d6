@@ -1,4 +1,5 @@
 require "./store"
+require "./editor"
 
 # The controller has no terminal dependencies: key handling and validated writes
 # can be exercised without a pseudo-terminal.
@@ -9,7 +10,9 @@ class TaskBoard
     @row = 0
     @project = 0
     @mode = "board"
-    @input = ""
+    @editor = BoardEditor.new()
+    @edit_width = 79
+    @screen_caret = nil
     @message = ""
     @query = ""
     @search_before = ""
@@ -18,13 +21,26 @@ class TaskBoard
     @detail_offset = 0
     @running = true
     @escape = false
-    @arrow = false
+    @sequence = ""
     refresh()
   end
 
   def running?() = @running
   def mode() = @mode
-  def input() = @input
+  def input() = @editor.text()
+  def editor() = @editor
+  def screen_caret() = @screen_caret
+  def place_caret(row, column)
+    @screen_caret = [row, column]
+  end
+
+  def hide_caret()
+    @screen_caret = nil
+  end
+
+  def edit_width(width)
+    @edit_width = width
+  end
   def message() = @message
   def column() = @column
   def row() = @row
@@ -63,7 +79,7 @@ class TaskBoard
   def project_for(task) = @associations[task.id()].name()
 
   def search_input()
-    @query = @input
+    @query = input()
     @row = 0
     refresh()
     if @columns[@column].empty?()
@@ -87,7 +103,7 @@ class TaskBoard
     end
     @mode = if ["notes", "edit"].include?(@mode) then @return_mode else "board" end
     @return_mode = "board"
-    @input = ""
+    @editor = BoardEditor.new()
     @message = ""
   end
 
@@ -97,7 +113,7 @@ class TaskBoard
     @return_mode = @mode
     @edit_id = task.id()
     @mode = mode
-    @input = if mode == "notes" then task.notes() else task.title() end
+    @editor = BoardEditor.new(if mode == "notes" then task.notes() else task.title() end)
     @message = ""
   end
 
@@ -109,7 +125,7 @@ class TaskBoard
     end
     entity = value.value()
     @mode = @return_mode
-    @input = ""
+    @editor = BoardEditor.new()
     @message = "Saved ##{entity.id()}"
     refresh()
     if entity.is_a?(BoardTask)
@@ -126,17 +142,17 @@ class TaskBoard
   def submit()
     case @mode
     when "project"
-      result(@store.create_project({"name": @input}))
+      result(@store.create_project({"name": input()}))
     when "add"
       result(@store.create_task({"project_id": @projects[@project - 1].id(),
-        "title": @input, "status": statuses()[@column]}))
+        "title": input(), "status": statuses()[@column]}))
     when "edit"
-      result(@store.update_task(@edit_id, {"title": @input}))
+      result(@store.update_task(@edit_id, {"title": input()}))
     when "notes"
-      result(@store.update_task(@edit_id, {"notes": @input}))
+      result(@store.update_task(@edit_id, {"notes": input()}))
     when "search"
       @mode = "board"
-      @input = ""
+      @editor = BoardEditor.new()
     end
   end
 
@@ -150,49 +166,70 @@ class TaskBoard
   end
 
   def key(key)
+    if key == "\x03" || key == "\x04"
+      @running = false
+      return
+    end
     # A lone Escape cancels immediately. If it starts an arrow sequence,
     # restore the view/edit before handling that arrow instead.
     if key == "\e"
-      @escape_state = [@mode, @input, @query, @column, @row, @message, @return_mode]
+      @escape_state = [@mode, @editor, @query, @column, @row, @message, @return_mode]
       cancel()
       @escape = true
-      @arrow = false
+      @sequence = ""
       return
     end
     if @escape
       @escape = false
       if key == "[" || key == "O"
         @mode = @escape_state[0]
-        @input = @escape_state[1]
+        @editor = @escape_state[1]
         @query = @escape_state[2]
         @column = @escape_state[3]
         @row = @escape_state[4]
         @message = @escape_state[5]
         @return_mode = @escape_state[6]
         refresh()
-        @arrow = true
+        @sequence = key
         return
       end
-    elsif @arrow
-      @arrow = false
-      key = {"A": "k", "B": "j", "C": "l", "D": "h"}.fetch(key, "")
-      if !["board", "detail"].include?(@mode) then return end
-    end
-    if key == "\x03" || key == "\x04"
-      @running = false
-      return
+    elsif !@sequence.empty?()
+      @sequence += key
+      # CSI parameters end in a letter or '~'; consume unknown sequences
+      # completely so their digits cannot become edited text or commands.
+      if Regexp.new("[A-Za-z~]\\z").match?(key)
+        action = {"[A": "up", "OA": "up", "[B": "down", "OB": "down",
+          "[C": "right", "OC": "right", "[D": "left", "OD": "left",
+          "[H": "home", "OH": "home", "[1~": "home", "[7~": "home",
+          "[F": "end", "OF": "end", "[4~": "end", "[8~": "end",
+          "[3~": "delete", "[1;5H": "first", "[1;5F": "last"}.fetch(@sequence, "")
+        @sequence = ""
+        if !["board", "detail"].include?(@mode)
+          @editor.action(action, @edit_width, @mode == "notes")
+          if @mode == "search" && action == "delete" then search_input() end
+          return
+        end
+        key = {"up": "k", "down": "j", "left": "h", "right": "l"}.fetch(action, "")
+      else
+        if @sequence.length() > 16 then @sequence = "?" end
+        return
+      end
     end
     if !["board", "detail"].include?(@mode)
       if @mode == "notes" && key == "\x13"
         submit()
       elsif key == "\r" || key == "\n"
-        if @mode == "notes" then @input += "\n" else submit() end
+        if @mode == "notes" then @editor.insert("\n") else submit() end
       elsif key == "\x7f" || key == "\x08"
-        @input = @input.gsub(Regexp.new("(?m).\\z"), "")
+        @editor.backspace()
       elsif key == "\x15"
-        @input = ""
+        @editor.clear()
+      elsif key == "\x01"
+        @editor.home()
+      elsif key == "\x05"
+        @editor.finish()
       elsif !key.empty?() && key >= " " && key != "\x7f"
-        @input += key
+        @editor.insert(key)
       end
       if @mode == "search" then search_input() end
       return
@@ -232,7 +269,7 @@ class TaskBoard
       @search_column = @column
       @search_row = @row
       @mode = "search"
-      @input = @query
+      @editor = BoardEditor.new(@query)
     when "\r", "\n"
       if selected() != nil
         @detail = selected()
@@ -292,33 +329,63 @@ def board_wrap(text, width)
 end
 
 def board_detail_frame(board, rows, columns)
+  if board.mode() == "notes" then return board_notes_frame(board, rows, columns) end
   task = board.detail()
   width = columns - 1
-  notes = if board.mode() == "notes" then board.input() + "|" else task.notes() end
+  notes = task.notes()
   if notes.empty?() then notes = "(No notes yet; press n to add them.)" end
   body = board_wrap(task.title(), width) + ["", "Notes:"] + board_wrap(notes, width)
   visible = rows - 5
   limit = if body.length() > visible then body.length() - visible else 0 end
   board.limit_detail_offset(limit)
-  start = if board.mode() == "notes" then limit else board.detail_offset() end
+  start = board.detail_offset()
   lines = [board_cell("Task ##{task.id()} [#{task.status()}] | #{board.project_for(task)}", width)]
   (0...visible).each() do |index|
     text = if start + index < body.length() then body[start + index] else "" end
     lines.push(board_cell(text, width))
   end
-  help = if board.mode() == "notes"
-    "Ctrl-S: save  Enter: newline  Ctrl-U: clear  Esc: cancel"
-  else
-    "Esc/q: back  j/k: scroll  n: notes  e: title  H/L: move"
-  end
-  lines.push(board_cell(help, width))
+  lines.push(board_cell("Esc/q: back  j/k: scroll  n: notes  e: title  H/L: move", width))
   lines.push(board_cell(board.message(), width))
-  prompt = if board.mode() == "edit" then "edit> #{board.input()}  [Enter: save, Esc: cancel]" else "" end
-  lines.push(board_cell(prompt, width))
+  prompt = if board.mode() == "edit" then board_editor_prompt(board, width, lines.length()) else "" end
+  lines.push(if prompt.empty?() then board_cell("", width) else prompt end)
+  lines.join("\r\n")
+end
+
+def board_editor_prompt(board, width, row)
+  prefix = "#{board.mode()}> "
+  available = width - prefix.length()
+  board.edit_width(available)
+  view = board.editor().view(available, 1)
+  board.place_caret(row, prefix.length() + view[2])
+  prefix + board_editor_cell(view[0][0], available)
+end
+
+def board_editor_cell(text, width)
+  text = board_safe(text)
+  text + " " * (width - text.scan(Regexp.new("(?m).")).length())
+end
+
+def board_notes_frame(board, rows, columns)
+  task = board.detail()
+  width = columns - 1
+  height = rows - 7
+  board.edit_width(width)
+  view = board.editor().view(width, height)
+  board.place_caret(3 + view[1], view[2])
+  lines = [board_cell("Task ##{task.id()} [#{task.status()}] | #{board.project_for(task)}", width),
+    board_cell(task.title(), width), "Notes:"]
+  (0...height).each() do |index|
+    text = if index < view[0].length() then view[0][index] else "" end
+    lines.push(board_editor_cell(text, width))
+  end
+  lines.push(board_cell("Ctrl-S: save  Esc: cancel  Arrows: move  Home/End  Delete", width))
+  lines.push(board_cell(board.message(), width))
+  lines.push(board_cell("Enter: newline  Ctrl-U: clear  Ctrl-Home/End: start/end of notes", width))
   lines.join("\r\n")
 end
 
 def board_frame(board, rows, columns)
+  board.hide_caret()
   if rows < 10 || columns < 60
     return "Terminal too small: need 60 columns x 10 rows. Resize, or q to quit."
   end
@@ -351,7 +418,7 @@ def board_frame(board, rows, columns)
   lines.push(board_cell(detail, columns - 1))
   lines.push(board_cell("/: search  Enter: details  a: add  e: edit  H/L: move  q: quit", columns - 1))
   lines.push(board_cell(board.message(), columns - 1))
-  prompt = if board.mode() == "board" then "" else "#{board.mode()}> #{board.input()}  [Enter: save, Esc: cancel]" end
-  lines.push(board_cell(prompt, columns - 1))
+  prompt = if board.mode() == "board" then "" else board_editor_prompt(board, columns - 1, lines.length()) end
+  lines.push(if prompt.empty?() then board_cell("", columns - 1) else prompt end)
   lines.join("\r\n")
 end

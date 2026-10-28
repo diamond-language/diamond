@@ -8,6 +8,8 @@ authoritative fine-grained record.
 
 ### Added
 
+- Cursor-based terminal task-board editing, with Home/End, Delete, UTF-8-safe
+  insertion/removal, and caret-following notes navigation and scrolling.
 - Live search and task details with persistent multiline notes in the terminal
   task board, with automatic database upgrades and matching CLI commands.
 - Constructor completion and go-to-definition in the language server, including

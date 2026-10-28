@@ -1,0 +1,139 @@
+# Cursor positions are UTF-8 code-point boundaries, not byte offsets. The
+# terminal layout assumes one column per code point (see the app README).
+class BoardEditor
+  def initialize(text = "")
+    @characters = text.scan(Regexp.new("(?m)."))
+    @cursor = @characters.length()
+    @preferred_column = nil
+    @top = 0
+  end
+
+  def text() = @characters.join("")
+  def cursor() = @cursor
+
+  def insert(text)
+    added = text.scan(Regexp.new("(?m)."))
+    @characters = @characters.slice(0, @cursor) + added +
+      @characters.slice(@cursor, @characters.length() - @cursor)
+    @cursor += added.length()
+    @preferred_column = nil
+  end
+
+  def backspace()
+    if @cursor > 0
+      @cursor -= 1
+      @characters.delete_at(@cursor)
+    end
+    @preferred_column = nil
+  end
+
+  def delete()
+    if @cursor < @characters.length() then @characters.delete_at(@cursor) end
+    @preferred_column = nil
+  end
+
+  def clear()
+    @characters = []
+    @cursor = 0
+    @top = 0
+    @preferred_column = nil
+  end
+
+  def horizontal(offset)
+    @cursor += offset
+    if @cursor < 0 then @cursor = 0 end
+    if @cursor > @characters.length() then @cursor = @characters.length() end
+    @preferred_column = nil
+  end
+
+  def home()
+    while @cursor > 0 && @characters[@cursor - 1] != "\n"
+      @cursor -= 1
+    end
+    @preferred_column = nil
+  end
+
+  def finish()
+    while @cursor < @characters.length() && @characters[@cursor] != "\n"
+      @cursor += 1
+    end
+    @preferred_column = nil
+  end
+
+  def boundary(last)
+    @cursor = if last then @characters.length() else 0 end
+    @preferred_column = nil
+  end
+
+  # Map every caret position to a wrapped row/column. Keep a final blank
+  # column available for an end-of-line caret at the right edge.
+  def layout(width)
+    lines = [""]
+    positions = []
+    row = 0
+    column = 0
+    @characters.each() do |character|
+      if character != "\n" && column == width
+        lines.push("")
+        row += 1
+        column = 0
+      end
+      positions.push([row, column])
+      if character == "\n"
+        lines.push("")
+        row += 1
+        column = 0
+      else
+        lines[row] += character
+        column += 1
+      end
+    end
+    positions.push([row, column])
+    [lines, positions]
+  end
+
+  def vertical(offset, width)
+    data = layout(width)
+    current = data[1][@cursor]
+    if @preferred_column == nil then @preferred_column = current[1] end
+    target = current[0] + offset
+    distance = nil
+    data[1].each_with_index() do |position, index|
+      if position[0] == target
+        delta = (position[1] - @preferred_column).abs()
+        if distance == nil || delta < distance
+          distance = delta
+          @cursor = index
+        end
+      end
+    end
+  end
+
+  # Only editor actions reach here; ordinary text is inserted separately so
+  # strings such as "left" can never be mistaken for a navigation event.
+  def action(key, width, multiline)
+    case key
+    when "left" then horizontal(-1)
+    when "right" then horizontal(1)
+    when "up"
+      if multiline then vertical(-1, width) end
+    when "down"
+      if multiline then vertical(1, width) end
+    when "home" then home()
+    when "end" then finish()
+    when "first" then boundary(false)
+    when "last" then boundary(true)
+    when "delete" then delete()
+    end
+  end
+
+  def view(width, height)
+    data = layout(width)
+    caret = data[1][@cursor]
+    limit = if data[0].length() > height then data[0].length() - height else 0 end
+    if @top > limit then @top = limit end
+    if caret[0] < @top then @top = caret[0] end
+    if caret[0] >= @top + height then @top = caret[0] - height + 1 end
+    [data[0].slice(@top, height), caret[0] - @top, caret[1]]
+  end
+end
