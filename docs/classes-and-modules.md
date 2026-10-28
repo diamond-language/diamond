@@ -690,6 +690,25 @@ declared member, and generates four methods for it automatically:
 - `to_s()` -- `"Point(x: 1, y: 2)"`: the class name, then each field as
   `name: value.to_s()`, comma-separated.
 
+Generic structs declare one parameter before the field list:
+
+```ruby
+struct Result[T](value: T, error: String | Nil)
+end
+
+result = Result.new(42, nil)
+explicit = Result[Int].new(value: 42, error: nil)
+puts(result.value())
+puts(result == explicit)
+```
+
+Generated initializers and readers check fields using the instance's fixed
+binding. Construction supports inference and explicit arguments just like generic
+classes. Generated equality compares class identity and field values; it does not
+compare type arguments separately. Structs generate readers; body methods retain
+the existing class mutation and freeze behavior. Generic struct inheritance and
+reopening are rejected.
+
 A struct composes normally with everything else: `.freeze()`/
 `.frozen?()` work on an instance like any other
 ([tap / dup / freeze / frozen? / respond_to? / public_send](#object-utilities)),

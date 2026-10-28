@@ -1,0 +1,8 @@
+struct Wide[T](a: T, b: T, c: T, d: T, e: T, f: T, g: T, h: T,
+  i: T, j: T, k: T, l: T, m: T, n: T, o: T, p: T)
+end
+first = Wide.new(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16)
+second = Wide[Int].new(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16)
+puts(first.p())
+puts(first == second)
+nil

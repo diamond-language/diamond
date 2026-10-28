@@ -145,6 +145,13 @@ static void compile_attribute_named(Compiler *compiler,bool writer,bool predicat
     (void)snprintf(function->name,sizeof function->name,"%s",method_name);
     function->owner_class=compiler->current_class>=0?
         (uint16_t)compiler->current_class:DIAMOND_OWNER_MODULE;
+    if(compiler->current_class>=0&&
+       compiler->program->classes[compiler->current_class]->type_parameter[0]!='\0') {
+        function->class_type_variable=true;
+        function->type_variable_count=1;
+        snprintf(function->type_variables[0],sizeof function->type_variables[0],"%s",
+            compiler->program->classes[compiler->current_class]->type_parameter);
+    }
     function->arity=writer?2:1;function->required_arity=function->arity;
     function->return_type_set=DIAMOND_NO_TYPE_SET;
     function->inferred_return_type_set=DIAMOND_NO_TYPE_SET;
@@ -1574,6 +1581,9 @@ static bool parse_struct_superclass(Compiler *compiler, DiamondClass *class,
         fail(compiler,superclass_span,"undefined superclass");return false;
     }
     const DiamondClass *parent_class=compiler->program->classes[(size_t)parent];
+    if(parent_class->type_parameter[0]!='\0') {
+        fail(compiler,superclass_span,"generic struct inheritance is not supported");return false;
+    }
     if(parent==index||!parent_class->generated_struct) {
         fail(compiler,superclass_span,
              "a struct's superclass must be a struct declared earlier");
@@ -1638,6 +1648,10 @@ static void emit_struct_initialize(Compiler *compiler, DiamondClass *class,
     } else {
         (void)snprintf(init->name,sizeof init->name,"initialize");
         init->owner_class=(uint16_t)index;
+        if(class->type_parameter[0]!='\0') {
+            init->class_type_variable=true;init->type_variable_count=1;
+            snprintf(init->type_variables[0],sizeof init->type_variables[0],"%s",class->type_parameter);
+        }
         init->arity=(uint8_t)(total_count+1);
         init->required_arity=init->arity;
         init->return_type_set=DIAMOND_NO_TYPE_SET;
@@ -1737,7 +1751,7 @@ static void emit_struct_equals(Compiler *compiler, DiamondClass *class,
             const uint16_t type_ok=allocate_register(compiler);
             emit_instruction(compiler,DIAMOND_OP_IS_TYPE,type_ok,other,
                 (uint16_t)(DIAMOND_TYPE_CLASS_BASE+index),3);
-            size_t mismatch_jumps[DIAMOND_MAX_DECLARED_PARAMETERS+1];
+            size_t mismatch_jumps[DIAMOND_MAX_DECLARED_PARAMETERS+2];
             size_t mismatch_count=0;
             mismatch_jumps[mismatch_count++]=
                 emit_jump(compiler,DIAMOND_OP_JUMP_IF_FALSE,type_ok);
@@ -1873,8 +1887,36 @@ uint16_t compile_struct(Compiler *compiler) {
     DiamondSpan field_name_spans[DIAMOND_MAX_DECLARED_PARAMETERS];
     int field_type_sets[DIAMOND_MAX_DECLARED_PARAMETERS];
     size_t field_count=0;
-    if(!parse_struct_fields(compiler,class,field_name_spans,field_type_sets,&field_count))
+    DiamondFunction *outer_function=compiler->function;
+    DiamondFunction *header=nullptr;
+    DiamondLexer probe=compiler->lexer;
+    if(diamond_lexer_next(&probe).kind==DIAMOND_TOKEN_LEFT_BRACKET) {
+        advance_token(compiler);advance_token(compiler);
+        if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER||
+           compiler->current.span.length>=sizeof class->type_parameter) {
+            fail(compiler,compiler->current.span,"expected generic struct type parameter");return 0;
+        }
+        memcpy(class->type_parameter,compiler->source+compiler->current.span.start,compiler->current.span.length);
+        class->type_parameter[compiler->current.span.length]='\0';
+        advance_token(compiler);
+        if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_BRACKET) {
+            fail(compiler,compiler->current.span,"generic structs require exactly one type parameter");return 0;
+        }
+        header=calloc(1,sizeof *header);
+        if(header==nullptr) {fail(compiler,name,"out of memory");return 0;}
+        header->type_variable_count=1;
+        snprintf(header->type_variables[0],sizeof header->type_variables[0],"%s",class->type_parameter);
+        compiler->function=header;
+    }
+    if(!parse_struct_fields(compiler,class,field_name_spans,field_type_sets,&field_count)) {
+        compiler->function=outer_function;
+        if(header!=nullptr) {diamond_function_free_arrays(header);free(header);}
         return 0;
+    }
+    if(header!=nullptr&&compiler->current.kind==DIAMOND_TOKEN_LESS) {
+        compiler->function=outer_function;diamond_function_free_arrays(header);free(header);
+        fail(compiler,name,"generic struct inheritance is not supported");return 0;
+    }
     /* The fields declared above, and (below) the whole inherited-then-own
      * list the generated methods cover. */
     const size_t own_field_count=field_count;
@@ -1885,7 +1927,11 @@ uint16_t compile_struct(Compiler *compiler) {
            own_field_count,&inherited_count,&inherited_init))
         return 0;
     const size_t total_count=inherited_count+own_field_count;
-    if(!consume_block_start(compiler))return 0;
+    if(!consume_block_start(compiler)) {
+        compiler->function=outer_function;
+        if(header!=nullptr) {diamond_function_free_arrays(header);free(header);}
+        return 0;
+    }
     const int outer_class=compiler->current_class;
     compiler->current_class=index;
     const bool outer_private=compiler->methods_private;
@@ -1897,6 +1943,8 @@ uint16_t compile_struct(Compiler *compiler) {
     if(!compiler->failed)
         emit_struct_initialize(compiler,class,index,name,field_type_sets,
             inherited_count,own_field_count,inherited_init);
+    compiler->function=outer_function;
+    if(header!=nullptr) {diamond_function_free_arrays(header);free(header);}
     if(!compiler->failed)emit_struct_equals(compiler,class,index,name,total_count);
     if(!compiler->failed)
         emit_struct_to_s(compiler,class,index,name,stored_name,total_count);

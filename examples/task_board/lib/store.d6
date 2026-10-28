@@ -1,5 +1,6 @@
 require_cut "mjolnir"
 require "./records"
+require "./result"
 
 struct BoardProject(id: Int, name: String)
 end
@@ -49,10 +50,15 @@ class BoardStore
     end
   end
 
-  def create_project(attrs)
+  def create_project(attrs) -> BoardWrite[BoardProject]
     changeset = Mjolnir::Changeset.cast(@projects, nil, attrs, ["name"])
       .validate_required(["name"]).validate_length("name", 1, 80).unique_constraint("name")
-    @repo.insert(changeset)
+    result = @repo.insert(changeset)
+    if result.err?()
+      BoardWrite[BoardProject].new(nil, result.error())
+    else
+      BoardWrite[BoardProject].new(result.value(), nil)
+    end
   end
 
   def project_records() -> BoardRecords[BoardProject] = @project_records
@@ -82,12 +88,24 @@ class BoardStore
     changeset
   end
 
-  def create_task(attrs) = @repo.insert(task_changeset(nil, attrs))
+  def create_task(attrs) -> BoardWrite[BoardTask]
+    result = @repo.insert(task_changeset(nil, attrs))
+    if result.err?()
+      BoardWrite[BoardTask].new(nil, result.error())
+    else
+      BoardWrite[BoardTask].new(result.value(), nil)
+    end
+  end
 
-  def update_task(id, attrs)
+  def update_task(id, attrs) -> BoardWrite[BoardTask]
     entity = task(id)
     if entity == nil then raise ArgumentError.new("task not found") end
-    @repo.update(task_changeset(entity, attrs))
+    result = @repo.update(task_changeset(entity, attrs))
+    if result.err?()
+      BoardWrite[BoardTask].new(nil, result.error())
+    else
+      BoardWrite[BoardTask].new(result.value(), nil)
+    end
   end
 
   # Project/status filters happen in SQL. Literal text search uses the rows

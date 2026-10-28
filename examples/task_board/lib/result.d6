@@ -1,0 +1,7 @@
+# A checked write result shared by the CLI and terminal controller.
+struct BoardWrite[T](payload: T | Nil, changeset: Mjolnir::Changeset | Nil)
+  def ok?() -> Bool = self.changeset() == nil
+  def err?() -> Bool = !self.ok?()
+  def value() -> T = self.payload()
+  def error() -> Mjolnir::Changeset = self.changeset()
+end

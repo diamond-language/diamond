@@ -100,7 +100,7 @@ method references support concrete explicit arguments; references that would
 capture an enclosing type variable are rejected instead of losing that binding.
 
 This native-compiler slice supports one class parameter in directly declared
-instance methods. Generic structs, inheritance, reopening,
+instance methods and generated struct fields. Generic inheritance, reopening,
 structural-interface conformance, and referring to the class
 parameter from nested definitions remain future work. Native objects and
 Callable types are not yet supported as explicit class type arguments. Unions
