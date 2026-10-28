@@ -23,7 +23,7 @@ annotations, pipe-separated unions, generics (`Array[T]`, `Hash[K, V]`),
 `is` for runtime type tests, and structural interfaces (`Sized`,
 `Callable[n]`-style).
 
-Classes can declare one constructor-inferred type parameter:
+Classes can declare one type parameter, inferred at construction or supplied explicitly:
 
 ```ruby
 class Box[T]
@@ -50,18 +50,40 @@ uses it, including through method references, `dup()`, and thread copies.
 Another instance can bind a different type. Unannotated fields and methods keep
 their usual dynamic behavior.
 
-This first slice supports one class parameter, in instance-method signatures.
-The constructor must supply enough type information to infer it; omitted
-defaults, empty collections without a usable element type, and values without
-a runtime type binding cannot infer `T`. A class cannot be reopened or take part
-in inheritance, and its instance methods cannot declare additional generic
-parameters. Explicit `Box[Int]` construction and annotations, generic structs,
-structural-interface conformance, and referring to the class parameter from
-nested definitions are future work.
-Use plain `Box` when an annotation only needs the class identity. Explicit
-method type arguments cannot override the instance's binding. Calls retain
-runtime checks while compiler and editor propagation of the instance type
-argument remains future work.
+`Box[Int].new(42)` supplies the binding before `initialize` runs. It works
+with positional, spread, keyword, defaulted, and trailing-block arguments.
+An explicit binding also permits construction when there is no value to infer
+from, such as `Box[Array[Int]].new([])` or a generic class with no initializer.
+Without an explicit argument, the supplied constructor arguments must provide
+enough information: for example, an empty `Array[T]` parameter cannot infer its
+element type.
+
+```ruby
+def read(box: Box[Int]) -> Int = box.value()
+def identity[T](box: Box[T]) -> Box[T] = box
+
+read(Box[Int].new(42))
+read(identity(Box.new(43)))
+```
+
+Parameterized class annotations check the stored binding, including in return
+annotations and nested collection contracts. They are invariant: a mutable
+`Box[Int]` is not a `Box[Int | String]`, or vice versa. Plain `Box` only checks
+class identity. Nested bindings can be supplied explicitly, for example
+`Box[Box[Int]].new(Box.new(42))`; inference from a value of a user class still
+retains that class's identity rather than its own type argument. Explicit method
+type arguments cannot override an instance's binding. `is Box` likewise tests
+the class identity; parameterized `is` tests are not supported.
+
+This native-compiler slice supports one class parameter in directly declared
+instance methods. Generic structs, inheritance, reopening, additional method
+type parameters, structural-interface conformance, and referring to the class
+parameter from nested definitions remain future work. Native objects and
+Callable types are not yet supported as explicit class type arguments. Unions
+combining a type variable with other members, repeated outer types with different
+arguments, and contracts beyond the runtime binding graph's capacity are also
+rejected rather than weakened. Calls retain runtime checks while compiler and
+editor propagation of the instance type argument remains future work.
 
 ```ruby
 interface Named

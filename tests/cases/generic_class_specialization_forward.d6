@@ -1,0 +1,9 @@
+def read(value: Later[Int]) -> Int = value.value()
+class Later[T]
+  def initialize(value: T)
+    @value = value
+  end
+  def value() -> T = @value
+end
+puts(read(Later[Int].new(42)))
+nil

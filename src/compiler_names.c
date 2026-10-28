@@ -152,7 +152,7 @@ static uint16_t parse_module_singleton_call(Compiler *compiler, DiamondSpan name
 /* `Class.new(...)` whose arguments include a keyword argument: the current
  * token is the first argument. */
 static uint16_t parse_class_new_keywords(Compiler *compiler, int class_index,
-        const DiamondFunction *initializer) {
+        const DiamondFunction *initializer,uint16_t explicit_type) {
     DiamondSpan keyword_names[DIAMOND_MAX_DECLARED_PARAMETERS];uint16_t keyword_values[DIAMOND_MAX_DECLARED_PARAMETERS];
     size_t keyword_count=0;
     const uint16_t positional=parse_dynamic_keyword_arguments(compiler,
@@ -166,6 +166,7 @@ static uint16_t parse_class_new_keywords(Compiler *compiler, int class_index,
         infer_contextual_keyword_arguments(compiler,initializer,
             keyword_names,keyword_values,keyword_count,
             inferred_arguments);
+        if(explicit_type!=DIAMOND_NO_TYPE_SET)inferred_arguments[0]=explicit_type;
         for(size_t index=0;index<keyword_count;index++) {
             const uint16_t snapshot=allocate_register(compiler);
             emit_instruction(compiler,DIAMOND_OP_MOVE,snapshot,
@@ -179,9 +180,11 @@ static uint16_t parse_class_new_keywords(Compiler *compiler, int class_index,
         has_block=true;
     }
     const uint16_t destination=allocate_register(compiler);
-    emit_opcode(compiler,DIAMOND_OP_NEW_KEYWORDS);
+    emit_opcode(compiler,explicit_type==DIAMOND_NO_TYPE_SET?
+        DIAMOND_OP_NEW_KEYWORDS:DIAMOND_OP_NEW_TYPED);
     emit_register(compiler,destination);
     emit_register(compiler,(uint16_t)class_index);
+    if(explicit_type!=DIAMOND_NO_TYPE_SET)emit_register(compiler,explicit_type);
     emit_register(compiler,positional);
     emit_byte(compiler,(uint8_t)(keyword_count|(has_block?0x80u:0u)));
     for(size_t index=0;index<keyword_count;index++) {
@@ -249,7 +252,7 @@ static uint16_t parse_class_new_call(Compiler *compiler, int class_index) {
     advance_token(compiler);
     skip_newlines(compiler);
     if(call_arguments_have_keyword(compiler))
-        return parse_class_new_keywords(compiler,class_index,initializer);
+        return parse_class_new_keywords(compiler,class_index,initializer,DIAMOND_NO_TYPE_SET);
     if(call_arguments_have_spread(compiler))
         return parse_class_new_spread(compiler,class_index,initializer);
     uint16_t args[DIAMOND_MAX_ARGUMENTS]; size_t count = 0;
@@ -360,6 +363,23 @@ static uint16_t parse_class_member_call(Compiler *compiler, DiamondSpan name,
     return parse_class_new_call(compiler,class_index);
 }
 
+/* Preserve generic function calls/references when a function and a class
+ * share a name. Only the explicit `.new` suffix selects the class. */
+static bool specialized_constructor_ahead(Compiler *compiler) {
+    DiamondLexer lexer=compiler->lexer;
+    size_t brackets=1;
+    while(brackets>0) {
+        const DiamondToken token=diamond_lexer_next(&lexer);
+        if(token.kind==DIAMOND_TOKEN_EOF||token.kind==DIAMOND_TOKEN_ERROR)return false;
+        if(token.kind==DIAMOND_TOKEN_LEFT_BRACKET)brackets++;
+        else if(token.kind==DIAMOND_TOKEN_RIGHT_BRACKET)brackets--;
+    }
+    if(diamond_lexer_next(&lexer).kind!=DIAMOND_TOKEN_DOT)return false;
+    const DiamondToken member=diamond_lexer_next(&lexer);
+    return member.kind==DIAMOND_TOKEN_IDENTIFIER&&
+        name_equals(compiler,"new",member.span,false);
+}
+
 uint16_t parse_name(Compiler *compiler) {
     const DiamondSpan name = compiler->previous.span;
     int class_index=find_class(compiler,name);
@@ -438,6 +458,31 @@ uint16_t parse_name(Compiler *compiler) {
         emit_register(compiler,destination);
         compiler->known_types[destination]=DIAMOND_TYPE_HASH;
         return destination;
+    }
+    if(class_index>=0&&compiler->current.kind==DIAMOND_TOKEN_LEFT_BRACKET&&
+       find_local(compiler,name)<0&&
+       (find_function(compiler,name)<0||specialized_constructor_ahead(compiler))) {
+        uint16_t arguments[8];size_t count=0;
+        if(!parse_explicit_type_arguments(compiler,arguments,&count))return 0;
+        const DiamondClass *class=compiler->program->classes[class_index];
+        if(class->type_parameter[0]=='\0'||count!=1) {
+            fail(compiler,name,"class specialization requires exactly one declared type argument");
+            return 0;
+        }
+        if(compiler->current.kind!=DIAMOND_TOKEN_DOT) {
+            fail(compiler,name,"expected '.new(...)' after class type argument");return 0;
+        }
+        advance_token(compiler);
+        if(!name_equals(compiler,"new",compiler->current.span,false)||class->sealed) {
+            fail(compiler,name,"expected constructor of an instantiable generic class");return 0;
+        }
+        advance_token(compiler);
+        if(compiler->current.kind!=DIAMOND_TOKEN_LEFT_PAREN) {
+            fail(compiler,name,"expected '(' after 'new'");return 0;
+        }
+        advance_token(compiler);skip_newlines(compiler);
+        return parse_class_new_keywords(compiler,class_index,
+            constructor_signature(compiler,class_index),arguments[0]);
     }
     if (class_index >= 0 && compiler->current.kind == DIAMOND_TOKEN_DOT)
         return parse_class_member_call(compiler,name,class_index);

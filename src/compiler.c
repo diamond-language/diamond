@@ -88,7 +88,7 @@ static bool is_call_opcode(DiamondOpCode opcode) {
         case DIAMOND_OP_CALL_TYPED_SINGLETON_SPREAD: case DIAMOND_OP_CALL_KEYWORD_SPREAD:
         case DIAMOND_OP_CALL_TYPED_KEYWORD_SPREAD: case DIAMOND_OP_INVOKE_KEYWORDS:
         case DIAMOND_OP_INVOKE_TYPED_KEYWORDS: case DIAMOND_OP_CALL_CLOSURE_KEYWORDS:
-        case DIAMOND_OP_NEW_KEYWORDS: case DIAMOND_OP_CALL_SINGLETON_KEYWORDS:
+        case DIAMOND_OP_NEW_TYPED: case DIAMOND_OP_NEW_KEYWORDS: case DIAMOND_OP_CALL_SINGLETON_KEYWORDS:
         case DIAMOND_OP_CALL_TYPED_SINGLETON_KEYWORDS: case DIAMOND_OP_TAIL_CALL:
         case DIAMOND_OP_FIBER_NEW: case DIAMOND_OP_THREAD_NEW:
         case DIAMOND_OP_SUPERVISOR_NEW: case DIAMOND_OP_CHANNEL_NEW:
@@ -313,6 +313,9 @@ bool type_members_satisfy_across(const Compiler *compiler,
     if(known.argument_set==DIAMOND_NO_TYPE_SET||
        !type_sets_satisfy_across(compiler,known_sets,known.argument_set,
                                  expected_sets,expected.argument_set))return false;
+    if(expected.id>=DIAMOND_TYPE_CLASS_BASE&&expected.id<DIAMOND_TYPE_VARIABLE_BASE)
+        return type_sets_satisfy_across(compiler,expected_sets,expected.argument_set,
+            known_sets,known.argument_set);
     if(expected.id!=DIAMOND_TYPE_HASH)return true;
     return known.second_argument_set!=DIAMOND_NO_TYPE_SET&&
         type_sets_satisfy_across(compiler,known_sets,known.second_argument_set,
@@ -362,6 +365,8 @@ static bool type_member_satisfies(const Compiler *compiler,
     if(known.argument_set==DIAMOND_NO_TYPE_SET||
        !type_set_satisfies(compiler,known.argument_set,expected.argument_set))
         return false;
+    if(expected.id>=DIAMOND_TYPE_CLASS_BASE&&expected.id<DIAMOND_TYPE_VARIABLE_BASE)
+        return type_set_satisfies(compiler,expected.argument_set,known.argument_set);
     if(expected.id!=DIAMOND_TYPE_HASH)return true;
     return known.second_argument_set!=DIAMOND_NO_TYPE_SET&&
         expected.second_argument_set!=DIAMOND_NO_TYPE_SET&&
@@ -516,7 +521,8 @@ static bool type_set_may_satisfy(const Compiler *compiler,uint16_t known_set,
             possible=type_member_satisfies(compiler,member,wanted)||
                 (member.argument_set==DIAMOND_NO_TYPE_SET&&
                  wanted.argument_set!=DIAMOND_NO_TYPE_SET&&
-                 (member.id==DIAMOND_TYPE_ARRAY||member.id==DIAMOND_TYPE_HASH)&&
+                 (member.id==DIAMOND_TYPE_ARRAY||member.id==DIAMOND_TYPE_HASH||
+                  (member.id>=DIAMOND_TYPE_CLASS_BASE&&member.id<DIAMOND_TYPE_VARIABLE_BASE))&&
                  member.id==wanted.id)||
                 /* Likewise a bare Callable, whose arity isn't known. */
                 (member.id==DIAMOND_TYPE_CALLABLE&&wanted.id==DIAMOND_TYPE_CALLABLE&&
@@ -2363,7 +2369,12 @@ int parse_type_annotation(Compiler *compiler) {
                     advance_token(compiler);
                     callable_return_set=(uint16_t)parse_type_annotation(compiler);
                 }
-            } else if(type==DIAMOND_TYPE_ARRAY||type==DIAMOND_TYPE_HASH) {
+            } else if(type==DIAMOND_TYPE_ARRAY||type==DIAMOND_TYPE_HASH||
+                (compiler->discovery_pass&&(type==DIAMOND_TYPE_NIL||
+                 (type>=DIAMOND_TYPE_CLASS_BASE&&type<DIAMOND_TYPE_CLASS_LIMIT)))||
+                (type>=DIAMOND_TYPE_CLASS_BASE&&type<DIAMOND_TYPE_VARIABLE_BASE&&
+                 (size_t)(type-DIAMOND_TYPE_CLASS_BASE)<compiler->program->class_count&&
+                 compiler->program->classes[type-DIAMOND_TYPE_CLASS_BASE]->type_parameter[0]!='\0')) {
                 advance_token(compiler);
                 skip_newlines(compiler);
                 argument_set=(uint16_t)parse_type_annotation(compiler);

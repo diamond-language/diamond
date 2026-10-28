@@ -1,0 +1,43 @@
+class Box[T]
+  def initialize(value: T)
+    @value = value
+  end
+  def value() -> T = @value
+  def replace(value: T)
+    @value = value
+  end
+end
+def read(box: Box[Int]) -> Int = box.value()
+def identity[T](box: Box[T]) -> Box[T] = box
+puts(read(Box[Int].new(42)))
+puts(read(Box[Int].new(value: 43)))
+puts(read(Box[Int].new(*[44])))
+puts(read(identity(Box.new(45))))
+puts(Box[Array[Int]].new([]).value())
+puts(Box[Box[Int]].new(Box.new(46)).value().value())
+class Empty[T]
+end
+def empty(value: Empty[Int]) -> Bool = true
+puts(empty(Empty[Int].new()))
+def union_box(value: Box[Int | String]) = value.value()
+union = Box[Int | String].new(47)
+union.replace("union")
+puts(union_box(union))
+class DefaultBox[T]
+  def initialize(value: T = 48)
+    @value = value
+  end
+  def value() -> T = @value
+end
+puts(DefaultBox[Int].new().value())
+class Mapped[T]
+  def initialize(value: T, callback: Callable[[T], T])
+    @value = callback(value)
+  end
+  def value() -> T = @value
+end
+mapped = Mapped[Int].new(40) do |value|
+  value + 2
+end
+puts(mapped.value())
+nil

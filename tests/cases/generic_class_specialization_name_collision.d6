@@ -1,0 +1,11 @@
+class Factory[T]
+  def initialize(value: T)
+    @value = value
+  end
+  def value() -> T = @value
+end
+def Factory[T](value: T) -> T = value
+puts(Factory[Int](42))
+puts(Factory.new("class").value())
+puts(Factory[Int].new(43).value())
+nil

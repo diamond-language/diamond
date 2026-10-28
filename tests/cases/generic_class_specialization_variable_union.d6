@@ -1,0 +1,7 @@
+class Box[T]
+  def initialize(value: T)
+    @value = value
+  end
+end
+def wrap[T](value: T) = Box[T | Nil].new(value)
+wrap(42)

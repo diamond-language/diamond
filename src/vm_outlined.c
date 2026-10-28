@@ -2225,14 +2225,30 @@ DiamondVmStatus outlined_new_spread(DiamondVm *vm,const DiamondChunk *chunk,Diam
     }
     const DiamondArray *spread=(const DiamondArray *)
         registers[spread_register].as.object;
+    const DiamondVmStatus status=new_instance_from_array(vm,chunk,registers,dest,
+        class_index,spread,DIAMOND_NO_TYPE_SET,depth);
+    VM_PROPAGATE(status);HELPER_DONE;
+}
+
+DiamondVmStatus new_instance_from_array(DiamondVm *vm,const DiamondChunk *chunk,
+        DiamondValue *registers,uint16_t dest,uint16_t class_index,
+        const DiamondArray *spread,uint16_t explicit_type,size_t depth) {
+    if(class_index>=chunk->class_count)return DIAMOND_VM_INVALID_BYTECODE;
     const DiamondClass *class=chunk->classes[class_index];
     DiamondInstance *instance=allocate_instance(vm,class,nullptr);
     if(instance==nullptr)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
     registers[dest]=DIAMOND_OBJECT(instance);
     const DiamondMethod *initialize=lookup_method(chunk,class,
         "initialize",sizeof("initialize")-1);
-    if(instance->type_binding!=nullptr&&initialize==nullptr)
+    if(instance->type_binding!=nullptr&&initialize==nullptr&&explicit_type==DIAMOND_NO_TYPE_SET)
         VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+    if(explicit_type!=DIAMOND_NO_TYPE_SET) {
+        if(instance->type_binding==nullptr||
+           !bind_explicit_class_type(chunk,explicit_type,instance->type_binding)) {
+            snprintf(vm->error,sizeof vm->error,"unsupported explicit class type argument");
+            VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+        }
+    }
     if(initialize!=nullptr) {
         if(spread->count<initialize->required_arity||
            (spread->count>initialize->arity&&
@@ -2254,7 +2270,7 @@ DiamondVmStatus outlined_new_spread(DiamondVm *vm,const DiamondChunk *chunk,Diam
             initialize->source_chunk:chunk;
         const DiamondFunction *fn=
             function_chunk->functions[initialize->function_index];
-        if(instance->type_binding!=nullptr) {
+        if(instance->type_binding!=nullptr&&explicit_type==DIAMOND_NO_TYPE_SET) {
             const DiamondVmStatus bound=bind_instance_constructor_type(
                 vm,function_chunk,fn,spread->values,spread->count,instance);
             if(bound!=DIAMOND_VM_OK) {free(args);VM_RETURN(bound);}
@@ -2296,7 +2312,7 @@ DiamondVmStatus outlined_new_spread(DiamondVm *vm,const DiamondChunk *chunk,Diam
             if(spread->count>1)instance->fields[1]=spread->values[1];
         } else if(spread->count!=0)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
     }
-    HELPER_DONE;
+    return DIAMOND_VM_OK;
 }
 
 /* DIAMOND_OP_INVOKE_KEYWORDS, DIAMOND_OP_INVOKE_TYPED_KEYWORDS, moved out of run_chunk's switch

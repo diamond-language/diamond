@@ -1,0 +1,6 @@
+class DefaultBox[T]
+  def initialize(value: T = 42)
+    @value = value
+  end
+end
+DefaultBox[String].new()
