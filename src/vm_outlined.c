@@ -1989,6 +1989,7 @@ DiamondVmStatus outlined_call_spread(DiamondVm *vm,const DiamondChunk *chunk,Dia
         .interfaces=chunk->interfaces,.interface_count=chunk->interface_count,
         .parameter_type_sets=function->parameter_type_sets,
         .type_variable_count=function->type_variable_count,
+        .class_type_variable=function->class_type_variable,
         .parameter_offset=function->owner_class==DIAMOND_OWNER_NONE?0:1,
         .type_variable_bindings=type_argument_count==0?nullptr:
             explicit_bindings,
@@ -2097,6 +2098,7 @@ DiamondVmStatus outlined_call_singleton_keywords(DiamondVm *vm,const DiamondChun
         .interface_count=chunk->interface_count,
         .parameter_type_sets=function->parameter_type_sets,
         .type_variable_count=function->type_variable_count,
+        .class_type_variable=function->class_type_variable,
         .parameter_offset=function->owner_class==DIAMOND_OWNER_NONE?0:1,
         .type_variable_bindings=type_count==0?nullptr:singleton_bindings,
         .register_count=function->register_count,
@@ -2190,6 +2192,7 @@ DiamondVmStatus outlined_call_singleton_spread(DiamondVm *vm,const DiamondChunk 
         .interface_count=chunk->interface_count,
         .parameter_type_sets=function->parameter_type_sets,
         .type_variable_count=function->type_variable_count,
+        .class_type_variable=function->class_type_variable,
         .parameter_offset=function->owner_class==DIAMOND_OWNER_NONE?0:1,
         .type_variable_bindings=type_argument_count==0?nullptr:
             explicit_bindings,
@@ -2228,6 +2231,8 @@ DiamondVmStatus outlined_new_spread(DiamondVm *vm,const DiamondChunk *chunk,Diam
     registers[dest]=DIAMOND_OBJECT(instance);
     const DiamondMethod *initialize=lookup_method(chunk,class,
         "initialize",sizeof("initialize")-1);
+    if(instance->type_binding!=nullptr&&initialize==nullptr)
+        VM_RETURN(DIAMOND_VM_TYPE_ERROR);
     if(initialize!=nullptr) {
         if(spread->count<initialize->required_arity||
            (spread->count>initialize->arity&&
@@ -2249,6 +2254,11 @@ DiamondVmStatus outlined_new_spread(DiamondVm *vm,const DiamondChunk *chunk,Diam
             initialize->source_chunk:chunk;
         const DiamondFunction *fn=
             function_chunk->functions[initialize->function_index];
+        if(instance->type_binding!=nullptr) {
+            const DiamondVmStatus bound=bind_instance_constructor_type(
+                vm,function_chunk,fn,spread->values,spread->count,instance);
+            if(bound!=DIAMOND_VM_OK) {free(args);VM_RETURN(bound);}
+        }
         DiamondChunk child={.name=fn->name,.code=fn->code,
           .lines=fn->lines,.columns=fn->columns,
           .code_count=fn->code_count,.constants=fn->constants,
@@ -2263,6 +2273,7 @@ DiamondVmStatus outlined_new_spread(DiamondVm *vm,const DiamondChunk *chunk,Diam
           .interface_count=function_chunk->interface_count,
           .parameter_type_sets=fn->parameter_type_sets,
           .type_variable_count=fn->type_variable_count,
+          .class_type_variable=fn->class_type_variable,
           .parameter_offset=fn->owner_class==DIAMOND_OWNER_NONE?0:1,
           .register_count=fn->register_count,
           .has_variadic=fn->has_variadic};
@@ -2355,7 +2366,7 @@ DiamondVmStatus outlined_invoke_keywords(DiamondVm *vm,const DiamondChunk *chunk
             (uint8_t)method_name_index,0,1,
             DIAMOND_OP_RETURN,0,2};
         uint32_t native_locations[12]={0};
-        DiamondChunk native_chunk=*chunk;
+        DiamondChunk native_chunk=*chunk;native_chunk.class_type_variable=false;
         native_chunk.name="<native keyword invoke>";
         native_chunk.code=native_code;
         native_chunk.lines=native_locations;
@@ -2419,7 +2430,7 @@ DiamondVmStatus outlined_invoke_keywords(DiamondVm *vm,const DiamondChunk *chunk
     code[code_count++]=DIAMOND_OP_RETURN;KEYWORD_SHORT(2);
 #undef KEYWORD_SHORT
     uint32_t locations[32]={0};
-    DiamondChunk synthetic=*chunk;synthetic.name="<keyword invoke>";
+    DiamondChunk synthetic=*chunk;synthetic.class_type_variable=false;synthetic.name="<keyword invoke>";
     synthetic.code=code;synthetic.lines=locations;
     synthetic.columns=locations;synthetic.code_count=code_count;
     synthetic.register_count=3;
@@ -2650,6 +2661,7 @@ DiamondVmStatus outlined_invoke_spread(DiamondVm *vm,const DiamondChunk *chunk,D
         .interface_count=function_chunk->interface_count,
         .parameter_type_sets=fn->parameter_type_sets,
         .type_variable_count=fn->type_variable_count,
+        .class_type_variable=fn->class_type_variable,
         .parameter_offset=fn->owner_class==DIAMOND_OWNER_NONE?0:1,
         .type_variable_bindings=type_argument_count==0?nullptr:
             explicit_bindings,

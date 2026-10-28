@@ -799,6 +799,7 @@ static inline DiamondChunk plain_call_chunk(const DiamondFunction *function,
         .interface_count = caller->interface_count,
         .parameter_type_sets = function->parameter_type_sets,
         .type_variable_count = function->type_variable_count,
+        .class_type_variable=function->class_type_variable,
         .parameter_offset = function->owner_class == DIAMOND_OWNER_NONE ? 0 : 1,
         .register_count = function->register_count,
         .has_variadic = function->has_variadic,
@@ -1333,6 +1334,10 @@ DIAMOND_INTERNAL void bind_context_set(DiamondTypeBinding *binding,uint8_t node,
 DIAMOND_INTERNAL void infer_from_value(const DiamondChunk *chunk,DiamondValue value,
     const DiamondTypeSet *sets,uint16_t set_index,
     DiamondTypeBinding bindings[8]);
+
+DIAMOND_INTERNAL DiamondVmStatus bind_instance_constructor_type(
+    DiamondVm *vm,const DiamondChunk *chunk,const DiamondFunction *function,
+    const DiamondValue *arguments,size_t count,DiamondInstance *instance);
 
 /* Split out of run_chunk's own switch (unlike GET_IVAR/GET_NAMESPACE_
  * CONSTANT and friends, which stay inline) specifically to keep run_chunk's

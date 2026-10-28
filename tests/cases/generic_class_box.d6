@@ -1,0 +1,45 @@
+class Box[T]
+  def initialize(value: T)
+    @value = value
+  end
+  def value() -> T = @value
+  def replace(value: T)
+    @value = value
+  end
+  def round_trip(value: T) -> T
+    self.replace(value: value)
+    self.value()
+  end
+  def copy_box() = Box.new(value: @value)
+end
+
+integer = Box.new(42)
+string = Box.new(value: "hello")
+spread = Box.new(*[17])
+puts(integer.value())
+puts(integer.copy_box().value())
+puts(string.value())
+puts(spread.value())
+integer.replace(value: 23)
+puts(integer.value())
+integer.replace(*[24])
+puts(integer.round_trip(25))
+copy = integer.dup()
+copy.replace(26)
+puts(copy.value())
+puts(integer.value())
+getter = string.value
+puts(getter())
+setter = string.replace
+setter("world")
+puts(getter())
+
+class Items[T]
+  def initialize(values: Array[T])
+    @values = values
+  end
+  def first() -> T = @values[0]
+end
+puts(Items.new([31, 32]).first())
+puts(Box.new([1, 2]).value())
+nil

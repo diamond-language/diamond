@@ -1,0 +1,7 @@
+class Box[T]
+  def initialize(value)
+    @value = value
+  end
+  def value() -> T = @value
+end
+Box.new(42)

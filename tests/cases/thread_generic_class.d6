@@ -1,0 +1,16 @@
+class Box[T]
+  def initialize(value: T)
+    @value = value
+  end
+  def value() -> T = @value
+  def replace(value: T)
+    @value = value
+  end
+end
+def worker(box)
+  box.replace(43)
+  box
+end
+box = Thread.new(worker, Box.new(42)).join()
+puts(box.value())
+box.replace("wrong")

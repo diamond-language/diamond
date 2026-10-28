@@ -113,6 +113,8 @@ static bool copy_instance_step(DiamondVm *dest_vm, DiamondValue value,
         copy=allocate_instance(dest_vm,source->class,*adopted_owner);
     }
     if(copy==nullptr)return false;
+    if(source->type_binding!=nullptr)
+        *copy->type_binding=*source->type_binding;
     /* Same unrooted-window bug as Array/Hash above, fixed the
      * same way -- `copy` itself is the container to protect;
      * writing straight into copy->fields[index] already puts each
@@ -1036,6 +1038,8 @@ DiamondVmStatus diamond_jit_dup(DiamondVm *vm, const DiamondValue *receiver,
             return DIAMOND_VM_TYPE_ERROR; /* real override -- caller must fall back */
         DiamondInstance *copy=allocate_instance(vm,instance->class,instance->owner);
         if(copy==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
+        if(instance->type_binding!=nullptr)
+            *copy->type_binding=*instance->type_binding;
         for(size_t index=0;index<instance->field_count;index++)
             copy->fields[index]=instance->fields[index];
         copy->shape=instance->shape;

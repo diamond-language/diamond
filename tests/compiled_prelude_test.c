@@ -65,6 +65,55 @@ static bool run_and_get_string(DiamondProgram *program, char *out, size_t out_si
     return true;
 }
 
+static void check_generic_class_round_trip(const DiamondProgram *template) {
+    static const char source[]=
+        "class Box[T]\n"
+        "  def initialize(value: T)\n    @value = value\n  end\n"
+        "  def value() -> T = @value\n"
+        "  def wrong() -> T = \"wrong\"\n"
+        "end\nBox.new(42)\n";
+    DiamondProgram *program=alloc_program();
+    DiamondDiagnostic diagnostic;
+    const bool compiled=diamond_compile_incremental(source,program,template,&diagnostic);
+    check(compiled,"generic class compiles against restored template");
+    if(compiled) {
+        char *bytes=nullptr;size_t length=0;
+        FILE *file=open_memstream(&bytes,&length);
+        check(file!=nullptr,"generic class serialization stream opens");
+        if(file!=nullptr) {
+            check(diamond_program_write_compiled(program,file),"generic class serializes");
+            fclose(file);
+            DiamondProgram *copy=alloc_program();diamond_program_init(copy);
+            const bool read=diamond_program_read_compiled((const uint8_t *)bytes,length,copy);
+            check(read,"generic class deserializes");
+            if(read) {
+                DiamondProgram *use=alloc_program();
+                const bool good=diamond_compile_incremental("Box.new(42).value()\n",
+                    use,copy,&diagnostic);
+                check(good,"restored generic class accepts new construction");
+                if(good) {
+                    char rendered[64];
+                    check(run_and_get_string(use,rendered,sizeof rendered)&&
+                        strcmp(rendered,"42")==0,"restored generic class retains binding");
+                }
+                const bool bad=diamond_compile_incremental("Box.new(42).wrong()\n",
+                    use,copy,&diagnostic);
+                check(bad,"restored generic class wrong return remains a runtime check");
+                if(bad) {
+                    DiamondChunk chunk=diamond_program_chunk(use);
+                    DiamondVm vm;diamond_vm_init(&vm);DiamondValue result=DIAMOND_NIL;
+                    check(diamond_vm_run(&vm,&chunk,&result)==DIAMOND_VM_TYPE_ERROR,
+                        "restored generic class rejects wrong return");
+                    diamond_vm_free(&vm);
+                }
+                diamond_program_free(use);free(use);
+            }
+            diamond_program_free(copy);free(copy);free(bytes);
+        }
+    }
+    diamond_program_free(program);free(program);
+}
+
 int main(void) {
     const size_t prelude_length = diamond_prelude_length(true);
     char *prelude_source = malloc(prelude_length + 1);
@@ -133,6 +182,7 @@ int main(void) {
         redefine_source, program, restored, &diagnostic);
     check(!redefine_compiled, "redefining a prelude function is rejected against the deserialized template");
 
+    check_generic_class_round_trip(restored);
     diamond_program_free(program);
     free(program);
     diamond_program_free(restored);

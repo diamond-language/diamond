@@ -191,6 +191,9 @@ typedef struct DiamondInstance {
      * must fall back to its own ambient chunk when it's nullptr -- never
      * assume non-null. */
     const DiamondChunk *owner;
+    /* Points after fields in this allocation; null for ordinary classes.
+     * Type graphs contain no GC values and stay fixed after construction. */
+    DiamondTypeBinding *type_binding;
     size_t field_count;
     DiamondValue fields[];
 } DiamondInstance;

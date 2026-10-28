@@ -148,6 +148,7 @@ static void assert_methods_are_plain(const DiamondMethod *methods, size_t count)
  * anything reads it. */
 static bool write_class(FILE *file, const DiamondClass *class) {
     if (!write_all(file, class->name, sizeof class->name)) return false;
+    if (!write_all(file, class->type_parameter, sizeof class->type_parameter)) return false;
     if (!write_all(file, &class->declaration_line, sizeof class->declaration_line)) return false;
     if (!write_all(file, &class->declaration_column, sizeof class->declaration_column)) return false;
     if (!write_all(file, &class->declaration_start, sizeof class->declaration_start)) return false;
@@ -412,6 +413,8 @@ static bool read_class(const uint8_t **cursor, const uint8_t *end, DiamondClass 
     diamond_class_free_tables(out);
     memset(out, 0, sizeof *out);
     if (!read_bytes(cursor, end, out->name, sizeof out->name)) return false;
+    if (!read_bytes(cursor, end, out->type_parameter, sizeof out->type_parameter)) return false;
+    if(memchr(out->type_parameter,'\0',sizeof out->type_parameter)==nullptr)return false;
     if (!read_bytes(cursor, end, &out->declaration_line, sizeof out->declaration_line)) return false;
     if (!read_bytes(cursor, end, &out->declaration_column, sizeof out->declaration_column)) return false;
     if (!read_bytes(cursor, end, &out->declaration_start, sizeof out->declaration_start)) return false;
@@ -693,7 +696,7 @@ enum { DIAMOND_CACHE_MAGIC_LENGTH = 8 };
  * 8: class operands are 16 bits wide and the native/variable/interface
  *    type-id bases moved, so every instruction that names a class is a byte
  *    longer and every stored type id has a different value. */
-enum { DIAMOND_CACHE_FORMAT_VERSION = 8 };
+enum { DIAMOND_CACHE_FORMAT_VERSION = 9 };
 
 /* A checksum of the compiler's own sources and prelude (every .c and .h
  * file under src/, plus lib/core.d6 and lib/core/), passed in by the

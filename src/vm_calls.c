@@ -83,6 +83,7 @@ DiamondVmStatus call_closure_helper(DiamondVm *vm,const DiamondChunk *chunk,
       .interfaces=chunk->interfaces,.interface_count=chunk->interface_count,
       .parameter_type_sets=fn->parameter_type_sets,
       .type_variable_count=fn->type_variable_count,
+      .class_type_variable=fn->class_type_variable,
       .parameter_offset=fn->owner_class==DIAMOND_OWNER_NONE?0:1,
       .register_count=fn->register_count,.has_variadic=fn->has_variadic};
     return run_chunk(&child,vm,arguments,argument_count,depth+1,called,result);
@@ -119,6 +120,7 @@ DiamondVmStatus forward_to_top_level_helper(DiamondVm *vm,
       .interfaces=chunk->interfaces,.interface_count=chunk->interface_count,
       .parameter_type_sets=target->parameter_type_sets,
       .type_variable_count=target->type_variable_count,
+      .class_type_variable=target->class_type_variable,
       .parameter_offset=target->owner_class==DIAMOND_OWNER_NONE?0:1,
       .register_count=target->register_count};
     return run_chunk(&child,vm,forward_args,total_argc,depth+1,nullptr,result);
@@ -359,6 +361,7 @@ DiamondVmStatus invoke_resolved_method_helper(DiamondVm *vm,
       .interfaces=function_chunk->interfaces,.interface_count=function_chunk->interface_count,
       .parameter_type_sets=fn->parameter_type_sets,
       .type_variable_count=fn->type_variable_count,
+      .class_type_variable=fn->class_type_variable,
       .parameter_offset=fn->owner_class==DIAMOND_OWNER_NONE?0:1,
       .type_variable_bindings=type_argument_count==0?nullptr:explicit_bindings,
       .register_count=fn->register_count,.has_variadic=fn->has_variadic};
@@ -819,6 +822,30 @@ DiamondVmStatus diamond_jit_native_call(DiamondVm *vm,
     return DIAMOND_VM_OK;
 }
 
+/* Keep the inference scratch graph out of ordinary constructor frames. */
+__attribute__((noinline))
+DiamondVmStatus bind_instance_constructor_type(DiamondVm *vm,
+        const DiamondChunk *chunk,const DiamondFunction *fn,
+        const DiamondValue *arguments,size_t count,DiamondInstance *instance) {
+    if(!fn->class_type_variable||fn->type_variable_count!=1)
+        return DIAMOND_VM_TYPE_ERROR;
+    DiamondTypeBinding bindings[8]={};
+    for(size_t parameter=0;parameter<count&&
+        parameter<DIAMOND_MAX_DECLARED_PARAMETERS;parameter++) {
+        if(arguments[parameter].kind==DIAMOND_VALUE_UNDEFINED)continue;
+        const uint16_t set=fn->parameter_type_sets[parameter];
+        if(set!=DIAMOND_NO_TYPE_SET&&set<fn->type_set_count)
+            infer_from_value(chunk,arguments[parameter],fn->type_sets,set,bindings);
+    }
+    if(bindings[0].node_count==0||bindings[0].nodes[0].count==0) {
+        snprintf(vm->error,sizeof vm->error,
+            "cannot infer generic class type parameter from constructor arguments");
+        return DIAMOND_VM_TYPE_ERROR;
+    }
+    *instance->type_binding=bindings[0];
+    return DIAMOND_VM_OK;
+}
+
 /* Phase 10 (docs/internal/jit-design.md): the interpreter's own plain
  * DIAMOND_OP_NEW case, extracted verbatim -- allocate, run `initialize` if
  * the class defines one (arity-checked exactly as the interpreter does),
@@ -841,10 +868,18 @@ DiamondVmStatus diamond_jit_new_instance(DiamondVm *vm, const DiamondChunk *chun
     registers[dest]=DIAMOND_OBJECT(instance);
     const DiamondMethod *init=lookup_method(
         chunk,class,"initialize",sizeof("initialize")-1);
+    if(instance->type_binding!=nullptr&&init==nullptr)return DIAMOND_VM_TYPE_ERROR;
     if(init!=nullptr) {
         if(argc<init->required_arity||
            (argc>init->arity && !init->has_variadic))
             return DIAMOND_VM_ARITY_ERROR;
+        if(instance->type_binding!=nullptr) {
+            const DiamondChunk *owner=init->source_chunk!=nullptr?init->source_chunk:chunk;
+            const DiamondFunction *fn=owner->functions[init->function_index];
+            const DiamondVmStatus bound=bind_instance_constructor_type(vm,owner,fn,
+                &registers[base],argc,instance);
+            if(bound!=DIAMOND_VM_OK)return bound;
+        }
         DiamondValue ignored=DIAMOND_NIL;
         return invoke_resolved_method_helper(vm,chunk,
             init,registers[dest],registers,base,argc,false,0,nullptr,
@@ -900,6 +935,7 @@ DiamondVmStatus call_closure_spread_helper(DiamondVm *vm,
       .interface_count=chunk->interface_count,
       .parameter_type_sets=fn->parameter_type_sets,
       .type_variable_count=fn->type_variable_count,
+      .class_type_variable=fn->class_type_variable,
       .parameter_offset=fn->owner_class==DIAMOND_OWNER_NONE?0:1,
       .register_count=fn->register_count,.has_variadic=fn->has_variadic};
     const DiamondVmStatus status=run_chunk(&child,vm,arguments,argument_count,
@@ -1074,7 +1110,7 @@ DiamondVmStatus public_send_helper(DiamondVm *vm,
     uint8_t code[12]={DIAMOND_OP_INVOKE_SPREAD,
         0,2,0,0,0,0,0,1,DIAMOND_OP_RETURN,0,2};
     uint32_t locations[12]={0};
-    DiamondChunk synthetic=*chunk;
+    DiamondChunk synthetic=*chunk;synthetic.class_type_variable=false;
     synthetic.name="<public_send>";
     synthetic.code=code;synthetic.lines=locations;synthetic.columns=locations;
     synthetic.code_count=sizeof code;synthetic.register_count=3;

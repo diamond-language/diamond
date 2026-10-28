@@ -204,6 +204,8 @@ bool known_type_satisfies_one(const Compiler *compiler, uint16_t known,
             size_t class_index=(size_t)(known-DIAMOND_TYPE_CLASS_BASE);
             while(class_index<compiler->program->class_count&&!found) {
                 const DiamondClass *class=compiler->program->classes[class_index];
+                /* Class identity alone cannot prove an instance's T. */
+                if(class->type_parameter[0]!='\0')return false;
                 for(size_t method=0;method<class->method_count;method++)
                     if(strcmp(class->methods[method].name,
                               interface->methods[required].name)==0&&
@@ -986,7 +988,7 @@ void publish_callable_return_type(Compiler *compiler,uint16_t reg,
 void publish_call_return_type(Compiler *compiler,uint16_t reg,
         const DiamondFunction *target,const uint16_t *bindings,
         size_t binding_count) {
-    if(target==nullptr)return;
+    if(target==nullptr||target->class_type_variable)return;
     if(target->return_type_set==DIAMOND_NO_TYPE_SET&&
        target->declared_by_discovery&&compiler->tooling_forward_calls!=nullptr) {
         compiler->tooling_forward_calls->forward_calls=true;

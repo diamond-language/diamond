@@ -1817,6 +1817,17 @@ uint16_t compile_definition(Compiler *compiler, bool captures_self) {
         direct_class_singleton_member,direct_module_member,nested_in_singleton_method);
     function->nested=!at_top_level;
     if(!copy_definition_name(compiler,function,name,is_index_operator))return 0;
+    if(direct_class_member&&
+       compiler->program->classes[compiler->current_class]->type_parameter[0]!='\0') {
+        function->class_type_variable=true;
+        function->type_variable_count=1;
+        (void)snprintf(function->type_variables[0],sizeof function->type_variables[0],
+            "%s",compiler->program->classes[compiler->current_class]->type_parameter);
+        if(compiler->current.kind==DIAMOND_TOKEN_LEFT_BRACKET) {
+            fail(compiler,name,"generic class methods cannot declare additional type parameters");
+            return 0;
+        }
+    }
     parse_generic_type_parameters(compiler,function);
     if (compiler->current.kind != DIAMOND_TOKEN_LEFT_PAREN) {
         fail(compiler, compiler->current.span, "expected '(' after function name");

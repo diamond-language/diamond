@@ -730,6 +730,7 @@ static bool contextual_signatures_equal(const DiamondFunction *left,
         const DiamondFunction *right) {
     if(left->arity!=right->arity||left->required_arity!=right->required_arity||
        left->has_variadic!=right->has_variadic||
+       left->class_type_variable!=right->class_type_variable||
        left->type_variable_count!=right->type_variable_count)return false;
     for(size_t parameter=0;parameter<left->arity&&parameter<DIAMOND_MAX_DECLARED_PARAMETERS;parameter++) {
         if(strcmp(left->parameter_names[parameter],
@@ -812,7 +813,7 @@ static void publish_union_instance_return_type(Compiler *compiler,uint16_t reg,
     for(size_t index=0;index<member_count;index++) {
         const DiamondFunction *target=class_instance_signature(compiler,
             members[index],name);
-        if(target==nullptr) {
+        if(target==nullptr||target->class_type_variable) {
             compiler->function->type_set_count=original_count;return;
         }
         uint16_t source_set=target->return_type_set;

@@ -98,6 +98,7 @@ DiamondVmStatus dispatch_pending_signals(DiamondVm *vm,const DiamondChunk *chunk
           .interfaces=chunk->interfaces,.interface_count=chunk->interface_count,
           .parameter_type_sets=fn->parameter_type_sets,
           .type_variable_count=fn->type_variable_count,
+          .class_type_variable=fn->class_type_variable,
           .parameter_offset=fn->owner_class==DIAMOND_OWNER_NONE?0:1,
           .register_count=fn->register_count};
         DiamondValue ignored=DIAMOND_NIL;
