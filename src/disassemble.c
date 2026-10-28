@@ -929,21 +929,27 @@ static bool disassemble_spread_constructors(DisassemblyWalk *walk) {
             if((size_t)class_index>=chunk->class_count)valid=false;
             offset+=7;break;
         }
+        case DIAMOND_OP_NEW_TYPED:
         case DIAMOND_OP_NEW_KEYWORDS: {
-            if(!require_bytes(stream,chunk,offset,8)) {valid=false;offset=chunk->code_count;break;}
+            const bool typed=opcode==DIAMOND_OP_NEW_TYPED;
+            const size_t extra=typed?2u:0u;
+            if(!require_bytes(stream,chunk,offset,8+extra)) {valid=false;offset=chunk->code_count;break;}
             const uint16_t class_index=(uint16_t)read_operand(chunk,offset+3);
-            const uint8_t encoded_keyword_count=chunk->code[offset+7];
+            const uint8_t encoded_keyword_count=chunk->code[offset+7+extra];
             const bool has_block=(encoded_keyword_count&0x80u)!=0;
             const uint8_t keyword_count=encoded_keyword_count&0x7fu;
-            const size_t total=8+(size_t)keyword_count*4+(has_block?2u:0u);
-            if(!keyword_trailer_count_valid(encoded_keyword_count)||
+            const size_t total=8+extra+(size_t)keyword_count*4+(has_block?2u:0u);
+            if((!typed&&!keyword_trailer_count_valid(encoded_keyword_count))||
+               keyword_count>DIAMOND_MAX_DECLARED_PARAMETERS||
                !require_bytes(stream,chunk,offset,total)) {valid=false;offset=chunk->code_count;break;}
-            fprintf(stream,"%-18s r%u, c%u, r%u, %u keywords\n","NEW_KEYWORDS",
+            fprintf(stream,"%-18s r%u, c%u, r%u, %u keywords\n",typed?"NEW_TYPED":"NEW_KEYWORDS",
                 checked_register(chunk,stream,read_operand(chunk,offset+1),&valid),class_index,
-                checked_register(chunk,stream,read_operand(chunk,offset+5),&valid),keyword_count);
+                checked_register(chunk,stream,read_operand(chunk,offset+5+extra),&valid),keyword_count);
             if((size_t)class_index>=chunk->class_count)valid=false;
+            if(typed&&(read_operand(chunk,offset+5)>=chunk->type_set_count||
+               class_index>=chunk->class_count||chunk->classes[class_index]->type_parameter[0]=='\0'))valid=false;
             for(size_t index=0;index<keyword_count;index++) {
-                const size_t entry=offset+8+index*4;
+                const size_t entry=offset+8+extra+index*4;
                 if((size_t)read_operand(chunk,entry)>=chunk->string_count)valid=false;
                 (void)checked_register(chunk,stream,read_operand(chunk,entry+2),&valid);
             }
@@ -1988,7 +1994,7 @@ size_t diamond_collect_call_sites(const DiamondChunk *chunk, size_t start_offset
                             is_call=true;
                         }
                     }
-                } else if(strcmp(mnemonic,"NEW")==0) {
+                } else if(strcmp(mnemonic,"NEW")==0||strcmp(mnemonic,"NEW_TYPED")==0) {
                     snprintf(site.name,sizeof site.name,"new");
                     is_call=true;
                 } else if(strncmp(mnemonic,"CALL_",5)==0) {

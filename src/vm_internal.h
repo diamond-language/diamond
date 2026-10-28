@@ -1330,6 +1330,11 @@ static inline uint8_t binding_node(DiamondTypeBinding *binding) {
 
 DIAMOND_INTERNAL void bind_context_set(DiamondTypeBinding *binding,uint8_t node,
     const DiamondChunk *context,const DiamondTypeSet *sets,uint16_t set_index);
+DIAMOND_INTERNAL bool bind_explicit_class_type(const DiamondChunk *chunk,
+    uint16_t set_index,DiamondTypeBinding *binding);
+DIAMOND_INTERNAL DiamondVmStatus new_instance_from_array(DiamondVm *vm,
+    const DiamondChunk *chunk,DiamondValue *registers,uint16_t destination,
+    uint16_t class_index,const DiamondArray *arguments,uint16_t explicit_type,size_t depth);
 
 DIAMOND_INTERNAL void infer_from_value(const DiamondChunk *chunk,DiamondValue value,
     const DiamondTypeSet *sets,uint16_t set_index,

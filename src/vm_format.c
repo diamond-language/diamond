@@ -252,10 +252,39 @@ static void append_element_types(char *buffer,size_t capacity,
  * Hash actually holds -- "Array[String]" rather than just "Array" -- so a
  * failed `values: Array[Int]` check says what was in the Array, and a
  * closure's arity, so `3.times() do ... end` says "got Callable[0]". */
+static void append_bound_type(char *buffer,size_t capacity,const DiamondChunk *chunk,
+        const DiamondTypeBinding *binding,uint8_t node,size_t depth) {
+    if(node>=binding->node_count||depth>=DIAMOND_BOUND_TYPE_NODES||
+       binding->nodes[node].count==0) {append_bounded(buffer,capacity,"?");return;}
+    for(size_t i=0;i<binding->nodes[node].count;i++) {
+        const DiamondBoundTypeMember member=binding->nodes[node].members[i];
+        if(i>0)append_bounded(buffer,capacity," | ");
+        append_bounded(buffer,capacity,type_name(chunk,member.id));
+        if(member.argument_node==UINT8_MAX)continue;
+        append_bounded(buffer,capacity,"[");
+        append_bound_type(buffer,capacity,chunk,binding,member.argument_node,depth+1);
+        if(member.second_argument_node!=UINT8_MAX) {
+            append_bounded(buffer,capacity,", ");
+            append_bound_type(buffer,capacity,chunk,binding,member.second_argument_node,depth+1);
+        }
+        append_bounded(buffer,capacity,"]");
+    }
+}
+
 void format_value_type_detailed(char *buffer,size_t capacity,
         const DiamondChunk *chunk,DiamondValue value) {
     diamond_format_value_type(buffer,capacity,value);
     if(value.kind!=DIAMOND_VALUE_OBJECT)return;
+    if(value.as.object->kind==DIAMOND_OBJECT_INSTANCE) {
+        const DiamondInstance *instance=(const DiamondInstance *)value.as.object;
+        if(instance->type_binding!=nullptr) {
+            append_bounded(buffer,capacity,"[");
+            append_bound_type(buffer,capacity,instance->owner!=nullptr?instance->owner:chunk,
+                instance->type_binding,0,0);
+            append_bounded(buffer,capacity,"]");
+        }
+        return;
+    }
     if(value.as.object->kind==DIAMOND_OBJECT_CLOSURE) {
         const DiamondClosure *closure=(const DiamondClosure *)value.as.object;
         if(closure->foreign_chunk!=nullptr||

@@ -20,6 +20,7 @@
 
 #include "compiled_prelude.h"
 #include "compiler.h"
+#include "disassemble.h"
 #include "prelude.h"
 #include "value.h"
 #include "vm.h"
@@ -65,13 +66,38 @@ static bool run_and_get_string(DiamondProgram *program, char *out, size_t out_si
     return true;
 }
 
+static void check_specialized_constructor_bytecode(const DiamondProgram *program) {
+    size_t class_index=0;
+    while(class_index<program->class_count&&strcmp(program->classes[class_index]->name,"Box")!=0)
+        class_index++;
+    check(class_index<program->class_count,"generic constructor class found");
+    if(class_index>=program->class_count)return;
+    uint8_t code[]={DIAMOND_OP_NEW_TYPED,0,1,(uint8_t)(class_index>>8),
+        (uint8_t)(class_index&UINT8_MAX),0,0,0,0,0,DIAMOND_OP_RETURN,0,1};
+    const DiamondTypeSet set={.count=1,.members={{.id=DIAMOND_TYPE_INT,
+        .argument_set=DIAMOND_NO_TYPE_SET,.second_argument_set=DIAMOND_NO_TYPE_SET,
+        .callable_arity=UINT8_MAX,.callable_return_set=DIAMOND_NO_TYPE_SET}}};
+    DiamondChunk chunk=diamond_program_chunk(program);
+    chunk.code=code;chunk.code_count=sizeof code;chunk.register_count=2;
+    chunk.type_sets=&set;chunk.type_set_count=1;
+    check(diamond_verify_bytecode(&chunk),"explicit constructor bytecode verifies");
+    code[5]=UINT8_MAX;code[6]=UINT8_MAX;
+    check(!diamond_verify_bytecode(&chunk),"invalid constructor type-set index rejected");
+    code[5]=0;code[6]=0;chunk.code_count=9;
+    check(!diamond_verify_bytecode(&chunk),"truncated constructor operands rejected");
+    chunk.code_count=sizeof code;code[9]=0x7f;
+    check(!diamond_verify_bytecode(&chunk),"oversized constructor keyword trailer rejected");
+    code[9]=0;code[3]=0;code[4]=0;
+    check(!diamond_verify_bytecode(&chunk),"non-generic class specialization rejected");
+}
+
 static void check_generic_class_round_trip(const DiamondProgram *template) {
     static const char source[]=
         "class Box[T]\n"
         "  def initialize(value: T)\n    @value = value\n  end\n"
         "  def value() -> T = @value\n"
         "  def wrong() -> T = \"wrong\"\n"
-        "end\nBox.new(42)\n";
+        "end\nBox[Int].new(42).value()\n";
     DiamondProgram *program=alloc_program();
     DiamondDiagnostic diagnostic;
     const bool compiled=diamond_compile_incremental(source,program,template,&diagnostic);
@@ -87,6 +113,11 @@ static void check_generic_class_round_trip(const DiamondProgram *template) {
             const bool read=diamond_program_read_compiled((const uint8_t *)bytes,length,copy);
             check(read,"generic class deserializes");
             if(read) {
+                check_specialized_constructor_bytecode(copy);
+                char rendered_constructor[64];
+                check(run_and_get_string(copy,rendered_constructor,sizeof rendered_constructor)&&
+                    strcmp(rendered_constructor,"42")==0,
+                    "serialized explicit generic constructor executes");
                 DiamondProgram *use=alloc_program();
                 const bool good=diamond_compile_incremental("Box.new(42).value()\n",
                     use,copy,&diagnostic);

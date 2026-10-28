@@ -1,0 +1,14 @@
+class Box[T]
+  def initialize(value: T)
+    @value = value
+  end
+  def value() -> T = @value
+  def replace(value: T)
+    @value = value
+  end
+end
+def worker() = Box[Array[Int]].new([])
+def consume(value: Box[Array[Int]]) = value.value().length()
+box = Thread.new(worker).join()
+puts(consume(box))
+box.replace(["wrong"])

@@ -695,8 +695,10 @@ enum { DIAMOND_CACHE_MAGIC_LENGTH = 8 };
  *    an opposite-endian target is rejected instead of misread.
  * 8: class operands are 16 bits wide and the native/variable/interface
  *    type-id bases moved, so every instruction that names a class is a byte
- *    longer and every stored type id has a different value. */
-enum { DIAMOND_CACHE_FORMAT_VERSION = 9 };
+ *    longer and every stored type id has a different value.
+ * 9: classes store a type parameter; methods distinguish its instance binding.
+ * 10: NEW_TYPED constructs explicitly specialized generic instances. */
+enum { DIAMOND_CACHE_FORMAT_VERSION = 10 };
 
 /* A checksum of the compiler's own sources and prelude (every .c and .h
  * file under src/, plus lib/core.d6 and lib/core/), passed in by the

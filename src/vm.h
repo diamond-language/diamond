@@ -636,6 +636,9 @@ typedef enum DiamondOpCode : uint8_t {
      * sort_keys). Without options the compiler emits the two-operand JSON_STRINGIFY, which
      * keeps the layout selfhost/parser.d6 emits. */
     DIAMOND_OP_JSON_STRINGIFY_OPTIONS,
+    /* dest, class, type-set, positional Array, keyword-count/flags, pairs,
+     * optional block. Explicit class binding precedes initialize. */
+    DIAMOND_OP_NEW_TYPED,
     DIAMOND_OP_COUNT,
 } DiamondOpCode;
 

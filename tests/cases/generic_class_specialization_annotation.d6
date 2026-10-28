@@ -1,0 +1,7 @@
+class Box[T]
+  def initialize(value: T)
+    @value = value
+  end
+end
+def consume(value: Box[Int]) = 42
+consume(Box.new("wrong"))

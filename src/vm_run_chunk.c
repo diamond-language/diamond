@@ -1836,16 +1836,22 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 VM_PROPAGATE(s);
                 break;
             }
+            case DIAMOND_OP_NEW_TYPED:
             case DIAMOND_OP_NEW_KEYWORDS: {
                 uint16_t destination=0,positional_register=0;
                 uint16_t class_index=0;uint8_t keyword_count=0;uint16_t keyword_names[DIAMOND_MAX_DECLARED_PARAMETERS];
                 uint16_t keyword_registers[DIAMOND_MAX_DECLARED_PARAMETERS];
+                uint16_t explicit_type=DIAMOND_NO_TYPE_SET;
                 READ_SHORT(destination);READ_SHORT(class_index);
+                if(instruction==DIAMOND_OP_NEW_TYPED)READ_SHORT(explicit_type);
                 READ_SHORT(positional_register);READ_BYTE(keyword_count);
                 const bool has_block=(keyword_count&0x80u)!=0;
                 keyword_count&=0x7fu;
                 if((size_t)class_index>=chunk->class_count||
-                   (keyword_count==0&&!has_block)||
+                   (instruction==DIAMOND_OP_NEW_TYPED&&
+                    (explicit_type>=chunk->type_set_count||
+                     chunk->classes[class_index]->type_parameter[0]=='\0'))||
+                   (keyword_count==0&&!has_block&&instruction!=DIAMOND_OP_NEW_TYPED)||
                    keyword_count>DIAMOND_MAX_DECLARED_PARAMETERS||
                    registers[positional_register].kind!=DIAMOND_VALUE_OBJECT||
                    registers[positional_register].as.object->kind!=DIAMOND_OBJECT_ARRAY)
@@ -1860,6 +1866,12 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 const DiamondClass *class=chunk->classes[class_index];
                 const DiamondMethod *initialize=lookup_method(chunk,class,
                     "initialize",sizeof("initialize")-1);
+                if(instruction==DIAMOND_OP_NEW_TYPED&&initialize==nullptr&&keyword_count==0&&!has_block) {
+                    const DiamondVmStatus status=new_instance_from_array(vm,chunk,registers,
+                        destination,class_index,(const DiamondArray *)registers[positional_register].as.object,
+                        explicit_type,depth);
+                    VM_PROPAGATE(status);break;
+                }
                 if(initialize==nullptr) {snprintf(vm->error,sizeof vm->error,
                     "no parameter with this name");VM_RETURN(DIAMOND_VM_ARITY_ERROR);}
                 const DiamondChunk *function_chunk=initialize->source_chunk!=nullptr?
@@ -1879,6 +1891,11 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 const size_t protected_count=vm->gc_protected_count;
                 if(!gc_protect(vm,DIAMOND_OBJECT(merged_array)))
                     VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                if(instruction==DIAMOND_OP_NEW_TYPED) {
+                    const DiamondVmStatus status=new_instance_from_array(vm,chunk,registers,
+                        destination,class_index,merged_array,explicit_type,depth);
+                    gc_unprotect(vm,protected_count);VM_PROPAGATE(status);break;
+                }
                 uint8_t code[10]={DIAMOND_OP_NEW_SPREAD,0,1,
                     (uint8_t)(class_index>>8),(uint8_t)(class_index&UINT8_MAX),0,0,
                     DIAMOND_OP_RETURN,0,1};uint32_t locations[10]={0};
