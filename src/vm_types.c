@@ -2,6 +2,7 @@
 
 #include "vm_internal.h"
 #include "bignum.h"
+#include "interface_inference.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -331,13 +332,37 @@ static bool generic_class_implements(const DiamondChunk *chunk,const DiamondClas
                wanted->arity>candidate->arity||candidate->function_index>=chunk->function_count||
                candidate->source_chunk!=nullptr)continue;
             const DiamondFunction *implementation=chunk->functions[candidate->function_index];
-            if(implementation->type_variable_count!=implementation->class_type_variable||
+            if(implementation->type_variable_count>8||
                (implementation->class_type_variable!=0&&
                 implementation->class_type_variable!=DIAMOND_CLASS_TYPE_PARAMETER_COUNT(class)))continue;
+            DiamondTypeBinding specialized[8]={};
+            const size_t receiver_count=implementation->class_type_variable==0?0:count;
+            if(receiver_count>implementation->class_type_variable)continue;
+            if(receiver_count>0)memcpy(specialized,bindings,receiver_count*sizeof *bindings);
+            uint16_t inferred[8];
+            for(size_t i=0;i<8;i++)inferred[i]=DIAMOND_NO_TYPE_SET;
+            for(size_t p=0;p<wanted->arity;p++)
+                interface_infer_variables(implementation,implementation->parameter_type_sets[p],
+                    interface->type_sets,wanted->parameter_type_sets[p],inferred,0);
             DiamondChunk context=*chunk;
-            /* An unrelated caller's T is never an implementation's T. */
-            context.type_variable_count=implementation->class_type_variable==0?0:(uint8_t)count;
-            context.type_variable_bindings=context.type_variable_count==0?nullptr:bindings;
+            /* Receiver slots are fixed; method slots come solely from this
+             * interface's inputs, never an unrelated caller's variables. */
+            context.type_variable_count=0;
+            context.type_variable_bindings=nullptr;
+            bool supported=true;
+            for(size_t variable=implementation->class_type_variable;
+                variable<implementation->type_variable_count&&supported;variable++) {
+                if(inferred[variable]==DIAMOND_NO_TYPE_SET)continue;
+                size_t nodes=0;
+                supported=interface_binding_supported(interface->type_sets,inferred[variable],&nodes);
+                if(!supported)break;
+                (void)binding_node(&specialized[variable]);
+                bind_context_set(&specialized[variable],0,&context,interface->type_sets,inferred[variable]);
+                supported=!specialized[variable].invalid;
+            }
+            if(!supported)continue;
+            context.type_variable_count=implementation->type_variable_count;
+            context.type_variable_bindings=specialized;
             found=true;
             for(size_t parameter=0;parameter<wanted->arity&&found;parameter++) {
                 const uint16_t needed=wanted->parameter_type_sets[parameter];
@@ -463,6 +488,13 @@ bool value_matches_type(const DiamondChunk *chunk, DiamondValue value,
                             &interface->methods[required];
                         const DiamondFunction *implementation=
                             chunk->functions[class->methods[method].function_index];
+                        if(implementation->type_variable_count>0) {
+                            const DiamondInterface single={.methods=interface->methods+required,.method_count=1,
+                                .type_sets=interface->type_sets};
+                            found=generic_class_implements(chunk,class,nullptr,0,&single);
+                            if(found)break;
+                            continue;
+                        }
                         found=true;
                         for(size_t parameter=0;parameter<wanted->arity;parameter++) {
                             const uint16_t required_set=wanted->parameter_type_sets[parameter];
@@ -588,6 +620,13 @@ static bool runtime_type_id_satisfies(const DiamondChunk *chunk,uint16_t known,
                         const DiamondInterfaceMethod *wanted=&interface->methods[required];
                         const DiamondFunction *implementation=
                             chunk->functions[class->methods[method].function_index];
+                        if(implementation->type_variable_count>0) {
+                            const DiamondInterface single={.methods=interface->methods+required,.method_count=1,
+                                .type_sets=interface->type_sets};
+                            found=generic_class_implements(chunk,class,nullptr,0,&single);
+                            if(found)break;
+                            continue;
+                        }
                         found=true;
                         for(size_t parameter=0;parameter<wanted->arity;parameter++) {
                             const uint16_t required_set=wanted->parameter_type_sets[parameter];

@@ -1,0 +1,8 @@
+interface StringIdentity
+  def identity(value: Int) -> String
+end
+class Identity
+  def identity[U](value: U) -> U = value
+end
+def read(value: StringIdentity) -> String = value.identity(42)
+read(Identity.new())

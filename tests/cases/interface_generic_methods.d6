@@ -1,0 +1,74 @@
+interface IntIdentity
+  def identity(value: Int) -> Int
+end
+interface StringIdentity
+  def identity(value: String) -> String
+end
+interface WrongReturn
+  def identity(value: Int) -> String
+end
+interface UnionIdentity
+  def identity(value: Int | String) -> Int | String
+end
+interface ArrayIdentity
+  def identity(value: Array[Int]) -> Array[Int]
+end
+interface PairIdentity
+  def pair(left: Int, right: String) -> String
+end
+interface CallbackIdentity
+  def apply(callback: Callable[[Int], Int], value: Int) -> Int
+end
+interface ReturnOnly
+  def create() -> Int
+end
+interface FixedReceiver
+  def fixed(value: String) -> String
+end
+class Identity
+  def identity[U](value: U) -> U = value
+  def pair[A, B](left: A, right: B) -> B = right
+  def apply[U](callback: Callable[[U], U], value: U) -> U = callback(value)
+  def create[U]() -> U = nil
+end
+class Child < Identity
+end
+class Box[T]
+  def initialize(value: T)
+    @value = value
+  end
+  def identity[U](value: U) -> U = value
+  def pair[A, B](left: A, right: B) -> B = right
+  def apply[U](callback: Callable[[U], U], value: U) -> U = callback(value)
+  def fixed[U](value: T) -> T = value
+end
+def use(value: IntIdentity) -> Int = value.identity(42)
+def use_array(value: ArrayIdentity) -> Array[Int] = value.identity([1, 2])
+def use_pair(value: PairIdentity) -> String = value.pair(42, "second")
+def increment(value: Int) -> Int = value + 1
+def use_callback(value: CallbackIdentity) -> Int = value.apply(increment, 41)
+def checks[U](value, unrelated: U)
+  puts(value is IntIdentity)
+  puts(value is StringIdentity)
+  puts(value is WrongReturn)
+  puts(value is UnionIdentity)
+  puts(value is ArrayIdentity)
+  puts(value is PairIdentity)
+  puts(value is CallbackIdentity)
+  puts(value is ReturnOnly)
+  puts(use(value))
+end
+plain = Identity.new()
+puts(use(plain))
+puts(use_array(plain))
+puts(use_pair(plain))
+puts(use_callback(plain))
+puts(use(Child.new()))
+checks(plain, "caller")
+boxed = Box.new(9)
+puts(use(boxed))
+puts(use_pair(boxed))
+puts(use_callback(boxed))
+checks(boxed, "caller")
+puts(boxed is FixedReceiver)
+puts(Box.new("fixed") is FixedReceiver)
