@@ -1,0 +1,48 @@
+class Pair[T, E]
+  def initialize(value: T, error: E)
+    @value = value
+    @error = error
+  end
+  def value() -> T = @value
+  def error() -> E = @error
+end
+class Collections[A, B] < Pair[Array[B], Hash[String, A]]
+  def own_value() -> B = @value[0]
+  def own_error() -> A = @error["key"]
+end
+class Flip[A, B] < Collections[B, A]
+end
+class Box[T]
+  def initialize(value: T)
+    @value = value
+  end
+  def value() -> T = @value
+end
+class Producer[T] < Box[Callable[[], T]]
+end
+class Nested[T] < Box[Box[T]]
+end
+interface TimeSource
+  def value() -> Callable[[], Time]
+end
+interface WrongSource
+  def value() -> Callable[[], String]
+end
+def clock() -> Time = Time.now()
+def label() -> String = "callable"
+def read(value: Pair[Array[Int], Hash[String, String]]) = value.error()["key"]
+def nested[T](value: Box[Box[T]]) -> T = value.value().value()
+def callback(value: Callable[[], Pair[Array[Int], Hash[String, String]]]) = read(value())
+def make() -> Flip[Int, String] = Flip.new([42], {"key" => "composed"})
+value = Collections.new([42], {"key" => "hash"})
+puts(value.own_value())
+puts(value.own_error())
+puts(read(value))
+puts(Collections[String, Int].new([43], {"key" => "explicit"}).value()[0])
+puts(callback(make))
+puts(nested(Nested.new(Box.new("nested class"))))
+puts(Producer.new(label).value()())
+puts(Producer[String].new(label).value()())
+native = Producer.new(clock)
+puts(native is TimeSource)
+puts(native is WrongSource)

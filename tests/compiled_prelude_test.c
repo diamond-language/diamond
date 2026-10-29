@@ -129,6 +129,9 @@ static void check_generic_class_round_trip(const DiamondProgram *template) {
         "class CallbackBox < Box[Callable[[Int], Int]]\nend\n"
         "class TimeBox < Box[Time]\nend\n"
         "class ForwardBox[U] < Box[U]\nend\n"
+        "class ArrayBox[U] < Box[Array[U]]\n  def first() -> U = @value[0]\nend\n"
+        "class Producer[U] < Box[Callable[[], U]]\nend\n"
+        "def answer() -> Int = 42\n"
         "class ForwardGrand[V] < ForwardBox[V]\nend\n"
         "class ForwardPair[A, B] < Payload[A, B]\nend\n"
         "class SwappedPair[A, B] < Payload[B, A]\nend\n"
@@ -154,6 +157,25 @@ static void check_generic_class_round_trip(const DiamondProgram *template) {
     check(compiled,"generic class compiles against restored template");
     if(compiled) {
         check_fixed_binding_rejection(program);
+        for(size_t i=0;i<program->class_count;i++) {
+            DiamondClass *class=program->classes[i];
+            if(strcmp(class->name,"ArrayBox")!=0)continue;
+            DiamondBoundTypeMember *root=&class->parent_type_bindings[0].nodes[0].members[0];
+            const uint8_t saved=root->argument_node;root->argument_node=0;
+            char *invalid=nullptr;size_t invalid_length=0;
+            FILE *invalid_file=open_memstream(&invalid,&invalid_length);
+            check(invalid_file!=nullptr,"invalid transformed image stream opens");
+            if(invalid_file!=nullptr) {
+                check(diamond_program_write_compiled(program,invalid_file),"invalid transformed image writes");
+                fclose(invalid_file);
+                DiamondProgram *rejected=alloc_program();diamond_program_init(rejected);
+                check(!diamond_program_read_compiled((const uint8_t *)invalid,invalid_length,rejected),
+                    "cyclic transformed superclass graph is rejected on restore");
+                diamond_program_free(rejected);free(rejected);free(invalid);
+            }
+            root->argument_node=saved;break;
+        }
+
         for(size_t i=0;i<program->class_count;i++) {
             DiamondClass *class=program->classes[i];
             if(strcmp(class->name,"ForwardBox")!=0)continue;
@@ -188,6 +210,31 @@ static void check_generic_class_round_trip(const DiamondProgram *template) {
                     strcmp(rendered_constructor,"42")==0,
                     "serialized explicit generic constructor executes");
                 DiamondProgram *use=alloc_program();
+                const bool transformed=diamond_compile_incremental(
+                    "ArrayBox.new([42]).first()\n",use,copy,&diagnostic);
+                check(transformed,"restored transformed superclass infers child argument");
+                if(transformed) {
+                    char rendered[64];
+                    check(run_and_get_string(use,rendered,sizeof rendered)&&strcmp(rendered,"42")==0,
+                        "restored transformed binding preserves child and parent views");
+                }
+                const bool nested_transform=diamond_compile_incremental(
+                    "class NestedArrayBox[T] < ArrayBox[Array[T]]\nend\n"
+                    "NestedArrayBox[Int].new([[43]]).value()[0][0]\n",use,copy,&diagnostic);
+                check(nested_transform,"restored transformed parent can be specialized again");
+                if(nested_transform) {
+                    char rendered[64];
+                    check(run_and_get_string(use,rendered,sizeof rendered)&&strcmp(rendered,"43")==0,
+                        "restored composed transformed binding executes");
+                }
+                const bool producer=diamond_compile_incremental(
+                    "Producer.new(answer).value()()\n",use,copy,&diagnostic);
+                check(producer,"restored Callable template infers its return argument");
+                if(producer) {
+                    char rendered[64];
+                    check(run_and_get_string(use,rendered,sizeof rendered)&&strcmp(rendered,"42")==0,
+                        "restored Callable template retains its signature");
+                }
                 const bool swapped=diamond_compile_incremental(
                     "SwappedPair[String, Int].new(42, \"abc\").value()\n",use,copy,&diagnostic);
                 check(swapped,"restored reordered superclass accepts explicit arguments");

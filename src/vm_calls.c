@@ -859,11 +859,15 @@ DiamondVmStatus bind_instance_constructor_type(DiamondVm *vm,
             "cannot infer generic class type parameter from constructor arguments");
         return DIAMOND_VM_TYPE_ERROR;
     }
-    uint8_t order[2];
-    if(!diamond_class_argument_order(chunk->classes,chunk->class_count,instance->class->index,
-        fn->owner_class,order))return DIAMOND_VM_TYPE_ERROR;
+    DiamondTypeBinding actual[2]={};
+    if(!diamond_map_class_bindings(chunk->classes,chunk->class_count,instance->class->index,
+        fn->owner_class,bindings,actual,true)) {
+        snprintf(vm->error,sizeof vm->error,
+            "cannot infer generic class type parameter from constructor arguments");
+        return DIAMOND_VM_TYPE_ERROR;
+    }
     for(size_t variable=0;variable<DIAMOND_CLASS_TYPE_PARAMETER_COUNT(instance->class);variable++)
-        instance->type_binding[order[variable]]=bindings[variable];
+        instance->type_binding[variable]=actual[variable];
     return DIAMOND_VM_OK;
 }
 

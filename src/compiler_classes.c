@@ -1347,29 +1347,52 @@ uint16_t compile_class(Compiler *compiler) {
                 fail(compiler,superclass_span,"generic superclass requires forwarded type arguments");return 0;
             }
             advance_token(compiler);skip_newlines(compiler);
-            uint8_t used=0,first=0;
-            for(size_t variable=0;variable<subclass_parameters;variable++) {
-                int selected=-1;
-                if(compiler->current.kind==DIAMOND_TOKEN_IDENTIFIER) {
-                    if(name_equals(compiler,class->type_parameter,compiler->current.span,false))selected=0;
-                    else if(subclass_parameters==2&&name_equals(compiler,class->second_type_parameter,
-                        compiler->current.span,false))selected=1;
+            DiamondFunction *outer=compiler->function;
+            DiamondFunction *header=calloc(1,sizeof *header);
+            if(header==nullptr) {fail(compiler,superclass_span,"out of memory");return 0;}
+            header->type_variable_count=(uint8_t)subclass_parameters;
+            snprintf(header->type_variables[0],sizeof header->type_variables[0],"%s",class->type_parameter);
+            snprintf(header->type_variables[1],sizeof header->type_variables[1],"%s",class->second_type_parameter);
+            compiler->function=header;
+            unsigned occurrences[2]={};
+            bool simple=true;uint8_t first=0;
+            for(size_t variable=0;variable<subclass_parameters&&!compiler->failed;variable++) {
+                const uint16_t argument=(uint16_t)parse_type_annotation(compiler);
+                if(compiler->failed)break;
+                DiamondTypeBinding *binding=&class->parent_type_bindings[variable];
+                if(!diamond_bind_type_template(header->type_sets,header->type_set_count,argument,binding)) {
+                    fail(compiler,superclass_span,"superclass type template exceeds the binding graph");break;
                 }
-                if(selected<0||(used&(uint8_t)(1u<<selected))!=0) {
-                    fail(compiler,compiler->current.span,"parent arguments must be a permutation of subclass parameters");return 0;
-                }
-                used|=(uint8_t)(1u<<selected);
-                if(variable==0)first=(uint8_t)selected;
-                advance_token(compiler);skip_newlines(compiler);
+                for(size_t n=0;n<binding->node_count;n++)
+                    for(size_t m=0;m<binding->nodes[n].count;m++) {
+                        const uint16_t id=binding->nodes[n].members[m].id;
+                        if(id>=DIAMOND_TYPE_VARIABLE_BASE&&id<DIAMOND_TYPE_VARIABLE_BASE+subclass_parameters) {
+                            occurrences[id-DIAMOND_TYPE_VARIABLE_BASE]++;
+                            if(binding->nodes[n].count!=1)
+                                fail(compiler,superclass_span,"parent type variables cannot be union alternatives");
+                        }
+                    }
+                if(binding->node_count!=1||binding->nodes[0].count!=1||
+                   binding->nodes[0].members[0].id<DIAMOND_TYPE_VARIABLE_BASE||
+                   binding->nodes[0].members[0].id>=DIAMOND_TYPE_VARIABLE_BASE+subclass_parameters)simple=false;
+                else if(variable==0)first=(uint8_t)(binding->nodes[0].members[0].id-DIAMOND_TYPE_VARIABLE_BASE);
+                skip_newlines(compiler);
                 const DiamondTokenKind separator=variable+1==subclass_parameters?
                     DIAMOND_TOKEN_RIGHT_BRACKET:DIAMOND_TOKEN_COMMA;
                 if(compiler->current.kind!=separator) {
-                    fail(compiler,compiler->current.span,"parent arguments must be a permutation of subclass parameters");return 0;
+                    fail(compiler,compiler->current.span,"wrong number of superclass type arguments");break;
                 }
                 advance_token(compiler);
                 if(variable+1<subclass_parameters)skip_newlines(compiler);
             }
-            class->swaps_parent_arguments=first==1;
+            compiler->function=outer;diamond_function_free_arrays(header);free(header);
+            if(compiler->failed)return 0;
+            for(size_t variable=0;variable<subclass_parameters;variable++)
+                if(occurrences[variable]!=1) {
+                    fail(compiler,superclass_span,"parent arguments must use each subclass parameter exactly once");return 0;
+                }
+            class->transforms_parent_arguments=!simple;
+            class->swaps_parent_arguments=simple&&first==1;
         } else if(generic_parent->type_parameter[0]!='\0') {
             const size_t count=DIAMOND_CLASS_TYPE_PARAMETER_COUNT(generic_parent);
             if(generic_parent->fixed_type_arguments) {

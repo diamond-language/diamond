@@ -200,6 +200,8 @@ int main(void) {
         "interface GenericPetSource\n  def value() -> Pet\nend\n"
         "class FixedPetRecords < GenericRecords[Pet]\nend\n"
         "class ForwardRecords[U] < GenericRecords[U]\nend\n"
+        "class ArrayRecords[U] < GenericRecords[Array[U]]\n"
+        "  def first() -> U = @value[0]\nend\n"
         "def read_generic_pet(value: GenericPetSource) -> Pet = value.value()\n"
         "def generic_interface_receivers()\n"
         "  read_generic_pet(GenericRecords[Pet].new(Pet.new())).bark()\n"
@@ -207,6 +209,9 @@ int main(void) {
         "  FixedPetRecords.new(Pet.new()).value().bark()\n"
         "  ForwardRecords.new(Pet.new()).value().bark()\n"
         "  ForwardRecords[Pet].new(Pet.new()).value().bark()\n"
+        "  ArrayRecords[Pet].new([Pet.new()]).value()[0].bark()\n"
+        "  ArrayRecords.new([Pet.new()]).value()[0].bark()\n"
+        "  ArrayRecords.new([Pet.new()]).first().bark()\n"
         "  GenericRecords[FixedPetRecords].new(FixedPetRecords.new(Pet.new())).value().value().bark()\n"
         "end\n"
         "struct MultiRecord[T, E](value: T, error: E)\n"
@@ -1153,6 +1158,9 @@ int main(void) {
     }
     const DiamondChunk chunk=diamond_program_chunk(program);
     int failed=check_generic_return_rejections();
+    failed|=check_receiver(program,&chunk,combined,"ArrayRecords[Pet].new([Pet.new()]).value()[0].","Pet",false);
+    failed|=check_receiver(program,&chunk,combined,"ArrayRecords.new([Pet.new()]).value()[0].","Pet",false);
+    failed|=check_receiver(program,&chunk,combined,"ArrayRecords.new([Pet.new()]).first().","Pet",false);
     failed|=check_receiver(program,&chunk,combined,"read_generic_pet(GenericRecords[Pet].new(Pet.new())).","Pet",false);
     failed|=check_receiver(program,&chunk,combined,"read_generic_pet(GenericRecords.new(Pet.new())).","Pet",false);
     failed|=check_receiver(program,&chunk,combined,"FixedPetRecords.new(Pet.new()).value().","Pet",false);

@@ -1,4 +1,99 @@
 class Box[T]
+  def initialize(value: T)
+    @value = value
+  end
+  def value() -> T = @value
+  def replace(value: T)
+    @value = value
+  end
+  def project[U](callback: Callable[[T], U]) -> U = callback(@value)
 end
 class Child[A] < Box[Array[A]]
+  def first() -> A = @value[0]
+end
+class Nested[A] < Child[Array[A]]
+end
+class Fixed < Child[String]
+end
+class Override[A] < Child[A]
+  def initialize(value: Array[A])
+    super(value)
+  end
+  def value() -> Array[A] = super()
+end
+class CallbackBox[T]
+  def initialize(value: T, callback: Callable[[T], T])
+    @value = callback(value)
+  end
+  def value() -> T = @value
+end
+class CallbackChild[T] < CallbackBox[Array[T]]
+end
+interface StringArraySource
+  def value() -> Array[String]
+end
+interface StringSource
+  def first() -> String
+end
+interface WrongSource
+  def value() -> Array[Int]
+end
+interface PickArray
+  def pick(value: Child[String]) -> Array[String]
+end
+class Picker[T]
+  def initialize(value: T)
+    @value = value
+  end
+  def pick[U](value: Box[U]) -> U = value.value()
+end
+def read(value: Box[Array[String]]) -> String = value.value()[0]
+def child(value: Child[String]) -> String = value.first()
+def infer[T](value: Box[Array[T]]) -> T = value.value()[0]
+def callback(value: Callable[[], Array[String]]) = value()[0]
+def describe(value: Array[String]) -> String = value[0]
+def pick(value: PickArray) -> String = value.pick(Child[String].new(["picked"]))[0]
+def check[U](value, unrelated: U)
+  puts(value is StringArraySource)
+  puts(value is StringSource)
+  puts(value is WrongSource)
+  puts(read(value))
+end
+value = Child.new(["inferred"])
+puts(child(value))
+puts(read(value))
+puts(infer(value))
+puts(callback(value.value))
+puts(value.project(describe))
+puts(Child[String].new(["explicit"]).first())
+puts(Child.new(value: ["keyword"]).value()[0])
+puts(Child.new(*[["spread"]]).value()[0])
+puts(Nested.new([[42]]).first()[0])
+puts(Nested[Int].new([[43]]).value()[0][0])
+puts(Fixed.new(["fixed"]).first())
+puts(Override.new(["override"]).value()[0])
+puts(read(value.dup()))
+puts(Picker.new(false) is PickArray)
+puts(pick(Picker.new(false)))
+explicit_callback = CallbackChild[String].new(["explicit block"]) do |array|
+  [array[0] + "!"]
+end
+puts(explicit_callback.value()[0])
+inferred_callback = CallbackChild.new(["inferred block"]) do |array|
+  [array[0] + "!"]
+end
+puts(inferred_callback.value()[0])
+begin
+  Child.new([])
+rescue error: TypeError
+  puts("empty inference rejected")
+end
+puts(Child[String].new([]).value().length())
+check(value, 1.5)
+value.replace(["replaced"])
+puts(value.first())
+begin
+  value.replace([1])
+rescue error: TypeError
+  puts("wrong replacement rejected")
 end

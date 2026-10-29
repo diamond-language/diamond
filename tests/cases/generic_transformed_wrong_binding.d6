@@ -1,0 +1,9 @@
+class Box[T]
+  def initialize(value: T)
+    @value = value
+  end
+end
+class Child[T] < Box[Array[T]]
+end
+def use(value: Box[Array[Int]]) = value
+use(Child[String].new(["wrong"]))

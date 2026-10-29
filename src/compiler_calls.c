@@ -755,8 +755,10 @@ static void infer_contextual_type_set(Compiler *compiler,
         uint16_t actual_index,uint16_t *bindings) {
     if(expected_index>=target->type_set_count||
        actual_index>=compiler->function->type_set_count)return;
-    const DiamondTypeSet *expected=&target->type_sets[expected_index];
-    const DiamondTypeSet *actual=&compiler->function->type_sets[actual_index];
+    const DiamondTypeSet expected_copy=target->type_sets[expected_index];
+    const DiamondTypeSet *expected=&expected_copy;
+    const DiamondTypeSet actual_copy=compiler->function->type_sets[actual_index];
+    const DiamondTypeSet *actual=&actual_copy;
     for(size_t wanted_index=0;wanted_index<expected->count;wanted_index++) {
         const DiamondTypeMember wanted=expected->members[wanted_index];
         if(wanted.id>=DIAMOND_TYPE_VARIABLE_BASE&&
@@ -778,8 +780,7 @@ static void infer_contextual_type_set(Compiler *compiler,
         }
         for(size_t known_index=0;known_index<actual->count;known_index++) {
             DiamondTypeMember known=actual->members[known_index];
-            if(!diamond_align_type_member(compiler->program->classes,
-                compiler->program->class_count,wanted.id,&known))continue;
+            if(!project_compiler_type_member(compiler,wanted.id,&known))continue;
             if(wanted.argument_set!=DIAMOND_NO_TYPE_SET&&
                known.argument_set!=DIAMOND_NO_TYPE_SET)
                 infer_contextual_type_set(compiler,target,wanted.argument_set,
@@ -850,7 +851,7 @@ static bool constructor_parameter_binds_class(const DiamondFunction *target,
     return false;
 }
 
-static bool constructor_input_complete(const Compiler *compiler,
+static bool constructor_input_complete(Compiler *compiler,
         const DiamondFunction *target,uint16_t expected,uint16_t actual,size_t depth) {
     if(!constructor_parameter_binds_class(target,expected,0))return true;
     if(depth>32||actual>=compiler->function->type_set_count)return false;
@@ -862,8 +863,7 @@ static bool constructor_input_complete(const Compiler *compiler,
         return !type_set_contains_variable(compiler,actual);
     if(known->count!=1)return false;
     DiamondTypeMember value=known->members[0];
-    if(!diamond_align_type_member(compiler->program->classes,
-        compiler->program->class_count,type.id,&value))return false;
+    if(!project_compiler_type_member(compiler,type.id,&value))return false;
     if(!constructor_input_complete(compiler,target,type.argument_set,value.argument_set,depth+1)||
        !constructor_input_complete(compiler,target,type.second_argument_set,value.second_argument_set,depth+1)||
        !constructor_input_complete(compiler,target,type.callable_return_set,value.callable_return_set,depth+1))return false;

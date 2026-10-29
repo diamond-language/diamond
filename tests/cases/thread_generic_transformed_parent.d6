@@ -1,0 +1,19 @@
+interface StringArraySource
+  def value() -> Array[String]
+end
+class Box[T]
+  def initialize(value: T)
+    @value = value
+  end
+  def value() -> T = @value
+end
+class Collection[T] < Box[Array[T]]
+  def first() -> T = @value[0]
+end
+def worker[U](value, unrelated: U)
+  puts(value is StringArraySource)
+  value.dup()
+end
+def spawn[U](value, unrelated: U) = Thread.new(worker, value, unrelated).join()
+def read(value: Box[Array[String]]) -> String = value.value()[0]
+puts(read(spawn(Collection.new(["copied"]), false)))
