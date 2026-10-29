@@ -174,6 +174,50 @@ static int check_generic_return_rejections(void) {
     return failed;
 }
 
+/* Compile actual requires, rather than concatenating declarations by hand,
+ * so qualified generic graphs cross the same source-map boundary as the LSP. */
+static int check_imported_generics(void) {
+    const char *path="tests/multifile/lsp_generics/main.d6";
+    FILE *file=fopen(path,"rb");
+    if(file==nullptr)return 1;
+    if(fseek(file,0,SEEK_END)!=0) {fclose(file);return 1;}
+    const long length=ftell(file);
+    if(length<0) {fclose(file);return 1;}
+    rewind(file);
+    char *source=malloc((size_t)length+1);
+    if(source==nullptr) {fclose(file);return 1;}
+    const size_t read=fread(source,1,(size_t)length,file);fclose(file);
+    if(read!=(size_t)length) {free(source);return 1;}
+    source[read]='\0';
+    char *combined=diamond_lsp_build_compile_buffer(path,source,read,nullptr,nullptr,nullptr,nullptr);
+    free(source);
+    if(combined==nullptr)return 1;
+    DiamondProgram *program=calloc(1,sizeof *program);DiamondDiagnostic diagnostic;
+    if(program==nullptr) {free(combined);return 1;}
+    if(!diamond_compile_for_tooling(combined,program,&diagnostic)) {
+        fprintf(stderr,"imported generics compile failed: %s near %.90s\n",diagnostic.message,combined+diagnostic.span.start);
+        diamond_program_free(program);free(program);free(combined);return 1;
+    }
+    const DiamondChunk chunk=diamond_program_chunk(program);
+    int failed=0;
+    failed|=check_receiver(program,&chunk,combined,"ImportedRecords::Box[ImportedModels::Pet].new(ImportedModels::Pet.new()).value().","ImportedModels::Pet",false);
+    failed|=check_receiver(program,&chunk,combined,"ImportedRecords::Box.new(ImportedModels::Pet.new()).value().","ImportedModels::Pet",false);
+    failed|=check_receiver(program,&chunk,combined,"ImportedRecords::Box[ImportedModels::Pet].new(ImportedModels::Pet.new()).all()[0].","ImportedModels::Pet",false);
+    failed|=check_receiver(program,&chunk,combined,"ImportedRecords::Box.new(ImportedModels::Pet.new()).echo[ImportedModels::Leaf](ImportedModels::Leaf.new()).","ImportedModels::Leaf",false);
+    failed|=check_receiver(program,&chunk,combined,"imported_identity[ImportedModels::Pet](ImportedModels::Pet.new()).","ImportedModels::Pet",false);
+    failed|=check_receiver(program,&chunk,combined,"ImportedRecords::Rows[ImportedModels::Pet].new([ImportedModels::Pet.new()]).value()[0].","ImportedModels::Pet",false);
+    failed|=check_receiver(program,&chunk,combined,"ImportedRecords::Tagged[ImportedModels::Pet, ImportedModels::Pet].new(ImportedModels::Pet.new(), ImportedModels::Leaf.new(), ImportedModels::Pet.new()).error().","ImportedModels::Leaf",false);
+    failed|=check_receiver(program,&chunk,combined,"ImportedRecords::Tagged.new(ImportedModels::Pet.new(), ImportedModels::Leaf.new(), ImportedModels::Pet.new()).tag().","ImportedModels::Pet",false);
+    failed|=check_receiver(program,&chunk,combined,"ImportedRecords::Box[ImportedRecords::Box[ImportedModels::Pet]].new(ImportedRecords::Box.new(ImportedModels::Pet.new())).value().value().","ImportedModels::Pet",false);
+    failed|=check_receiver(program,&chunk,combined,"ImportedRecords.make_pet().value().","ImportedModels::Pet",false);
+    failed|=check_receiver(program,&chunk,combined,"ImportedRecords :: Box[ImportedModels :: Pet].new(ImportedModels::Pet.new()).all()[0].","ImportedModels::Pet",false);
+    failed|=check_receiver(program,&chunk,combined,"ImportedRecords::Box.new(value).value().",nullptr,false);
+    failed|=check_receiver(program,&chunk,combined,"ImportedRecords::Box[ImportedModels::Nested::Pet].new(ImportedModels::Nested::Pet.new()).value().","ImportedModels::Nested::Pet",false);
+    failed|=check_receiver(program,&chunk,combined,"ImportedRecords::Box[Array[ImportedModels::Pet]].new([ImportedModels::Pet.new()]).value()[0].","ImportedModels::Pet",false);
+    failed|=check_receiver(program,&chunk,combined,"ImportedRecords::Box[plain_model].new(plain_model.new()).value().","plain_model",false);
+    diamond_program_free(program);free(program);free(combined);return failed;
+}
+
 int main(void) {
 #define REPEAT_16(text) text text text text text text text text text text text text text text text text
     static const char source[] =
@@ -1169,6 +1213,7 @@ int main(void) {
     }
     const DiamondChunk chunk=diamond_program_chunk(program);
     int failed=check_generic_return_rejections();
+    failed|=check_imported_generics();
     failed|=check_receiver(program,&chunk,combined,"TaggedRecord[Pet, Leaf].new(Pet.new(), Pet.new(), Leaf.new()).value().","Pet",false);
     failed|=check_receiver(program,&chunk,combined,"TaggedRecord.new(Pet.new(), Pet.new(), Leaf.new()).error().","Pet",false);
     failed|=check_receiver(program,&chunk,combined,"TaggedRecord.new(Pet.new(), Pet.new(), Leaf.new()).tag().","Leaf",false);

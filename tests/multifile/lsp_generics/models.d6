@@ -1,0 +1,21 @@
+class plain_model
+  def lower() -> String = "lower"
+end
+module OtherModels
+  class Pet
+    def misleading() -> String = "other"
+  end
+end
+module ImportedModels
+  module Nested
+    class Pet
+      def deep() -> Int = 2
+    end
+  end
+  class Pet
+    def title() -> String = "pet"
+  end
+  class Leaf
+    def ping() -> Int = 1
+  end
+end

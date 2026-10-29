@@ -399,6 +399,18 @@ static size_t function_return_classes_bound(const DiamondChunk *chunk,
     return count;
 }
 
+static bool qualified_constant_name(const char *source,const DiamondToken *tokens,
+        size_t start,size_t end,char *name,size_t capacity);
+
+/* Read a constant path by tokens, so whitespace around :: has the same
+ * meaning as it does in the compiler. Do not guess by an unqualified suffix. */
+static size_t constant_path_end(const DiamondToken *tokens,size_t start,size_t end) {
+    size_t last=start;
+    while(last+2<=end&&tokens[last+1].kind==DIAMOND_TOKEN_DOUBLE_COLON&&
+          tokens[last+2].kind==DIAMOND_TOKEN_IDENTIFIER)last+=2;
+    return last;
+}
+
 /* Parse provable class unions, nested class specializations, and Array shapes.
  * The depth and graph budgets keep incomplete editor input conservative. */
 static bool parse_explicit_type_binding_union(const DiamondChunk *chunk,
@@ -409,8 +421,10 @@ static bool parse_explicit_type_binding(const DiamondChunk *chunk,
         const char *source,const DiamondToken *tokens,size_t *index,size_t end,
         ReceiverTypeBinding *binding,unsigned depth) {
     if(depth>32||*index>end||tokens[*index].kind!=DIAMOND_TOKEN_IDENTIFIER)return false;
-    const char *name=source+tokens[*index].span.start;
-    const size_t length=tokens[*index].span.length;
+    const size_t last=constant_path_end(tokens,*index,end);
+    char name[DIAMOND_MAX_FUNCTION_NAME*2];
+    if(!qualified_constant_name(source,tokens,*index,last,name,sizeof name))return false;
+    const size_t length=strlen(name),after=last+1;
     static const struct {const char *name;uint16_t type;} builtins[]={
         {"Int",DIAMOND_TYPE_INT},{"String",DIAMOND_TYPE_STRING},
         {"Bool",DIAMOND_TYPE_BOOL},{"Float",DIAMOND_TYPE_FLOAT}};
@@ -418,10 +432,10 @@ static bool parse_explicit_type_binding(const DiamondChunk *chunk,
         if(strlen(builtins[candidate].name)==length&&
            memcmp(builtins[candidate].name,name,length)==0) {
             binding->has_builtin=true;binding->builtin_type=builtins[candidate].type;
-            (*index)++;return true;
+            *index=after;return true;
         }
     if(length==5&&memcmp(name,"Array",5)==0) {
-        (*index)++;
+        *index=after;
         if(depth>32||*index>end||tokens[*index].kind!=DIAMOND_TOKEN_LEFT_BRACKET)return false;
         (*index)++;
         if(!parse_explicit_type_binding_union(chunk,source,tokens,index,end,binding,depth+1)||
@@ -434,7 +448,7 @@ static bool parse_explicit_type_binding(const DiamondChunk *chunk,
            memcmp(chunk->classes[candidate]->name,name,length)==0) {
             binding->classes[0]=candidate;binding->class_count=1;
             binding->array_depth=0;
-            (*index)++;
+            *index=after;
             if(*index<=end&&tokens[*index].kind==DIAMOND_TOKEN_LEFT_BRACKET) {
                 const size_t count=DIAMOND_CLASS_TYPE_PARAMETER_COUNT(chunk->classes[candidate]);
                 if(count==0)return false;
@@ -546,7 +560,7 @@ static bool parse_receiver_call_syntax(const DiamondChunk *chunk,
     return tokens[call->callee_index].kind==DIAMOND_TOKEN_IDENTIFIER;
 }
 
-/* `Outer::Inner` (or a single constant): joins a run of constant tokens
+/* `Outer::Inner` (or a single declaration name): joins identifier tokens
  * separated by `::` into one qualified name. False for anything else, so a
  * call or an expression ending in `)` never matches. */
 static bool qualified_constant_name(const char *source,const DiamondToken *tokens,
@@ -557,8 +571,6 @@ static bool qualified_constant_name(const char *source,const DiamondToken *token
         if(name_position) {
             const DiamondToken token=tokens[index];
             if(token.kind!=DIAMOND_TOKEN_IDENTIFIER||token.span.length==0)return false;
-            const char first=source[token.span.start];
-            if(first<'A'||first>'Z')return false;
             if(used+token.span.length+1>=capacity)return false;
             memcpy(name+used,source+token.span.start,token.span.length);
             used+=token.span.length;
@@ -571,6 +583,28 @@ static bool qualified_constant_name(const char *source,const DiamondToken *token
     if(((end-start)%2)!=0)return false;
     name[used]='\0';
     return used>0;
+}
+
+static bool specialized_class_receiver(const DiamondChunk *chunk,const char *source,
+        const DiamondToken *tokens,size_t start,size_t end,size_t *class_index,
+        ReceiverTypeBinding *bindings) {
+    if(start>end||tokens[start].kind!=DIAMOND_TOKEN_IDENTIFIER||
+       tokens[end].kind!=DIAMOND_TOKEN_RIGHT_BRACKET)return false;
+    const size_t last=constant_path_end(tokens,start,end);
+    if(last+2>=end||tokens[last+1].kind!=DIAMOND_TOKEN_LEFT_BRACKET)return false;
+    char name[DIAMOND_MAX_FUNCTION_NAME*2];
+    if(!qualified_constant_name(source,tokens,start,last,name,sizeof name))return false;
+    for(size_t c=0;c<chunk->class_count;c++) {
+        const DiamondClass *class=chunk->classes[c];
+        if(strcmp(class->name,name)!=0)continue;
+        const size_t count=DIAMOND_CLASS_TYPE_PARAMETER_COUNT(class);
+        if(count==0||class->fixed_type_arguments)return false;
+        ReceiverTypeBinding scratch[2]={};
+        if(explicit_type_bindings(chunk,source,tokens,last+2,end-1,
+            bindings==nullptr?scratch:bindings,2)!=count)return false;
+        *class_index=c;return true;
+    }
+    return false;
 }
 
 static size_t resolve_expression(const DiamondProgram *program,const DiamondChunk *chunk,
@@ -882,15 +916,10 @@ static size_t first_receiver_index(const DiamondChunk *chunk,const char *source,
                 else if(tokens[candidate].kind==DIAMOND_TOKEN_RIGHT_BRACKET&&
                         --bracket_depth==0) {close=candidate;break;}
             }
-            bool class_arguments=false;
-            if(close>index&&close<end&&tokens[close+1].kind==DIAMOND_TOKEN_DOT) {
-                const size_t length=tokens[index-1].span.start+tokens[index-1].span.length-tokens[start].span.start;
-                for(size_t c=0;c<chunk->class_count;c++)
-                    if(strlen(chunk->classes[c]->name)==length&&
-                       memcmp(chunk->classes[c]->name,source+tokens[start].span.start,length)==0) {
-                        class_arguments=true;break;
-                    }
-            }
+            size_t class_index=0;
+            const bool class_arguments=close>index&&close<end&&
+                tokens[close+1].kind==DIAMOND_TOKEN_DOT&&
+                specialized_class_receiver(chunk,source,tokens,start,close,&class_index,nullptr);
             if(close>index&&close<end&&
                (tokens[close+1].kind==DIAMOND_TOKEN_LEFT_PAREN||class_arguments)) {
                 index=close;continue;
@@ -1165,15 +1194,20 @@ static bool resolve_expression_binding(const DiamondProgram *program,const Diamo
         if(targets.receiver_count!=1)return false;
         const size_t class_index=targets.receiver_classes[0];
         const DiamondClass *class=chunk->classes[class_index];
+        if(call.callee_index<start+2)return false;
+        const size_t receiver_end=call.callee_index-2;
+        const bool explicit_class=tokens[receiver_end].kind==DIAMOND_TOKEN_RIGHT_BRACKET;
         count=DIAMOND_CLASS_TYPE_PARAMETER_COUNT(class);
         if(count>0) {
             if(class->fixed_type_arguments) {
-                if(start+1<call.callee_index&&tokens[start+1].kind==DIAMOND_TOKEN_LEFT_BRACKET)return false;
+                if(explicit_class)return false;
                 for(size_t variable=0;variable<count;variable++)
                     if(!binding_from_graph(chunk,&class->fixed_type_bindings[variable],0,
                         &arguments[variable],depth+1))return false;
-            } else if(start+1<call.callee_index&&tokens[start+1].kind==DIAMOND_TOKEN_LEFT_BRACKET) {
-                if(explicit_type_bindings(chunk,source,tokens,start+2,call.callee_index-3,arguments,count)!=count)return false;
+            } else if(explicit_class) {
+                size_t specialized=0;
+                if(!specialized_class_receiver(chunk,source,tokens,start,receiver_end,&specialized,arguments)||
+                   specialized!=class_index)return false;
             } else {
                 const DiamondMethod *init=receiver_lookup_method(chunk,class_index,false,"initialize",10);
                 if(init==nullptr||init->function_index>=chunk->function_count||
@@ -1298,16 +1332,9 @@ static size_t resolve_expression(const DiamondProgram *program,const DiamondChun
         const char *source,const DiamondToken *tokens,size_t start,size_t end,
         size_t *classes,size_t capacity,bool *is_singleton,unsigned depth) {
     if(start>end||capacity==0||depth>32)return 0;
-    if(end>=start+3&&tokens[start].kind==DIAMOND_TOKEN_IDENTIFIER&&
-       tokens[start+1].kind==DIAMOND_TOKEN_LEFT_BRACKET&&
-       tokens[end].kind==DIAMOND_TOKEN_RIGHT_BRACKET) {
-        ReceiverTypeBinding arguments[2]={};bool singleton=false;
-        const size_t count=resolve_name(program,chunk,source,tokens[start],
-            classes,capacity,&singleton);
-        if(count==1&&singleton&&chunk->classes[classes[0]]->type_parameter[0]!='\0'&&
-           explicit_type_bindings(chunk,source,tokens,start+2,end-1,arguments,2)==DIAMOND_CLASS_TYPE_PARAMETER_COUNT(chunk->classes[classes[0]])) {
-            *is_singleton=true;return count;
-        }
+    size_t specialized=0;
+    if(specialized_class_receiver(chunk,source,tokens,start,end,&specialized,nullptr)) {
+        classes[0]=specialized;*is_singleton=true;return 1;
     }
     /* Grouping parentheses do not change the receiver. Only unwrap when the
      * opening token's matching close is this range's final token; otherwise

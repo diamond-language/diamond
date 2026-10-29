@@ -74,6 +74,11 @@ authoritative fine-grained record.
 
 ### Fixed
 
+- Language-server receiver queries retain qualified generic names across imports,
+  including constructors such as `Records::Box[Models::Pet].new(...)`, nested type
+  arguments, explicit method arguments, inherited readers, and indexed returns.
+  Completion, hover, and definitions use the full namespace and current unsaved
+  dependency buffers instead of losing the receiver or guessing by its short name.
 - A generic function no longer crashes when a type variable is inferred from a class value
   (`self` returned from a class singleton method), and no longer rejects a native object
   (`id(Channel.new(1))` failed with "expected <invalid type>"): such values leave the type
