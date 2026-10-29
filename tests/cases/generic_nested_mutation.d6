@@ -1,0 +1,19 @@
+class Box[T]
+  def initialize(value: T)
+    @value = value
+  end
+  def value() -> T = @value
+  def replace(value: T)
+    @value = value
+  end
+end
+def replace(box, value) = box.replace(value)
+box = Box.new(Box.new(42))
+replace(box, Box.new(43))
+puts(box.value().value())
+begin
+  replace(box, Box.new("wrong"))
+rescue error: TypeError
+  puts("nested mutation rejected")
+end
+puts(box.value().value())

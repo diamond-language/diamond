@@ -1,6 +1,6 @@
 union checked
 subclass checked
-nested binding checked
+42
 42
 unknown input checked
 dynamic spread checked

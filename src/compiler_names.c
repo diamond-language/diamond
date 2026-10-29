@@ -214,14 +214,14 @@ static uint16_t compile_constructor_block(Compiler *compiler,
         context,initializer==nullptr?0:initializer->type_variable_count);
 }
 
-/* Runtime value inference erases a user instance's own generic argument and
- * a Callable's signature. Preserve that rule in advisory constructor graphs. */
+/* Instance arguments survive runtime value inference. Callable signatures
+ * still have no payload in the runtime graph, so erase only that shape. */
 static uint16_t constructor_value_hint(Compiler *compiler,uint16_t source,size_t depth) {
     if(depth>32||source>=compiler->function->type_set_count)return DIAMOND_NO_TYPE_SET;
     DiamondTypeSet set=compiler->function->type_sets[source];
     for(size_t index=0;index<set.count;index++) {
         DiamondTypeMember *member=&set.members[index];
-        if(member->id>=DIAMOND_TYPE_CLASS_BASE||member->id==DIAMOND_TYPE_CALLABLE) {
+        if(member->id==DIAMOND_TYPE_CALLABLE) {
             member->argument_set=DIAMOND_NO_TYPE_SET;
             member->second_argument_set=DIAMOND_NO_TYPE_SET;
             member->callable_arity=UINT8_MAX;member->callable_parameters_typed=false;

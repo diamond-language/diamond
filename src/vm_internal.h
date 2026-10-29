@@ -1324,7 +1324,8 @@ DIAMOND_INTERNAL DiamondVmStatus inspect_value(DiamondVm *vm,const DiamondChunk 
                                      DiamondValue *out);
 
 static inline uint8_t binding_node(DiamondTypeBinding *binding) {
-    if(binding->node_count==DIAMOND_BOUND_TYPE_NODES)return UINT8_MAX;
+    if(binding->invalid)return UINT8_MAX;
+    if(binding->node_count==DIAMOND_BOUND_TYPE_NODES) {binding->invalid=true;return UINT8_MAX;}
     return binding->node_count++;
 }
 

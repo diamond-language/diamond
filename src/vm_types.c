@@ -161,6 +161,7 @@ bool diamond_native_method_satisfies(uint16_t receiver_type,const char *name,
 
 static bool bound_nodes_equal(const DiamondTypeBinding *left,uint8_t a,
         const DiamondTypeBinding *right,uint8_t b,size_t depth) {
+    if(left->invalid||right->invalid)return false;
     if(a==UINT8_MAX||b==UINT8_MAX)return a==b;
     if(depth>=DIAMOND_BOUND_TYPE_NODES||a>=left->node_count||b>=right->node_count)
         return false;
@@ -183,7 +184,7 @@ static bool bound_nodes_equal(const DiamondTypeBinding *left,uint8_t a,
  * Callable-signature payload. Reject lossy specializations rather than
  * silently discarding part of an explicit contract. */
 static bool supported_binding_graph(const DiamondTypeBinding *binding) {
-    if(binding->node_count==0||binding->node_count>DIAMOND_BOUND_TYPE_NODES)return false;
+    if(binding->invalid||binding->node_count==0||binding->node_count>DIAMOND_BOUND_TYPE_NODES)return false;
     for(size_t n=0;n<binding->node_count;n++)
         for(size_t m=0;m<binding->nodes[n].count;m++) {
             const uint16_t id=binding->nodes[n].members[m].id;
@@ -228,7 +229,7 @@ bool bind_explicit_class_type(const DiamondChunk *chunk,uint16_t index,
     *binding=(DiamondTypeBinding){};
     (void)binding_node(binding);
     bind_context_set(binding,0,chunk,chunk->type_sets,index);
-    return true;
+    return !binding->invalid;
 }
 
 bool bind_explicit_instance_types(const DiamondChunk *chunk,uint16_t index,DiamondInstance *instance) {
@@ -244,6 +245,7 @@ bool bind_explicit_instance_types(const DiamondChunk *chunk,uint16_t index,Diamo
 static bool value_matches_bound_node(const DiamondChunk *chunk,DiamondValue value,
                                      const DiamondTypeBinding *binding,
                                      uint8_t node_index) {
+    if(binding->invalid)return false;
     if(node_index>=binding->node_count)return true;
     const DiamondBoundTypeNode *node=&binding->nodes[node_index];
     if(node->count==0)return true;
@@ -519,6 +521,64 @@ static bool runtime_type_id_satisfies(const DiamondChunk *chunk,uint16_t known,
     return false;
 }
 
+/* A bound variable may stand for a complete class/container graph, not just
+ * its root id. Callback variance checks must substitute that graph as well. */
+static bool runtime_bound_has_arguments(const DiamondChunk *chunk,uint16_t id) {
+    if(id<DIAMOND_TYPE_VARIABLE_BASE||id>=DIAMOND_TYPE_INTERFACE_BASE||
+       chunk->type_variable_bindings==nullptr)return false;
+    const size_t variable=id-DIAMOND_TYPE_VARIABLE_BASE;
+    if(variable>=chunk->type_variable_count)return false;
+    const DiamondTypeBinding *graph=&chunk->type_variable_bindings[variable];
+    if(graph->invalid||graph->node_count==0)return false;
+    for(size_t i=0;i<graph->nodes[0].count;i++)
+        if(graph->nodes[0].members[i].argument_node!=UINT8_MAX)return true;
+    return false;
+}
+
+static bool runtime_graph_satisfies(const DiamondChunk *chunk,
+        const DiamondTypeBinding *known,uint8_t a,
+        const DiamondTypeBinding *expected,uint8_t b,size_t depth) {
+    if(known->invalid||expected->invalid||depth>=DIAMOND_BOUND_TYPE_NODES||
+       a>=known->node_count||b>=expected->node_count)return false;
+    for(size_t i=0;i<known->nodes[a].count;i++) {
+        const DiamondBoundTypeMember actual=known->nodes[a].members[i];
+        bool accepted=false;
+        for(size_t j=0;j<expected->nodes[b].count&&!accepted;j++) {
+            const DiamondBoundTypeMember wanted=expected->nodes[b].members[j];
+            if(!runtime_type_id_satisfies(chunk,actual.id,wanted.id))continue;
+            if(wanted.argument_node==UINT8_MAX) {accepted=true;continue;}
+            if(actual.argument_node==UINT8_MAX||
+               !runtime_graph_satisfies(chunk,known,actual.argument_node,expected,wanted.argument_node,depth+1))continue;
+            const bool invariant=wanted.id>=DIAMOND_TYPE_CLASS_BASE&&wanted.id<DIAMOND_TYPE_CLASS_LIMIT;
+            if(invariant&&!runtime_graph_satisfies(chunk,expected,wanted.argument_node,known,actual.argument_node,depth+1))continue;
+            if(wanted.second_argument_node!=UINT8_MAX&&
+               (actual.second_argument_node==UINT8_MAX||
+                !runtime_graph_satisfies(chunk,known,actual.second_argument_node,expected,wanted.second_argument_node,depth+1)||
+                (invariant&&!runtime_graph_satisfies(chunk,expected,wanted.second_argument_node,known,actual.second_argument_node,depth+1))))continue;
+            accepted=true;
+        }
+        if(!accepted)return false;
+    }
+    return true;
+}
+
+static bool runtime_set_graph_supported(const DiamondTypeSet *sets,uint16_t index,size_t depth) {
+    if(depth>=DIAMOND_BOUND_TYPE_NODES)return false;
+    const DiamondTypeSet *set=&sets[index];
+    for(size_t i=0;i<set->count;i++) {
+        const DiamondTypeMember member=set->members[i];
+        /* Repeated outer types would lose their distinct argument graphs.
+         * Native kinds and Callable signatures have no graph payload. */
+        if(member.id==DIAMOND_TYPE_NATIVE||member.id==DIAMOND_TYPE_CALLABLE)return false;
+        for(size_t prior=0;prior<i;prior++)if(set->members[prior].id==member.id)return false;
+        if(member.argument_set!=DIAMOND_NO_TYPE_SET&&
+           !runtime_set_graph_supported(sets,member.argument_set,depth+1))return false;
+        if(member.second_argument_set!=DIAMOND_NO_TYPE_SET&&
+           !runtime_set_graph_supported(sets,member.second_argument_set,depth+1))return false;
+    }
+    return true;
+}
+
 static bool runtime_member_satisfies(const DiamondChunk *chunk,
                                      const DiamondTypeSet *known_sets,
                                      DiamondTypeMember known,
@@ -564,6 +624,20 @@ static bool runtime_set_satisfies(const DiamondChunk *chunk,
                                   uint16_t known_index,
                                   const DiamondTypeSet *expected_sets,
                                   uint16_t expected_index) {
+    bool expand=false;
+    for(size_t i=0;i<known_sets[known_index].count;i++)
+        expand|=runtime_bound_has_arguments(chunk,known_sets[known_index].members[i].id);
+    for(size_t i=0;i<expected_sets[expected_index].count;i++)
+        expand|=runtime_bound_has_arguments(chunk,expected_sets[expected_index].members[i].id);
+    if(expand) {
+        if(!runtime_set_graph_supported(known_sets,known_index,0)||
+           !runtime_set_graph_supported(expected_sets,expected_index,0))return false;
+        DiamondTypeBinding known_graph={.node_count=1},expected_graph={.node_count=1};
+        bind_context_set(&known_graph,0,chunk,known_sets,known_index);
+        bind_context_set(&expected_graph,0,chunk,expected_sets,expected_index);
+        return !known_graph.invalid&&!expected_graph.invalid&&
+            runtime_graph_satisfies(chunk,&known_graph,0,&expected_graph,0,0);
+    }
     const DiamondTypeSet *known=&known_sets[known_index];
     const DiamondTypeSet *expected=&expected_sets[expected_index];
     for(size_t source=0;source<known->count;source++) {
@@ -848,15 +922,18 @@ static uint16_t runtime_value_type(const DiamondChunk *chunk,DiamondValue value)
 
 static DiamondBoundTypeMember *binding_member(DiamondTypeBinding *binding,
                                                uint8_t node,uint16_t id) {
-    if(node>=binding->node_count)return nullptr;
+    if(binding->invalid||node>=binding->node_count)return nullptr;
     DiamondBoundTypeNode *target=&binding->nodes[node];
     for(size_t index=0;index<target->count;index++)
         if(target->members[index].id==id)return &target->members[index];
-    if(target->count==DIAMOND_BOUND_TYPE_MEMBERS)return nullptr;
+    if(target->count==DIAMOND_BOUND_TYPE_MEMBERS) {binding->invalid=true;return nullptr;}
     target->members[target->count]=(DiamondBoundTypeMember){.id=id,
         .argument_node=UINT8_MAX,.second_argument_node=UINT8_MAX};
     return &target->members[target->count++];
 }
+
+static void bind_bound_node(DiamondTypeBinding *target,uint8_t target_node,
+                            const DiamondTypeBinding *source,uint8_t source_node);
 
 static void bind_value_graph(const DiamondChunk *chunk,DiamondTypeBinding *binding,
                              uint8_t node,DiamondValue value) {
@@ -866,7 +943,26 @@ static void bind_value_graph(const DiamondChunk *chunk,DiamondTypeBinding *bindi
     if(type==DIAMOND_TYPE_NONE)return;
     DiamondBoundTypeMember *member=binding_member(binding,node,type);
     if(member==nullptr)return;
-    if(type==DIAMOND_TYPE_ARRAY) {
+    if(type>=DIAMOND_TYPE_CLASS_BASE&&type<DIAMOND_TYPE_CLASS_LIMIT) {
+        const DiamondInstance *instance=(const DiamondInstance *)value.as.object;
+        const size_t count=DIAMOND_CLASS_TYPE_PARAMETER_COUNT(instance->class);
+        if(count==0)return;
+        if(instance->type_binding==nullptr) {binding->invalid=true;return;}
+        for(size_t variable=0;variable<count;variable++) {
+            uint8_t *child=variable==0?&member->argument_node:&member->second_argument_node;
+            const DiamondTypeBinding *source=&instance->type_binding[variable];
+            if(source->invalid||source->node_count==0||source->nodes[0].count==0) {
+                binding->invalid=true;return;
+            }
+            if(*child!=UINT8_MAX) {
+                if(!bound_nodes_equal(binding,*child,source,0,0))binding->invalid=true;
+            } else {
+                *child=binding_node(binding);
+                if(*child!=UINT8_MAX)bind_bound_node(binding,*child,source,0);
+            }
+            if(binding->invalid)return;
+        }
+    } else if(type==DIAMOND_TYPE_ARRAY) {
         if(member->argument_node==UINT8_MAX)member->argument_node=binding_node(binding);
         if(member->argument_node==UINT8_MAX)return;
         const DiamondArray *array=(const DiamondArray *)value.as.object;
@@ -910,10 +1006,23 @@ static void bind_known_set(DiamondTypeBinding *binding,uint8_t node,
 
 static void bind_bound_node(DiamondTypeBinding *target,uint8_t target_node,
                             const DiamondTypeBinding *source,uint8_t source_node) {
-    if(source_node>=source->node_count)return;
+    if(source->invalid) {target->invalid=true;return;}
+    if(target->invalid||source_node>=source->node_count)return;
     const DiamondBoundTypeNode *node=&source->nodes[source_node];
     for(size_t index=0;index<node->count;index++) {
         const DiamondBoundTypeMember known=node->members[index];
+        if(known.id>=DIAMOND_TYPE_CLASS_BASE&&known.id<DIAMOND_TYPE_CLASS_LIMIT&&
+           target_node<target->node_count) {
+            const DiamondBoundTypeNode *held=&target->nodes[target_node];
+            for(size_t existing=0;existing<held->count;existing++) {
+                const DiamondBoundTypeMember prior=held->members[existing];
+                if(prior.id!=known.id)continue;
+                if(!bound_nodes_equal(target,prior.argument_node,source,known.argument_node,0)||
+                   !bound_nodes_equal(target,prior.second_argument_node,source,known.second_argument_node,0)) {
+                    target->invalid=true;return;
+                }
+            }
+        }
         DiamondBoundTypeMember *member=
             binding_member(target,target_node,known.id);
         if(member==nullptr)continue;
@@ -947,6 +1056,27 @@ void bind_context_set(DiamondTypeBinding *binding,uint8_t node,
                 bind_bound_node(binding,node,
                     &context->type_variable_bindings[variable],0);
             continue;
+        }
+        if(known.id>=DIAMOND_TYPE_CLASS_BASE&&known.id<DIAMOND_TYPE_CLASS_LIMIT&&
+           !binding->invalid&&node<binding->node_count) {
+            for(size_t prior=0;prior<binding->nodes[node].count;prior++) {
+                const DiamondBoundTypeMember held=binding->nodes[node].members[prior];
+                if(held.id!=known.id)continue;
+                DiamondTypeBinding incoming={.node_count=1};
+                const uint16_t arguments[2]={known.argument_set,known.second_argument_set};
+                uint8_t children[2]={UINT8_MAX,UINT8_MAX};
+                for(size_t argument=0;argument<2;argument++)
+                    if(arguments[argument]!=DIAMOND_NO_TYPE_SET) {
+                        children[argument]=binding_node(&incoming);
+                        if(children[argument]!=UINT8_MAX)
+                            bind_context_set(&incoming,children[argument],context,sets,arguments[argument]);
+                    }
+                if(incoming.invalid||
+                   !bound_nodes_equal(binding,held.argument_node,&incoming,children[0],0)||
+                   !bound_nodes_equal(binding,held.second_argument_node,&incoming,children[1],0)) {
+                    binding->invalid=true;return;
+                }
+            }
         }
         DiamondBoundTypeMember *member=binding_member(binding,node,known.id);
         if(member==nullptr)continue;

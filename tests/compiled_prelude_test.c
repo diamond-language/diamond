@@ -98,7 +98,7 @@ static void check_generic_class_round_trip(const DiamondProgram *template) {
         "  def value() -> T = @value\n"
         "  def wrong() -> T = \"wrong\"\n"
         "  def echo[U](value: U) -> U = value\n"
-        "end\nstruct Payload[T, E](value: T, error: E)\nend\nBox[Int].new(42).value()\n";
+        "end\nstruct Payload[T, E](value: T, error: E)\nend\nBox[Box[Int]].new(Box.new(42)).value().value()\n";
     DiamondProgram *program=alloc_program();
     DiamondDiagnostic diagnostic;
     const bool compiled=diamond_compile_incremental(source,program,template,&diagnostic);
@@ -127,6 +127,14 @@ static void check_generic_class_round_trip(const DiamondProgram *template) {
                     char rendered[64];
                     check(run_and_get_string(use,rendered,sizeof rendered)&&
                         strcmp(rendered,"42")==0,"restored generic class retains binding");
+                }
+                const bool nested=diamond_compile_incremental(
+                    "Box.new(Box.new(42)).value().value()\n",use,copy,&diagnostic);
+                check(nested,"restored generic class infers nested bindings");
+                if(nested) {
+                    char rendered[64];
+                    check(run_and_get_string(use,rendered,sizeof rendered)&&strcmp(rendered,"42")==0,
+                        "restored nested binding survives both readers");
                 }
                 const bool record=diamond_compile_incremental(
                     "Payload[Int, String].new(42, \"abc\").error().length()\n",use,copy,&diagnostic);

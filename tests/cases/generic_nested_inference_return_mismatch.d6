@@ -1,0 +1,3 @@
+struct Box[T](value: T)
+end
+def wrong() -> Box[Box[Int]] = Box.new(Box.new("text"))
