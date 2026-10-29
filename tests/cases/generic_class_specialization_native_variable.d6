@@ -4,4 +4,4 @@ class Box[T]
   end
 end
 def wrap[T](value: T) = Box[T].new(value)
-wrap[Time](Time.now())
+puts(wrap[Time](Time.now()) is Box)

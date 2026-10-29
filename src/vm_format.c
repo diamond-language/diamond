@@ -26,8 +26,11 @@ static const char *type_name(const DiamondChunk *chunk,uint16_t type) {
         const size_t variable=(size_t)(type-DIAMOND_TYPE_VARIABLE_BASE);
         const DiamondTypeBinding *binding=chunk->type_variable_bindings;
         if(binding!=nullptr&&variable<chunk->type_variable_count&&
-           binding[variable].node_count>0&&binding[variable].nodes[0].count>0)
-            name=type_name(chunk,binding[variable].nodes[0].members[0].id);
+           binding[variable].node_count>0&&binding[variable].nodes[0].count>0) {
+            const DiamondBoundTypeMember member=binding[variable].nodes[0].members[0];
+            name=member.id==DIAMOND_TYPE_NATIVE?diamond_native_type_name(member.native_kind):
+                type_name(chunk,member.id);
+        }
         else name="TypeVariable";
     }
     else if(type>=DIAMOND_TYPE_INTERFACE_BASE&&
@@ -259,7 +262,32 @@ static void append_bound_type(char *buffer,size_t capacity,const DiamondChunk *c
     for(size_t i=0;i<binding->nodes[node].count;i++) {
         const DiamondBoundTypeMember member=binding->nodes[node].members[i];
         if(i>0)append_bounded(buffer,capacity," | ");
+        if(member.id==DIAMOND_TYPE_NATIVE) {
+            append_bounded(buffer,capacity,diamond_native_type_name(member.native_kind));
+            continue;
+        }
         append_bounded(buffer,capacity,type_name(chunk,member.id));
+        if(member.id==DIAMOND_TYPE_CALLABLE&&member.signature<binding->signature_count) {
+            const DiamondBoundSignature signature=binding->signatures[member.signature];
+            if(signature.arity==UINT8_MAX)continue;
+            append_bounded(buffer,capacity,signature.parameters_typed?"[[":"[");
+            if(signature.parameters_typed) {
+                for(size_t p=0;p<signature.arity;p++) {
+                    if(p>0)append_bounded(buffer,capacity,", ");
+                    append_bound_type(buffer,capacity,chunk,binding,signature.parameter_nodes[p],depth+1);
+                }
+                append_bounded(buffer,capacity,"]");
+            } else {
+                char arity[8];snprintf(arity,sizeof arity,"%u",(unsigned)signature.arity);
+                append_bounded(buffer,capacity,arity);
+            }
+            if(signature.return_node!=UINT8_MAX) {
+                append_bounded(buffer,capacity,", ");
+                append_bound_type(buffer,capacity,chunk,binding,signature.return_node,depth+1);
+            }
+            append_bounded(buffer,capacity,"]");
+            continue;
+        }
         if(member.argument_node==UINT8_MAX)continue;
         append_bounded(buffer,capacity,"[");
         append_bound_type(buffer,capacity,chunk,binding,member.argument_node,depth+1);

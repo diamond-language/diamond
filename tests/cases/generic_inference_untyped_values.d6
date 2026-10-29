@@ -1,6 +1,5 @@
-# A generic parameter inferred from a value with no type id -- a class value
-# (`self` in a class singleton) or a native object -- leaves the type
-# variable unconstrained instead of crashing or rejecting the value.
+# Class values still leave a generic variable unconstrained. Native objects
+# retain their kind and join scalar alternatives in the inferred union.
 class Foo
   def self.make() = self
 end
@@ -14,7 +13,8 @@ p(id(1..3))
 p(pair(1, 2))
 p(pair(Channel.new(1), Channel.new(2)).length())
 begin
-  pair(Channel.new(1), 2)
+  p(pair(Channel.new(1), 2))
 rescue error: TypeError
   puts(error.message())
 end
+nil

@@ -1559,7 +1559,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 /* Only the first type_argument_count entries are ever read (below,
                  * and through .type_variable_bindings); zeroing all eight cost about
                  * 3 KB of memset on every call, typed or not. */
-                DiamondTypeBinding explicit_bindings[8];
+                DiamondTypeBinding explicit_bindings[type_argument_count==0?1:type_argument_count];
                 for(size_t index=0;index<type_argument_count;index++) {
                     explicit_bindings[index]=(DiamondTypeBinding){};
                     uint16_t set_index=0;READ_SHORT(set_index);

@@ -1,0 +1,34 @@
+interface WideCallback
+  def value() -> Callable[[Int | String], Int]
+end
+interface IntCallback
+  def value() -> Callable[[Int], Int]
+end
+interface NarrowReturn
+  def value() -> Callable[[Int], Int]
+end
+struct Box[T](value: T)
+end
+def increment(value: Int) -> Int = value + 1
+def wide(value: Int | String) -> Int = 42
+def broad_return(value: Int) -> Int | String = value
+def text(value: String) -> String = value
+def bad_native[T](value: T) -> T = false
+def bad_callback[T](value: T) -> T = text
+def checks(value)
+  puts(value is WideCallback)
+  puts(value is IntCallback)
+end
+checks(Box.new(increment))
+checks(Box.new(wide))
+checks(Box.new(broad_return))
+begin
+  bad_native(Time.now())
+rescue error: TypeError
+  puts("native return rejected")
+end
+begin
+  bad_callback(increment)
+rescue error: TypeError
+  puts("callback return rejected")
+end
