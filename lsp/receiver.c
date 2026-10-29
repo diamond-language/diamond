@@ -861,7 +861,7 @@ static size_t infer_class_bindings(const DiamondProgram *program,
         }
         parameter++;argument_start=index+1;
     }
-    for(size_t index=function->class_type_variable?1u:0u;index<function->type_variable_count;index++)
+    for(size_t index=function->class_type_variable;index<function->type_variable_count;index++)
         if(!binding_present(&bindings[index]))return 0;
     return function->type_variable_count;
 }

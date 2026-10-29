@@ -2646,7 +2646,7 @@ DiamondVmStatus outlined_invoke_spread(DiamondVm *vm,const DiamondChunk *chunk,D
         method->source_chunk!=nullptr?method->source_chunk:owner;
     const DiamondFunction *fn=
         function_chunk->functions[method->function_index];
-    const size_t class_offset=fn->class_type_variable?1u:0u;
+    const size_t class_offset=fn->class_type_variable;
     if(type_argument_count>0&&(fn->type_variable_count>8||
        fn->type_variable_count<class_offset||
        type_argument_count!=fn->type_variable_count-class_offset)) {

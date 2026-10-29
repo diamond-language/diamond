@@ -1942,7 +1942,7 @@ static uint16_t parse_bound_method_reference(Compiler *compiler,uint16_t receive
         target->type_variable_count<=8&&
         (!target->class_type_variable||(!target->has_variadic&&target->type_variable_count>0))&&
         (target->type_variable_count==0||
-         type_argument_count==target->type_variable_count-(target->class_type_variable?1u:0u));
+         type_argument_count==target->type_variable_count-(target->class_type_variable));
     const bool checked_class_reference=typed_wrapper&&target->class_type_variable;
     uint16_t parameter_sets[DIAMOND_MAX_DECLARED_PARAMETERS];
     for(size_t index=0;index<DIAMOND_MAX_DECLARED_PARAMETERS;index++)

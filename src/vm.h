@@ -1339,7 +1339,8 @@ typedef struct DiamondFunction {
     char parameter_names[DIAMOND_MAX_DECLARED_PARAMETERS][DIAMOND_MAX_FUNCTION_NAME];
     char type_variables[8][DIAMOND_MAX_FUNCTION_NAME];
     uint8_t type_variable_count;
-    bool class_type_variable;
+    /* Number of receiver-owned slots before method-owned type variables. */
+    uint8_t class_type_variable;
     bool uses_instance_state;
     /* A nested def whose own body calls or names it (a recursive local
      * helper). Set by the compiler's discovery pass; the real pass then
@@ -1448,7 +1449,7 @@ struct DiamondChunk {
     size_t module_count;
     const uint16_t *parameter_type_sets;
     uint8_t type_variable_count;
-    bool class_type_variable;
+    uint8_t class_type_variable;
     uint8_t parameter_offset;
     const DiamondTypeBinding *type_variable_bindings;
     uint16_t register_count;
