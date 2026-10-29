@@ -1,0 +1,17 @@
+struct Box[T](value: T)
+end
+struct Result[T, E](value: T, error: E)
+end
+def identity[T](value: T) -> T = value
+def checked(value: Box[Box[Int]]) -> Int = value.value().value()
+def check_result(value: Result[Box[Int], Box[String]]) -> String = value.error().value()
+
+box = Box.new(Box.new(42))
+puts(checked(box))
+puts(checked(box.dup()))
+puts(checked(identity(box)))
+puts(checked(Box.new(*[Box.new(43)])))
+puts(checked(Box.new(value: Box.new(44))))
+puts(check_result(Result.new(Box.new(1), Box.new("error"))))
+puts(identity([Box.new(45)])[0].value())
+puts(identity({"value": Box.new(46)})["value"].value())

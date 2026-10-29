@@ -1,0 +1,26 @@
+struct Box[T](value: T)
+end
+def combine[T](first: T, second: T) -> T = first
+def wrong(value: Box[Box[String]]) = value
+def forward(value) = wrong(value)
+puts(combine(Box.new(1), Box.new(2)).value())
+begin
+  combine(Box.new(1), Box.new("text"))
+rescue error: TypeError
+  puts("conflicting nested bindings rejected")
+end
+begin
+  forward(Box.new(Box.new(42)))
+rescue error: TypeError
+  puts("nested mismatch rejected")
+end
+box = Box.new(1)
+depth = 0
+begin
+  while depth < 100
+    box = Box.new(box)
+    depth = depth + 1
+  end
+rescue error: TypeError
+  puts("nested graph limit rejected")
+end

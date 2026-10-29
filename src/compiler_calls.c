@@ -872,9 +872,9 @@ static bool constructor_input_complete(const Compiler *compiler,
     return true;
 }
 
-/* Constructor inference observes actual values, not upper bounds. Only a
- * direct T fed by a closed scalar proves an invariant binding. Structural
- * arguments can still describe an editor result, without eliding checks. */
+/* Constructor inference observes actual values, not upper bounds. A direct T
+ * fed by a closed scalar or a fixed generic instance proves an invariant
+ * binding. Broader structural arguments provide advisory editor facts. */
 bool infer_constructor_argument(Compiler *compiler,const DiamondFunction *target,
         size_t parameter,uint16_t argument,uint16_t *bindings,bool *exact) {
     if(target==nullptr||parameter>=DIAMOND_MAX_DECLARED_PARAMETERS)return true;
@@ -900,7 +900,11 @@ bool infer_constructor_argument(Compiler *compiler,const DiamondFunction *target
     const DiamondTypeSet *known=&compiler->function->type_sets[actual];
     if(wanted->count!=1||(wanted->members[0].id<DIAMOND_TYPE_VARIABLE_BASE||wanted->members[0].id>=DIAMOND_TYPE_VARIABLE_BASE+target->class_type_variable)||
        known->count!=1||
-       !(known->members[0].id<=DIAMOND_TYPE_NIL||known->members[0].id==DIAMOND_TYPE_SYMBOL))
+       !(known->members[0].id<=DIAMOND_TYPE_NIL||known->members[0].id==DIAMOND_TYPE_SYMBOL||
+         (known->members[0].id>=DIAMOND_TYPE_CLASS_BASE&&known->members[0].id<DIAMOND_TYPE_CLASS_LIMIT&&
+          (size_t)(known->members[0].id-DIAMOND_TYPE_CLASS_BASE)<compiler->program->class_count&&
+          DIAMOND_CLASS_TYPE_PARAMETER_COUNT(compiler->program->classes[known->members[0].id-DIAMOND_TYPE_CLASS_BASE])>0&&
+          known->members[0].argument_set!=DIAMOND_NO_TYPE_SET)))
         *exact=false;
     infer_contextual_type_set(compiler,target,expected,(uint16_t)actual,bindings);
     return true;

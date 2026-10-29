@@ -1,0 +1,28 @@
+struct Box[T](value: T)
+end
+def integer(value: Box[Int]) -> Int = value.value()
+def string(value: Box[String]) -> Int = value.value().length()
+def accept[T](first: Callable[[T], Int], second: Callable[[T], Int]) -> Bool = true
+def apply[T](callback: Callable[[T], Int], value: T) -> Int = callback(value)
+def produce() -> Box[Int] = Box.new(42)
+def create[T](callback: Callable[[], T]) -> Box[T] = Box.new(callback())
+def nullable(value: Box[Int] | Nil) -> Int = 0
+def union(value: Box[Int] | Box[String]) -> Int = 0
+def accept_values[T](callback: Callable[[T], Int], first: T, second: T) -> Bool = true
+def callback() -> Int = 1
+def read_box(value: Box) -> Int = 0
+puts(accept(integer, integer))
+puts(apply(integer, Box.new(43)))
+puts(create(produce).value().value())
+puts(accept_values(nullable, Box.new(44), nil))
+puts(apply(read_box, Box.new(callback)))
+begin
+  accept(integer, string)
+rescue error: TypeError
+  puts("callback binding conflict rejected")
+end
+begin
+  apply(union, Box[Int | String].new(1))
+rescue error: TypeError
+  puts("conflicting callback union rejected")
+end

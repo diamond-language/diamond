@@ -1,0 +1,13 @@
+struct Box[T](value: T)
+end
+struct Pair[T, E](first: T, second: E)
+end
+def worker(value: Pair[Box[Int], Box[String]]) -> Pair[Box[Int], Box[String]]
+  puts(value.first().value())
+  puts(value.second().value())
+  value.dup()
+end
+value = Pair.new(Box.new(42), Box.new("copied"))
+copy = Thread.new(worker, value).join()
+puts(copy.first().value())
+puts(copy.second().value())

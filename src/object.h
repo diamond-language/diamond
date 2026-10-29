@@ -169,6 +169,8 @@ typedef struct DiamondBoundTypeNode {
 typedef struct DiamondTypeBinding {
     DiamondBoundTypeNode nodes[DIAMOND_BOUND_TYPE_NODES];
     uint8_t node_count;
+    /* A failed graph join must never become an unconstrained binding. */
+    bool invalid;
 } DiamondTypeBinding;
 
 typedef struct DiamondInstance {

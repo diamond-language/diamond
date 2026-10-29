@@ -157,6 +157,12 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
         execution.type_variable_bindings=bindings;
         chunk=&execution;
     }
+    if(chunk->type_variable_bindings!=nullptr)
+        for(size_t variable=0;variable<chunk->type_variable_count;variable++)
+            if(chunk->type_variable_bindings[variable].invalid) {
+                snprintf(vm->error,sizeof vm->error,"cannot represent inferred type binding");
+                return DIAMOND_VM_TYPE_ERROR;
+            }
     if (argument_count > DIAMOND_REGISTER_COUNT) {
         return DIAMOND_VM_ARITY_ERROR;
     }
@@ -1519,6 +1525,11 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     }
                     if(chunk->class_type_variable)
                         memcpy(bindings,((const DiamondInstance *)arguments[0].as.object)->type_binding,chunk->class_type_variable*sizeof(DiamondTypeBinding));
+                    for(size_t variable=0;variable<chunk->type_variable_count;variable++)
+                        if(bindings[variable].invalid) {
+                            snprintf(vm->error,sizeof vm->error,"cannot represent inferred type binding");
+                            VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                        }
                     execution.type_variable_bindings = bindings;
                     chunk = &execution;
                     frame.chunk = chunk;

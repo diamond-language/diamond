@@ -65,10 +65,19 @@ their usual dynamic behavior.
 The compiler retains an exact scalar constructor binding: `Box.new(42)` carries
 `Box[Int]` through assignments and chained calls, so `box.map(as_string)` retains
 `Box[String]` when the callback is typed. Keyword arguments and literal spreads
-also preserve these facts. Broader input types, user-class values, and structural
-collection inference provide editor hints where representable, while keeping
+also preserve these facts. Broader input types, instances of nongeneric classes,
+and structural collection inference provide editor hints where representable, while keeping
 runtime checks for the invariant binding. Unknown contributing arguments,
 conflicting inferred shapes, and dynamic spreads stay conservative.
+
+Generic instances retain their stored arguments during inference:
+`Box.new(Box.new(42))` binds `Box[Box[Int]]`. This also works through generic
+functions, collections, both parameters of a generic struct, `dup()`, and thread
+copies. A known invariant instance binding can preserve compiler return facts;
+broader or unknown inputs still use conservative editor hints and runtime checks.
+Contributions with the same generic class must agree on its stored arguments.
+Conflicting bindings and graphs beyond the runtime's capacity raise `TypeError`
+instead of discarding an inner contract.
 
 `Box[Int].new(42)` supplies the binding before `initialize` runs. It works
 with positional, spread, keyword, defaulted, and trailing-block arguments.
@@ -90,8 +99,8 @@ Parameterized class annotations check the stored binding, including in return
 annotations and nested collection contracts. They are invariant: a mutable
 `Box[Int]` is not a `Box[Int | String]`, or vice versa. Plain `Box` only checks
 class identity. Nested bindings can be supplied explicitly, for example
-`Box[Box[Int]].new(Box.new(42))`; inference from a value of a user class still
-retains that class's identity rather than its own type argument. Explicit method
+`Box[Box[Int]].new(Box.new(42))`; inferred construction preserves the same nested
+instance arguments. Explicit method
 type arguments cannot override an instance's binding. `is Box` likewise tests
 the class identity; parameterized `is` tests are not supported.
 

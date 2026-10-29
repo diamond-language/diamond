@@ -28,11 +28,7 @@ begin
 rescue error: TypeError
   puts("subclass checked")
 end
-begin
-  from_nested(Box[Int].new(42))
-rescue error: TypeError
-  puts("nested binding checked")
-end
+puts(from_nested(Box[Int].new(42)).value().value())
 puts(from_union(42).value())
 begin
   from_unknown("text")

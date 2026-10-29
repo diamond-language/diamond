@@ -210,6 +210,7 @@ int main(void) {
         "def generic_leaf(value: Pet) -> Leaf = Leaf.new()\n"
         "def inferred_records() = GenericRecords[Pet].new(Pet.new())\n"
         "def generic_label(value: Int) -> String = value.to_s()\n"
+        "def nested_identity[T](value: T) -> T = value\n"
         "def generic_record_receivers()\n"
         "  rows = GenericRecords[Pet].new(Pet.new())\n"
         "  rows.value().bark()\n"
@@ -228,6 +229,8 @@ int main(void) {
         "  strings = GenericRecords[String].new(\"text\")\n"
         "  strings.value().upcase()\n"
         "  integers = GenericRecords[Int].new(42)\n"
+        "  integer_value = 7\n"
+        "  rows.choose(42, integer_value).to_s()\n"
         "  integers.value().to_s()\n"
         "  integers.map[String](generic_label).value().upcase()\n"
         "  integers.map(generic_label).value().upcase()\n"
@@ -262,6 +265,16 @@ int main(void) {
         "  conflicting_pair.first().bark()\n"
         "  nested_model = GenericRecords.new(GenericRecords[Pet].new(Pet.new()))\n"
         "  nested_model.value().value().bark()\n"
+        "  GenericRecords.new(GenericRecords[Pet].new(Pet.new())).value().value().bark()\n"
+        "  GenericRecords[GenericRecords[Pet]].new(GenericRecords[Pet].new(Pet.new())).value().value().bark()\n"
+        "  nested_array = GenericRecords.new([GenericRecords[Pet].new(Pet.new())])\n"
+        "  nested_array.value()[0].value().bark()\n"
+        "  nested_identity(nested_model).value().value().bark()\n"
+        "  nested_pair = MultiRecord.new(GenericRecords[Pet].new(Pet.new()), GenericRecords[Leaf].new(Leaf.new()))\n"
+        "  nested_pair.value().value().bark()\n"
+        "  nested_pair.error().value().ping()\n"
+        "  nested_conflict = GenericPair.new(GenericRecords[Pet].new(Pet.new()), GenericRecords[Leaf].new(Leaf.new()))\n"
+        "  nested_conflict.first().value().bark()\n"
         "end\n"
         "def checked_constructor_union(value: Int | String) -> GenericRecords[Int] = GenericRecords.new(value)\n"
         "def checked_constructor_parent(value: Pet) -> GenericRecords[Pet] = GenericRecords.new(value)\n"
@@ -1161,7 +1174,15 @@ int main(void) {
     failed|=check_receiver(program,&chunk,combined,"array_model.value()[0].","Pet",false);
     failed|=check_receiver(program,&chunk,combined,"incomplete_pair.first().",nullptr,false);
     failed|=check_receiver(program,&chunk,combined,"conflicting_pair.first().",nullptr,false);
-    failed|=check_receiver(program,&chunk,combined,"nested_model.value().value().",nullptr,false);
+    failed|=check_receiver(program,&chunk,combined,"nested_model.value().value().","Pet",false);
+    failed|=check_receiver(program,&chunk,combined,"GenericRecords.new(GenericRecords[Pet].new(Pet.new())).value().value().","Pet",false);
+    failed|=check_receiver(program,&chunk,combined,"GenericRecords[GenericRecords[Pet]].new(GenericRecords[Pet].new(Pet.new())).value().value().","Pet",false);
+    failed|=check_receiver(program,&chunk,combined,"nested_array.value()[0].value().","Pet",false);
+    failed|=check_receiver(program,&chunk,combined,"nested_identity(nested_model).value().value().","Pet",false);
+    failed|=check_receiver(program,&chunk,combined,"nested_pair.value().value().","Pet",false);
+    failed|=check_receiver(program,&chunk,combined,"nested_pair.error().value().","Leaf",false);
+    failed|=check_receiver(program,&chunk,combined,"nested_conflict.first().value().",nullptr,false);
+    failed|=check_builtin(program,&chunk,combined,"rows.choose(42, integer_value).",true,DIAMOND_TYPE_INT);
     failed|=check_type_check_count(&chunk,"checked_constructor_union",2);
     failed|=check_type_check_count(&chunk,"checked_constructor_parent",2);
     failed|=check_return_contract(&chunk,"checked_constructor_unknown");

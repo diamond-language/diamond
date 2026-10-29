@@ -254,7 +254,7 @@ static void append_element_types(char *buffer,size_t capacity,
  * closure's arity, so `3.times() do ... end` says "got Callable[0]". */
 static void append_bound_type(char *buffer,size_t capacity,const DiamondChunk *chunk,
         const DiamondTypeBinding *binding,uint8_t node,size_t depth) {
-    if(node>=binding->node_count||depth>=DIAMOND_BOUND_TYPE_NODES||
+    if(binding->invalid||node>=binding->node_count||depth>=DIAMOND_BOUND_TYPE_NODES||
        binding->nodes[node].count==0) {append_bounded(buffer,capacity,"?");return;}
     for(size_t i=0;i<binding->nodes[node].count;i++) {
         const DiamondBoundTypeMember member=binding->nodes[node].members[i];

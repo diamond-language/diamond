@@ -848,7 +848,7 @@ DiamondVmStatus bind_instance_constructor_type(DiamondVm *vm,
             infer_from_value(chunk,arguments[parameter],fn->type_sets,set,bindings);
     }
     for(size_t variable=0;variable<DIAMOND_CLASS_TYPE_PARAMETER_COUNT(instance->class);variable++)
-    if(bindings[variable].node_count==0||bindings[variable].nodes[0].count==0) {
+    if(bindings[variable].invalid||bindings[variable].node_count==0||bindings[variable].nodes[0].count==0) {
         snprintf(vm->error,sizeof vm->error,
             "cannot infer generic class type parameter from constructor arguments");
         return DIAMOND_VM_TYPE_ERROR;
