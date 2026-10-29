@@ -1,0 +1,23 @@
+struct Pair[T, E](first: T, second: E)
+  def choose[U](value: U) -> U = value
+  def transform[U](callback: Callable[[E], U]) -> U = callback(self.second())
+end
+
+def checked(pair: Pair[Int, String]) -> String = pair.second()
+def echo[A, B](pair: Pair[A, B]) -> B = pair.second()
+def length(value: String) -> Int = value.length()
+
+pair = Pair.new(42, "text")
+puts(pair.first())
+puts(checked(pair))
+puts(echo(pair))
+puts(pair.choose[Bool](true))
+puts(pair.transform[Int](length))
+puts(pair.transform[Int]() do |value| value.length() end)
+explicit = Pair[Int, String].new(second: "other", first: 7)
+puts(explicit.first())
+puts(explicit.second())
+puts(explicit.dup().second())
+reader = explicit.second
+puts(reader())
+puts(Pair[String, Int].new("reverse", 9).second())

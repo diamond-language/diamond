@@ -1,0 +1,3 @@
+struct Pair[T, E](first: T, second: E)
+end
+def read(pair: Pair[Int]) = pair.first()

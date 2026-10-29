@@ -1,0 +1,21 @@
+class Either[T, E]
+  def initialize(value: T, error: E)
+    @value = value
+    @error = error
+  end
+  def value() -> T = @value
+  def error() -> E = @error
+  def replace(error: E)
+    @error = error
+  end
+  def echo[U](value: U) -> U = value
+end
+
+def check(value: Either[Int, String]) -> String = value.error()
+value = Either.new(1, "error")
+puts(check(value))
+value.replace("updated")
+puts(value.error())
+puts(value.echo[Bool](true))
+puts(Either[Int, String].new(*[2, "spread"]).error())
+puts(Either[String, Int].new("other", 3).error())

@@ -23,7 +23,7 @@ annotations, pipe-separated unions, generics (`Array[T]`, `Hash[K, V]`),
 `is` for runtime type tests, and structural interfaces (`Sized`,
 `Callable[n]`-style).
 
-Classes can declare one type parameter, inferred at construction or supplied explicitly:
+Classes can declare one or two type parameters, inferred at construction or supplied explicitly:
 
 ```ruby
 class Box[T]
@@ -42,6 +42,17 @@ box.replace(43)
 puts(box.value())
 box.replace("wrong")  # TypeError: expected Int, got String
 ```
+
+Two parameters bind independently, including in generated struct readers:
+
+```ruby
+struct Result[T, E](value: T, error: E)
+end
+result = Result[Int, String | Nil].new(42, nil)
+```
+
+Both arguments are required when specializing a two-parameter class or struct.
+Each stored binding is invariant. Method parameters follow both receiver slots.
 
 Construction infers `T` from the supplied, annotated constructor arguments,
 including nested `Array[T]` and `Hash[String, T]` parameters. Multiple values
@@ -95,11 +106,11 @@ also supply their class argument to contextual block typing.
 
 Explicit method arguments bind only method parameters. They cannot replace `T`,
 and a method cannot redeclare its class's parameter name. The total budget is
-eight variables: one class parameter and up to seven method parameters. Bound
+eight variables shared between the class parameters and method parameters. Bound
 method references support concrete explicit arguments; references that would
 capture an enclosing type variable are rejected instead of losing that binding.
 
-This native-compiler slice supports one class parameter in directly declared
+This native-compiler slice supports up to two class parameters in directly declared
 instance methods and generated struct fields. Generic inheritance, reopening,
 structural-interface conformance, and referring to the class
 parameter from nested definitions remain future work. Native objects and

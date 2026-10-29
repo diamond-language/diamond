@@ -1,1 +1,1 @@
-generic structs require exactly one type parameter
+generic structs require one or two type parameters

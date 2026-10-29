@@ -991,10 +991,13 @@ typedef struct DiamondShape {
     uint8_t field_count;
 } DiamondShape;
 
+#define DIAMOND_CLASS_TYPE_PARAMETER_COUNT(c) ((c)->type_parameter[0]=='\0'?0u:((c)->second_type_parameter[0]=='\0'?1u:2u))
+
 struct DiamondClass {
     char name[DIAMOND_MAX_FUNCTION_NAME];
-    /* First generic-class slice: one constructor-inferred instance type. */
+    /* Up to two constructor-bound instance type parameters. */
     char type_parameter[DIAMOND_MAX_FUNCTION_NAME];
+    char second_type_parameter[DIAMOND_MAX_FUNCTION_NAME];
     /* This class's own position in its program's classes[] table (set when
      * the class is created or deserialized). Lets a class pointer be mapped
      * to the same class in a copy of the program without pointer arithmetic

@@ -279,8 +279,11 @@ void format_value_type_detailed(char *buffer,size_t capacity,
         const DiamondInstance *instance=(const DiamondInstance *)value.as.object;
         if(instance->type_binding!=nullptr) {
             append_bounded(buffer,capacity,"[");
-            append_bound_type(buffer,capacity,instance->owner!=nullptr?instance->owner:chunk,
-                instance->type_binding,0,0);
+            for(size_t variable=0;variable<DIAMOND_CLASS_TYPE_PARAMETER_COUNT(instance->class);variable++) {
+                if(variable!=0)append_bounded(buffer,capacity,", ");
+                append_bound_type(buffer,capacity,instance->owner!=nullptr?instance->owner:chunk,
+                    &instance->type_binding[variable],0,0);
+            }
             append_bounded(buffer,capacity,"]");
         }
         return;

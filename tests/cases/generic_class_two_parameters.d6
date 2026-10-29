@@ -1,2 +1,2 @@
-class Pair[T, U]
+class Pair[T, U, V]
 end

@@ -690,7 +690,7 @@ declared member, and generates four methods for it automatically:
 - `to_s()` -- `"Point(x: 1, y: 2)"`: the class name, then each field as
   `name: value.to_s()`, comma-separated.
 
-Generic structs declare one parameter before the field list:
+Generic structs declare one or two parameters before the field list:
 
 ```ruby
 struct Result[T](value: T, error: String | Nil)
