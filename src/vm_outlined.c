@@ -1924,7 +1924,7 @@ DiamondVmStatus outlined_call_spread(DiamondVm *vm,const DiamondChunk *chunk,Dia
     /* Only the first type_argument_count entries are ever read (below,
      * and through .type_variable_bindings); zeroing all eight cost about
      * 3 KB of memset on every call, typed or not. */
-    DiamondTypeBinding explicit_bindings[8];
+    DiamondTypeBinding explicit_bindings[type_argument_count==0?1:type_argument_count];
     for(size_t index=0;index<type_argument_count;index++) {
         explicit_bindings[index]=(DiamondTypeBinding){};
         if((size_t)type_arguments[index]>=chunk->type_set_count)
@@ -2078,7 +2078,7 @@ DiamondVmStatus outlined_call_singleton_keywords(DiamondVm *vm,const DiamondChun
     for(size_t index=0;index<merged_count;index++)
         singleton_arguments[index+needs_receiver]=merged[index];
     free(merged);
-    DiamondTypeBinding singleton_bindings[8];
+    DiamondTypeBinding singleton_bindings[type_count==0?1:type_count];
     for(size_t index=0;index<type_count;index++) {
         singleton_bindings[index]=(DiamondTypeBinding){};
         if((size_t)type_arguments[index]>=chunk->type_set_count) {
@@ -2150,7 +2150,7 @@ DiamondVmStatus outlined_call_singleton_spread(DiamondVm *vm,const DiamondChunk 
     /* Only the first type_argument_count entries are ever read (below,
      * and through .type_variable_bindings); zeroing all eight cost about
      * 3 KB of memset on every call, typed or not. */
-    DiamondTypeBinding explicit_bindings[8];
+    DiamondTypeBinding explicit_bindings[type_argument_count==0?1:type_argument_count];
     for(size_t index=0;index<type_argument_count;index++) {
         explicit_bindings[index]=(DiamondTypeBinding){};
         if((size_t)type_arguments[index]>=chunk->type_set_count)
@@ -2658,7 +2658,7 @@ DiamondVmStatus outlined_invoke_spread(DiamondVm *vm,const DiamondChunk *chunk,D
     /* Only the first type_argument_count entries are ever read (below,
      * and through .type_variable_bindings); zeroing all eight cost about
      * 3 KB of memset on every call, typed or not. */
-    DiamondTypeBinding explicit_bindings[8];
+    DiamondTypeBinding explicit_bindings[type_argument_count>0?fn->type_variable_count:1];
     if(type_argument_count>0&&class_offset!=0)memset(explicit_bindings,0,class_offset*sizeof explicit_bindings[0]);
     for(size_t index=0;index<type_argument_count;index++) {
         DiamondTypeBinding *binding=&explicit_bindings[index+class_offset];

@@ -1,0 +1,14 @@
+def recurse[A, B, C, D, E, F, G, H](a: A, b: B, c: C, d: D, e: E, f: F, g: G, h: H) -> Int
+  1 + recurse[A, B, C, D, E, F, G, H](a, b, c, d, e, f, g, h)
+end
+def worker() -> Int = recurse[Int, Int, Int, Int, Int, Int, Int, Int](1, 2, 3, 4, 5, 6, 7, 8)
+begin
+  Thread.new(worker).join()
+rescue error: ThreadError
+  puts(error.message().include?("stack overflow"))
+end
+begin
+  Fiber.new(worker).resume()
+rescue error: SystemStackError
+  puts(error.message().include?("stack overflow"))
+end

@@ -348,7 +348,9 @@ DiamondVmStatus invoke_resolved_method_helper(DiamondVm *vm,
     /* Only the first type_argument_count entries are ever read (below,
      * and through .type_variable_bindings); zeroing all eight cost about
      * 3 KB of memset on every call, typed or not. */
-    DiamondTypeBinding explicit_bindings[8];
+    /* Ordinary calls must not reserve eight full binding graphs on every
+     * recursive frame. Typed calls need exactly the declared slots. */
+    DiamondTypeBinding explicit_bindings[typed&&fn->type_variable_count>0?fn->type_variable_count:1];
     if(typed&&class_offset!=0)explicit_bindings[0]=(DiamondTypeBinding){};
     for(size_t index=0;index<type_argument_count;index++) {
         DiamondTypeBinding *binding=&explicit_bindings[index+class_offset];
