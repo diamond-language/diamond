@@ -303,10 +303,18 @@ static bool generic_interface_signature(const Compiler *compiler,
         .argument_sets={receiver.argument_set,receiver.second_argument_set},
         .method_arguments=compiler->program->entry.type_sets,
         .method_argument_count=compiler->program->entry.type_set_count};
+    if(implementation->class_type_variable>0) {
+        uint8_t order[2];
+        if(!diamond_class_argument_order(compiler->program->classes,compiler->program->class_count,
+            receiver.id-DIAMOND_TYPE_CLASS_BASE,implementation->owner_class,order))return false;
+        const uint16_t actual[2]={receiver.argument_set,receiver.second_argument_set};
+        arena.argument_sets[0]=actual[order[0]];arena.argument_sets[1]=actual[order[1]];
+    }
     InterfaceWitness witnesses[8]={};
     for(size_t i=0;i<8;i++)arena.method_sets[i]=DIAMOND_NO_TYPE_SET;
     for(size_t p=0;p<wanted->arity;p++)
-        interface_infer_variables(implementation,implementation->parameter_type_sets[p],
+        interface_infer_variables(implementation,compiler->program->classes,compiler->program->class_count,
+            implementation->parameter_type_sets[p],
             arena.method_arguments,wanted->parameter_type_sets[p],witnesses,0);
     for(size_t variable=implementation->class_type_variable;
         variable<implementation->type_variable_count;variable++) {
@@ -560,6 +568,9 @@ bool type_members_satisfy_across(const Compiler *compiler,
         return fixed_member_satisfies(compiler,known,expected_sets,expected);
     }
 
+    if(known.id!=expected.id&&known.id>=DIAMOND_TYPE_CLASS_BASE&&known.id<DIAMOND_TYPE_CLASS_LIMIT&&
+       expected.id>=DIAMOND_TYPE_CLASS_BASE&&expected.id<DIAMOND_TYPE_CLASS_LIMIT&&
+       !diamond_align_type_member(compiler->program->classes,compiler->program->class_count,expected.id,&known))return false;
     if(expected.id==DIAMOND_TYPE_CALLABLE) {
         if(expected.callable_arity!=UINT8_MAX&&
            known.callable_arity!=expected.callable_arity)return false;
@@ -776,7 +787,7 @@ static bool type_set_may_satisfy(const Compiler *compiler,uint16_t known_set,
                  wanted.argument_set!=DIAMOND_NO_TYPE_SET&&
                  (member.id==DIAMOND_TYPE_ARRAY||member.id==DIAMOND_TYPE_HASH||
                   (member.id>=DIAMOND_TYPE_CLASS_BASE&&member.id<DIAMOND_TYPE_VARIABLE_BASE))&&
-                 member.id==wanted.id)||
+                 (member.id==wanted.id||known_type_satisfies_one(compiler,member.id,wanted.id)))||
                 /* Likewise a bare Callable, whose arity isn't known. */
                 (member.id==DIAMOND_TYPE_CALLABLE&&wanted.id==DIAMOND_TYPE_CALLABLE&&
                  member.callable_arity==UINT8_MAX);

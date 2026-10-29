@@ -1,0 +1,6 @@
+class Pair[T, E]
+end
+class Swapped[A, B] < Pair[B, A]
+end
+def use(value: Pair[String, Int]) = nil
+def wrong(value: Swapped[String, Int]) = use(value)

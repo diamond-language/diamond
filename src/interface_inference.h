@@ -82,7 +82,7 @@ static void interface_join_witness(InterfaceWitness *witness,const DiamondTypeSe
  * must subsequently pass variance checks. Return-only variables have no witness.
  * Receiver-owned variables are fixed and must never be rebound here. */
 static void interface_infer_variables(const DiamondFunction *function,
-        uint16_t pattern,const DiamondTypeSet *inputs,uint16_t input,
+        DiamondClass *const *classes,size_t class_count,uint16_t pattern,const DiamondTypeSet *inputs,uint16_t input,
         InterfaceWitness bindings[8],size_t depth) {
     if(pattern==DIAMOND_NO_TYPE_SET||input==DIAMOND_NO_TYPE_SET||
        pattern>=function->type_set_count||depth>32)return;
@@ -97,16 +97,16 @@ static void interface_infer_variables(const DiamondFunction *function,
             continue;
         }
         for(size_t j=0;j<actual->count;j++) {
-            const DiamondTypeMember source=actual->members[j];
-            if(source.id!=target.id)continue;
-            interface_infer_variables(function,target.argument_set,inputs,source.argument_set,bindings,depth+1);
-            interface_infer_variables(function,target.second_argument_set,inputs,source.second_argument_set,bindings,depth+1);
+            DiamondTypeMember source=actual->members[j];
+            if(!diamond_align_type_member(classes,class_count,target.id,&source))continue;
+            interface_infer_variables(function,classes,class_count,target.argument_set,inputs,source.argument_set,bindings,depth+1);
+            interface_infer_variables(function,classes,class_count,target.second_argument_set,inputs,source.second_argument_set,bindings,depth+1);
             if(target.id!=DIAMOND_TYPE_CALLABLE)continue;
-            interface_infer_variables(function,target.callable_return_set,inputs,source.callable_return_set,bindings,depth+1);
+            interface_infer_variables(function,classes,class_count,target.callable_return_set,inputs,source.callable_return_set,bindings,depth+1);
             if(target.callable_parameters_typed&&source.callable_parameters_typed&&
                target.callable_arity==source.callable_arity)
                 for(size_t p=0;p<target.callable_arity;p++)
-                    interface_infer_variables(function,target.callable_parameter_sets[p],inputs,
+                    interface_infer_variables(function,classes,class_count,target.callable_parameter_sets[p],inputs,
                         source.callable_parameter_sets[p],bindings,depth+1);
         }
     }

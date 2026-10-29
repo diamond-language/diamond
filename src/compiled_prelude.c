@@ -152,6 +152,8 @@ static bool write_class(FILE *file, const DiamondClass *class) {
     if (!write_all(file, class->second_type_parameter, sizeof class->second_type_parameter)) return false;
     const uint8_t fixed=class->fixed_type_arguments?1:0;
     if(!write_all(file,&fixed,sizeof fixed))return false;
+    const uint8_t swapped=class->swaps_parent_arguments?1:0;
+    if(!write_all(file,&swapped,sizeof swapped))return false;
     if(fixed&&!write_all(file,class->fixed_type_bindings,sizeof class->fixed_type_bindings))return false;
     if (!write_all(file, &class->declaration_line, sizeof class->declaration_line)) return false;
     if (!write_all(file, &class->declaration_column, sizeof class->declaration_column)) return false;
@@ -427,6 +429,9 @@ static bool read_class(const uint8_t **cursor, const uint8_t *end, DiamondClass 
     uint8_t fixed=0;
     if(!read_bytes(cursor,end,&fixed,sizeof fixed)||fixed>1)return false;
     out->fixed_type_arguments=fixed!=0;
+    uint8_t swapped=0;
+    if(!read_bytes(cursor,end,&swapped,sizeof swapped)||swapped>1)return false;
+    out->swaps_parent_arguments=swapped!=0;
     if(fixed&&(!read_bytes(cursor,end,out->fixed_type_bindings,sizeof out->fixed_type_bindings)||
        DIAMOND_CLASS_TYPE_PARAMETER_COUNT(out)==0))return false;
     if (!read_bytes(cursor, end, &out->declaration_line, sizeof out->declaration_line)) return false;
@@ -695,6 +700,10 @@ static bool fixed_binding_node_valid(const DiamondProgram *program,const Diamond
 }
 
 static bool fixed_class_bindings_valid(const DiamondProgram *program,const DiamondClass *class) {
+    if(class->swaps_parent_arguments&&(class->fixed_type_arguments||
+       DIAMOND_CLASS_TYPE_PARAMETER_COUNT(class)!=2||class->superclass>=program->class_count||
+       program->classes[class->superclass]->fixed_type_arguments||
+       DIAMOND_CLASS_TYPE_PARAMETER_COUNT(program->classes[class->superclass])!=2))return false;
     if(!class->fixed_type_arguments) {
         if(DIAMOND_CLASS_TYPE_PARAMETER_COUNT(class)==0||class->superclass==DIAMOND_NO_CLASS)return true;
         if(class->superclass>=program->class_count||class->superclass==class->index)return false;
@@ -789,7 +798,7 @@ enum { DIAMOND_CACHE_MAGIC_LENGTH = 8 };
  * 9: classes store a type parameter; methods distinguish its instance binding.
  * 10: NEW_TYPED constructs explicitly specialized generic instances.
  * 11: generic class methods bind method variables after the receiver slot. */
-enum { DIAMOND_CACHE_FORMAT_VERSION = 13 };
+enum { DIAMOND_CACHE_FORMAT_VERSION = 14 };
 
 /* A checksum of the compiler's own sources and prelude (every .c and .h
  * file under src/, plus lib/core.d6 and lib/core/), passed in by the

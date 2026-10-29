@@ -131,6 +131,9 @@ static void check_generic_class_round_trip(const DiamondProgram *template) {
         "class ForwardBox[U] < Box[U]\nend\n"
         "class ForwardGrand[V] < ForwardBox[V]\nend\n"
         "class ForwardPair[A, B] < Payload[A, B]\nend\n"
+        "class SwappedPair[A, B] < Payload[B, A]\nend\n"
+        "class TwicePair[C, D] < SwappedPair[D, C]\nend\n"
+        "class FixedSwapped < SwappedPair[String, Int]\nend\n"
         "interface IntSource\n  def value() -> Int\nend\n"
         "interface IntEcho\n  def echo(value: Int) -> Int\nend\n"
         "interface MixedEcho\n  def both(left: Int, right: String) -> Int | String\nend\n"
@@ -151,6 +154,24 @@ static void check_generic_class_round_trip(const DiamondProgram *template) {
     check(compiled,"generic class compiles against restored template");
     if(compiled) {
         check_fixed_binding_rejection(program);
+        for(size_t i=0;i<program->class_count;i++) {
+            DiamondClass *class=program->classes[i];
+            if(strcmp(class->name,"ForwardBox")!=0)continue;
+            class->swaps_parent_arguments=true;
+            char *invalid=nullptr;size_t invalid_length=0;
+            FILE *invalid_file=open_memstream(&invalid,&invalid_length);
+            check(invalid_file!=nullptr,"invalid permutation image stream opens");
+            if(invalid_file!=nullptr) {
+                check(diamond_program_write_compiled(program,invalid_file),"invalid permutation image writes");
+                fclose(invalid_file);
+                DiamondProgram *rejected=alloc_program();diamond_program_init(rejected);
+                check(!diamond_program_read_compiled((const uint8_t *)invalid,invalid_length,rejected),
+                    "one-parameter class cannot restore a two-slot permutation");
+                diamond_program_free(rejected);free(rejected);free(invalid);
+            }
+            class->swaps_parent_arguments=false;
+            break;
+        }
         char *bytes=nullptr;size_t length=0;
         FILE *file=open_memstream(&bytes,&length);
         check(file!=nullptr,"generic class serialization stream opens");
@@ -167,6 +188,38 @@ static void check_generic_class_round_trip(const DiamondProgram *template) {
                     strcmp(rendered_constructor,"42")==0,
                     "serialized explicit generic constructor executes");
                 DiamondProgram *use=alloc_program();
+                const bool swapped=diamond_compile_incremental(
+                    "SwappedPair[String, Int].new(42, \"abc\").value()\n",use,copy,&diagnostic);
+                check(swapped,"restored reordered superclass accepts explicit arguments");
+                if(swapped) {
+                    char rendered[64];
+                    check(run_and_get_string(use,rendered,sizeof rendered)&&strcmp(rendered,"42")==0,
+                        "restored reordered binding executes in the parent view");
+                }
+                const bool swapped_inferred=diamond_compile_incremental(
+                    "SwappedPair.new(42, \"abc\").error().length()\n",use,copy,&diagnostic);
+                check(swapped_inferred,"restored reordered superclass infers child arguments");
+                if(swapped_inferred) {
+                    char rendered[64];
+                    check(run_and_get_string(use,rendered,sizeof rendered)&&strcmp(rendered,"3")==0,
+                        "restored inferred reordered binding retains the second parent slot");
+                }
+                const bool composed=diamond_compile_incremental(
+                    "TwicePair[Int, String].new(42, \"abc\").value()\n",use,copy,&diagnostic);
+                check(composed,"restored superclass permutations compose");
+                if(composed) {
+                    char rendered[64];
+                    check(run_and_get_string(use,rendered,sizeof rendered)&&strcmp(rendered,"42")==0,
+                        "restored double permutation returns the original slot order");
+                }
+                const bool fixed_swapped=diamond_compile_incremental(
+                    "FixedSwapped.new(42, \"abc\").value()\n",use,copy,&diagnostic);
+                check(fixed_swapped,"restored fixed child keeps its reordered ancestor view");
+                if(fixed_swapped) {
+                    char rendered[64];
+                    check(run_and_get_string(use,rendered,sizeof rendered)&&strcmp(rendered,"42")==0,
+                        "restored fixed reordered child executes");
+                }
                 const bool forwarded=diamond_compile_incremental(
                     "ForwardGrand[Int].new(42).value()\n",use,copy,&diagnostic);
                 check(forwarded,"restored parameterized superclass accepts explicit arguments");

@@ -1347,21 +1347,29 @@ uint16_t compile_class(Compiler *compiler) {
                 fail(compiler,superclass_span,"generic superclass requires forwarded type arguments");return 0;
             }
             advance_token(compiler);skip_newlines(compiler);
+            uint8_t used=0,first=0;
             for(size_t variable=0;variable<subclass_parameters;variable++) {
-                const char *parameter=variable==0?class->type_parameter:class->second_type_parameter;
-                if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER||
-                   !name_equals(compiler,parameter,compiler->current.span,false)) {
-                    fail(compiler,compiler->current.span,"parent arguments must forward subclass parameters in declaration order");return 0;
+                int selected=-1;
+                if(compiler->current.kind==DIAMOND_TOKEN_IDENTIFIER) {
+                    if(name_equals(compiler,class->type_parameter,compiler->current.span,false))selected=0;
+                    else if(subclass_parameters==2&&name_equals(compiler,class->second_type_parameter,
+                        compiler->current.span,false))selected=1;
                 }
+                if(selected<0||(used&(uint8_t)(1u<<selected))!=0) {
+                    fail(compiler,compiler->current.span,"parent arguments must be a permutation of subclass parameters");return 0;
+                }
+                used|=(uint8_t)(1u<<selected);
+                if(variable==0)first=(uint8_t)selected;
                 advance_token(compiler);skip_newlines(compiler);
                 const DiamondTokenKind separator=variable+1==subclass_parameters?
                     DIAMOND_TOKEN_RIGHT_BRACKET:DIAMOND_TOKEN_COMMA;
                 if(compiler->current.kind!=separator) {
-                    fail(compiler,compiler->current.span,"parent arguments must forward subclass parameters in declaration order");return 0;
+                    fail(compiler,compiler->current.span,"parent arguments must be a permutation of subclass parameters");return 0;
                 }
                 advance_token(compiler);
                 if(variable+1<subclass_parameters)skip_newlines(compiler);
             }
+            class->swaps_parent_arguments=first==1;
         } else if(generic_parent->type_parameter[0]!='\0') {
             const size_t count=DIAMOND_CLASS_TYPE_PARAMETER_COUNT(generic_parent);
             if(generic_parent->fixed_type_arguments) {

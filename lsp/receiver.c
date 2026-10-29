@@ -689,10 +689,11 @@ static bool infer_structural_class_bindings(const DiamondChunk *chunk,
             bindings[variable].graph.node_count>0&&
             receiver_graph_equal(&bindings[variable].graph,0,&inferred.graph,0,0);
     }
-    if(expected->count!=1||actual->count!=1||
-       expected->members[0].id!=actual->members[0].id)return false;
+    if(expected->count!=1||actual->count!=1)return false;
     const DiamondTypeMember *wanted=&expected->members[0];
-    const DiamondTypeMember *known=&actual->members[0];
+    DiamondTypeMember aligned=actual->members[0];
+    if(!diamond_align_type_member(chunk->classes,chunk->class_count,wanted->id,&aligned))return false;
+    const DiamondTypeMember *known=&aligned;
     if(wanted->argument_set!=DIAMOND_NO_TYPE_SET) {
         if(known->argument_set==DIAMOND_NO_TYPE_SET||
            !infer_structural_class_bindings(chunk,expected_sets,expected_count,
@@ -1059,21 +1060,16 @@ static bool resolve_target_bindings(const DiamondProgram *program,
         const DiamondBoundTypeMember member=receiver.graph.nodes[0].members[0];
         size_t receiver_class;
         if(!decode_class_type(chunk,member.id,&receiver_class))return false;
-        if(receiver_class!=function->owner_class) {
-            size_t ancestor=receiver_class;
-            for(size_t step=0;step<chunk->class_count&&ancestor!=function->owner_class;step++) {
-                ancestor=chunk->classes[ancestor]->superclass;
-                if(ancestor==DIAMOND_NO_CLASS||ancestor>=chunk->class_count)return false;
-            }
-            if(ancestor!=function->owner_class)return false;
-        }
+        uint8_t order[2];
+        if(!diamond_class_argument_order(chunk->classes,chunk->class_count,receiver_class,
+            function->owner_class,order))return false;
         for(size_t variable=0;variable<function->class_type_variable;variable++) {
             if(chunk->classes[receiver_class]->fixed_type_arguments) {
-                if(!binding_from_graph(chunk,&chunk->classes[receiver_class]->fixed_type_bindings[variable],
+                if(!binding_from_graph(chunk,&chunk->classes[receiver_class]->fixed_type_bindings[order[variable]],
                     0,&bindings[variable],depth+1))return false;
                 continue;
             }
-            const uint8_t child=variable==0?member.argument_node:member.second_argument_node;
+            const uint8_t child=order[variable]==0?member.argument_node:member.second_argument_node;
             if(!binding_from_graph(chunk,&receiver.graph,child,&bindings[variable],depth+1))return false;
         }
         *binding_count=function->type_variable_count;
@@ -1133,6 +1129,12 @@ static bool resolve_expression_binding(const DiamondProgram *program,const Diamo
                 if(init==nullptr||init->function_index>=chunk->function_count||
                    infer_class_bindings(program,chunk,source,tokens,call.left+1,end-1,
                        chunk->functions[init->function_index],arguments,depth+1)==0)return false;
+                uint8_t order[2];
+                if(!diamond_class_argument_order(chunk->classes,chunk->class_count,class_index,
+                    chunk->functions[init->function_index]->owner_class,order))return false;
+                if(order[0]==1) {
+                    const ReceiverTypeBinding first=arguments[0];arguments[0]=arguments[1];arguments[1]=first;
+                }
             }
         }
         DiamondTypeBinding graph={.node_count=1,.nodes={{.count=1,.members={{

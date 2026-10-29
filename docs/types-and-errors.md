@@ -129,12 +129,14 @@ Callable signatures. Further concrete subclasses inherit the same bindings.
 The concrete subclass cannot supply new type arguments or infer replacements
 from its constructor values. Fixed parent arguments must be concrete and fit
 the bounded binding graph. A parameterized subclass may instead forward its
-parameters unchanged: `class Child[A] < Box[A]`, or
-`class Result[A, B] < Pair[A, B]`. Parameters may have different names from the
-parent's, but must have the same count and be forwarded in declaration order.
+parameters: `class Child[A] < Box[A]`, `class Result[A, B] < Pair[A, B]`, or
+`class Swapped[A, B] < Pair[B, A]`. Parameters may have different names from the
+parent's, but must have the same count and each must appear exactly once.
 Explicit or inferred constructor arguments then bind the inherited slots;
 inherited methods, `super`, method references, and further subclasses retain
-those bindings. Reordered, transformed, or mixed fixed parent arguments,
+those bindings in the correct ancestor view. Constructor inference maps the
+parent's slots back to the subclass's declaration order, and permutations compose
+through multiple inheritance levels. Transformed or mixed fixed parent arguments,
 parameterized subclasses of a fixed parent, generic struct inheritance,
 reopening these classes, and referring to class parameters from nested
 definitions remain future work. Native types such as

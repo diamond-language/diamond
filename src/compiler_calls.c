@@ -777,8 +777,9 @@ static void infer_contextual_type_set(Compiler *compiler,
             continue;
         }
         for(size_t known_index=0;known_index<actual->count;known_index++) {
-            const DiamondTypeMember known=actual->members[known_index];
-            if(known.id!=wanted.id)continue;
+            DiamondTypeMember known=actual->members[known_index];
+            if(!diamond_align_type_member(compiler->program->classes,
+                compiler->program->class_count,wanted.id,&known))continue;
             if(wanted.argument_set!=DIAMOND_NO_TYPE_SET&&
                known.argument_set!=DIAMOND_NO_TYPE_SET)
                 infer_contextual_type_set(compiler,target,wanted.argument_set,
@@ -859,8 +860,10 @@ static bool constructor_input_complete(const Compiler *compiler,
     const DiamondTypeMember type=wanted->members[0];
     if(type.id>=DIAMOND_TYPE_VARIABLE_BASE&&type.id<DIAMOND_TYPE_VARIABLE_BASE+target->class_type_variable)
         return !type_set_contains_variable(compiler,actual);
-    if(known->count!=1||known->members[0].id!=type.id)return false;
-    const DiamondTypeMember value=known->members[0];
+    if(known->count!=1)return false;
+    DiamondTypeMember value=known->members[0];
+    if(!diamond_align_type_member(compiler->program->classes,
+        compiler->program->class_count,type.id,&value))return false;
     if(!constructor_input_complete(compiler,target,type.argument_set,value.argument_set,depth+1)||
        !constructor_input_complete(compiler,target,type.second_argument_set,value.second_argument_set,depth+1)||
        !constructor_input_complete(compiler,target,type.callable_return_set,value.callable_return_set,depth+1))return false;

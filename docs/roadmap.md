@@ -17,6 +17,14 @@ background. Further JIT work is optional and measurement-driven.
 These are possible next steps, not commitments. Start with a measured need or
 a concrete application gap.
 
+### Rebrand Diamond as d6
+
+- Plan the user-facing rename to **d6**, which remains a reference to Diamond.
+- Determine whether to keep the **cut** and **facet** names; the current preference
+  is to keep them.
+- Preserve `DIAMOND_` constants and existing internal identifiers. Avoid plumbing
+  changes whose only purpose would be to replace the codename.
+
 ### Packages
 
 - **arm64 packages** -- the `.deb` and `.rpm` are x86-64 only; an arm64 build needs its

@@ -1,0 +1,4 @@
+class Pair[T, E]
+end
+class Child[A, B] < Pair[A, A]
+end

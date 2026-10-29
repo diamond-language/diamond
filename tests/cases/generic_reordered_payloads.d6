@@ -1,0 +1,42 @@
+class Pair[T, E]
+  def initialize(value: T, error: E)
+    @value = value
+    @error = error
+  end
+  def value() -> T = @value
+  def error() -> E = @error
+end
+class Swapped[A, B] < Pair[B, A]
+end
+class Wrapped[T, E]
+  def initialize(value: Pair[T, E])
+    @value = value
+  end
+  def value() -> E = @value.error()
+end
+class WrappedSwap[A, B] < Wrapped[B, A]
+end
+def increment(value: Int) -> Int = value + 1
+def build() -> Swapped[String, Int] = Swapped.new(42, "callback")
+def invoke(callback: Callable[[], Pair[Int, String]]) -> Int = callback().value()
+def dynamic_invoke(callback) = invoke(callback)
+def accepts_parent(value: Pair[Int, String]) -> Int = value.value()
+def accepts_child(value: Swapped[String, Int]) -> Int = value.value()
+def call_child(callback: Callable[[Swapped[String, Int]], Int]) -> Int = callback(Swapped.new(41, "child"))
+def dynamic_child(callback) = call_child(callback)
+def call_parent(callback: Callable[[Pair[Int, String]], Int]) -> Int = callback(Pair.new(1, "parent"))
+def dynamic_parent(callback) = call_parent(callback)
+nested = Swapped[Hash[String, Int], Array[String]].new(["nested"], {"count" => 2})
+puts(nested.value()[0])
+puts(nested.error()["count"])
+native = Swapped[Time, Callable[[Int], Int]].new(increment, Time.now())
+puts(native.value()(41))
+puts(native.error() is Time)
+puts(WrappedSwap.new(Swapped.new(7, "wrapped")).value())
+puts(dynamic_invoke(build))
+puts(dynamic_child(accepts_parent))
+begin
+  dynamic_parent(accepts_child)
+rescue error: TypeError
+  puts("unsafe callback rejected")
+end

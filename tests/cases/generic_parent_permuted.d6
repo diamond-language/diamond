@@ -1,4 +1,10 @@
 class Pair[T, E]
+  def initialize(value: T, error: E)
+    @value = value
+    @error = error
+  end
+  def value() -> T = @value
 end
 class Child[A, B] < Pair[B, A]
 end
+puts(Child[String, Int].new(42, "error").value())
