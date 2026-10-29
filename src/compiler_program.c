@@ -438,6 +438,7 @@ bool diamond_class_argument_order(DiamondClass *const *classes,size_t count,
     for(size_t step=0;step<count;step++) {
         if(actual==owner)return true;
         const DiamondClass *class=classes[actual];
+        if(class->transforms_parent_arguments)return false;
         if(class->swaps_parent_arguments) {
             if(class->fixed_type_arguments||DIAMOND_CLASS_TYPE_PARAMETER_COUNT(class)!=2||
                class->superclass>=count||classes[class->superclass]->fixed_type_arguments||

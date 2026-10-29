@@ -154,6 +154,9 @@ static bool write_class(FILE *file, const DiamondClass *class) {
     if(!write_all(file,&fixed,sizeof fixed))return false;
     const uint8_t swapped=class->swaps_parent_arguments?1:0;
     if(!write_all(file,&swapped,sizeof swapped))return false;
+    const uint8_t transformed=class->transforms_parent_arguments?1:0;
+    if(!write_all(file,&transformed,sizeof transformed))return false;
+    if(transformed&&!write_all(file,class->parent_type_bindings,sizeof class->parent_type_bindings))return false;
     if(fixed&&!write_all(file,class->fixed_type_bindings,sizeof class->fixed_type_bindings))return false;
     if (!write_all(file, &class->declaration_line, sizeof class->declaration_line)) return false;
     if (!write_all(file, &class->declaration_column, sizeof class->declaration_column)) return false;
@@ -432,6 +435,10 @@ static bool read_class(const uint8_t **cursor, const uint8_t *end, DiamondClass 
     uint8_t swapped=0;
     if(!read_bytes(cursor,end,&swapped,sizeof swapped)||swapped>1)return false;
     out->swaps_parent_arguments=swapped!=0;
+    uint8_t transformed=0;
+    if(!read_bytes(cursor,end,&transformed,sizeof transformed)||transformed>1)return false;
+    out->transforms_parent_arguments=transformed!=0;
+    if(transformed&&!read_bytes(cursor,end,out->parent_type_bindings,sizeof out->parent_type_bindings))return false;
     if(fixed&&(!read_bytes(cursor,end,out->fixed_type_bindings,sizeof out->fixed_type_bindings)||
        DIAMOND_CLASS_TYPE_PARAMETER_COUNT(out)==0))return false;
     if (!read_bytes(cursor, end, &out->declaration_line, sizeof out->declaration_line)) return false;
@@ -657,9 +664,10 @@ static bool constants_are_scalar(const DiamondFunction *function) {
 }
 
 static bool fixed_binding_node_valid(const DiamondProgram *program,const DiamondTypeBinding *binding,
-        uint8_t node,uint16_t active,uint16_t *reachable) {
+        uint8_t node,uint16_t active,uint16_t *reachable,size_t variables) {
     if(node==UINT8_MAX)return true;
     if(node>=binding->node_count||(active&(uint16_t)(1u<<node))!=0)return false;
+    if(variables>0&&(*reachable&(uint16_t)(1u<<node))!=0)return false;
     active|=(uint16_t)(1u<<node);
     *reachable|=(uint16_t)(1u<<node);
     const DiamondBoundTypeNode *set=&binding->nodes[node];
@@ -668,19 +676,22 @@ static bool fixed_binding_node_valid(const DiamondProgram *program,const Diamond
         const DiamondBoundTypeMember member=set->members[i];
         const bool class_type=member.id>=DIAMOND_TYPE_CLASS_BASE&&member.id<DIAMOND_TYPE_CLASS_LIMIT;
         if(member.id>=DIAMOND_TYPE_CLASS_LIMIT&&member.id<DIAMOND_TYPE_INTERFACE_BASE&&
-           member.id!=DIAMOND_TYPE_NATIVE)return false;
+           member.id!=DIAMOND_TYPE_NATIVE&&
+           !(member.id>=DIAMOND_TYPE_VARIABLE_BASE&&member.id<DIAMOND_TYPE_VARIABLE_BASE+variables))return false;
         if(member.argument_node!=UINT8_MAX&&!class_type&&member.id!=DIAMOND_TYPE_ARRAY&&
            member.id!=DIAMOND_TYPE_HASH)return false;
         if(member.second_argument_node!=UINT8_MAX&&!class_type&&member.id!=DIAMOND_TYPE_HASH)return false;
-        if(member.id>=DIAMOND_TYPE_VARIABLE_BASE&&member.id<DIAMOND_TYPE_INTERFACE_BASE)return false;
+        if(member.id>=DIAMOND_TYPE_VARIABLE_BASE&&member.id<DIAMOND_TYPE_INTERFACE_BASE&&
+           (member.id>=DIAMOND_TYPE_VARIABLE_BASE+variables||set->count!=1||
+            member.argument_node!=UINT8_MAX||member.second_argument_node!=UINT8_MAX||member.signature!=UINT8_MAX))return false;
         if(member.id>=DIAMOND_TYPE_INTERFACE_BASE&&
            (size_t)(member.id-DIAMOND_TYPE_INTERFACE_BASE)>=program->interface_count)return false;
         if(member.id>=DIAMOND_TYPE_CLASS_BASE&&member.id<DIAMOND_TYPE_CLASS_LIMIT&&
            (size_t)(member.id-DIAMOND_TYPE_CLASS_BASE)>=program->class_count)return false;
         if(member.id==DIAMOND_TYPE_NATIVE&&
            strcmp(diamond_native_type_name(member.native_kind),"<native>")==0)return false;
-        if(!fixed_binding_node_valid(program,binding,member.argument_node,active,reachable)||
-           !fixed_binding_node_valid(program,binding,member.second_argument_node,active,reachable))return false;
+        if(!fixed_binding_node_valid(program,binding,member.argument_node,active,reachable,variables)||
+           !fixed_binding_node_valid(program,binding,member.second_argument_node,active,reachable,variables))return false;
         if(member.id==DIAMOND_TYPE_CALLABLE&&member.signature!=UINT8_MAX) {
             if(member.signature>=binding->signature_count)return false;
             const DiamondBoundSignature *signature=&binding->signatures[member.signature];
@@ -692,14 +703,35 @@ static bool fixed_binding_node_valid(const DiamondProgram *program,const Diamond
                (signature->parameters_typed&&signature->arity>16))return false;
             if(signature->parameters_typed)
                 for(size_t p=0;p<signature->arity;p++)
-                    if(!fixed_binding_node_valid(program,binding,signature->parameter_nodes[p],active,reachable))return false;
-            if(!fixed_binding_node_valid(program,binding,signature->return_node,active,reachable))return false;
+                    if(!fixed_binding_node_valid(program,binding,signature->parameter_nodes[p],active,reachable,variables))return false;
+            if(!fixed_binding_node_valid(program,binding,signature->return_node,active,reachable,variables))return false;
         }
     }
     return true;
 }
 
 static bool fixed_class_bindings_valid(const DiamondProgram *program,const DiamondClass *class) {
+    if(class->transforms_parent_arguments) {
+        const size_t variables=DIAMOND_CLASS_TYPE_PARAMETER_COUNT(class);
+        if(class->fixed_type_arguments||class->swaps_parent_arguments||variables==0||
+           class->superclass>=program->class_count||class->superclass==class->index)return false;
+        unsigned occurrences[2]={};
+        for(size_t i=0;i<variables;i++) {
+            const DiamondTypeBinding *binding=&class->parent_type_bindings[i];
+            uint16_t reachable=0;const bool zero=false;
+            if(memcmp(&binding->invalid,&zero,sizeof zero)!=0||binding->node_count==0||
+               binding->node_count>DIAMOND_BOUND_TYPE_NODES||binding->signature_count>DIAMOND_BOUND_SIGNATURES||
+               !fixed_binding_node_valid(program,binding,0,0,&reachable,variables)||
+               reachable!=(uint16_t)((1u<<binding->node_count)-1u))return false;
+            for(size_t n=0;n<binding->node_count;n++)
+                for(size_t m=0;m<binding->nodes[n].count;m++) {
+                    const uint16_t id=binding->nodes[n].members[m].id;
+                    if(id>=DIAMOND_TYPE_VARIABLE_BASE&&id<DIAMOND_TYPE_VARIABLE_BASE+variables)
+                        occurrences[id-DIAMOND_TYPE_VARIABLE_BASE]++;
+                }
+        }
+        for(size_t i=0;i<variables;i++)if(occurrences[i]!=1)return false;
+    }
     if(class->swaps_parent_arguments&&(class->fixed_type_arguments||
        DIAMOND_CLASS_TYPE_PARAMETER_COUNT(class)!=2||class->superclass>=program->class_count||
        program->classes[class->superclass]->fixed_type_arguments||
@@ -724,7 +756,7 @@ static bool fixed_class_bindings_valid(const DiamondProgram *program,const Diamo
         uint16_t reachable=0;
         if(memcmp(&binding->invalid,&zero,sizeof zero)!=0||binding->node_count==0||
            binding->node_count>DIAMOND_BOUND_TYPE_NODES||binding->signature_count>DIAMOND_BOUND_SIGNATURES||
-           !fixed_binding_node_valid(program,binding,0,0,&reachable)||
+           !fixed_binding_node_valid(program,binding,0,0,&reachable,0)||
            reachable!=(uint16_t)((1u<<binding->node_count)-1u))return false;
     }
     return true;
@@ -798,7 +830,7 @@ enum { DIAMOND_CACHE_MAGIC_LENGTH = 8 };
  * 9: classes store a type parameter; methods distinguish its instance binding.
  * 10: NEW_TYPED constructs explicitly specialized generic instances.
  * 11: generic class methods bind method variables after the receiver slot. */
-enum { DIAMOND_CACHE_FORMAT_VERSION = 14 };
+enum { DIAMOND_CACHE_FORMAT_VERSION = 15 };
 
 /* A checksum of the compiler's own sources and prelude (every .c and .h
  * file under src/, plus lib/core.d6 and lib/core/), passed in by the

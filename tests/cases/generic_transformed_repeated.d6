@@ -1,0 +1,4 @@
+class Box[T]
+end
+class Child[T] < Box[Hash[T, T]]
+end

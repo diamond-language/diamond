@@ -197,22 +197,21 @@ static uint16_t compile_constructor_block(Compiler *compiler,int class_index,
         const DiamondFunction *initializer,const ConstructorInference *inference,
         uint16_t explicit_type) {
     uint16_t context[8];memcpy(context,inference->bindings,sizeof context);
-    if(explicit_type!=DIAMOND_NO_TYPE_SET) {
-        if(initializer!=nullptr&&initializer->class_type_variable==2) {
-            const DiamondTypeMember descriptor=compiler->function->type_sets[explicit_type].members[0];
-            uint8_t order[2];
-            if(!diamond_class_argument_order(compiler->program->classes,compiler->program->class_count,
-                (size_t)class_index,initializer->owner_class,order))return 0;
-            const uint16_t actual[2]={descriptor.argument_set,descriptor.second_argument_set};
-            context[0]=actual[order[0]];context[1]=actual[order[1]];
-        } else context[0]=explicit_type;
+    if(explicit_type!=DIAMOND_NO_TYPE_SET&&initializer!=nullptr) {
+        DiamondTypeMember descriptor={.id=(uint16_t)(DIAMOND_TYPE_CLASS_BASE+class_index),
+            .argument_set=explicit_type,.second_argument_set=DIAMOND_NO_TYPE_SET};
+        if(initializer->class_type_variable==2) {
+            const DiamondTypeMember pair=compiler->function->type_sets[explicit_type].members[0];
+            descriptor.argument_set=pair.argument_set;descriptor.second_argument_set=pair.second_argument_set;
+        }
+        if(!bind_receiver_type_arguments(compiler,initializer,descriptor,context))return 0;
     }
     else if(initializer!=nullptr&&initializer->class_type_variable&&
             initializer->type_variable_count==initializer->class_type_variable&&
-            (!inference->complete||!inference->exact))
+            !inference->complete)
         for(size_t variable=0;variable<initializer->class_type_variable;variable++)context[variable]=DIAMOND_NO_TYPE_SET;
-    /* A proved scalar binding can type an unannotated block. Broader
-     * constructor contributions can still join at runtime. */
+    /* Complete constructor facts provide contextual block types. Parameter
+     * and return guards still validate advisory container facts at runtime. */
     return compile_contextual_typed_block(compiler,initializer,
         initializer==nullptr||initializer->arity<=1?0:initializer->arity-2,
         context,initializer==nullptr?0:initializer->type_variable_count);
@@ -259,6 +258,21 @@ static uint16_t import_fixed_binding(Compiler *compiler,const DiamondTypeBinding
     return base;
 }
 
+bool project_compiler_type_member(Compiler *compiler,uint16_t target,DiamondTypeMember *member) {
+    DiamondTypeSet *owned=nullptr;
+    if(!diamond_project_type_member(compiler->program->classes,compiler->program->class_count,
+        target,member,compiler->function->type_sets,&owned))return false;
+    if(owned==nullptr)return true;
+    const uint16_t source[2]={member->argument_set,member->second_argument_set};
+    uint16_t roots[2]={DIAMOND_NO_TYPE_SET,DIAMOND_NO_TYPE_SET};
+    for(size_t i=0;i<2;i++)if(source[i]!=DIAMOND_NO_TYPE_SET) {
+        DiamondTypeBinding graph;
+        if(!diamond_bind_type_template(owned,2*DIAMOND_BOUND_TYPE_NODES,source[i],&graph)||
+           (roots[i]=import_fixed_binding(compiler,&graph))==DIAMOND_NO_TYPE_SET) {free(owned);return false;}
+    }
+    free(owned);member->argument_set=roots[0];member->second_argument_set=roots[1];return true;
+}
+
 static void publish_constructor_type(Compiler *compiler,uint16_t reg,int class_index,
         const ConstructorInference *inference,uint16_t explicit_type) {
     compiler->known_types[reg]=(uint16_t)(DIAMOND_TYPE_CLASS_BASE+class_index);
@@ -279,12 +293,16 @@ static void publish_constructor_type(Compiler *compiler,uint16_t reg,int class_i
         }
     } else {
         if(!inference->complete)return;
-        uint8_t order[2]={0,1};
         const DiamondFunction *initializer=constructor_signature(compiler,class_index);
-        if(initializer!=nullptr&&!diamond_class_argument_order(compiler->program->classes,
-            compiler->program->class_count,(size_t)class_index,initializer->owner_class,order))return;
+        DiamondTypeBinding parent[2]={},child[2]={};
         for(size_t variable=0;variable<count;variable++) {
-            uint16_t argument=inference->bindings[variable];
+            if(!diamond_bind_type_template(compiler->function->type_sets,compiler->function->type_set_count,
+                inference->bindings[variable],&parent[variable]))return;
+        }
+        if(!diamond_map_class_bindings(compiler->program->classes,compiler->program->class_count,
+            (size_t)class_index,initializer==nullptr?(size_t)class_index:initializer->owner_class,parent,child,true))return;
+        for(size_t variable=0;variable<count;variable++) {
+            uint16_t argument=import_fixed_binding(compiler,&child[variable]);
             if(argument>=compiler->function->type_set_count||type_set_contains_variable(compiler,argument))return;
             if(!inference->exact)argument=constructor_value_hint(compiler,argument,0);
             else {
@@ -295,7 +313,7 @@ static void publish_constructor_type(Compiler *compiler,uint16_t reg,int class_i
                 compiler->function->type_sets[argument]=exact;
             }
             if(argument==DIAMOND_NO_TYPE_SET)return;
-            arguments[order[variable]]=argument;
+            arguments[variable]=argument;
         }
     }
     if(!reserve_type_sets(compiler,1))return;
@@ -1728,14 +1746,12 @@ static bool prepare_native_collection_block(Compiler *compiler,
     return true;
 }
 
-bool bind_receiver_type_arguments(const Compiler *compiler,const DiamondFunction *target,
+bool bind_receiver_type_arguments(Compiler *compiler,const DiamondFunction *target,
         DiamondTypeMember member,uint16_t *bindings) {
     if(member.id<DIAMOND_TYPE_CLASS_BASE||member.id>=DIAMOND_TYPE_CLASS_LIMIT)return false;
-    uint8_t order[2];
-    if(!diamond_class_argument_order(compiler->program->classes,compiler->program->class_count,
-        member.id-DIAMOND_TYPE_CLASS_BASE,target->owner_class,order))return false;
+    if(!project_compiler_type_member(compiler,(uint16_t)(DIAMOND_TYPE_CLASS_BASE+target->owner_class),&member))return false;
     const uint16_t actual[2]={member.argument_set,member.second_argument_set};
-    for(size_t variable=0;variable<target->class_type_variable;variable++)bindings[variable]=actual[order[variable]];
+    for(size_t variable=0;variable<target->class_type_variable;variable++)bindings[variable]=actual[variable];
     return true;
 }
 
@@ -1982,7 +1998,8 @@ static uint16_t parse_bound_method_reference(Compiler *compiler,uint16_t receive
     size_t contract_count=type_argument_count;
     if(target!=nullptr&&target->class_type_variable) {
         for(size_t i=0;i<8;i++)class_bindings[i]=DIAMOND_NO_TYPE_SET;
-        const int32_t receiver_set=compiler->known_type_sets[receiver];
+        const int32_t receiver_set=compiler->known_type_sets[receiver]>=0?
+            compiler->known_type_sets[receiver]:compiler->tooling_type_sets[receiver];
         if(receiver_set>=0) {
             const DiamondTypeSet *known=&compiler->function->type_sets[receiver_set];
             if(known->count==1)(void)bind_receiver_type_arguments(compiler,target,known->members[0],class_bindings);

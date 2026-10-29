@@ -1338,10 +1338,8 @@ static inline bool bind_receiver_prefix(const DiamondChunk *chunk,const DiamondI
     if(owner==SIZE_MAX)
         for(size_t i=0;i<chunk->function_count;i++)
             if(chunk->functions[i]->code==chunk->code) {owner=chunk->functions[i]->owner_class;break;}
-    uint8_t order[2];
-    if(!diamond_class_argument_order(chunk->classes,chunk->class_count,self->class->index,owner,order))return false;
-    for(size_t i=0;i<chunk->class_type_variable;i++)bindings[i]=self->type_binding[order[i]];
-    return true;
+    return diamond_map_class_bindings(chunk->classes,chunk->class_count,
+        self->class->index,owner,self->type_binding,bindings,false);
 }
 
 DIAMOND_INTERNAL void bind_context_set(DiamondTypeBinding *binding,uint8_t node,

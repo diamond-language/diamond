@@ -816,7 +816,8 @@ DIAMOND_INTERNAL uint16_t parse_base64_call(Compiler *compiler);
 DIAMOND_INTERNAL uint16_t parse_cipher_call(Compiler *compiler);
 DIAMOND_INTERNAL uint16_t parse_secure_random_call(Compiler *compiler);
 DIAMOND_INTERNAL uint16_t parse_crypto_call(Compiler *compiler,bool keyed);
-DIAMOND_INTERNAL bool bind_receiver_type_arguments(const Compiler *compiler,
+DIAMOND_INTERNAL bool project_compiler_type_member(Compiler *compiler,uint16_t target,DiamondTypeMember *member);
+DIAMOND_INTERNAL bool bind_receiver_type_arguments(Compiler *compiler,
     const DiamondFunction *target,DiamondTypeMember member,uint16_t *bindings);
 DIAMOND_INTERNAL const DiamondFunction *constructor_signature(const Compiler *compiler,
         int class_index);

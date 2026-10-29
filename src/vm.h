@@ -1000,6 +1000,8 @@ struct DiamondClass {
     char second_type_parameter[DIAMOND_MAX_FUNCTION_NAME];
     bool fixed_type_arguments;
     bool swaps_parent_arguments;
+    bool transforms_parent_arguments;
+    DiamondTypeBinding parent_type_bindings[2];
     DiamondTypeBinding fixed_type_bindings[2];
     /* This class's own position in its program's classes[] table (set when
      * the class is created or deserialized). Lets a class pointer be mapped
@@ -2296,6 +2298,17 @@ bool diamond_class_argument_order(DiamondClass *const *classes,size_t count,
                                  size_t actual,size_t owner,uint8_t order[2]);
 bool diamond_align_type_member(DiamondClass *const *classes,size_t count,
                               uint16_t target,DiamondTypeMember *actual);
+bool diamond_bind_type_template(const DiamondTypeSet *sets,size_t count,uint16_t index,
+                               DiamondTypeBinding *binding);
+void diamond_join_type_binding(DiamondTypeBinding *target,const DiamondTypeBinding *source);
+bool diamond_map_class_bindings(DiamondClass *const *classes,size_t count,
+    size_t actual,size_t owner,const DiamondTypeBinding input[2],
+    DiamondTypeBinding output[2],bool inverse);
+/* On success, owned_sets is either NULL (a permutation) or a table the
+ * caller must free after consuming the projected member. */
+bool diamond_project_type_member(DiamondClass *const *classes,size_t count,
+    uint16_t target,DiamondTypeMember *member,const DiamondTypeSet *sets,
+    DiamondTypeSet **owned_sets);
 /* Writes a Time value's default string representation ("2026-08-30
  * 12:30:00 UTC", "... +0000", or a fixed-offset zone) into `buffer`,
  * returning the length written, 0 on failure. Exported so src/value.c's

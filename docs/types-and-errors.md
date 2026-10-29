@@ -136,7 +136,17 @@ Explicit or inferred constructor arguments then bind the inherited slots;
 inherited methods, `super`, method references, and further subclasses retain
 those bindings in the correct ancestor view. Constructor inference maps the
 parent's slots back to the subclass's declaration order, and permutations compose
-through multiple inheritance levels. Transformed or mixed fixed parent arguments,
+through multiple inheritance levels. Parent arguments may also wrap parameters,
+as in `class Collection[T] < Box[Array[T]]`. An inferred
+`Collection.new(["hello"])` binds the child's `T` to `String` and the inherited
+parent's `T` to `Array[String]`. Nested containers, class arguments, native types,
+and Callable signatures retain their metadata through this substitution.
+Transformations compose with forwarding and reordered parents; inherited
+constructors infer child parameters by matching the parent argument structure.
+Each subclass parameter must occur exactly once across the parent arguments and
+cannot be a union alternative. Parent and child must still have the same number
+of parameters. Parents with a different parameter count (including
+`class StringResult[T] < Result[T, String]`),
 parameterized subclasses of a fixed parent, generic struct inheritance,
 reopening these classes, and referring to class parameters from nested
 definitions remain future work. Native types such as
