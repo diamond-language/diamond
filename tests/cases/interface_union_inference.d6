@@ -1,0 +1,66 @@
+interface Mixed
+  def same(left: Int, right: String) -> Int | String
+end
+interface Reversed
+  def same(left: String, right: Int) -> String | Int
+end
+interface TooNarrow
+  def same(left: Int, right: String) -> Int
+end
+interface Arrays
+  def first(left: Array[Int], right: Array[String]) -> Int | String
+end
+interface NativeUnion
+  def same(left: Time, right: Regexp) -> Time | Regexp
+end
+interface Repeated
+  def same(left: Array[Int], right: Array[Int]) -> Array[Int]
+end
+interface UnionApply
+  def apply(callback: Callable[[Int | String], Int | String], left: Int, right: String) -> Int | String
+end
+interface UnsafeApply
+  def apply(callback: Callable[[Int], Int | String], left: Int, right: String) -> Int | String
+end
+class Identity
+  def same[U](left: U, right: U) -> U = left
+  def first[U](left: Array[U], right: Array[U]) -> U = left[0]
+  def apply[U](callback: Callable[[U], U], left: U, right: U) -> U = callback(right)
+end
+class Box[T]
+  def initialize(value: T)
+    @value = value
+  end
+  def same[U](left: U, right: U) -> U = right
+  def first[U](left: Array[U], right: Array[U]) -> U = right[0]
+  def apply[U](callback: Callable[[U], U], left: U, right: U) -> U = callback(right)
+end
+def mixed(value: Mixed) -> Int | String = value.same(42, "second")
+def arrays(value: Arrays) -> Int | String = value.first([42], ["second"])
+def native(value: NativeUnion) -> Bool = value.same(Time.now(), Regexp.new("x")) is Time
+def echo(value: Int | String) -> Int | String = value
+def apply(value: UnionApply) -> Int | String = value.apply(echo, 42, "callback")
+def checks[U](value, unrelated: U)
+  puts(value is Mixed)
+  puts(value is Reversed)
+  puts(value is TooNarrow)
+  puts(value is Arrays)
+  puts(value is NativeUnion)
+  puts(value is Repeated)
+  puts(mixed(value))
+end
+value = Identity.new()
+puts(mixed(value))
+puts(arrays(value))
+puts(native(value))
+checks(value, false)
+boxed = Box.new(false)
+puts(mixed(boxed))
+puts(arrays(boxed))
+checks(boxed, 42)
+puts(value is UnionApply)
+puts(value is UnsafeApply)
+puts(apply(value))
+puts(boxed is UnionApply)
+puts(boxed is UnsafeApply)
+puts(apply(boxed))

@@ -349,6 +349,9 @@ static bool interface_signature_resolved(const DiamondFunction *function,uint16_
  * recursive structural checks bounded independently on each OS thread. */
 static thread_local unsigned runtime_generic_interface_depth;
 
+static void bind_context_members(DiamondTypeBinding *binding,uint8_t node,
+        const DiamondChunk *context,const DiamondTypeSet *sets,const DiamondTypeSet *set);
+
 static bool generic_class_implements(const DiamondChunk *chunk,const DiamondClass *class,
         const DiamondTypeBinding *bindings,size_t count,const DiamondInterface *interface) {
     if(runtime_generic_interface_depth>=32)return false;
@@ -370,8 +373,7 @@ static bool generic_class_implements(const DiamondChunk *chunk,const DiamondClas
             const size_t receiver_count=implementation->class_type_variable==0?0:count;
             if(receiver_count>implementation->class_type_variable)continue;
             if(receiver_count>0)memcpy(specialized,bindings,receiver_count*sizeof *bindings);
-            uint16_t inferred[8];
-            for(size_t i=0;i<8;i++)inferred[i]=DIAMOND_NO_TYPE_SET;
+            InterfaceWitness inferred[8]={};
             for(size_t p=0;p<wanted->arity;p++)
                 interface_infer_variables(implementation,implementation->parameter_type_sets[p],
                     interface->type_sets,wanted->parameter_type_sets[p],inferred,0);
@@ -383,12 +385,13 @@ static bool generic_class_implements(const DiamondChunk *chunk,const DiamondClas
             bool supported=true;
             for(size_t variable=implementation->class_type_variable;
                 variable<implementation->type_variable_count&&supported;variable++) {
-                if(inferred[variable]==DIAMOND_NO_TYPE_SET)continue;
+                if(!inferred[variable].inferred)continue;
                 size_t nodes=0;
-                supported=interface_binding_supported(interface->type_sets,inferred[variable],&nodes);
+                supported=!inferred[variable].invalid&&
+                    interface_members_supported(interface->type_sets,&inferred[variable].set,&nodes);
                 if(!supported)break;
                 (void)binding_node(&specialized[variable]);
-                bind_context_set(&specialized[variable],0,&context,interface->type_sets,inferred[variable]);
+                bind_context_members(&specialized[variable],0,&context,interface->type_sets,&inferred[variable].set);
                 supported=!specialized[variable].invalid;
             }
             if(!supported)continue;
@@ -1346,9 +1349,8 @@ static void bind_bound_node(DiamondTypeBinding *target,uint8_t target_node,
     }
 }
 
-void bind_context_set(DiamondTypeBinding *binding,uint8_t node,
-    const DiamondChunk *context,const DiamondTypeSet *sets,uint16_t set_index) {
-    const DiamondTypeSet *set=&sets[set_index];
+static void bind_context_members(DiamondTypeBinding *binding,uint8_t node,
+    const DiamondChunk *context,const DiamondTypeSet *sets,const DiamondTypeSet *set) {
     for(size_t index=0;index<set->count;index++) {
         const DiamondTypeMember known=set->members[index];
         if(known.id>=DIAMOND_TYPE_VARIABLE_BASE&&
@@ -1400,6 +1402,11 @@ void bind_context_set(DiamondTypeBinding *binding,uint8_t node,
                                  known.second_argument_set);
         }
     }
+}
+
+void bind_context_set(DiamondTypeBinding *binding,uint8_t node,
+    const DiamondChunk *context,const DiamondTypeSet *sets,uint16_t set_index) {
+    bind_context_members(binding,node,context,sets,&sets[set_index]);
 }
 
 static void infer_from_context_set(const DiamondChunk *known_context,
