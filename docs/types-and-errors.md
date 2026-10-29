@@ -121,7 +121,7 @@ capture an enclosing type variable are rejected instead of losing that binding.
 
 This native-compiler slice supports up to two class parameters in directly declared
 instance methods and generated struct fields. Generic inheritance, reopening,
-structural-interface conformance, and referring to the class
+and referring to the class
 parameter from nested definitions remain future work. Native objects and
 Callable types are not yet supported as explicit class type arguments. Unions
 combining a type variable with other members, repeated outer types with different
@@ -172,6 +172,30 @@ conformance is checked against `return_type_set`, which only an explicit
 annotation populates, not the separate, tooling-only return-type inference
 compile_definition also computes for every function (see docs/roadmap.md's
 "Improve receiver-aware tooling").
+
+Generic classes and structs satisfy interfaces using each instance's fixed type
+arguments. `Box[String]` can satisfy `StringSource` below; `Box[Int]` cannot:
+
+```ruby
+interface StringSource
+  def value() -> String
+end
+struct Box[T](value: T)
+end
+def read(source: StringSource) -> String = source.value()
+puts(read(Box.new("hello")))
+```
+
+Conformance substitutes both receiver parameters through nested class,
+collection, and Callable signatures. Parameters remain contravariant and returns
+covariant. Known incompatible specializations are compile errors; unknown or
+symbolic receiver arguments retain runtime checks. `is Interface` checks the
+actual instance bindings, including after duplication or a thread copy.
+Unrelated generic methods do not prevent conformance. Required methods that
+introduce their own type parameters, or use a foreign dynamically compiled body,
+are not specialized by this check. Recursive checks that cannot establish a
+finite proof are rejected conservatively. An unconstrained collection binding
+cannot promise a typed element contract.
 
 A call to a known top-level function is checked at compile time where
 the compiler can prove an argument is the wrong type -- `f("s")` for

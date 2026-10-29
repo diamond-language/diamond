@@ -991,6 +991,16 @@ static bool run_compile_pass(const char *source, DiamondProgram *program,
  * slots up except by an ordinary, successful by-name reference. */
 static bool seed_program_from_template(DiamondProgram *destination,
                                        const DiamondProgram *template) {
+    /* Interface signatures index the entry type table. Preserve that table
+     * when seeding a restored or incremental program; copying only the
+     * methods would reinterpret their indexes against unrelated new types. */
+    if(template->interface_count>0) {
+        if(!diamond_function_reserve_type_sets(&destination->entry,template->entry.type_set_count))return false;
+        if(template->entry.type_set_count>0)
+            memcpy(destination->entry.type_sets,template->entry.type_sets,
+                template->entry.type_set_count*sizeof *template->entry.type_sets);
+        destination->entry.type_set_count=template->entry.type_set_count;
+    }
     /* Copy only the used prefix of each metadata table. Unused slots are
      * initialized explicitly when claimed, just as after program_init. */
     for(size_t index=0;index<template->class_count;index++) {
@@ -1004,6 +1014,7 @@ static bool seed_program_from_template(DiamondProgram *destination,
         DiamondInterface *copy=diamond_program_interface_slot(destination,index);
         if(copy==nullptr)return false;
         if(!diamond_interface_copy(copy,template->interfaces[index]))return false;
+        copy->type_sets=destination->entry.type_sets;
     }
     destination->interface_count=template->interface_count;
     for(size_t index=0;index<template->module_count;index++) {

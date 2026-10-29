@@ -197,6 +197,12 @@ int main(void) {
         "  def project[U](transform: Callable[[T], U]) -> Array[U] = [transform(self.value())]\n"
         "  def choose[U](left: U, right: U) -> U = left\n"
         "end\n"
+        "interface GenericPetSource\n  def value() -> Pet\nend\n"
+        "def read_generic_pet(value: GenericPetSource) -> Pet = value.value()\n"
+        "def generic_interface_receivers()\n"
+        "  read_generic_pet(GenericRecords[Pet].new(Pet.new())).bark()\n"
+        "  read_generic_pet(GenericRecords.new(Pet.new())).bark()\n"
+        "end\n"
         "struct MultiRecord[T, E](value: T, error: E)\n"
         "  def echo[U](value: U) -> U = value\n"
         "end\n"
@@ -1135,6 +1141,8 @@ int main(void) {
     }
     const DiamondChunk chunk=diamond_program_chunk(program);
     int failed=check_generic_return_rejections();
+    failed|=check_receiver(program,&chunk,combined,"read_generic_pet(GenericRecords[Pet].new(Pet.new())).","Pet",false);
+    failed|=check_receiver(program,&chunk,combined,"read_generic_pet(GenericRecords.new(Pet.new())).","Pet",false);
     failed|=check_receiver(program,&chunk,combined,"multi.error().","Leaf",false);
     failed|=check_receiver(program,&chunk,combined,"multi.value().","Pet",false);
     failed|=check_receiver(program,&chunk,combined,"multi.echo[Pet](Pet.new()).","Pet",false);

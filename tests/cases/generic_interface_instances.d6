@@ -1,0 +1,66 @@
+interface StringSource
+  def value() -> String
+end
+interface StringWriter
+  def replace(value: String)
+end
+interface StringBox < StringSource, StringWriter
+end
+interface NestedSource
+  def value() -> StringSource
+end
+interface PairSource
+  def value() -> String
+  def error() -> Int
+end
+interface CallbackSource
+  def value() -> Callable
+end
+interface ZeroCallbackSource
+  def value() -> Callable[[], Int]
+end
+class Box[T]
+  def initialize(value: T)
+    @value = value
+  end
+  def value() -> T = @value
+  def replace(value: T)
+    @value = value
+  end
+  def unrelated[U](value: U) -> U = value
+end
+struct Pair[T, E](value: T, error: E)
+end
+def read(value: StringSource) -> String = value.value()
+def write(value: StringBox) -> String
+  value.replace("changed")
+  value.value()
+end
+def nested(value: NestedSource) -> String = value.value().value()
+def pair(value: PairSource) -> Int = value.error()
+def dynamic(value) = read(value)
+def bare(value: Box) -> String = read(value)
+def matches[T](value, unrelated: T) = value is StringSource
+def symbolic[T](value: Box[T]) -> String = read(value)
+def callback_value() -> Int = 1
+
+box = Box.new("hello")
+puts(read(box))
+puts(box is StringBox)
+puts(write(box))
+puts(dynamic(box))
+puts(bare(box))
+puts(matches(box, 1))
+puts(matches(Box.new(42), "unrelated"))
+puts(symbolic(box))
+puts(nested(Box.new(Box.new("nested"))))
+puts(pair(Pair.new("payload", 42)))
+puts(read(box.dup()))
+callback_box = Box.new(callback_value)
+puts(callback_box is CallbackSource)
+puts(callback_box is ZeroCallbackSource)
+begin
+  dynamic(Box.new(42))
+rescue error: TypeError
+  puts("wrong binding rejected")
+end

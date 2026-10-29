@@ -1,0 +1,34 @@
+interface MixedSource
+  def value() -> Int | String
+end
+interface IntSource
+  def value() -> Int
+end
+interface IntWriter
+  def replace(value: Int)
+end
+interface ArraySource
+  def value() -> Array[Int]
+end
+interface ArrayWriter
+  def replace(value: Array[Int])
+end
+class Box[T]
+  def initialize(value: T)
+    @value = value
+  end
+  def value() -> T = @value
+  def replace(value: T)
+    @value = value
+  end
+end
+def test(value)
+  puts(value is MixedSource)
+  puts(value is IntSource)
+  puts(value is IntWriter)
+end
+test(Box[Int | String].new(1))
+puts(Box.new([1, 2]) is ArraySource)
+puts(Box.new([]) is ArraySource)
+puts(Box.new([]) is ArrayWriter)
+puts(Box.new(["wrong"]) is ArrayWriter)
