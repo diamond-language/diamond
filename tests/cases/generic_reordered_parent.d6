@@ -1,0 +1,101 @@
+interface IntValue
+  def value() -> Int
+end
+interface StringError
+  def error() -> String
+end
+interface StringValue
+  def value() -> String
+end
+interface FloatPick
+  def pick(value: Swapped[Bool, Float]) -> Float
+end
+interface WrongPick
+  def pick(value: Swapped[Bool, Float]) -> Bool
+end
+class Pair[T, E]
+  def initialize(value: T, error: E)
+    @value = value
+    @error = error
+  end
+  def value() -> T = @value
+  def error() -> E = @error
+  def replace(value: T)
+    @value = value
+  end
+  def echo[U](value: U) -> U = value
+  def itself() -> Pair[T, E] = self
+  def project[U](callback: Callable[[T], U]) -> U = callback(@value)
+  def pick[U, V](other: Pair[U, V]) -> U = other.value()
+end
+class Swapped[A, B] < Pair[B, A]
+  def own_error() -> A = @error
+  def own_value() -> B = @value
+end
+class Twice[X, Y] < Swapped[Y, X]
+end
+class Fixed < Swapped[String, Int]
+end
+class Override[A, B] < Swapped[A, B]
+  def initialize(value: B, error: A)
+    super(value, error)
+  end
+  def value() -> B = super()
+end
+class CallbackPair[T, E]
+  def initialize(value: T, error: E, callback: Callable[[T], T])
+    @value = callback(value)
+    @error = error
+  end
+  def value() -> T = @value
+end
+class CallbackSwap[A, B] < CallbackPair[B, A]
+end
+def read(value: Pair[Int, String]) -> Int = value.value()
+def own(value: Swapped[String, Int]) -> String = value.own_error()
+def inferred[T, E](value: Pair[T, E]) -> E = value.error()
+def reader(callback: Callable[[], Int]) -> Int = callback()
+def show(value: Int) -> String = value.to_s()
+def pick(value: FloatPick) -> Float = value.pick(Swapped[Bool, Float].new(1.5, true))
+def checks[U](value, unrelated: U)
+  puts(value is IntValue)
+  puts(value is StringError)
+  puts(value is StringValue)
+  puts(read(value))
+end
+value = Swapped.new(42, "error")
+puts(read(value))
+puts(own(value))
+puts(value.own_value())
+puts(inferred(value))
+puts(value.echo[String]("method"))
+puts(reader(value.value))
+puts(Twice.new(7, "twice").value())
+puts(Twice[Int, String].new(8, "explicit twice").error())
+puts(Fixed.new(9, "fixed").value())
+puts(Override[String, Int].new(10, "override").value())
+puts(Swapped[String, Int].new(11, "explicit").value())
+puts(Swapped.new(value: 12, error: "keyword").value())
+puts(Swapped.new(*[13, "spread"]).error())
+puts(read(value.dup()))
+puts(read(value.itself()))
+puts("mapped " + value.project(show))
+puts(value is FloatPick)
+puts(value is WrongPick)
+puts(pick(value))
+callback = CallbackSwap[String, Int].new(20, "block") do |number|
+  number + 1
+end
+puts(callback.value())
+inferred_callback = CallbackSwap.new(30, "inferred block") do |number|
+  number + 1
+end
+puts(inferred_callback.value())
+checks(value, false)
+value.replace(99)
+puts(value.value())
+begin
+  value.replace("wrong")
+rescue error: TypeError
+  puts("wrong replacement rejected")
+end

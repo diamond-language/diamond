@@ -212,12 +212,18 @@ int main(void) {
         "struct MultiRecord[T, E](value: T, error: E)\n"
         "  def echo[U](value: U) -> U = value\n"
         "end\n"
+        "class SwappedRecord[A, B] < MultiRecord[B, A]\n"
+        "  def own() -> A = @error\n"
+        "end\n"
         "def multi_record_receivers()\n"
         "  multi = MultiRecord[Pet, Leaf].new(Pet.new(), Leaf.new())\n"
         "  multi.error().ping()\n"
         "  multi.value().bark()\n"
         "  multi.echo[Pet](Pet.new()).bark()\n"
         "  MultiRecord[Pet, Leaf].new(Pet.new(), Leaf.new()).error().ping()\n"
+        "  SwappedRecord[Leaf, Pet].new(Pet.new(), Leaf.new()).value().bark()\n"
+        "  SwappedRecord.new(Pet.new(), Leaf.new()).error().ping()\n"
+        "  SwappedRecord.new(Pet.new(), Leaf.new()).own().ping()\n"
         "end\n"
         "def generic_leaf(value: Pet) -> Leaf = Leaf.new()\n"
         "def inferred_records() = GenericRecords[Pet].new(Pet.new())\n"
@@ -1152,6 +1158,9 @@ int main(void) {
     failed|=check_receiver(program,&chunk,combined,"FixedPetRecords.new(Pet.new()).value().","Pet",false);
     failed|=check_receiver(program,&chunk,combined,"ForwardRecords.new(Pet.new()).value().","Pet",false);
     failed|=check_receiver(program,&chunk,combined,"ForwardRecords[Pet].new(Pet.new()).value().","Pet",false);
+    failed|=check_receiver(program,&chunk,combined,"SwappedRecord[Leaf, Pet].new(Pet.new(), Leaf.new()).value().","Pet",false);
+    failed|=check_receiver(program,&chunk,combined,"SwappedRecord.new(Pet.new(), Leaf.new()).error().","Leaf",false);
+    failed|=check_receiver(program,&chunk,combined,"SwappedRecord.new(Pet.new(), Leaf.new()).own().","Leaf",false);
     failed|=check_receiver(program,&chunk,combined,"GenericRecords[FixedPetRecords].new(FixedPetRecords.new(Pet.new())).value().value().","Pet",false);
     failed|=check_receiver(program,&chunk,combined,"multi.error().","Leaf",false);
     failed|=check_receiver(program,&chunk,combined,"multi.value().","Pet",false);

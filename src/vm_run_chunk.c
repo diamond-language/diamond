@@ -123,7 +123,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                         chunk->type_sets,set,bindings);
             }
         }
-        memcpy(bindings,self->type_binding,chunk->class_type_variable*sizeof(DiamondTypeBinding));
+        if(!bind_receiver_prefix(chunk,self,bindings))return DIAMOND_VM_TYPE_ERROR;
         execution=*chunk;
         execution.type_variable_bindings=bindings;
         chunk=&execution;
@@ -1508,7 +1508,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                            chunk->class_type_variable>chunk->type_variable_count||
                            chunk->class_type_variable!=DIAMOND_CLASS_TYPE_PARAMETER_COUNT(self->class))
                             VM_RETURN(DIAMOND_VM_TYPE_ERROR);
-                        memcpy(bindings,self->type_binding,chunk->class_type_variable*sizeof(DiamondTypeBinding));
+                        if(!bind_receiver_prefix(chunk,self,bindings))VM_RETURN(DIAMOND_VM_TYPE_ERROR);
                     }
                     for (size_t parameter = 0;
                          (!chunk->class_type_variable||chunk->type_variable_count>chunk->class_type_variable)&&
@@ -1523,8 +1523,8 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                                 arguments[parameter + chunk->parameter_offset],
                                 chunk->type_sets, set, bindings);
                     }
-                    if(chunk->class_type_variable)
-                        memcpy(bindings,((const DiamondInstance *)arguments[0].as.object)->type_binding,chunk->class_type_variable*sizeof(DiamondTypeBinding));
+                    if(chunk->class_type_variable&&!bind_receiver_prefix(chunk,
+                        (const DiamondInstance *)arguments[0].as.object,bindings))VM_RETURN(DIAMOND_VM_TYPE_ERROR);
                     for(size_t variable=0;variable<chunk->type_variable_count;variable++)
                         if(bindings[variable].invalid) {
                             snprintf(vm->error,sizeof vm->error,"cannot represent inferred type binding");
@@ -1584,6 +1584,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     .parameter_type_sets=function->parameter_type_sets,
                     .type_variable_count=function->type_variable_count,
                     .class_type_variable=function->class_type_variable,
+        .binding_owner_plus_one=(uint16_t)(function->owner_class+1u),
                     .parameter_offset=function->owner_class==DIAMOND_OWNER_NONE?0:1,
                     .type_variable_bindings=explicit_bindings,
                     .register_count=function->register_count,

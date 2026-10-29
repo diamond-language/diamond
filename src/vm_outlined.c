@@ -1990,6 +1990,7 @@ DiamondVmStatus outlined_call_spread(DiamondVm *vm,const DiamondChunk *chunk,Dia
         .parameter_type_sets=function->parameter_type_sets,
         .type_variable_count=function->type_variable_count,
         .class_type_variable=function->class_type_variable,
+        .binding_owner_plus_one=(uint16_t)(function->owner_class+1u),
         .parameter_offset=function->owner_class==DIAMOND_OWNER_NONE?0:1,
         .type_variable_bindings=type_argument_count==0?nullptr:
             explicit_bindings,
@@ -2099,6 +2100,7 @@ DiamondVmStatus outlined_call_singleton_keywords(DiamondVm *vm,const DiamondChun
         .parameter_type_sets=function->parameter_type_sets,
         .type_variable_count=function->type_variable_count,
         .class_type_variable=function->class_type_variable,
+        .binding_owner_plus_one=(uint16_t)(function->owner_class+1u),
         .parameter_offset=function->owner_class==DIAMOND_OWNER_NONE?0:1,
         .type_variable_bindings=type_count==0?nullptr:singleton_bindings,
         .register_count=function->register_count,
@@ -2193,6 +2195,7 @@ DiamondVmStatus outlined_call_singleton_spread(DiamondVm *vm,const DiamondChunk 
         .parameter_type_sets=function->parameter_type_sets,
         .type_variable_count=function->type_variable_count,
         .class_type_variable=function->class_type_variable,
+        .binding_owner_plus_one=(uint16_t)(function->owner_class+1u),
         .parameter_offset=function->owner_class==DIAMOND_OWNER_NONE?0:1,
         .type_variable_bindings=type_argument_count==0?nullptr:
             explicit_bindings,
@@ -2290,6 +2293,7 @@ DiamondVmStatus new_instance_from_array(DiamondVm *vm,const DiamondChunk *chunk,
           .parameter_type_sets=fn->parameter_type_sets,
           .type_variable_count=fn->type_variable_count,
           .class_type_variable=fn->class_type_variable,
+        .binding_owner_plus_one=(uint16_t)(fn->owner_class+1u),
           .parameter_offset=fn->owner_class==DIAMOND_OWNER_NONE?0:1,
           .register_count=fn->register_count,
           .has_variadic=fn->has_variadic};
@@ -2685,6 +2689,7 @@ DiamondVmStatus outlined_invoke_spread(DiamondVm *vm,const DiamondChunk *chunk,D
         .parameter_type_sets=fn->parameter_type_sets,
         .type_variable_count=fn->type_variable_count,
         .class_type_variable=fn->class_type_variable,
+        .binding_owner_plus_one=(uint16_t)(fn->owner_class+1u),
         .parameter_offset=fn->owner_class==DIAMOND_OWNER_NONE?0:1,
         .type_variable_bindings=type_argument_count==0?nullptr:
             explicit_bindings,

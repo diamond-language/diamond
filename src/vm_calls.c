@@ -84,6 +84,7 @@ DiamondVmStatus call_closure_helper(DiamondVm *vm,const DiamondChunk *chunk,
       .parameter_type_sets=fn->parameter_type_sets,
       .type_variable_count=fn->type_variable_count,
       .class_type_variable=fn->class_type_variable,
+        .binding_owner_plus_one=(uint16_t)(fn->owner_class+1u),
       .parameter_offset=fn->owner_class==DIAMOND_OWNER_NONE?0:1,
       .register_count=fn->register_count,.has_variadic=fn->has_variadic};
     return run_chunk(&child,vm,arguments,argument_count,depth+1,called,result);
@@ -121,6 +122,7 @@ DiamondVmStatus forward_to_top_level_helper(DiamondVm *vm,
       .parameter_type_sets=target->parameter_type_sets,
       .type_variable_count=target->type_variable_count,
       .class_type_variable=target->class_type_variable,
+        .binding_owner_plus_one=(uint16_t)(target->owner_class+1u),
       .parameter_offset=target->owner_class==DIAMOND_OWNER_NONE?0:1,
       .register_count=target->register_count};
     return run_chunk(&child,vm,forward_args,total_argc,depth+1,nullptr,result);
@@ -372,6 +374,7 @@ DiamondVmStatus invoke_resolved_method_helper(DiamondVm *vm,
       .parameter_type_sets=fn->parameter_type_sets,
       .type_variable_count=fn->type_variable_count,
       .class_type_variable=fn->class_type_variable,
+        .binding_owner_plus_one=(uint16_t)(fn->owner_class+1u),
       .parameter_offset=fn->owner_class==DIAMOND_OWNER_NONE?0:1,
       .type_variable_bindings=type_argument_count==0?nullptr:explicit_bindings,
       .register_count=fn->register_count,.has_variadic=fn->has_variadic};
@@ -856,7 +859,11 @@ DiamondVmStatus bind_instance_constructor_type(DiamondVm *vm,
             "cannot infer generic class type parameter from constructor arguments");
         return DIAMOND_VM_TYPE_ERROR;
     }
-    memcpy(instance->type_binding,bindings,DIAMOND_CLASS_TYPE_PARAMETER_COUNT(instance->class)*sizeof(DiamondTypeBinding));
+    uint8_t order[2];
+    if(!diamond_class_argument_order(chunk->classes,chunk->class_count,instance->class->index,
+        fn->owner_class,order))return DIAMOND_VM_TYPE_ERROR;
+    for(size_t variable=0;variable<DIAMOND_CLASS_TYPE_PARAMETER_COUNT(instance->class);variable++)
+        instance->type_binding[order[variable]]=bindings[variable];
     return DIAMOND_VM_OK;
 }
 
@@ -950,6 +957,7 @@ DiamondVmStatus call_closure_spread_helper(DiamondVm *vm,
       .parameter_type_sets=fn->parameter_type_sets,
       .type_variable_count=fn->type_variable_count,
       .class_type_variable=fn->class_type_variable,
+        .binding_owner_plus_one=(uint16_t)(fn->owner_class+1u),
       .parameter_offset=fn->owner_class==DIAMOND_OWNER_NONE?0:1,
       .register_count=fn->register_count,.has_variadic=fn->has_variadic};
     const DiamondVmStatus status=run_chunk(&child,vm,arguments,argument_count,

@@ -429,6 +429,44 @@ void diamond_interface_free_tables(DiamondInterface *interface) {
 /* Replaces `destination`'s contents (releasing its own tables) with a deep
  * copy of `source`. Copied tables hold exactly the used entries. False on
  * allocation failure, leaving `destination` with empty tables. */
+/* Target slot i reads actual slot order[i]. Each supported edge is a
+ * permutation of at most two slots; composition is therefore its own inverse. */
+bool diamond_class_argument_order(DiamondClass *const *classes,size_t count,
+        size_t actual,size_t owner,uint8_t order[2]) {
+    order[0]=0;order[1]=1;
+    if(actual>=count||owner>=count)return false;
+    for(size_t step=0;step<count;step++) {
+        if(actual==owner)return true;
+        const DiamondClass *class=classes[actual];
+        if(class->swaps_parent_arguments) {
+            if(class->fixed_type_arguments||DIAMOND_CLASS_TYPE_PARAMETER_COUNT(class)!=2||
+               class->superclass>=count||classes[class->superclass]->fixed_type_arguments||
+               DIAMOND_CLASS_TYPE_PARAMETER_COUNT(classes[class->superclass])!=2)return false;
+            const uint8_t first=order[0];order[0]=order[1];order[1]=first;
+        }
+        actual=class->superclass;
+        if(actual==DIAMOND_NO_CLASS||actual>=count)return false;
+    }
+    return false;
+}
+
+bool diamond_align_type_member(DiamondClass *const *classes,size_t count,
+        uint16_t target,DiamondTypeMember *actual) {
+    if(actual->id==target)return true;
+    if(actual->id<DIAMOND_TYPE_CLASS_BASE||actual->id>=DIAMOND_TYPE_CLASS_LIMIT||
+       target<DIAMOND_TYPE_CLASS_BASE||target>=DIAMOND_TYPE_CLASS_LIMIT)return false;
+    uint8_t order[2];
+    if(!diamond_class_argument_order(classes,count,actual->id-DIAMOND_TYPE_CLASS_BASE,
+        target-DIAMOND_TYPE_CLASS_BASE,order)&&
+       !diamond_class_argument_order(classes,count,target-DIAMOND_TYPE_CLASS_BASE,
+        actual->id-DIAMOND_TYPE_CLASS_BASE,order))return false;
+    if(order[0]==1) {
+        const uint16_t first=actual->argument_set;
+        actual->argument_set=actual->second_argument_set;actual->second_argument_set=first;
+    }
+    return true;
+}
+
 bool diamond_class_copy(DiamondClass *destination,const DiamondClass *source) {
     diamond_class_free_tables(destination);
     memcpy(destination,source,sizeof *destination);

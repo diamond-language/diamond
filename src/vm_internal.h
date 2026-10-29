@@ -800,6 +800,7 @@ static inline DiamondChunk plain_call_chunk(const DiamondFunction *function,
         .parameter_type_sets = function->parameter_type_sets,
         .type_variable_count = function->type_variable_count,
         .class_type_variable=function->class_type_variable,
+        .binding_owner_plus_one=(uint16_t)(function->owner_class+1u),
         .parameter_offset = function->owner_class == DIAMOND_OWNER_NONE ? 0 : 1,
         .register_count = function->register_count,
         .has_variadic = function->has_variadic,
@@ -1327,6 +1328,20 @@ static inline uint8_t binding_node(DiamondTypeBinding *binding) {
     if(binding->invalid)return UINT8_MAX;
     if(binding->node_count==DIAMOND_BOUND_TYPE_NODES) {binding->invalid=true;return UINT8_MAX;}
     return binding->node_count++;
+}
+
+static inline bool bind_receiver_prefix(const DiamondChunk *chunk,const DiamondInstance *self,
+        DiamondTypeBinding *bindings) {
+    if(chunk->class_type_variable==0)return true;
+    if(chunk->class_type_variable>2||self->type_binding==nullptr)return false;
+    size_t owner=chunk->binding_owner_plus_one==0?SIZE_MAX:(size_t)chunk->binding_owner_plus_one-1;
+    if(owner==SIZE_MAX)
+        for(size_t i=0;i<chunk->function_count;i++)
+            if(chunk->functions[i]->code==chunk->code) {owner=chunk->functions[i]->owner_class;break;}
+    uint8_t order[2];
+    if(!diamond_class_argument_order(chunk->classes,chunk->class_count,self->class->index,owner,order))return false;
+    for(size_t i=0;i<chunk->class_type_variable;i++)bindings[i]=self->type_binding[order[i]];
+    return true;
 }
 
 DIAMOND_INTERNAL void bind_context_set(DiamondTypeBinding *binding,uint8_t node,

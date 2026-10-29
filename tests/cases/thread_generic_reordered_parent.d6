@@ -1,0 +1,24 @@
+interface IntValue
+  def value() -> Int
+end
+interface StringError
+  def error() -> String
+end
+class Pair[T, E]
+  def initialize(value: T, error: E)
+    @value = value
+    @error = error
+  end
+  def value() -> T = @value
+  def error() -> E = @error
+end
+class Swapped[A, B] < Pair[B, A]
+end
+def worker[U](value, unrelated: U)
+  puts(value is IntValue)
+  puts(value is StringError)
+  value.dup()
+end
+def spawn[U](value, unrelated: U) = Thread.new(worker, value, unrelated).join()
+def read(value: Pair[Int, String]) -> String = value.error()
+puts(read(spawn(Swapped.new(42, "copied"), false)))
