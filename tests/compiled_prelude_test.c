@@ -98,7 +98,10 @@ static void check_generic_class_round_trip(const DiamondProgram *template) {
         "  def value() -> T = @value\n"
         "  def wrong() -> T = \"wrong\"\n"
         "  def echo[U](value: U) -> U = value\n"
-        "end\nstruct Payload[T, E](value: T, error: E)\nend\nBox[Box[Int]].new(Box.new(42)).value().value()\n";
+        "end\nstruct Payload[T, E](value: T, error: E)\nend\n"
+        "interface IntSource\n  def value() -> Int\nend\n"
+        "def read_source(value: IntSource) -> Int = value.value()\n"
+        "Box[Box[Int]].new(Box.new(42)).value().value()\n";
     DiamondProgram *program=alloc_program();
     DiamondDiagnostic diagnostic;
     const bool compiled=diamond_compile_incremental(source,program,template,&diagnostic);
@@ -136,6 +139,18 @@ static void check_generic_class_round_trip(const DiamondProgram *template) {
                     check(run_and_get_string(use,rendered,sizeof rendered)&&strcmp(rendered,"42")==0,
                         "restored nested binding survives both readers");
                 }
+                const bool conforming=diamond_compile_incremental(
+                    "read_source(Box.new(42))\n",use,copy,&diagnostic);
+                check(conforming,"restored generic instance satisfies interface");
+                if(!conforming)fprintf(stderr,"interface compile diagnostic: %s\n",diagnostic.message);
+                if(conforming) {
+                    char rendered[64];
+                    check(run_and_get_string(use,rendered,sizeof rendered)&&strcmp(rendered,"42")==0,
+                        "restored interface uses receiver binding");
+                }
+                const bool rejected=diamond_compile_incremental(
+                    "read_source(Box.new(\"wrong\"))\n",use,copy,&diagnostic);
+                check(!rejected,"restored interface rejects incompatible receiver binding");
                 const bool record=diamond_compile_incremental(
                     "Payload[Int, String].new(42, \"abc\").error().length()\n",use,copy,&diagnostic);
                 check(record,"restored generic struct accepts construction");

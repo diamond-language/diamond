@@ -1,0 +1,19 @@
+interface StringSource
+  def value() -> String
+end
+struct Box[T](value: T)
+end
+def worker[U](value, unrelated: U)
+  puts(value is StringSource)
+  value.dup()
+end
+def read(value: StringSource) -> String = value.value()
+def spawn[U](value, unrelated: U) = Thread.new(worker, value, unrelated).join()
+copy = spawn(Box.new("copied"), 1)
+puts(read(copy))
+wrong = spawn(Box.new(42), "unrelated")
+begin
+  read(wrong)
+rescue error: TypeError
+  puts("wrong copy rejected")
+end

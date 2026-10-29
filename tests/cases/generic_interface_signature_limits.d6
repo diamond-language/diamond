@@ -1,0 +1,67 @@
+interface LabelSource
+  def label() -> String
+end
+interface TimeSource
+  def clock() -> Time
+end
+interface FileSource
+  def clock() -> File
+end
+interface IdentityInt
+  def identity(value: Int) -> Int
+end
+interface LoopSource
+  def next_source() -> LoopSource
+end
+interface StringSource
+  def value() -> String
+end
+interface NativeValue
+  def value() -> Time
+end
+class FromCallback[T]
+  def initialize(callback: Callable[[], T])
+    @value = callback()
+  end
+  def value() -> T = @value
+end
+def clock() -> Time = Time.now()
+class Factory[T]
+  def initialize(value: T)
+    @value = value
+  end
+  def label(extra: String = "label") -> String = extra
+  def clock() -> Time = Time.now()
+  def identity[U](value: U) -> U = value
+  def next_source() -> Factory = self
+end
+class Inferred[T]
+  def initialize(value: T)
+    @value = value
+  end
+  def value() = @value
+end
+class WrongArity[T]
+  def initialize(value: T)
+    @value = value
+  end
+  def value(required: T) -> T = required
+end
+def label(value: LabelSource) -> String = value.label()
+def bare(value: Factory) -> String = label(value)
+def checks(value)
+  puts(value is LabelSource)
+  puts(value is TimeSource)
+  puts(value is FileSource)
+  puts(value is IdentityInt)
+  puts(value is LoopSource)
+  puts(value is LabelSource)
+end
+value = Factory.new(42)
+puts(bare(value))
+checks(value)
+puts(Inferred.new("inferred") is StringSource)
+puts(WrongArity.new("wrong") is StringSource)
+native = FromCallback.new(clock)
+puts(native.value() is Time)
+puts(native is NativeValue)

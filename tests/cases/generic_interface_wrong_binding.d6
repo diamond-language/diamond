@@ -1,0 +1,7 @@
+interface StringSource
+  def value() -> String
+end
+struct Box[T](value: T)
+end
+def read(value: StringSource) -> String = value.value()
+read(Box.new(42))

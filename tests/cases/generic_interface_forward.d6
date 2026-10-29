@@ -1,0 +1,14 @@
+def read(value: Source) -> String = value.value()
+def checked(value: Holder[String]) -> String = read(value)
+def dynamic(value) = read(value)
+interface Source
+  def value() -> String
+end
+struct Holder[T](value: T)
+end
+puts(checked(Holder.new("forward")))
+begin
+  dynamic(Holder.new(42))
+rescue error: TypeError
+  puts("wrong forward binding rejected")
+end

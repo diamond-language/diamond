@@ -283,6 +283,104 @@ static bool value_matches_bound_node(const DiamondChunk *chunk,DiamondValue valu
     return false;
 }
 
+static bool runtime_set_graph_supported(const DiamondTypeSet *sets,uint16_t index,size_t depth);
+static void bind_bound_node(DiamondTypeBinding *target,uint8_t target_node,
+                            const DiamondTypeBinding *source,uint8_t source_node);
+
+static bool interface_signature_resolved(const DiamondFunction *function,uint16_t set,
+        const DiamondTypeBinding *bindings,size_t count,size_t depth) {
+    if(set==DIAMOND_NO_TYPE_SET)return true;
+    if(depth>32||set>=function->type_set_count)return false;
+    for(size_t i=0;i<function->type_sets[set].count;i++) {
+        const DiamondTypeMember member=function->type_sets[set].members[i];
+        if(member.id>=DIAMOND_TYPE_VARIABLE_BASE&&member.id<DIAMOND_TYPE_INTERFACE_BASE) {
+            const size_t variable=member.id-DIAMOND_TYPE_VARIABLE_BASE;
+            if(variable>=count||bindings==nullptr||bindings[variable].invalid||
+               bindings[variable].node_count==0||bindings[variable].nodes[0].count==0)return false;
+            /* A stored Native id carries no native-kind payload. It cannot
+             * establish a concrete Time/File/etc. interface contract. */
+            for(size_t node=0;node<bindings[variable].node_count;node++)
+                for(size_t item=0;item<bindings[variable].nodes[node].count;item++)
+                    if(bindings[variable].nodes[node].members[item].id==DIAMOND_TYPE_NATIVE)return false;
+        }
+        if(!interface_signature_resolved(function,member.argument_set,bindings,count,depth+1)||
+           !interface_signature_resolved(function,member.second_argument_set,bindings,count,depth+1)||
+           !interface_signature_resolved(function,member.callable_return_set,bindings,count,depth+1))return false;
+        if(member.callable_parameters_typed)
+            for(size_t parameter=0;parameter<member.callable_arity;parameter++)
+                if(!interface_signature_resolved(function,member.callable_parameter_sets[parameter],bindings,count,depth+1))return false;
+    }
+    return true;
+}
+
+/* Interface matching is synchronous and cannot yield into another VM. Keep
+ * recursive structural checks bounded independently on each OS thread. */
+static thread_local unsigned runtime_generic_interface_depth;
+
+static bool generic_class_implements(const DiamondChunk *chunk,const DiamondClass *class,
+        const DiamondTypeBinding *bindings,size_t count,const DiamondInterface *interface) {
+    if(runtime_generic_interface_depth>=32)return false;
+    runtime_generic_interface_depth++;
+    bool matches=true;
+    for(size_t required=0;required<interface->method_count&&matches;required++) {
+        const DiamondInterfaceMethod *wanted=&interface->methods[required];
+        bool found=false;
+        for(size_t method=0;method<class->method_count&&!found;method++) {
+            const DiamondMethod *candidate=&class->methods[method];
+            if(strcmp(candidate->name,wanted->name)!=0||wanted->arity<candidate->required_arity||
+               wanted->arity>candidate->arity||candidate->function_index>=chunk->function_count||
+               candidate->source_chunk!=nullptr)continue;
+            const DiamondFunction *implementation=chunk->functions[candidate->function_index];
+            if(implementation->type_variable_count!=implementation->class_type_variable||
+               (implementation->class_type_variable!=0&&
+                implementation->class_type_variable!=DIAMOND_CLASS_TYPE_PARAMETER_COUNT(class)))continue;
+            DiamondChunk context=*chunk;
+            /* An unrelated caller's T is never an implementation's T. */
+            context.type_variable_count=implementation->class_type_variable==0?0:(uint8_t)count;
+            context.type_variable_bindings=context.type_variable_count==0?nullptr:bindings;
+            found=true;
+            for(size_t parameter=0;parameter<wanted->arity&&found;parameter++) {
+                const uint16_t needed=wanted->parameter_type_sets[parameter];
+                const uint16_t actual=implementation->parameter_type_sets[parameter];
+                if(needed==DIAMOND_NO_TYPE_SET) {found=actual==DIAMOND_NO_TYPE_SET;continue;}
+                if(actual==DIAMOND_NO_TYPE_SET)continue;
+                found=interface_signature_resolved(implementation,actual,context.type_variable_bindings,
+                    context.type_variable_count,0)&&runtime_set_satisfies(&context,
+                    interface->type_sets,needed,implementation->type_sets,actual);
+            }
+            if(found&&wanted->return_type_set!=DIAMOND_NO_TYPE_SET)
+                found=implementation->return_type_set!=DIAMOND_NO_TYPE_SET&&
+                    interface_signature_resolved(implementation,implementation->return_type_set,
+                        context.type_variable_bindings,context.type_variable_count,0)&&
+                    runtime_set_satisfies(&context,implementation->type_sets,
+                        implementation->return_type_set,interface->type_sets,wanted->return_type_set);
+        }
+        matches=found;
+    }
+    runtime_generic_interface_depth--;return matches;
+}
+
+static bool generic_member_implements(const DiamondChunk *chunk,const DiamondTypeSet *sets,
+        DiamondTypeMember member,uint16_t expected) {
+    const size_t index=member.id-DIAMOND_TYPE_CLASS_BASE;
+    const size_t interface_index=expected-DIAMOND_TYPE_INTERFACE_BASE;
+    if(index>=chunk->class_count||interface_index>=chunk->interface_count)return false;
+    const DiamondClass *class=chunk->classes[index];
+    DiamondTypeBinding bindings[2]={};
+    const uint16_t arguments[2]={member.argument_set,member.second_argument_set};
+    const size_t count=DIAMOND_CLASS_TYPE_PARAMETER_COUNT(class);
+    size_t bound=0;
+    for(size_t variable=0;variable<count;variable++) {
+        if(arguments[variable]==DIAMOND_NO_TYPE_SET)break;
+        if(!runtime_set_graph_supported(sets,arguments[variable],0))return false;
+        (void)binding_node(&bindings[variable]);
+        bind_context_set(&bindings[variable],0,chunk,sets,arguments[variable]);
+        if(bindings[variable].invalid)return false;
+        bound++;
+    }
+    return generic_class_implements(chunk,class,bindings,bound,chunk->interfaces[interface_index]);
+}
+
 bool value_matches_type(const DiamondChunk *chunk, DiamondValue value,
                                uint16_t type) {
     /* A bare id can't say which native kind; any native object will do.
@@ -350,7 +448,11 @@ bool value_matches_type(const DiamondChunk *chunk, DiamondValue value,
             bool found=false;
             const DiamondClass *class=((DiamondInstance *)value.as.object)->class;
             while(class!=nullptr&&!found) {
-                if(class->type_parameter[0]!='\0')return false;
+                if(class->type_parameter[0]!='\0') {
+                    const DiamondInstance *instance=(const DiamondInstance *)value.as.object;
+                    return generic_class_implements(chunk,class,instance->type_binding,
+                        instance->type_binding==nullptr?0:DIAMOND_CLASS_TYPE_PARAMETER_COUNT(class),interface);
+                }
                 for(size_t method=0;method<class->method_count;method++)
                     if(strcmp(class->methods[method].name,
                               interface->methods[required].name)==0&&
@@ -475,7 +577,8 @@ static bool runtime_type_id_satisfies(const DiamondChunk *chunk,uint16_t known,
             bool found=false;size_t index=(size_t)(known-DIAMOND_TYPE_CLASS_BASE);
             while(index<chunk->class_count&&!found) {
                 const DiamondClass *class=chunk->classes[index];
-                if(class->type_parameter[0]!='\0')return false;
+                if(class->type_parameter[0]!='\0')
+                    return generic_class_implements(chunk,class,nullptr,0,interface);
                 for(size_t method=0;method<class->method_count;method++)
                     if(strcmp(class->methods[method].name,
                               interface->methods[required].name)==0&&
@@ -530,6 +633,7 @@ static bool runtime_bound_has_arguments(const DiamondChunk *chunk,uint16_t id) {
     if(variable>=chunk->type_variable_count)return false;
     const DiamondTypeBinding *graph=&chunk->type_variable_bindings[variable];
     if(graph->invalid||graph->node_count==0)return false;
+    if(graph->nodes[0].count>1)return true;
     for(size_t i=0;i<graph->nodes[0].count;i++)
         if(graph->nodes[0].members[i].argument_node!=UINT8_MAX)return true;
     return false;
@@ -540,11 +644,29 @@ static bool runtime_graph_satisfies(const DiamondChunk *chunk,
         const DiamondTypeBinding *expected,uint8_t b,size_t depth) {
     if(known->invalid||expected->invalid||depth>=DIAMOND_BOUND_TYPE_NODES||
        a>=known->node_count||b>=expected->node_count)return false;
+    if(expected->nodes[b].count==0)return true;
+    if(known->nodes[a].count==0)return false;
     for(size_t i=0;i<known->nodes[a].count;i++) {
         const DiamondBoundTypeMember actual=known->nodes[a].members[i];
         bool accepted=false;
         for(size_t j=0;j<expected->nodes[b].count&&!accepted;j++) {
             const DiamondBoundTypeMember wanted=expected->nodes[b].members[j];
+            if(wanted.id>=DIAMOND_TYPE_INTERFACE_BASE&&actual.id>=DIAMOND_TYPE_CLASS_BASE&&
+               actual.id<DIAMOND_TYPE_CLASS_LIMIT&&(size_t)(actual.id-DIAMOND_TYPE_CLASS_BASE)<chunk->class_count&&
+               DIAMOND_CLASS_TYPE_PARAMETER_COUNT(chunk->classes[actual.id-DIAMOND_TYPE_CLASS_BASE])>0) {
+                const size_t interface_index=wanted.id-DIAMOND_TYPE_INTERFACE_BASE;
+                if(interface_index>=chunk->interface_count)continue;
+                const DiamondClass *class=chunk->classes[actual.id-DIAMOND_TYPE_CLASS_BASE];
+                DiamondTypeBinding arguments[2]={};size_t count=0;
+                const uint8_t children[2]={actual.argument_node,actual.second_argument_node};
+                for(size_t variable=0;variable<DIAMOND_CLASS_TYPE_PARAMETER_COUNT(class);variable++) {
+                    if(children[variable]==UINT8_MAX)break;
+                    (void)binding_node(&arguments[variable]);
+                    bind_bound_node(&arguments[variable],0,known,children[variable]);count++;
+                }
+                accepted=generic_class_implements(chunk,class,arguments,count,chunk->interfaces[interface_index]);
+                continue;
+            }
             if(!runtime_type_id_satisfies(chunk,actual.id,wanted.id))continue;
             if(wanted.argument_node==UINT8_MAX) {accepted=true;continue;}
             if(actual.argument_node==UINT8_MAX||
@@ -569,7 +691,9 @@ static bool runtime_set_graph_supported(const DiamondTypeSet *sets,uint16_t inde
         const DiamondTypeMember member=set->members[i];
         /* Repeated outer types would lose their distinct argument graphs.
          * Native kinds and Callable signatures have no graph payload. */
-        if(member.id==DIAMOND_TYPE_NATIVE||member.id==DIAMOND_TYPE_CALLABLE)return false;
+        if(member.id==DIAMOND_TYPE_NATIVE||
+           (member.id==DIAMOND_TYPE_CALLABLE&&(member.callable_arity!=UINT8_MAX||
+            member.callable_parameters_typed||member.callable_return_set!=DIAMOND_NO_TYPE_SET)))return false;
         for(size_t prior=0;prior<i;prior++)if(set->members[prior].id==member.id)return false;
         if(member.argument_set!=DIAMOND_NO_TYPE_SET&&
            !runtime_set_graph_supported(sets,member.argument_set,depth+1))return false;
@@ -584,6 +708,12 @@ static bool runtime_member_satisfies(const DiamondChunk *chunk,
                                      DiamondTypeMember known,
                                      const DiamondTypeSet *expected_sets,
                                      DiamondTypeMember expected) {
+    if(known.id==DIAMOND_TYPE_NATIVE&&expected.id==DIAMOND_TYPE_NATIVE)
+        return known.callable_arity==expected.callable_arity;
+    if(expected.id>=DIAMOND_TYPE_INTERFACE_BASE&&known.id>=DIAMOND_TYPE_CLASS_BASE&&
+       known.id<DIAMOND_TYPE_CLASS_LIMIT&&(size_t)(known.id-DIAMOND_TYPE_CLASS_BASE)<chunk->class_count&&
+       DIAMOND_CLASS_TYPE_PARAMETER_COUNT(chunk->classes[known.id-DIAMOND_TYPE_CLASS_BASE])>0)
+        return generic_member_implements(chunk,known_sets,known,expected.id);
     if(!runtime_type_id_satisfies(chunk,known.id,expected.id))return false;
     if(expected.id==DIAMOND_TYPE_CALLABLE) {
         if(expected.callable_arity!=UINT8_MAX&&

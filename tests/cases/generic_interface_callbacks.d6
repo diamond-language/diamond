@@ -1,0 +1,28 @@
+interface StringSource
+  def value() -> String
+end
+struct Box[T](value: T)
+end
+interface Consumer
+  def consume(callback: Callable[[String], String]) -> String
+end
+class TypedConsumer[T]
+  def initialize(value: T)
+    @value = value
+  end
+  def consume(callback: Callable[[T], String]) -> String = callback(@value)
+end
+def stringify(value: String) -> String = value + "!"
+def use(value: Consumer) -> String = value.consume(stringify)
+def produce() -> Box[String] = Box.new("callback")
+def wrong() -> Box[Int] = Box.new(42)
+def accept(callback: Callable[[], StringSource]) -> String = callback().value()
+def dynamic(callback) = accept(callback)
+puts(accept(produce))
+puts(use(TypedConsumer.new("value")))
+puts(TypedConsumer.new(42) is Consumer)
+begin
+  dynamic(wrong)
+rescue error: TypeError
+  puts("wrong callback rejected")
+end

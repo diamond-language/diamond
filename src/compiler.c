@@ -167,6 +167,174 @@ uint16_t allocate_register(Compiler *compiler) {
     return reg;
 }
 
+/* Specialize a method signature in an owned table. Class arguments come from
+ * the receiver's table, never the implementation's variable namespace. */
+typedef struct InterfaceTypeArena {
+    DiamondTypeSet *sets;
+    size_t count,capacity;
+    const DiamondFunction *implementation;
+    const DiamondTypeSet *arguments;
+    size_t argument_count;
+    uint16_t argument_sets[2];
+    int32_t *signature_map,*argument_map;
+    struct InterfaceTypeArena *parent;
+} InterfaceTypeArena;
+
+static thread_local InterfaceTypeArena *active_interface_arena;
+
+static bool interface_append_member(InterfaceTypeArena *arena,DiamondTypeSet *set,
+        DiamondTypeMember member) {
+    for(size_t i=0;i<set->count;i++)
+        if(type_members_structurally_equal(&set->members[i],arena->sets,arena->count,
+                &member,arena->sets,arena->count,0))return true;
+    if(set->count==DIAMOND_MAX_UNION_TYPES)return false;
+    set->members[set->count++]=member;return true;
+}
+
+static uint16_t interface_clone_set(InterfaceTypeArena *arena,uint16_t index,
+        bool signature,size_t depth) {
+    const DiamondTypeSet *sets=signature?arena->implementation->type_sets:arena->arguments;
+    const size_t count=signature?arena->implementation->type_set_count:arena->argument_count;
+    int32_t *map=signature?arena->signature_map:arena->argument_map;
+    if(index==DIAMOND_NO_TYPE_SET||index>=count||depth>32)return DIAMOND_NO_TYPE_SET;
+    if(map[index]>=0)return (uint16_t)map[index];
+    if(map[index]==-2)return DIAMOND_NO_TYPE_SET;
+    map[index]=-2;
+    DiamondTypeSet result={};
+    for(size_t i=0;i<sets[index].count;i++) {
+        DiamondTypeMember member=sets[index].members[i];
+        if(member.id>=DIAMOND_TYPE_VARIABLE_BASE&&member.id<DIAMOND_TYPE_INTERFACE_BASE) {
+            const size_t variable=member.id-DIAMOND_TYPE_VARIABLE_BASE;
+            if(!signature||variable>=arena->implementation->class_type_variable||variable>=2)
+                return DIAMOND_NO_TYPE_SET;
+            const uint16_t argument=interface_clone_set(arena,arena->argument_sets[variable],false,depth+1);
+            if(argument==DIAMOND_NO_TYPE_SET)return DIAMOND_NO_TYPE_SET;
+            const DiamondTypeSet replacement=arena->sets[argument];
+            for(size_t j=0;j<replacement.count;j++)
+                if(!interface_append_member(arena,&result,replacement.members[j]))return DIAMOND_NO_TYPE_SET;
+            continue;
+        }
+        uint16_t *children[3]={&member.argument_set,&member.second_argument_set,&member.callable_return_set};
+        for(size_t child=0;child<3;child++)if(*children[child]!=DIAMOND_NO_TYPE_SET) {
+            *children[child]=interface_clone_set(arena,*children[child],signature,depth+1);
+            if(*children[child]==DIAMOND_NO_TYPE_SET)return DIAMOND_NO_TYPE_SET;
+        }
+        if(member.callable_parameters_typed)
+            for(size_t parameter=0;parameter<member.callable_arity;parameter++) {
+                uint16_t *child=&member.callable_parameter_sets[parameter];
+                if(*child==DIAMOND_NO_TYPE_SET)continue;
+                *child=interface_clone_set(arena,*child,signature,depth+1);
+                if(*child==DIAMOND_NO_TYPE_SET)return DIAMOND_NO_TYPE_SET;
+            }
+        if(!interface_append_member(arena,&result,member))return DIAMOND_NO_TYPE_SET;
+    }
+    if(arena->count==DIAMOND_NO_TYPE_SET)return DIAMOND_NO_TYPE_SET;
+    if(arena->count==arena->capacity) {
+        size_t capacity=arena->capacity==0?16:arena->capacity*2;
+        if(capacity>DIAMOND_NO_TYPE_SET)capacity=DIAMOND_NO_TYPE_SET;
+        DiamondTypeSet *grown=realloc(arena->sets,capacity*sizeof *grown);
+        if(grown==nullptr)return DIAMOND_NO_TYPE_SET;
+        arena->sets=grown;arena->capacity=capacity;
+    }
+    const uint16_t added=(uint16_t)arena->count++;
+    arena->sets[added]=result;map[index]=added;return added;
+}
+
+static size_t interface_argument_count(const Compiler *compiler,const DiamondTypeSet *sets) {
+    if(sets==nullptr)return 0;
+    for(const InterfaceTypeArena *arena=active_interface_arena;arena!=nullptr;arena=arena->parent)
+        if(sets==arena->sets)return arena->count;
+    if(sets==compiler->function->type_sets)return compiler->function->type_set_count;
+    if(sets==compiler->program->entry.type_sets)return compiler->program->entry.type_set_count;
+    for(size_t i=0;i<compiler->program->function_count;i++)
+        if(sets==compiler->program->functions[i]->type_sets)
+            return compiler->program->functions[i]->type_set_count;
+    return 0;
+}
+
+/* Only synchronous type comparisons use this guard; it holds no compiler
+ * state and remains independent across compilation threads. */
+static thread_local unsigned generic_interface_depth;
+
+static bool generic_interfaces_pending(const Compiler *compiler) {
+    for(size_t i=0;i<compiler->program->interface_count;i++)
+        if(compiler->program->interfaces[i]->declared_by_discovery)return true;
+    for(size_t i=0;i<compiler->program->class_count;i++) {
+        const DiamondClass *class=compiler->program->classes[i];
+        if(class->declared_by_discovery)return true;
+        for(size_t method=0;method<class->method_count;method++) {
+            const uint16_t index=class->methods[method].function_index;
+            if(index>=compiler->program->function_count||
+               compiler->program->functions[index]->declared_by_discovery)return true;
+        }
+    }
+    return false;
+}
+
+static bool generic_interface_signature(const Compiler *compiler,
+        const DiamondFunction *implementation,const DiamondInterfaceMethod *wanted,
+        const DiamondTypeSet *arguments,DiamondTypeMember receiver) {
+    if(implementation->type_variable_count!=implementation->class_type_variable)return false;
+    InterfaceTypeArena arena={.implementation=implementation,.arguments=arguments,
+        .argument_count=interface_argument_count(compiler,arguments),
+        .argument_sets={receiver.argument_set,receiver.second_argument_set}};
+    arena.signature_map=malloc(implementation->type_set_count*sizeof *arena.signature_map);
+    arena.argument_map=malloc(arena.argument_count*sizeof *arena.argument_map);
+    if((implementation->type_set_count>0&&arena.signature_map==nullptr)||
+       (arena.argument_count>0&&arena.argument_map==nullptr)) {
+        free(arena.signature_map);free(arena.argument_map);return false;
+    }
+    for(size_t i=0;i<implementation->type_set_count;i++)arena.signature_map[i]=-1;
+    for(size_t i=0;i<arena.argument_count;i++)arena.argument_map[i]=-1;
+    arena.parent=active_interface_arena;active_interface_arena=&arena;
+    bool found=true;
+    for(size_t parameter=0;parameter<wanted->arity&&found;parameter++) {
+        const uint16_t required=wanted->parameter_type_sets[parameter];
+        const uint16_t actual=implementation->parameter_type_sets[parameter];
+        if(required==DIAMOND_NO_TYPE_SET) {found=actual==DIAMOND_NO_TYPE_SET;continue;}
+        if(actual==DIAMOND_NO_TYPE_SET)continue;
+        const uint16_t specialized=interface_clone_set(&arena,actual,true,0);
+        found=specialized!=DIAMOND_NO_TYPE_SET&&type_sets_satisfy_across(compiler,
+            compiler->program->entry.type_sets,required,arena.sets,specialized);
+    }
+    if(found&&wanted->return_type_set!=DIAMOND_NO_TYPE_SET) {
+        const uint16_t specialized=interface_clone_set(&arena,implementation->return_type_set,true,0);
+        found=specialized!=DIAMOND_NO_TYPE_SET&&type_sets_satisfy_across(compiler,
+            arena.sets,specialized,compiler->program->entry.type_sets,wanted->return_type_set);
+    }
+    active_interface_arena=arena.parent;
+    free(arena.sets);free(arena.signature_map);free(arena.argument_map);return found;
+}
+
+static bool generic_class_satisfies_interface(const Compiler *compiler,
+        const DiamondTypeSet *arguments,DiamondTypeMember receiver,uint16_t expected) {
+    if(generic_interface_depth>=32)return false;
+    const size_t index=receiver.id-DIAMOND_TYPE_CLASS_BASE;
+    const size_t interface_index=expected-DIAMOND_TYPE_INTERFACE_BASE;
+    if(index>=compiler->program->class_count||interface_index>=compiler->program->interface_count)return false;
+    const DiamondClass *class=compiler->program->classes[index];
+    const DiamondInterface *interface=compiler->program->interfaces[interface_index];
+    if(generic_interfaces_pending(compiler))return false;
+    generic_interface_depth++;
+    bool matches=true;
+    for(size_t required=0;required<interface->method_count&&matches;required++) {
+        const DiamondInterfaceMethod *wanted=&interface->methods[required];
+        bool found=false;
+        for(size_t method=0;method<class->method_count&&!found;method++) {
+            const DiamondMethod *candidate=&class->methods[method];
+            if(strcmp(candidate->name,wanted->name)!=0||wanted->arity<candidate->required_arity||
+               wanted->arity>candidate->arity||candidate->function_index>=compiler->program->function_count||
+               candidate->source_chunk!=nullptr)continue;
+            const DiamondFunction *implementation=compiler->program->functions[candidate->function_index];
+            if(implementation->class_type_variable!=0&&
+               implementation->class_type_variable!=DIAMOND_CLASS_TYPE_PARAMETER_COUNT(class))continue;
+            found=generic_interface_signature(compiler,implementation,wanted,arguments,receiver);
+        }
+        matches=found;
+    }
+    generic_interface_depth--;return matches;
+}
+
 bool known_type_satisfies_one(const Compiler *compiler, uint16_t known,
                                      uint16_t expected) {
     if(known==expected) return true;
@@ -205,7 +373,9 @@ bool known_type_satisfies_one(const Compiler *compiler, uint16_t known,
             while(class_index<compiler->program->class_count&&!found) {
                 const DiamondClass *class=compiler->program->classes[class_index];
                 /* Class identity alone cannot prove an instance's T. */
-                if(class->type_parameter[0]!='\0')return false;
+                if(class->type_parameter[0]!='\0')return generic_class_satisfies_interface(compiler,nullptr,
+                    (DiamondTypeMember){.id=known,.argument_set=DIAMOND_NO_TYPE_SET,
+                        .second_argument_set=DIAMOND_NO_TYPE_SET},expected);
                 for(size_t method=0;method<class->method_count;method++)
                     if(strcmp(class->methods[method].name,
                               interface->methods[required].name)==0&&
@@ -290,6 +460,11 @@ bool type_members_satisfy_across(const Compiler *compiler,
     const DiamondTypeSet *expected_sets,DiamondTypeMember expected) {
     if(known.id==DIAMOND_TYPE_NATIVE||expected.id==DIAMOND_TYPE_NATIVE)
         return known.id==expected.id&&known.callable_arity==expected.callable_arity;
+    if(expected.id>=DIAMOND_TYPE_INTERFACE_BASE&&known.id>=DIAMOND_TYPE_CLASS_BASE&&
+       known.id<DIAMOND_TYPE_CLASS_LIMIT&&
+       (size_t)(known.id-DIAMOND_TYPE_CLASS_BASE)<compiler->program->class_count&&
+       DIAMOND_CLASS_TYPE_PARAMETER_COUNT(compiler->program->classes[known.id-DIAMOND_TYPE_CLASS_BASE])>0)
+        return generic_class_satisfies_interface(compiler,known_sets,known,expected.id);
     if(!known_type_satisfies_one(compiler,known.id,expected.id))return false;
     if(expected.id==DIAMOND_TYPE_CALLABLE) {
         if(expected.callable_arity!=UINT8_MAX&&
@@ -344,42 +519,8 @@ bool type_sets_satisfy_across(const Compiler *compiler,
 static bool type_member_satisfies(const Compiler *compiler,
                                   DiamondTypeMember known,
                                   DiamondTypeMember expected) {
-    /* A native type (Time, Fiber, ...) matches only the same native kind,
-     * which the member keeps in callable_arity. */
-    if(known.id==DIAMOND_TYPE_NATIVE||expected.id==DIAMOND_TYPE_NATIVE)
-        return known.id==expected.id&&known.callable_arity==expected.callable_arity;
-    if(!known_type_satisfies_one(compiler,known.id,expected.id))return false;
-    if(expected.id==DIAMOND_TYPE_CALLABLE) {
-        if(expected.callable_arity!=UINT8_MAX&&
-           known.callable_arity!=expected.callable_arity)return false;
-        if(expected.callable_parameters_typed)
-            for(size_t parameter=0;parameter<expected.callable_arity;parameter++) {
-                const uint16_t wanted=expected.callable_parameter_sets[parameter];
-                if(wanted==DIAMOND_NO_TYPE_SET)continue;
-                const uint16_t actual=known.callable_parameter_sets[parameter];
-                if(actual!=DIAMOND_NO_TYPE_SET&&
-                   !type_set_satisfies(compiler,wanted,actual))return false;
-            }
-        return expected.callable_return_set==DIAMOND_NO_TYPE_SET||
-            (known.callable_return_set!=DIAMOND_NO_TYPE_SET&&
-             type_set_satisfies(compiler,known.callable_return_set,
-                                expected.callable_return_set));
-    }
-    if(expected.argument_set==DIAMOND_NO_TYPE_SET)return true;
-    if(known.argument_set==DIAMOND_NO_TYPE_SET||
-       !type_set_satisfies(compiler,known.argument_set,expected.argument_set))
-        return false;
-    if(expected.id>=DIAMOND_TYPE_CLASS_BASE&&expected.id<DIAMOND_TYPE_VARIABLE_BASE)
-        return type_set_satisfies(compiler,expected.argument_set,known.argument_set)&&
-            (expected.second_argument_set==DIAMOND_NO_TYPE_SET||
-             (known.second_argument_set!=DIAMOND_NO_TYPE_SET&&
-              type_set_satisfies(compiler,known.second_argument_set,expected.second_argument_set)&&
-              type_set_satisfies(compiler,expected.second_argument_set,known.second_argument_set)));
-    if(expected.id!=DIAMOND_TYPE_HASH)return true;
-    return known.second_argument_set!=DIAMOND_NO_TYPE_SET&&
-        expected.second_argument_set!=DIAMOND_NO_TYPE_SET&&
-        type_set_satisfies(compiler,known.second_argument_set,
-                           expected.second_argument_set);
+    return type_members_satisfy_across(compiler,compiler->function->type_sets,known,
+        compiler->function->type_sets,expected);
 }
 
 bool type_set_contains_variable(const Compiler *compiler,uint16_t set_index) {
@@ -527,6 +668,16 @@ static bool type_set_may_satisfy(const Compiler *compiler,uint16_t known_set,
         for(size_t target=0;target<expected->count&&!possible;target++) {
             const DiamondTypeMember wanted=expected->members[target];
             possible=type_member_satisfies(compiler,member,wanted)||
+                (wanted.id>=DIAMOND_TYPE_INTERFACE_BASE&&
+                 (size_t)(wanted.id-DIAMOND_TYPE_INTERFACE_BASE)<compiler->program->interface_count&&
+                 member.id>=DIAMOND_TYPE_CLASS_BASE&&
+                 member.id<DIAMOND_TYPE_CLASS_LIMIT&&
+                 (size_t)(member.id-DIAMOND_TYPE_CLASS_BASE)<compiler->program->class_count&&
+                 DIAMOND_CLASS_TYPE_PARAMETER_COUNT(compiler->program->classes[member.id-DIAMOND_TYPE_CLASS_BASE])>0&&
+                 (generic_interfaces_pending(compiler)||
+                  member.argument_set==DIAMOND_NO_TYPE_SET||
+                  type_set_contains_variable(compiler,member.argument_set)||
+                  (member.second_argument_set!=DIAMOND_NO_TYPE_SET&&type_set_contains_variable(compiler,member.second_argument_set))))||
                 (member.argument_set==DIAMOND_NO_TYPE_SET&&
                  wanted.argument_set!=DIAMOND_NO_TYPE_SET&&
                  (member.id==DIAMOND_TYPE_ARRAY||member.id==DIAMOND_TYPE_HASH||
@@ -556,7 +707,13 @@ static TypeCheckVerdict type_check_verdict(Compiler *compiler,uint16_t reg,
     if(known==TYPE_UNKNOWN)return TYPE_CHECK_NEEDS_RUNTIME;
     const DiamondTypeSet *set=&compiler->function->type_sets[set_index];
     for(size_t index=0;index<set->count;index++) {
-        if(!known_type_satisfies_one(compiler,known,set->members[index].id))continue;
+        if(!known_type_satisfies_one(compiler,known,set->members[index].id)) {
+            if(set->members[index].id>=DIAMOND_TYPE_INTERFACE_BASE&&known>=DIAMOND_TYPE_CLASS_BASE&&
+               known<DIAMOND_TYPE_CLASS_LIMIT&&(size_t)(known-DIAMOND_TYPE_CLASS_BASE)<compiler->program->class_count&&
+               DIAMOND_CLASS_TYPE_PARAMETER_COUNT(compiler->program->classes[known-DIAMOND_TYPE_CLASS_BASE])>0)
+                return TYPE_CHECK_NEEDS_RUNTIME;
+            continue;
+        }
         return set->members[index].argument_set!=DIAMOND_NO_TYPE_SET?
             TYPE_CHECK_NEEDS_RUNTIME:TYPE_CHECK_SATISFIED;
     }

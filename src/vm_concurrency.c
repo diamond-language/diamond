@@ -99,6 +99,10 @@ int create_vm_thread(pthread_t *handle,
  * interface slots are copied one by one; independently allocated
  * function records keep thread-local method replacement isolated. Returns
  * nullptr only on allocation failure. */
+static size_t interface_type_end(size_t end,uint16_t index) {
+    return index==DIAMOND_NO_TYPE_SET||index<end?end:(size_t)index+1;
+}
+
 DiamondProgram *clone_program_from_chunk(const DiamondChunk *chunk) {
     DiamondProgram *clone=calloc(1,sizeof *clone);
     if(clone==nullptr)return nullptr;
@@ -108,14 +112,50 @@ DiamondProgram *clone_program_from_chunk(const DiamondChunk *chunk) {
      * diamond_program_init's own memset would just re-zero memory
      * calloc already zeroed. See its own comment (src/compiler.c). */
     diamond_program_init_fresh(clone);
-    if(chunk->type_set_count>0) {
-        if(!diamond_function_reserve_type_sets(&clone->entry,
-                chunk->type_set_count)) {
+    const DiamondTypeSet *entry_types=chunk->type_sets;
+    size_t entry_type_count=chunk->type_set_count;
+    const DiamondTypeSet *interface_types=nullptr;
+    size_t interface_end=0;
+    for(size_t index=0;index<chunk->interface_count;index++) {
+        const DiamondInterface *interface=chunk->interfaces[index];
+        size_t needed=0;
+        for(size_t method=0;method<interface->method_count;method++) {
+            const DiamondInterfaceMethod *signature=&interface->methods[method];
+            needed=interface_type_end(needed,signature->return_type_set);
+            for(size_t parameter=0;parameter<signature->arity;parameter++)
+                needed=interface_type_end(needed,signature->parameter_type_sets[parameter]);
+        }
+        if(needed==0)continue;
+        if(interface->type_sets==nullptr||
+           (interface_types!=nullptr&&interface_types!=interface->type_sets)) {
             diamond_program_free(clone);free(clone);return nullptr;
         }
-        memcpy(clone->entry.type_sets,chunk->type_sets,
-            chunk->type_set_count*sizeof *clone->entry.type_sets);
-        clone->entry.type_set_count=chunk->type_set_count;
+        interface_types=interface->type_sets;
+        if(needed>interface_end)interface_end=needed;
+    }
+    if(interface_types!=nullptr) {
+        /* A function's chunk has its own type table. Interface indexes still
+         * name the program entry table: copy its closed referenced prefix. */
+        for(size_t index=0;index<interface_end;index++)
+            for(size_t member=0;member<interface_types[index].count;member++) {
+                const DiamondTypeMember type=interface_types[index].members[member];
+                interface_end=interface_type_end(interface_end,type.argument_set);
+                interface_end=interface_type_end(interface_end,type.second_argument_set);
+                interface_end=interface_type_end(interface_end,type.callable_return_set);
+                if(type.callable_parameters_typed)
+                    for(size_t parameter=0;parameter<type.callable_arity;parameter++)
+                        interface_end=interface_type_end(interface_end,type.callable_parameter_sets[parameter]);
+            }
+        entry_types=interface_types;entry_type_count=interface_end;
+    }
+    if(entry_type_count>0) {
+        if(!diamond_function_reserve_type_sets(&clone->entry,
+                entry_type_count)) {
+            diamond_program_free(clone);free(clone);return nullptr;
+        }
+        memcpy(clone->entry.type_sets,entry_types,
+            entry_type_count*sizeof *clone->entry.type_sets);
+        clone->entry.type_set_count=entry_type_count;
     }
     for(size_t index=0;index<chunk->function_count;index++) {
         DiamondFunction *function=diamond_program_add_function(clone);
