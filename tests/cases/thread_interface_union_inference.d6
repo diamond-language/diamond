@@ -1,0 +1,19 @@
+interface Mixed
+  def same(left: Int, right: String) -> Int | String
+end
+interface Narrow
+  def same(left: Int, right: String) -> Int
+end
+class Identity[T]
+  def initialize(value: T)
+  end
+  def same[U](left: U, right: U) -> U = right
+end
+def worker[U](value, unrelated: U)
+  puts(value is Mixed)
+  puts(value is Narrow)
+  value.dup()
+end
+def use(value: Mixed) -> Int | String = value.same(42, "copied")
+def spawn[U](value, unrelated: U) = Thread.new(worker, value, unrelated).join()
+puts(use(spawn(Identity.new(false), 42)))

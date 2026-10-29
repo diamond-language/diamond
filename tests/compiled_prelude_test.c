@@ -101,6 +101,11 @@ static void check_generic_class_round_trip(const DiamondProgram *template) {
         "end\nstruct Payload[T, E](value: T, error: E)\nend\n"
         "interface IntSource\n  def value() -> Int\nend\n"
         "interface IntEcho\n  def echo(value: Int) -> Int\nend\n"
+        "interface MixedEcho\n  def both(left: Int, right: String) -> Int | String\nend\n"
+        "class UnionEcho\n  def both[U](left: U, right: U) -> U = right\nend\n"
+        "def read_mixed(value: MixedEcho) -> Int\n"
+        "  result = value.both(42, \"abc\")\n"
+        "  if result is String\n    result.length()\n  else\n    result\n  end\nend\n"
         "interface TimeSource\n  def value() -> Time\nend\n"
         "interface CallbackSource\n  def value() -> Callable[[Int], Int]\nend\n"
         "def increment(value: Int) -> Int = value + 1\n"
@@ -164,6 +169,14 @@ static void check_generic_class_round_trip(const DiamondProgram *template) {
                     char rendered[64];
                     check(run_and_get_string(use,rendered,sizeof rendered)&&strcmp(rendered,"42")==0,
                         "restored interface isolates method witness from receiver");
+                }
+                const bool mixed=diamond_compile_incremental(
+                    "read_mixed(UnionEcho.new())\n",use,copy,&diagnostic);
+                check(mixed,"restored interface joins method input witnesses");
+                if(mixed) {
+                    char rendered[64];
+                    check(run_and_get_string(use,rendered,sizeof rendered)&&strcmp(rendered,"3")==0,
+                        "restored interface executes with a shared union binding");
                 }
                 const bool callback=diamond_compile_incremental(
                     "read_callback(Box[Callable[[Int], Int]].new(increment))\n",use,copy,&diagnostic);

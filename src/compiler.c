@@ -196,28 +196,23 @@ static bool interface_append_member(InterfaceTypeArena *arena,DiamondTypeSet *se
 }
 
 static uint16_t interface_clone_set(InterfaceTypeArena *arena,uint16_t index,
+        unsigned source,size_t depth);
+
+static uint16_t interface_clone_members(InterfaceTypeArena *arena,const DiamondTypeSet *set,
         unsigned source,size_t depth) {
+    if(depth>32)return DIAMOND_NO_TYPE_SET;
     const bool signature=source==1;
-    const DiamondTypeSet *sets=source==2?arena->method_arguments:
-        signature?arena->implementation->type_sets:arena->arguments;
-    const size_t count=source==2?arena->method_argument_count:
-        signature?arena->implementation->type_set_count:arena->argument_count;
-    int32_t *map=source==2?arena->method_map:signature?arena->signature_map:arena->argument_map;
-    if(index==DIAMOND_NO_TYPE_SET||index>=count||depth>32)return DIAMOND_NO_TYPE_SET;
-    if(map[index]>=0)return (uint16_t)map[index];
-    if(map[index]==-2)return DIAMOND_NO_TYPE_SET;
-    map[index]=-2;
     DiamondTypeSet result={};
-    for(size_t i=0;i<sets[index].count;i++) {
-        DiamondTypeMember member=sets[index].members[i];
+    for(size_t i=0;i<set->count;i++) {
+        DiamondTypeMember member=set->members[i];
         if(member.id>=DIAMOND_TYPE_VARIABLE_BASE&&member.id<DIAMOND_TYPE_INTERFACE_BASE) {
             const size_t variable=member.id-DIAMOND_TYPE_VARIABLE_BASE;
             if(!signature||variable>=arena->implementation->type_variable_count||variable>=8)
                 return DIAMOND_NO_TYPE_SET;
             const bool receiver=variable<arena->implementation->class_type_variable;
             if(receiver&&variable>=2)return DIAMOND_NO_TYPE_SET;
-            const uint16_t argument=interface_clone_set(arena,
-                receiver?arena->argument_sets[variable]:arena->method_sets[variable],receiver?0:2,depth+1);
+            const uint16_t argument=receiver?
+                interface_clone_set(arena,arena->argument_sets[variable],0,depth+1):arena->method_sets[variable];
             if(argument==DIAMOND_NO_TYPE_SET)return DIAMOND_NO_TYPE_SET;
             const DiamondTypeSet replacement=arena->sets[argument];
             for(size_t j=0;j<replacement.count;j++)
@@ -247,7 +242,24 @@ static uint16_t interface_clone_set(InterfaceTypeArena *arena,uint16_t index,
         arena->sets=grown;arena->capacity=capacity;
     }
     const uint16_t added=(uint16_t)arena->count++;
-    arena->sets[added]=result;map[index]=added;return added;
+    arena->sets[added]=result;return added;
+}
+
+static uint16_t interface_clone_set(InterfaceTypeArena *arena,uint16_t index,
+        unsigned source,size_t depth) {
+    const bool signature=source==1;
+    const DiamondTypeSet *sets=source==2?arena->method_arguments:
+        signature?arena->implementation->type_sets:arena->arguments;
+    const size_t count=source==2?arena->method_argument_count:
+        signature?arena->implementation->type_set_count:arena->argument_count;
+    int32_t *map=source==2?arena->method_map:signature?arena->signature_map:arena->argument_map;
+    if(index==DIAMOND_NO_TYPE_SET||index>=count||depth>32)return DIAMOND_NO_TYPE_SET;
+    if(map[index]>=0)return (uint16_t)map[index];
+    if(map[index]==-2)return DIAMOND_NO_TYPE_SET;
+    map[index]=-2;
+    const uint16_t added=interface_clone_members(arena,&sets[index],source,depth);
+    if(added!=DIAMOND_NO_TYPE_SET)map[index]=added;
+    return added;
 }
 
 static size_t interface_argument_count(const Compiler *compiler,const DiamondTypeSet *sets) {
@@ -291,15 +303,17 @@ static bool generic_interface_signature(const Compiler *compiler,
         .argument_sets={receiver.argument_set,receiver.second_argument_set},
         .method_arguments=compiler->program->entry.type_sets,
         .method_argument_count=compiler->program->entry.type_set_count};
+    InterfaceWitness witnesses[8]={};
     for(size_t i=0;i<8;i++)arena.method_sets[i]=DIAMOND_NO_TYPE_SET;
     for(size_t p=0;p<wanted->arity;p++)
         interface_infer_variables(implementation,implementation->parameter_type_sets[p],
-            arena.method_arguments,wanted->parameter_type_sets[p],arena.method_sets,0);
+            arena.method_arguments,wanted->parameter_type_sets[p],witnesses,0);
     for(size_t variable=implementation->class_type_variable;
         variable<implementation->type_variable_count;variable++) {
-        if(arena.method_sets[variable]==DIAMOND_NO_TYPE_SET)continue;
+        if(!witnesses[variable].inferred)continue;
         size_t nodes=0;
-        if(!interface_binding_supported(arena.method_arguments,arena.method_sets[variable],&nodes))return false;
+        if(witnesses[variable].invalid||
+           !interface_members_supported(arena.method_arguments,&witnesses[variable].set,&nodes))return false;
     }
     arena.signature_map=malloc(implementation->type_set_count*sizeof *arena.signature_map);
     arena.argument_map=malloc(arena.argument_count*sizeof *arena.argument_map);
@@ -315,6 +329,12 @@ static bool generic_interface_signature(const Compiler *compiler,
     arena.parent=active_interface_arena;active_interface_arena=&arena;
     generic_interface_depth++;
     bool found=true;
+    for(size_t variable=implementation->class_type_variable;
+        variable<implementation->type_variable_count&&found;variable++) {
+        if(!witnesses[variable].inferred)continue;
+        arena.method_sets[variable]=interface_clone_members(&arena,&witnesses[variable].set,2,0);
+        found=arena.method_sets[variable]!=DIAMOND_NO_TYPE_SET;
+    }
     for(size_t parameter=0;parameter<wanted->arity&&found;parameter++) {
         const uint16_t required=wanted->parameter_type_sets[parameter];
         const uint16_t actual=implementation->parameter_type_sets[parameter];

@@ -195,13 +195,14 @@ symbolic receiver arguments retain runtime checks. `is Interface` checks the
 actual instance bindings, including after duplication or a thread copy.
 Unrelated generic methods do not prevent conformance. A required method may
 introduce its own type parameters: `identity[U](value: U) -> U` satisfies a
-method taking and returning `Int`, for example. Each method variable takes its
-first witness from the interface's supplied parameter types, including nested
-collection and Callable signatures. The complete specialized signature must
+method taking and returning `Int`, for example. Each method variable joins the
+interface's supplied input types into a union, including occurrences inside
+collection and Callable signatures. For example, `same[U](left: U, right: U) -> U`
+satisfies a method taking `Int` and `String` and returning `Int | String`.
+Structurally equal inputs are deduplicated, including nested types. The complete specialized signature must
 then pass parameter and return variance checks. Receiver variables stay fixed;
 an unrelated caller's variables cannot supply a witness. Return-only variables
-cannot establish a concrete return contract. This is conservative inference:
-it does not search for a union witness across conflicting inputs. Witnesses
+cannot establish a concrete return contract. Witnesses
 must fit the bounded type graph, including native kinds and typed Callable
 values. Callable parameters remain contravariant and returns covariant.
 Incompatible Callable alternatives sharing a binding are rejected rather than

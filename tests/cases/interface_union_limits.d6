@@ -1,0 +1,26 @@
+interface TooMany
+  def many(a: Int, b: String, c: Float, d: Bool, e: Nil, f: Array[Int], g: Hash[Int, Int], h: Time, i: Regexp)
+end
+interface Invariant
+  def same(left: Box[Int], right: Box[String]) -> Box[Int] | Box[String]
+end
+interface Fixed
+  def fixed(left: Int, right: String) -> Int | String
+end
+struct Box[T](value: T)
+end
+class Identity[T]
+  def initialize(value: T)
+  end
+  def same[U](left: U, right: U) -> U = left
+  def fixed[U](left: T, right: U) -> T = left
+  def many[U](a: U, b: U, c: U, d: U, e: U, f: U, g: U, h: U, i: U)
+  end
+end
+def checks(value)
+  puts(value is TooMany)
+  puts(value is Invariant)
+  puts(value is Fixed)
+end
+checks(Identity.new(false))
+checks(Identity.new(42))

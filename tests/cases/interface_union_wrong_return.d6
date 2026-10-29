@@ -1,0 +1,8 @@
+interface Narrow
+  def same(left: Int, right: String) -> Int
+end
+class Identity
+  def same[U](left: U, right: U) -> U = right
+end
+def use(value: Narrow) -> Int = value.same(42, "wrong")
+use(Identity.new())
