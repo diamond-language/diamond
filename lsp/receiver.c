@@ -1060,7 +1060,6 @@ static bool resolve_target_bindings(const DiamondProgram *program,
         size_t receiver_class;
         if(!decode_class_type(chunk,member.id,&receiver_class))return false;
         if(receiver_class!=function->owner_class) {
-            if(!chunk->classes[receiver_class]->fixed_type_arguments)return false;
             size_t ancestor=receiver_class;
             for(size_t step=0;step<chunk->class_count&&ancestor!=function->owner_class;step++) {
                 ancestor=chunk->classes[ancestor]->superclass;

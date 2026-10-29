@@ -1,0 +1,6 @@
+class Box[T]
+end
+class StringBox < Box[String]
+end
+class Child[A] < StringBox
+end

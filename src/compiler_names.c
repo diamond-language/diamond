@@ -1972,7 +1972,8 @@ static uint16_t parse_bound_method_reference(Compiler *compiler,uint16_t receive
         const int32_t receiver_set=compiler->known_type_sets[receiver];
         if(receiver_set>=0) {
             const DiamondTypeSet *known=&compiler->function->type_sets[receiver_set];
-            if(known->count==1&&known->members[0].id==DIAMOND_TYPE_CLASS_BASE+target->owner_class)
+            if(known->count==1&&known_type_satisfies_one(compiler,known->members[0].id,
+                (uint16_t)(DIAMOND_TYPE_CLASS_BASE+target->owner_class)))
                 {class_bindings[0]=known->members[0].argument_set;
                     if(target->class_type_variable==2)class_bindings[1]=known->members[0].second_argument_set;}
         }

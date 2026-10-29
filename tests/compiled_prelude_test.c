@@ -128,6 +128,9 @@ static void check_generic_class_round_trip(const DiamondProgram *template) {
         "class IntPayload < Payload[Int, String]\nend\n"
         "class CallbackBox < Box[Callable[[Int], Int]]\nend\n"
         "class TimeBox < Box[Time]\nend\n"
+        "class ForwardBox[U] < Box[U]\nend\n"
+        "class ForwardGrand[V] < ForwardBox[V]\nend\n"
+        "class ForwardPair[A, B] < Payload[A, B]\nend\n"
         "interface IntSource\n  def value() -> Int\nend\n"
         "interface IntEcho\n  def echo(value: Int) -> Int\nend\n"
         "interface MixedEcho\n  def both(left: Int, right: String) -> Int | String\nend\n"
@@ -164,6 +167,30 @@ static void check_generic_class_round_trip(const DiamondProgram *template) {
                     strcmp(rendered_constructor,"42")==0,
                     "serialized explicit generic constructor executes");
                 DiamondProgram *use=alloc_program();
+                const bool forwarded=diamond_compile_incremental(
+                    "ForwardGrand[Int].new(42).value()\n",use,copy,&diagnostic);
+                check(forwarded,"restored parameterized superclass accepts explicit arguments");
+                if(forwarded) {
+                    char rendered[64];
+                    check(run_and_get_string(use,rendered,sizeof rendered)&&strcmp(rendered,"42")==0,
+                        "restored parameterized superclass keeps forwarded binding");
+                }
+                const bool forwarded_inferred=diamond_compile_incremental(
+                    "read_source(ForwardBox.new(42))\n",use,copy,&diagnostic);
+                check(forwarded_inferred,"restored parameterized superclass infers inherited constructor binding");
+                if(forwarded_inferred) {
+                    char rendered[64];
+                    check(run_and_get_string(use,rendered,sizeof rendered)&&strcmp(rendered,"42")==0,
+                        "restored forwarded binding satisfies inherited interface");
+                }
+                const bool forwarded_pair=diamond_compile_incremental(
+                    "ForwardPair.new(42, \"abc\").error().length()\n",use,copy,&diagnostic);
+                check(forwarded_pair,"restored parameterized superclass forwards both arguments");
+                if(forwarded_pair) {
+                    char rendered[64];
+                    check(run_and_get_string(use,rendered,sizeof rendered)&&strcmp(rendered,"3")==0,
+                        "restored two-parameter forwarded binding executes");
+                }
                 const bool inherited=diamond_compile_incremental(
                     "GrandIntBox.new(42).value()\n",use,copy,&diagnostic);
                 check(inherited,"restored fixed superclass accepts construction");

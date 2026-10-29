@@ -1,0 +1,4 @@
+class Box[T]
+end
+class Child[A] < Box[Array[A]]
+end

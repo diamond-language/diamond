@@ -199,11 +199,14 @@ int main(void) {
         "end\n"
         "interface GenericPetSource\n  def value() -> Pet\nend\n"
         "class FixedPetRecords < GenericRecords[Pet]\nend\n"
+        "class ForwardRecords[U] < GenericRecords[U]\nend\n"
         "def read_generic_pet(value: GenericPetSource) -> Pet = value.value()\n"
         "def generic_interface_receivers()\n"
         "  read_generic_pet(GenericRecords[Pet].new(Pet.new())).bark()\n"
         "  read_generic_pet(GenericRecords.new(Pet.new())).bark()\n"
         "  FixedPetRecords.new(Pet.new()).value().bark()\n"
+        "  ForwardRecords.new(Pet.new()).value().bark()\n"
+        "  ForwardRecords[Pet].new(Pet.new()).value().bark()\n"
         "  GenericRecords[FixedPetRecords].new(FixedPetRecords.new(Pet.new())).value().value().bark()\n"
         "end\n"
         "struct MultiRecord[T, E](value: T, error: E)\n"
@@ -1147,6 +1150,8 @@ int main(void) {
     failed|=check_receiver(program,&chunk,combined,"read_generic_pet(GenericRecords[Pet].new(Pet.new())).","Pet",false);
     failed|=check_receiver(program,&chunk,combined,"read_generic_pet(GenericRecords.new(Pet.new())).","Pet",false);
     failed|=check_receiver(program,&chunk,combined,"FixedPetRecords.new(Pet.new()).value().","Pet",false);
+    failed|=check_receiver(program,&chunk,combined,"ForwardRecords.new(Pet.new()).value().","Pet",false);
+    failed|=check_receiver(program,&chunk,combined,"ForwardRecords[Pet].new(Pet.new()).value().","Pet",false);
     failed|=check_receiver(program,&chunk,combined,"GenericRecords[FixedPetRecords].new(FixedPetRecords.new(Pet.new())).value().value().","Pet",false);
     failed|=check_receiver(program,&chunk,combined,"multi.error().","Leaf",false);
     failed|=check_receiver(program,&chunk,combined,"multi.value().","Pet",false);

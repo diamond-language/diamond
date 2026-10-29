@@ -695,7 +695,13 @@ static bool fixed_binding_node_valid(const DiamondProgram *program,const Diamond
 }
 
 static bool fixed_class_bindings_valid(const DiamondProgram *program,const DiamondClass *class) {
-    if(!class->fixed_type_arguments)return true;
+    if(!class->fixed_type_arguments) {
+        if(DIAMOND_CLASS_TYPE_PARAMETER_COUNT(class)==0||class->superclass==DIAMOND_NO_CLASS)return true;
+        if(class->superclass>=program->class_count||class->superclass==class->index)return false;
+        const DiamondClass *parent=program->classes[class->superclass];
+        return !parent->fixed_type_arguments&&
+            DIAMOND_CLASS_TYPE_PARAMETER_COUNT(parent)==DIAMOND_CLASS_TYPE_PARAMETER_COUNT(class);
+    }
     if(class->superclass==DIAMOND_NO_CLASS||class->superclass>=program->class_count||
        class->superclass==class->index)return false;
     const DiamondClass *parent=program->classes[class->superclass];

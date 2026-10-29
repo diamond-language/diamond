@@ -1,0 +1,22 @@
+interface StringSource
+  def value() -> String
+end
+interface IntSource
+  def value() -> Int
+end
+class Box[T]
+  def initialize(value: T)
+    @value = value
+  end
+  def value() -> T = @value
+end
+class Child[A] < Box[A]
+end
+def worker[U](value, unrelated: U)
+  puts(value is StringSource)
+  puts(value is IntSource)
+  value.dup()
+end
+def spawn[U](value, unrelated: U) = Thread.new(worker, value, unrelated).join()
+def read(value: Box[String]) -> String = value.value()
+puts(read(spawn(Child.new("copied"), false)))

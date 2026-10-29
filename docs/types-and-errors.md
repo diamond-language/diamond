@@ -126,11 +126,18 @@ parent's fields and methods, and `StringBox.new("hello")` retains `String`
 through inherited getters, overrides, `super`, duplication, and thread copies.
 Both parent arguments may be fixed, including nested types, native kinds, and
 Callable signatures. Further concrete subclasses inherit the same bindings.
-The subclass cannot supply new type arguments or infer replacements from its
-constructor values. Parent arguments must be concrete and fit the bounded
-binding graph. Parameterized subclasses, generic struct inheritance, reopening
-these classes, and referring to class parameters from nested definitions remain
-future work. Native types such as
+The concrete subclass cannot supply new type arguments or infer replacements
+from its constructor values. Fixed parent arguments must be concrete and fit
+the bounded binding graph. A parameterized subclass may instead forward its
+parameters unchanged: `class Child[A] < Box[A]`, or
+`class Result[A, B] < Pair[A, B]`. Parameters may have different names from the
+parent's, but must have the same count and be forwarded in declaration order.
+Explicit or inferred constructor arguments then bind the inherited slots;
+inherited methods, `super`, method references, and further subclasses retain
+those bindings. Reordered, transformed, or mixed fixed parent arguments,
+parameterized subclasses of a fixed parent, generic struct inheritance,
+reopening these classes, and referring to class parameters from nested
+definitions remain future work. Native types such as
 `Time` and typed Callable signatures work as explicit or inferred class
 arguments. Bindings retain native kinds, Callable arity, parameter types, and
 return types, including through duplication and thread copies. Unions

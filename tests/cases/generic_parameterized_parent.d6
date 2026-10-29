@@ -1,0 +1,63 @@
+interface StringSource
+  def value() -> String
+end
+interface IntSource
+  def value() -> Int
+end
+class Box[T]
+  def initialize(value: T)
+    @value = value
+  end
+  def value() -> T = @value
+  def replace(value: T)
+    @value = value
+  end
+  def echo[U](value: U) -> U = value
+end
+class Child[A] < Box[A]
+  def own(value: A) -> A = value
+end
+class Grandchild[B] < Child[B]
+end
+class StringChild < Grandchild[String]
+end
+class Override[C] < Child[C]
+  def initialize(value: C)
+    super(value)
+  end
+  def value() -> C = super()
+end
+def read(value: Box[String]) -> String = value.value()
+def read_child(value: Child[String]) -> String = read(value)
+def read_grand(value: Grandchild[String]) -> String = read_child(value)
+def source(value: StringSource) -> String = value.value()
+def reader(callback: Callable[[], String]) -> String = callback()
+def checks[U](value, unrelated: U)
+  puts(value is StringSource)
+  puts(value is IntSource)
+end
+value = Child.new("child")
+puts(read_child(value))
+puts(value.own("own"))
+puts(value.echo(42))
+puts(value.echo[String]("method"))
+puts(read_grand(Grandchild.new("grand")))
+puts(source(value))
+puts(StringChild.new("fixed").value())
+puts(Override[Int].new(42).value())
+puts(Child[String].new("explicit").value())
+puts(Child.new(value: "keyword").value())
+puts(Child.new(*["spread"]).value())
+puts(read(value.dup()))
+puts(reader(value.value))
+method = value.echo[Int]
+puts(method(42))
+checks(value, 42)
+checks(Grandchild.new(42), "caller")
+value.replace("changed")
+puts(value.value())
+begin
+  value.replace(42)
+rescue error: TypeError
+  puts("wrong replacement rejected")
+end

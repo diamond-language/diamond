@@ -1,0 +1,23 @@
+class Pair[T, E]
+  def initialize(value: T, error: E)
+    @value = value
+    @error = error
+  end
+  def value() -> T = @value
+  def error() -> E = @error
+  def echo[U](value: U) -> U = value
+end
+class Result[A, B] < Pair[A, B]
+  def own(value: B) -> B = value
+end
+class GrandResult[C, D] < Result[C, D]
+end
+def read(value: Pair[String, Int]) -> String = value.value()
+result = Result.new("pair", 42)
+puts(read(result))
+puts(result.error())
+puts(result.own(7))
+puts(result.echo[String]("method"))
+puts(GrandResult[String, Int].new("grand", 9).value())
+puts(Result[Array[String], Hash[String, Int]].new(["nested"], {"count" => 2}).value()[0])
+puts(Result[Array[String], Hash[String, Int]].new(["nested"], {"count" => 2}).error()["count"])
