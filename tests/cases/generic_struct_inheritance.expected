@@ -1,0 +1,36 @@
+42
+child
+Child(value: 42, extra: child)
+true
+false
+false
+false
+false
+44
+spread
+42
+42
+method
+42
+Grand(value: 46, extra: grand, flag: true)
+false
+Fixed(value: 47, extra: fixed)
+false
+new parameter
+FixedParent(value: 50, extra: fixed parent, payload: false)
+PlainParent(x: 51, payload: plain parent)
+fixed error
+false
+true
+true
+true
+53
+54
+55
+56
+42
+57
+wide
+inherited field rejected
+own field rejected
+nil

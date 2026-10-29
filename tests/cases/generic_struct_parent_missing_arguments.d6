@@ -1,0 +1,4 @@
+struct Item[T](value: T)
+end
+struct Child(extra: Int) < Item
+end

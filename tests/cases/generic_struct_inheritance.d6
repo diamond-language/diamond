@@ -1,4 +1,97 @@
 struct Item[T](value: T)
+  def echo[U](value: U) -> U = value
+  def map[U](callback: Callable[[T], U]) -> Item[U] = Item[U].new(callback(@value))
 end
-struct Child(extra: Int) < Item
+struct Child[T](extra: String) < Item[T]
+  def value() -> T = super()
+end
+struct Grand[T](flag: Bool) < Child[T]
+end
+struct Fixed(extra: String) < Item[Int]
+end
+struct NewParameter[T, U](extra: U) < Item[T]
+end
+struct FixedParent[T](payload: T) < Fixed
+end
+struct Plain(x: Int)
+end
+struct PlainParent[T](payload: T) < Plain
+end
+struct Pair[T, E](value: T, error: E)
+end
+struct Mixed[T, U](extra: U) < Pair[T, String]
+end
+struct Swapped[A, B](extra: Int) < Pair[B, A]
+end
+struct Transformed[T](extra: String) < Item[Array[T]]
+end
+struct Combined[A, B](extra: String) < Item[Hash[A, B]]
+end
+struct Alias[T]() < Item[T]
+end
+struct Many[T](a: T, b: Int, c: Int, d: Int, e: Int, f: Int, g: Int, h: Int, i: Int, j: Int, k: Int)
+end
+struct Wider[T](last: String) < Many[T]
+end
+interface IntValue
+  def value() -> Int
+end
+interface StringError
+  def error() -> String
+end
+interface BoolExtra
+  def extra() -> Bool
+end
+def read(value: Item[Int]) -> Int = value.value()
+def inferred[T](value: Item[T]) -> T = value.value()
+def pair(value: Pair[Int, String]) -> String = value.error()
+def callback(value: Callable[[], Int]) -> Int = value()
+def describe(value: Int) -> String = value.to_s()
+def wrong_inherited(value) = Fixed.new(value, "fixed")
+def wrong_own(value) = Child[Int].new(42, value)
+value = Child.new(42, "child")
+puts(read(value))
+puts(value.extra())
+puts(value)
+puts(value == Child[Int].new(42, "child"))
+puts(value == Child[Int].new(42, "different"))
+puts(value == Child[Int].new(43, "child"))
+puts(value == Item.new(42))
+puts(Item.new(42) == value)
+puts(Child.new(value: 44, extra: "keyword").value())
+puts(Child.new(*[45, "spread"]).extra())
+puts(inferred(value))
+puts(callback(value.value))
+puts(value.echo[String]("method"))
+puts(value.map(describe).value())
+puts(Grand.new(46, "grand", true))
+puts(Grand.new(46, "grand", true) == Grand.new(46, "grand", false))
+puts(Fixed.new(47, "fixed"))
+puts(NewParameter.new(48, false).extra())
+puts(NewParameter[Int, String].new(49, "new parameter").extra())
+puts(FixedParent.new(50, "fixed parent", false))
+puts(PlainParent.new(51, "plain parent"))
+mixed = Mixed.new(52, "fixed error", false)
+puts(pair(mixed))
+puts(mixed.extra())
+puts(mixed is StringError)
+puts(mixed is BoolExtra)
+puts(mixed is IntValue)
+puts(Swapped[String, Int].new(53, "swapped", 1).value())
+puts(Transformed.new([54], "transformed").value()[0])
+puts(Combined.new({"key" => 55}, "combined").value()["key"])
+puts(Alias.new(56).value())
+puts(read(value.dup()))
+wide = Wider.new(57, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, "wide")
+puts(wide.a())
+puts(wide.last())
+begin
+  wrong_inherited("wrong")
+rescue error: TypeError
+  puts("inherited field rejected")
+end
+begin
+  wrong_own(0)
+rescue error: TypeError
+  puts("own field rejected")
 end

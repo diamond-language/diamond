@@ -1130,6 +1130,117 @@ static void compile_class_body(Compiler *compiler, DiamondClass *class) {
     if(!compiler->failed)snapshot_ivar_known_classes(compiler,class);
 }
 
+/* Structs may introduce parameters used only by their new fields. Classes
+ * require every parameter to be forwarded, since inherited constructors must
+ * infer their complete canonical prefix from the parent view. */
+static bool parse_generic_parent_arguments(Compiler *compiler,DiamondClass *class,
+        const DiamondClass *generic_parent,DiamondSpan superclass_span,bool allow_own_parameters) {
+    const size_t subclass_parameters=DIAMOND_CLASS_TYPE_PARAMETER_COUNT(class);
+    if(subclass_parameters>0) {
+        const size_t parent_parameters=DIAMOND_CLASS_TYPE_PARAMETER_COUNT(generic_parent);
+        if(allow_own_parameters&&parent_parameters==0) {
+            if(compiler->current.kind==DIAMOND_TOKEN_LEFT_BRACKET) {
+                fail(compiler,superclass_span,"non-generic superclass does not accept type arguments");return false;
+            }
+            return true;
+        }
+        if(allow_own_parameters&&generic_parent->fixed_type_arguments) {
+            memcpy(class->parent_type_bindings,generic_parent->fixed_type_bindings,sizeof class->parent_type_bindings);
+            class->transforms_parent_arguments=true;
+            return true;
+        }
+        if(generic_parent->fixed_type_arguments||parent_parameters==0) {
+            fail(compiler,superclass_span,"parameterized subclasses require corresponding generic parent parameters");return false;
+        }
+        if(compiler->current.kind!=DIAMOND_TOKEN_LEFT_BRACKET) {
+            fail(compiler,superclass_span,"generic superclass requires forwarded type arguments");return false;
+        }
+        advance_token(compiler);skip_newlines(compiler);
+        DiamondFunction *outer=compiler->function;
+        DiamondFunction *header=calloc(1,sizeof *header);
+        if(header==nullptr) {fail(compiler,superclass_span,"out of memory");return false;}
+        header->type_variable_count=(uint8_t)subclass_parameters;
+        snprintf(header->type_variables[0],sizeof header->type_variables[0],"%s",class->type_parameter);
+        snprintf(header->type_variables[1],sizeof header->type_variables[1],"%s",class->second_type_parameter);
+        compiler->function=header;
+        unsigned occurrences[2]={};
+        bool simple=parent_parameters==subclass_parameters;uint8_t first=0;
+        for(size_t variable=0;variable<parent_parameters&&!compiler->failed;variable++) {
+            const uint16_t argument=(uint16_t)parse_type_annotation(compiler);
+            if(compiler->failed)break;
+            DiamondTypeBinding *binding=&class->parent_type_bindings[variable];
+            if(!diamond_bind_type_template(header->type_sets,header->type_set_count,argument,binding)) {
+                fail(compiler,superclass_span,"superclass type template exceeds the binding graph");break;
+            }
+            for(size_t n=0;n<binding->node_count;n++)
+                for(size_t m=0;m<binding->nodes[n].count;m++) {
+                    const uint16_t id=binding->nodes[n].members[m].id;
+                    if(id>=DIAMOND_TYPE_VARIABLE_BASE&&id<DIAMOND_TYPE_VARIABLE_BASE+subclass_parameters) {
+                        occurrences[id-DIAMOND_TYPE_VARIABLE_BASE]++;
+                        if(binding->nodes[n].count!=1)
+                            fail(compiler,superclass_span,"parent type variables cannot be union alternatives");
+                    }
+                }
+            if(binding->node_count!=1||binding->nodes[0].count!=1||
+               binding->nodes[0].members[0].id<DIAMOND_TYPE_VARIABLE_BASE||
+               binding->nodes[0].members[0].id>=DIAMOND_TYPE_VARIABLE_BASE+subclass_parameters)simple=false;
+            else if(variable==0)first=(uint8_t)(binding->nodes[0].members[0].id-DIAMOND_TYPE_VARIABLE_BASE);
+            skip_newlines(compiler);
+            const DiamondTokenKind separator=variable+1==parent_parameters?
+                DIAMOND_TOKEN_RIGHT_BRACKET:DIAMOND_TOKEN_COMMA;
+            if(compiler->current.kind!=separator) {
+                fail(compiler,compiler->current.span,"wrong number of superclass type arguments");break;
+            }
+            advance_token(compiler);
+            if(variable+1<parent_parameters)skip_newlines(compiler);
+        }
+        compiler->function=outer;diamond_function_free_arrays(header);free(header);
+        if(compiler->failed)return false;
+        for(size_t variable=0;variable<subclass_parameters;variable++)
+            if(occurrences[variable]>1||(!allow_own_parameters&&occurrences[variable]!=1)) {
+                fail(compiler,superclass_span,allow_own_parameters?
+                    "parent arguments may use each struct parameter at most once":
+                    "parent arguments must use each subclass parameter exactly once");return false;
+            }
+        class->transforms_parent_arguments=!simple;
+        class->swaps_parent_arguments=simple&&first==1;
+    } else if(generic_parent->type_parameter[0]!='\0') {
+        const size_t count=DIAMOND_CLASS_TYPE_PARAMETER_COUNT(generic_parent);
+        if(generic_parent->fixed_type_arguments) {
+            memcpy(class->fixed_type_bindings,generic_parent->fixed_type_bindings,
+                sizeof class->fixed_type_bindings);
+        } else {
+            if(compiler->current.kind!=DIAMOND_TOKEN_LEFT_BRACKET) {
+                fail(compiler,superclass_span,"generic superclass requires fixed type arguments");return false;
+            }
+            advance_token(compiler);skip_newlines(compiler);
+            for(size_t variable=0;variable<count;variable++) {
+                const uint16_t argument=(uint16_t)parse_type_annotation(compiler);
+                if(compiler->failed)return false;
+                if(!diamond_bind_fixed_type(compiler->function->type_sets,
+                    compiler->function->type_set_count,argument,&class->fixed_type_bindings[variable])) {
+                    fail(compiler,superclass_span,"superclass type arguments must be concrete and fit the binding graph");return false;
+                }
+                skip_newlines(compiler);
+                if(variable+1<count) {
+                    if(compiler->current.kind!=DIAMOND_TOKEN_COMMA) {
+                        fail(compiler,superclass_span,"wrong number of superclass type arguments");return false;
+                    }
+                    advance_token(compiler);skip_newlines(compiler);
+                }
+            }
+            if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_BRACKET) {
+                fail(compiler,superclass_span,"wrong number of superclass type arguments");return false;
+            }
+            advance_token(compiler);
+        }
+        class->fixed_type_arguments=true;
+        snprintf(class->type_parameter,sizeof class->type_parameter,"$parent0");
+        if(count==2)snprintf(class->second_type_parameter,sizeof class->second_type_parameter,"$parent1");
+    }
+    return true;
+}
+
 uint16_t compile_class(Compiler *compiler) {
     const bool this_declaration_sealed=compiler->current.kind==DIAMOND_TOKEN_SEALED;
     advance_token(compiler);
@@ -1324,7 +1435,6 @@ uint16_t compile_class(Compiler *compiler) {
         fail(compiler,name,"generic classes cannot be reopened");return 0;
     }
     if(compiler->current.kind==DIAMOND_TOKEN_LESS) {
-        const size_t subclass_parameters=DIAMOND_CLASS_TYPE_PARAMETER_COUNT(class);
         advance_token(compiler);
         if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER) {
             fail(compiler,compiler->current.span,"expected superclass name after '<'"); return 0;
@@ -1338,95 +1448,7 @@ uint16_t compile_class(Compiler *compiler) {
         if(parent<0) { fail(compiler,superclass_span,"undefined superclass"); return 0; }
         if(parent==index) {fail(compiler,superclass_span,"a class cannot inherit from itself");return 0;}
         const DiamondClass *generic_parent=compiler->program->classes[parent];
-        if(subclass_parameters>0) {
-            const size_t parent_parameters=DIAMOND_CLASS_TYPE_PARAMETER_COUNT(generic_parent);
-            if(generic_parent->fixed_type_arguments||parent_parameters==0) {
-                fail(compiler,superclass_span,"parameterized subclasses require corresponding generic parent parameters");return 0;
-            }
-            if(compiler->current.kind!=DIAMOND_TOKEN_LEFT_BRACKET) {
-                fail(compiler,superclass_span,"generic superclass requires forwarded type arguments");return 0;
-            }
-            advance_token(compiler);skip_newlines(compiler);
-            DiamondFunction *outer=compiler->function;
-            DiamondFunction *header=calloc(1,sizeof *header);
-            if(header==nullptr) {fail(compiler,superclass_span,"out of memory");return 0;}
-            header->type_variable_count=(uint8_t)subclass_parameters;
-            snprintf(header->type_variables[0],sizeof header->type_variables[0],"%s",class->type_parameter);
-            snprintf(header->type_variables[1],sizeof header->type_variables[1],"%s",class->second_type_parameter);
-            compiler->function=header;
-            unsigned occurrences[2]={};
-            bool simple=parent_parameters==subclass_parameters;uint8_t first=0;
-            for(size_t variable=0;variable<parent_parameters&&!compiler->failed;variable++) {
-                const uint16_t argument=(uint16_t)parse_type_annotation(compiler);
-                if(compiler->failed)break;
-                DiamondTypeBinding *binding=&class->parent_type_bindings[variable];
-                if(!diamond_bind_type_template(header->type_sets,header->type_set_count,argument,binding)) {
-                    fail(compiler,superclass_span,"superclass type template exceeds the binding graph");break;
-                }
-                for(size_t n=0;n<binding->node_count;n++)
-                    for(size_t m=0;m<binding->nodes[n].count;m++) {
-                        const uint16_t id=binding->nodes[n].members[m].id;
-                        if(id>=DIAMOND_TYPE_VARIABLE_BASE&&id<DIAMOND_TYPE_VARIABLE_BASE+subclass_parameters) {
-                            occurrences[id-DIAMOND_TYPE_VARIABLE_BASE]++;
-                            if(binding->nodes[n].count!=1)
-                                fail(compiler,superclass_span,"parent type variables cannot be union alternatives");
-                        }
-                    }
-                if(binding->node_count!=1||binding->nodes[0].count!=1||
-                   binding->nodes[0].members[0].id<DIAMOND_TYPE_VARIABLE_BASE||
-                   binding->nodes[0].members[0].id>=DIAMOND_TYPE_VARIABLE_BASE+subclass_parameters)simple=false;
-                else if(variable==0)first=(uint8_t)(binding->nodes[0].members[0].id-DIAMOND_TYPE_VARIABLE_BASE);
-                skip_newlines(compiler);
-                const DiamondTokenKind separator=variable+1==parent_parameters?
-                    DIAMOND_TOKEN_RIGHT_BRACKET:DIAMOND_TOKEN_COMMA;
-                if(compiler->current.kind!=separator) {
-                    fail(compiler,compiler->current.span,"wrong number of superclass type arguments");break;
-                }
-                advance_token(compiler);
-                if(variable+1<parent_parameters)skip_newlines(compiler);
-            }
-            compiler->function=outer;diamond_function_free_arrays(header);free(header);
-            if(compiler->failed)return 0;
-            for(size_t variable=0;variable<subclass_parameters;variable++)
-                if(occurrences[variable]!=1) {
-                    fail(compiler,superclass_span,"parent arguments must use each subclass parameter exactly once");return 0;
-                }
-            class->transforms_parent_arguments=!simple;
-            class->swaps_parent_arguments=simple&&first==1;
-        } else if(generic_parent->type_parameter[0]!='\0') {
-            const size_t count=DIAMOND_CLASS_TYPE_PARAMETER_COUNT(generic_parent);
-            if(generic_parent->fixed_type_arguments) {
-                memcpy(class->fixed_type_bindings,generic_parent->fixed_type_bindings,
-                    sizeof class->fixed_type_bindings);
-            } else {
-                if(compiler->current.kind!=DIAMOND_TOKEN_LEFT_BRACKET) {
-                    fail(compiler,superclass_span,"generic superclass requires fixed type arguments");return 0;
-                }
-                advance_token(compiler);skip_newlines(compiler);
-                for(size_t variable=0;variable<count;variable++) {
-                    const uint16_t argument=(uint16_t)parse_type_annotation(compiler);
-                    if(compiler->failed)return 0;
-                    if(!diamond_bind_fixed_type(compiler->function->type_sets,
-                        compiler->function->type_set_count,argument,&class->fixed_type_bindings[variable])) {
-                        fail(compiler,superclass_span,"superclass type arguments must be concrete and fit the binding graph");return 0;
-                    }
-                    skip_newlines(compiler);
-                    if(variable+1<count) {
-                        if(compiler->current.kind!=DIAMOND_TOKEN_COMMA) {
-                            fail(compiler,superclass_span,"wrong number of superclass type arguments");return 0;
-                        }
-                        advance_token(compiler);skip_newlines(compiler);
-                    }
-                }
-                if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_BRACKET) {
-                    fail(compiler,superclass_span,"wrong number of superclass type arguments");return 0;
-                }
-                advance_token(compiler);
-            }
-            class->fixed_type_arguments=true;
-            snprintf(class->type_parameter,sizeof class->type_parameter,"$parent0");
-            if(count==2)snprintf(class->second_type_parameter,sizeof class->second_type_parameter,"$parent1");
-        }
+        if(!parse_generic_parent_arguments(compiler,class,generic_parent,superclass_span,false))return 0;
         if(!superclass_decided) {
             class->superclass=(uint16_t)parent;
             const DiamondClass *parent_class=compiler->program->classes[(size_t)parent];
@@ -1583,6 +1605,12 @@ static DiamondClass *declare_struct_class(Compiler *compiler, DiamondSpan name,
     class->field_count=0;class->class_variable_count=0;
     class->declared_by_discovery=false;
     class->superclass=DIAMOND_NO_CLASS;class->sealed=false;
+    if(class->fixed_type_arguments) {
+        class->type_parameter[0]='\0';class->second_type_parameter[0]='\0';
+        class->fixed_type_arguments=false;
+    }
+    class->swaps_parent_arguments=false;class->transforms_parent_arguments=false;
+    memset(class->parent_type_bindings,0,sizeof class->parent_type_bindings);
     class->generated_struct=true;
     class->declaration_line=(uint32_t)name.line;
     class->declaration_column=(uint32_t)name.column;
@@ -1685,14 +1713,12 @@ static bool parse_struct_superclass(Compiler *compiler, DiamondClass *class,
         fail(compiler,superclass_span,"undefined superclass");return false;
     }
     const DiamondClass *parent_class=compiler->program->classes[(size_t)parent];
-    if(parent_class->type_parameter[0]!='\0') {
-        fail(compiler,superclass_span,"generic struct inheritance is not supported");return false;
-    }
     if(parent==index||!parent_class->generated_struct) {
         fail(compiler,superclass_span,
              "a struct's superclass must be a struct declared earlier");
         return false;
     }
+    if(!parse_generic_parent_arguments(compiler,class,parent_class,superclass_span,true))return false;
     for(size_t method=0;method<parent_class->method_count;method++)
         if(strcmp(parent_class->methods[method].name,"initialize")==0&&
            (size_t)parent_class->methods[method].function_index<
@@ -1715,6 +1741,9 @@ static bool parse_struct_superclass(Compiler *compiler, DiamondClass *class,
                      "struct field is already defined by its superclass");
                 return false;
             }
+    if(!diamond_class_reserve_fields(class,inherited_count+own_field_count)) {
+        fail(compiler,superclass_span,"out of memory declaring struct fields");return false;
+    }
     /* Inherited fields take the first slots, as in an ordinary
      * subclass, so the parent's methods and readers keep working. */
     for(size_t own=own_field_count;own-->0;) {
@@ -1733,6 +1762,35 @@ static bool parse_struct_superclass(Compiler *compiler, DiamondClass *class,
     class->superclass=(uint16_t)parent;
     *inherited_count_out=inherited_count;
     *inherited_init_out=inherited_init;
+    return true;
+}
+
+/* Parent field annotations belong to the parent's constructor table. Import
+ * the edge templates first, then substitute them into the child's constructor;
+ * raw table copies would confuse renamed/reordered parameters and fixed slots. */
+__attribute__((noinline))
+static bool struct_parent_bindings(Compiler *compiler,const DiamondClass *class,
+        const DiamondFunction *parent,uint16_t bindings[2]) {
+    if(parent==nullptr||parent->class_type_variable==0)return true;
+    DiamondTypeBinding canonical[2]={},mapped[2]={};
+    for(size_t i=0;i<DIAMOND_CLASS_TYPE_PARAMETER_COUNT(class);i++) {
+        if(class->fixed_type_arguments)canonical[i]=class->fixed_type_bindings[i];
+        else {
+            canonical[i].node_count=1;canonical[i].nodes[0].count=1;
+            canonical[i].nodes[0].members[0]=(DiamondBoundTypeMember){
+                .id=(uint16_t)(DIAMOND_TYPE_VARIABLE_BASE+i),.argument_node=UINT8_MAX,
+                .second_argument_node=UINT8_MAX,.signature=UINT8_MAX,.native_kind=UINT8_MAX};
+        }
+    }
+    if(!diamond_map_class_bindings(compiler->program->classes,compiler->program->class_count,
+        class->index,parent->owner_class,canonical,mapped,false))return false;
+    for(size_t i=0;i<parent->class_type_variable;i++) {
+        if(!reserve_type_sets(compiler,mapped[i].node_count))return false;
+        bindings[i]=(uint16_t)compiler->function->type_set_count;
+        if(!diamond_binding_type_sets(&mapped[i],compiler->function->type_sets+bindings[i],
+            mapped[i].node_count,bindings[i]))return false;
+        compiler->function->type_set_count+=mapped[i].node_count;
+    }
     return true;
 }
 
@@ -1786,8 +1844,11 @@ static void emit_struct_initialize(Compiler *compiler, DiamondClass *class,
         if(!begin_struct_method(compiler,init,&state)) {
             fail(compiler,name,"out of memory compiling initialize");
         } else {
+            uint16_t parent_bindings[2]={DIAMOND_NO_TYPE_SET,DIAMOND_NO_TYPE_SET};
+            if(!struct_parent_bindings(compiler,class,inherited_init,parent_bindings))
+                fail(compiler,name,"cannot specialize inherited struct fields");
             (void)allocate_register(compiler);
-            for(size_t field=0;field<total_count;field++) {
+            for(size_t field=0;field<total_count&&!compiler->failed;field++) {
                 const bool inherited=field<inherited_count;
                 const uint16_t value_register=allocate_register(compiler);
                 /* Check each argument against its field's declared type,
@@ -1795,17 +1856,19 @@ static void emit_struct_initialize(Compiler *compiler, DiamondClass *class,
                  * construction, not first when the reader is called.
                  * Recording it as the parameter's type also gives calls
                  * the compile-time argument check. */
-                const uint16_t parameter_set=inherited
-                    ? (inherited_init->parameter_type_sets[field]==
-                           DIAMOND_NO_TYPE_SET
-                        ? DIAMOND_NO_TYPE_SET
-                        : clone_type_set_into_current(compiler,
-                            inherited_init->type_sets,
-                            inherited_init->type_set_count,
-                            inherited_init->parameter_type_sets[field]))
-                    : clone_type_set_into_current(compiler,
-                        struct_outer->type_sets,struct_outer->type_set_count,
-                        (uint16_t)field_type_sets[field-inherited_count]);
+                uint16_t parameter_set=DIAMOND_NO_TYPE_SET;
+                if(inherited&&inherited_init->class_type_variable>0) {
+                    bool resolved=true;
+                    parameter_set=clone_substituted_type_set(compiler,inherited_init,
+                        inherited_init->parameter_type_sets[field],parent_bindings,
+                        inherited_init->class_type_variable,&resolved);
+                    if(!resolved) {fail(compiler,name,"cannot specialize inherited struct field");break;}
+                } else if(inherited)
+                    parameter_set=clone_type_set_into_current(compiler,inherited_init->type_sets,
+                        inherited_init->type_set_count,inherited_init->parameter_type_sets[field]);
+                else parameter_set=clone_type_set_into_current(compiler,
+                    struct_outer->type_sets,struct_outer->type_set_count,
+                    (uint16_t)field_type_sets[field-inherited_count]);
                 if(parameter_set!=DIAMOND_NO_TYPE_SET) {
                     init->parameter_type_sets[field]=parameter_set;
                     emit_instruction(compiler,DIAMOND_OP_CHECK_TYPE,value_register,
@@ -2032,10 +2095,6 @@ uint16_t compile_struct(Compiler *compiler) {
         if(header!=nullptr) {diamond_function_free_arrays(header);free(header);}
         return 0;
     }
-    if(header!=nullptr&&compiler->current.kind==DIAMOND_TOKEN_LESS) {
-        compiler->function=outer_function;diamond_function_free_arrays(header);free(header);
-        fail(compiler,name,"generic struct inheritance is not supported");return 0;
-    }
     /* The fields declared above, and (below) the whole inherited-then-own
      * list the generated methods cover. */
     const size_t own_field_count=field_count;
@@ -2043,8 +2102,11 @@ uint16_t compile_struct(Compiler *compiler) {
     const DiamondFunction *inherited_init=nullptr;
     if(compiler->current.kind==DIAMOND_TOKEN_LESS&&
        !parse_struct_superclass(compiler,class,index,field_name_spans,
-           own_field_count,&inherited_count,&inherited_init))
+           own_field_count,&inherited_count,&inherited_init)) {
+        compiler->function=outer_function;
+        if(header!=nullptr) {diamond_function_free_arrays(header);free(header);}
         return 0;
+    }
     const size_t total_count=inherited_count+own_field_count;
     if(!consume_block_start(compiler)) {
         compiler->function=outer_function;

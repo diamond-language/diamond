@@ -1,0 +1,20 @@
+struct Pair[T, E](value: T, error: E)
+end
+struct Tagged[T, U](tag: U) < Pair[T, String]
+end
+interface StringError
+  def error() -> String
+end
+interface BoolTag
+  def tag() -> Bool
+end
+def worker[U](value, unrelated: U)
+  puts(value is StringError)
+  puts(value is BoolTag)
+  value.dup()
+end
+def spawn[U](value, unrelated: U) = Thread.new(worker, value, unrelated).join()
+def read(value: Pair[Int, String]) -> Int = value.value()
+value = spawn(Tagged.new(42, "copied", false), 1.5)
+puts(read(value))
+puts(value.tag())

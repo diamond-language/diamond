@@ -217,6 +217,7 @@ int main(void) {
         "struct MultiRecord[T, E](value: T, error: E)\n"
         "  def echo[U](value: U) -> U = value\n"
         "end\n"
+        "struct TaggedRecord[T, U](tag: U) < MultiRecord[T, Pet]\nend\n"
         "class PetErrorRecord[T] < MultiRecord[T, Pet]\n"
         "  def own() -> T = @value\nend\n"
         "class GrandPetError[T] < PetErrorRecord[T]\nend\n"
@@ -224,6 +225,9 @@ int main(void) {
         "  def own() -> A = @error\n"
         "end\n"
         "def multi_record_receivers()\n"
+        "  TaggedRecord[Pet, Leaf].new(Pet.new(), Pet.new(), Leaf.new()).value().bark()\n"
+        "  TaggedRecord.new(Pet.new(), Pet.new(), Leaf.new()).error().bark()\n"
+        "  TaggedRecord.new(Pet.new(), Pet.new(), Leaf.new()).tag().ping()\n"
         "  PetErrorRecord[Leaf].new(Leaf.new(), Pet.new()).value().ping()\n"
         "  PetErrorRecord.new(Leaf.new(), Pet.new()).error().bark()\n"
         "  PetErrorRecord.new(Leaf.new(), Pet.new()).own().ping()\n"
@@ -1165,6 +1169,9 @@ int main(void) {
     }
     const DiamondChunk chunk=diamond_program_chunk(program);
     int failed=check_generic_return_rejections();
+    failed|=check_receiver(program,&chunk,combined,"TaggedRecord[Pet, Leaf].new(Pet.new(), Pet.new(), Leaf.new()).value().","Pet",false);
+    failed|=check_receiver(program,&chunk,combined,"TaggedRecord.new(Pet.new(), Pet.new(), Leaf.new()).error().","Pet",false);
+    failed|=check_receiver(program,&chunk,combined,"TaggedRecord.new(Pet.new(), Pet.new(), Leaf.new()).tag().","Leaf",false);
     failed|=check_receiver(program,&chunk,combined,"PetErrorRecord[Leaf].new(Leaf.new(), Pet.new()).value().","Leaf",false);
     failed|=check_receiver(program,&chunk,combined,"PetErrorRecord.new(Leaf.new(), Pet.new()).error().","Pet",false);
     failed|=check_receiver(program,&chunk,combined,"PetErrorRecord.new(Leaf.new(), Pet.new()).own().","Leaf",false);
