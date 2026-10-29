@@ -136,6 +136,11 @@ static void check_generic_class_round_trip(const DiamondProgram *template) {
         "class ForwardPair[A, B] < Payload[A, B]\nend\n"
         "class SwappedPair[A, B] < Payload[B, A]\nend\n"
         "class StringPayload[T] < Payload[T, String]\nend\n"
+        "struct TaggedPayload[T, U](tag: U) < Payload[T, String]\nend\n"
+        "struct FixedPayload(tag: String) < Payload[Int, String]\nend\n"
+        "struct FixedPayloadChild[T](child: T) < FixedPayload\nend\n"
+        "struct PlainPayload(flag: Bool)\nend\n"
+        "struct PlainPayloadChild[T](value: T) < PlainPayload\nend\n"
         "class TwicePair[C, D] < SwappedPair[D, C]\nend\n"
         "class FixedSwapped < SwappedPair[String, Int]\nend\n"
         "interface IntSource\n  def value() -> Int\nend\n"
@@ -158,6 +163,24 @@ static void check_generic_class_round_trip(const DiamondProgram *template) {
     check(compiled,"generic class compiles against restored template");
     if(compiled) {
         check_fixed_binding_rejection(program);
+        for(size_t i=0;i<program->class_count;i++) {
+            DiamondClass *class=program->classes[i];
+            if(strcmp(class->name,"TaggedPayload")!=0)continue;
+            class->generated_struct=false;
+            char *invalid=nullptr;size_t invalid_length=0;
+            FILE *invalid_file=open_memstream(&invalid,&invalid_length);
+            check(invalid_file!=nullptr,"invalid struct marker image stream opens");
+            if(invalid_file!=nullptr) {
+                check(diamond_program_write_compiled(program,invalid_file),"invalid struct marker image writes");
+                fclose(invalid_file);
+                DiamondProgram *rejected=alloc_program();diamond_program_init(rejected);
+                check(!diamond_program_read_compiled((const uint8_t *)invalid,invalid_length,rejected),
+                    "child-only parameters require a generated struct on restore");
+                diamond_program_free(rejected);free(rejected);free(invalid);
+            }
+            class->generated_struct=true;break;
+        }
+
         for(size_t i=0;i<program->class_count;i++) {
             DiamondClass *class=program->classes[i];
             if(strcmp(class->name,"StringPayload")!=0)continue;
@@ -270,6 +293,42 @@ static void check_generic_class_round_trip(const DiamondProgram *template) {
                     char rendered[64];
                     check(run_and_get_string(use,rendered,sizeof rendered)&&strcmp(rendered,"5")==0,
                         "restored mixed parent retains its fixed second argument");
+                }
+                const bool cached_struct_child=diamond_compile_incremental(
+                    "struct CachedChild[T, U](flag: Bool) < TaggedPayload[T, U]\nend\n"
+                    "value = CachedChild.new(42, \"fixed\", false, true)\n"
+                    "if value.tag()\n  0\nelse\n  42\nend\n",use,copy,&diagnostic);
+                check(cached_struct_child,"restored generic struct accepts a new generic child");
+                if(cached_struct_child) {
+                    char rendered[64];
+                    check(run_and_get_string(use,rendered,sizeof rendered)&&strcmp(rendered,"42")==0,
+                        "restored inherited constructor keeps child-only and fixed parent slots separate");
+                }
+                const bool cached_fixed_struct=diamond_compile_incremental(
+                    "struct CachedFixed(tag: String) < Payload[Int, String]\nend\n"
+                    "CachedFixed.new(42, \"fixed\", \"tag\").value()\n",use,copy,&diagnostic);
+                check(cached_fixed_struct,"restored generic struct accepts a concrete struct child");
+                if(cached_fixed_struct) {
+                    char rendered[64];
+                    check(run_and_get_string(use,rendered,sizeof rendered)&&strcmp(rendered,"42")==0,
+                        "restored fixed struct constructor specializes inherited fields");
+                }
+                const bool cached_plain_struct=diamond_compile_incremental(
+                    "PlainPayloadChild.new(false, 42).value()\n",use,copy,&diagnostic);
+                check(cached_plain_struct,"restored generic child retains a nongeneric struct parent");
+                if(cached_plain_struct) {
+                    char rendered[64];
+                    check(run_and_get_string(use,rendered,sizeof rendered)&&strcmp(rendered,"42")==0,
+                        "restored child infers parameters solely from its new field");
+                }
+                const bool cached_fixed_parent=diamond_compile_incremental(
+                    "value = FixedPayloadChild.new(42, \"fixed\", \"tag\", false)\n"
+                    "if value.child()\n  0\nelse\n  value.value()\nend\n",use,copy,&diagnostic);
+                check(cached_fixed_parent,"restored generic child retains a fixed struct parent");
+                if(cached_fixed_parent) {
+                    char rendered[64];
+                    check(run_and_get_string(use,rendered,sizeof rendered)&&strcmp(rendered,"42")==0,
+                        "restored fixed parent bindings cannot replace the child's own parameter");
                 }
                 const bool swapped=diamond_compile_incremental(
                     "SwappedPair[String, Int].new(42, \"abc\").value()\n",use,copy,&diagnostic);

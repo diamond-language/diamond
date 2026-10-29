@@ -8,6 +8,12 @@ authoritative fine-grained record.
 
 ### Added
 
+- Generic structs can inherit earlier structs with fixed, forwarded, reordered,
+  mixed, or transformed parent arguments. Generated constructors specialize the
+  inherited field types; new fields may introduce child-only parameters.
+  Inherited readers retain the parent view, while generated equality and string
+  output include inherited and new fields. Cached structs remain available as
+  parents during incremental compilation.
 - Generic classes and structs support up to two type parameters, with explicit
   specialization (`Box[Int].new(42)`) or constructor inference (`Box.new(42)`).
   Parameterized annotations check the stored instance arguments, including nested

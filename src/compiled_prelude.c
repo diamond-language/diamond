@@ -150,6 +150,8 @@ static bool write_class(FILE *file, const DiamondClass *class) {
     if (!write_all(file, class->name, sizeof class->name)) return false;
     if (!write_all(file, class->type_parameter, sizeof class->type_parameter)) return false;
     if (!write_all(file, class->second_type_parameter, sizeof class->second_type_parameter)) return false;
+    const uint8_t generated_struct=class->generated_struct?1:0;
+    if(!write_all(file,&generated_struct,sizeof generated_struct))return false;
     const uint8_t fixed=class->fixed_type_arguments?1:0;
     if(!write_all(file,&fixed,sizeof fixed))return false;
     const uint8_t swapped=class->swaps_parent_arguments?1:0;
@@ -429,6 +431,9 @@ static bool read_class(const uint8_t **cursor, const uint8_t *end, DiamondClass 
     if (!read_bytes(cursor, end, out->second_type_parameter, sizeof out->second_type_parameter)) return false;
     if(memchr(out->second_type_parameter,'\0',sizeof out->second_type_parameter)==nullptr)return false;
     if(out->second_type_parameter[0]!='\0'&&out->type_parameter[0]=='\0')return false;
+    uint8_t generated_struct=0;
+    if(!read_bytes(cursor,end,&generated_struct,sizeof generated_struct)||generated_struct>1)return false;
+    out->generated_struct=generated_struct!=0;
     uint8_t fixed=0;
     if(!read_bytes(cursor,end,&fixed,sizeof fixed)||fixed>1)return false;
     out->fixed_type_arguments=fixed!=0;
@@ -711,6 +716,9 @@ static bool fixed_binding_node_valid(const DiamondProgram *program,const Diamond
 }
 
 static bool fixed_class_bindings_valid(const DiamondProgram *program,const DiamondClass *class) {
+    if(class->generated_struct&&class->superclass!=DIAMOND_NO_CLASS&&
+       (class->superclass>=program->class_count||class->superclass==class->index||
+        !program->classes[class->superclass]->generated_struct))return false;
     if(class->transforms_parent_arguments) {
         const size_t variables=DIAMOND_CLASS_TYPE_PARAMETER_COUNT(class);
         if(class->fixed_type_arguments||class->swaps_parent_arguments||variables==0||
@@ -732,7 +740,8 @@ static bool fixed_class_bindings_valid(const DiamondProgram *program,const Diamo
                         occurrences[id-DIAMOND_TYPE_VARIABLE_BASE]++;
                 }
         }
-        for(size_t i=0;i<variables;i++)if(occurrences[i]!=1)return false;
+        for(size_t i=0;i<variables;i++)
+            if(occurrences[i]>1||(!class->generated_struct&&occurrences[i]!=1))return false;
     }
     if(class->swaps_parent_arguments&&(class->fixed_type_arguments||
        DIAMOND_CLASS_TYPE_PARAMETER_COUNT(class)!=2||class->superclass>=program->class_count||
@@ -742,8 +751,9 @@ static bool fixed_class_bindings_valid(const DiamondProgram *program,const Diamo
         if(DIAMOND_CLASS_TYPE_PARAMETER_COUNT(class)==0||class->superclass==DIAMOND_NO_CLASS)return true;
         if(class->superclass>=program->class_count||class->superclass==class->index)return false;
         const DiamondClass *parent=program->classes[class->superclass];
-        return !parent->fixed_type_arguments&&
+        return (!parent->fixed_type_arguments||(class->generated_struct&&class->transforms_parent_arguments))&&
             (class->transforms_parent_arguments||
+             (class->generated_struct&&DIAMOND_CLASS_TYPE_PARAMETER_COUNT(parent)==0)||
              DIAMOND_CLASS_TYPE_PARAMETER_COUNT(parent)==DIAMOND_CLASS_TYPE_PARAMETER_COUNT(class));
     }
     if(class->superclass==DIAMOND_NO_CLASS||class->superclass>=program->class_count||
@@ -833,7 +843,7 @@ enum { DIAMOND_CACHE_MAGIC_LENGTH = 8 };
  * 9: classes store a type parameter; methods distinguish its instance binding.
  * 10: NEW_TYPED constructs explicitly specialized generic instances.
  * 11: generic class methods bind method variables after the receiver slot. */
-enum { DIAMOND_CACHE_FORMAT_VERSION = 16 };
+enum { DIAMOND_CACHE_FORMAT_VERSION = 17 };
 
 /* A checksum of the compiler's own sources and prelude (every .c and .h
  * file under src/, plus lib/core.d6 and lib/core/), passed in by the

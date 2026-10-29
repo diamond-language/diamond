@@ -153,7 +153,11 @@ omitted defaults and empty collections, and cannot be rebound by constructor
 arguments. Reordered and transformed arguments compose with these fixed slots.
 Two child parameters may also be combined into one parent argument, as in
 `class Entries[A, B] < Box[Hash[A, B]]`.
-Parameterized subclasses of a fixed parent, generic struct inheritance,
+Structs also support these parent mappings. Their generated constructors
+specialize inherited field annotations and can infer additional child parameters
+from new fields; those parameters need not occur in the parent arguments.
+See [generic struct inheritance](classes-and-modules.md#struct-declarations).
+Parameterized ordinary classes inheriting a fixed parent,
 reopening these classes, and referring to class parameters from nested
 definitions remain future work. Native types such as
 `Time` and typed Callable signatures work as explicit or inferred class

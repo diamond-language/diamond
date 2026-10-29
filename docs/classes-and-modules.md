@@ -706,8 +706,32 @@ Generated initializers and readers check fields using the instance's fixed
 binding. Construction supports inference and explicit arguments just like generic
 classes. Generated equality compares class identity and field values; it does not
 compare type arguments separately. Structs generate readers; body methods retain
-the existing class mutation and freeze behavior. Generic struct inheritance and
-reopening are rejected.
+the existing class mutation and freeze behavior. Reopening is rejected.
+
+Generic structs can inherit earlier structs using fixed, forwarded, reordered,
+mixed, or transformed parent arguments:
+
+```ruby
+struct Cell[T](value: T)
+end
+struct TaggedCell[T, U](tag: U) < Cell[T]
+end
+
+tagged = TaggedCell.new(42, "answer")
+puts(tagged.value())
+puts(tagged.tag())
+puts(tagged == TaggedCell[Int, String].new(42, "answer"))
+```
+
+The generated constructor takes inherited fields first and new fields last.
+Parent field annotations are specialized into the child's parameter namespace,
+so `TaggedCell` infers `T` from `value` and `U` from its own `tag` field. Inherited
+readers and methods keep the parent bindings; generated `==` and `to_s` include
+all fields. Each child parameter may occur at most once across the parent
+arguments; parameters used only by new fields need not appear there. A generic
+child may also extend a nongeneric or fixed struct parent. A nongeneric child
+can fix a generic parent's arguments, for example
+`struct NamedInt(name: String) < Cell[Int]`.
 
 A struct composes normally with everything else: `.freeze()`/
 `.frozen?()` work on an instance like any other

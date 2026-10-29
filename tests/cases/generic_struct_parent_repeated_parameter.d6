@@ -1,0 +1,4 @@
+struct Pair[T, U](value: T, error: U)
+end
+struct Child[T](extra: Int) < Pair[T, T]
+end
