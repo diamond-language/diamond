@@ -105,7 +105,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
             return DIAMOND_VM_TYPE_ERROR;
         const DiamondInstance *self=(const DiamondInstance *)arguments[0].as.object;
         if(chunk->class_type_variable>chunk->type_variable_count||
-           chunk->class_type_variable!=DIAMOND_CLASS_TYPE_PARAMETER_COUNT(self->class)||
+           chunk->class_type_variable>2||
            self->type_binding==nullptr||self->type_binding->node_count==0)
             return DIAMOND_VM_TYPE_ERROR;
         if(chunk->type_variable_bindings!=nullptr)
@@ -1506,7 +1506,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                             (const DiamondInstance *)arguments[0].as.object;
                         if(self->type_binding==nullptr||
                            chunk->class_type_variable>chunk->type_variable_count||
-                           chunk->class_type_variable!=DIAMOND_CLASS_TYPE_PARAMETER_COUNT(self->class))
+                           chunk->class_type_variable>2)
                             VM_RETURN(DIAMOND_VM_TYPE_ERROR);
                         if(!bind_receiver_prefix(chunk,self,bindings))VM_RETURN(DIAMOND_VM_TYPE_ERROR);
                     }

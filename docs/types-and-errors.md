@@ -131,7 +131,7 @@ from its constructor values. Fixed parent arguments must be concrete and fit
 the bounded binding graph. A parameterized subclass may instead forward its
 parameters: `class Child[A] < Box[A]`, `class Result[A, B] < Pair[A, B]`, or
 `class Swapped[A, B] < Pair[B, A]`. Parameters may have different names from the
-parent's, but must have the same count and each must appear exactly once.
+parent's, but each must appear exactly once across the parent arguments.
 Explicit or inferred constructor arguments then bind the inherited slots;
 inherited methods, `super`, method references, and further subclasses retain
 those bindings in the correct ancestor view. Constructor inference maps the
@@ -144,10 +144,16 @@ and Callable signatures retain their metadata through this substitution.
 Transformations compose with forwarding and reordered parents; inherited
 constructors infer child parameters by matching the parent argument structure.
 Each subclass parameter must occur exactly once across the parent arguments and
-cannot be a union alternative. Parent and child must still have the same number
-of parameters. Parents with a different parameter count (including
-`class StringResult[T] < Result[T, String]`),
-parameterized subclasses of a fixed parent, generic struct inheritance,
+cannot be a union alternative. Parent and child may have different parameter
+counts: `class StringResult[T] < Result[T, String]` fixes the parent's second
+slot while inferring the child's `T` from the first. `StringResult.new(42, "error")`
+and `StringResult[Int].new(42, "error")` both retain the parent view
+`Result[Int, String]`. Fixed slots use their declared contracts, including for
+omitted defaults and empty collections, and cannot be rebound by constructor
+arguments. Reordered and transformed arguments compose with these fixed slots.
+Two child parameters may also be combined into one parent argument, as in
+`class Entries[A, B] < Box[Hash[A, B]]`.
+Parameterized subclasses of a fixed parent, generic struct inheritance,
 reopening these classes, and referring to class parameters from nested
 definitions remain future work. Native types such as
 `Time` and typed Callable signatures work as explicit or inferred class

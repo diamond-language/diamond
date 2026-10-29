@@ -1001,6 +1001,7 @@ struct DiamondClass {
     bool fixed_type_arguments;
     bool swaps_parent_arguments;
     bool transforms_parent_arguments;
+    /* One owned template per parent slot, in the child's variable namespace. */
     DiamondTypeBinding parent_type_bindings[2];
     DiamondTypeBinding fixed_type_bindings[2];
     /* This class's own position in its program's classes[] table (set when
@@ -2301,9 +2302,15 @@ bool diamond_align_type_member(DiamondClass *const *classes,size_t count,
 bool diamond_bind_type_template(const DiamondTypeSet *sets,size_t count,uint16_t index,
                                DiamondTypeBinding *binding);
 void diamond_join_type_binding(DiamondTypeBinding *target,const DiamondTypeBinding *source);
+/* Forward mapping reads actual's slots and writes owner's slots. Inverse
+ * mapping reads owner's slots and writes actual's slots; counts may differ. */
 bool diamond_map_class_bindings(DiamondClass *const *classes,size_t count,
     size_t actual,size_t owner,const DiamondTypeBinding input[2],
     DiamondTypeBinding output[2],bool inverse);
+/* Replace closed ancestor slots with their declaration contracts. Constructor
+ * values cannot infer replacements for these slots; invocation checks them. */
+bool diamond_seed_fixed_parent_bindings(DiamondClass *const *classes,size_t count,
+    size_t actual,size_t owner,DiamondTypeBinding bindings[2]);
 /* On success, owned_sets is either NULL (a permutation) or a table the
  * caller must free after consuming the projected member. */
 bool diamond_project_type_member(DiamondClass *const *classes,size_t count,

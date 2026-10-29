@@ -1,1 +1,1 @@
-parameterized subclasses require corresponding generic parent parameters
+parent arguments must use each subclass parameter exactly once

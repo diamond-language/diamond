@@ -1,0 +1,69 @@
+class Payload[T, E]
+  def initialize(value: T, error: E)
+    @value = value
+    @error = error
+  end
+  def value() -> T = @value
+  def error() -> E = @error
+end
+class StringErrors[T] < Payload[T, Array[String]]
+end
+class MaybeError[T] < Payload[T, String | Nil]
+end
+class TimeError[T] < Payload[T, Time]
+end
+class CallbackError[T] < Payload[T, Callable[[], String]]
+end
+interface Label
+  def label() -> String
+end
+class Labeler
+  def label() -> String = "interface"
+end
+class InterfaceError[T] < Payload[T, Label]
+end
+class Box[T]
+  def initialize(value: T)
+    @value = value
+  end
+  def value() -> T = @value
+end
+class HashBox[A, B] < Box[Hash[A, B]]
+  def key() -> A = @value.key_at(0)
+  def item() -> B = @value.value_at(0)
+end
+interface TimeSource
+  def error() -> Time
+end
+interface HashSource
+  def value() -> Hash[String, Int]
+end
+def label() -> String = "callback"
+def produce() -> StringErrors[Int] = StringErrors.new(42, [])
+def arrays(callback: Callable[[], Payload[Int, Array[String]]]) = callback().error().length()
+def read(value: Box[Hash[String, Int]]) = value.value()["key"]
+def hash_ref(callback: Callable[[], Hash[String, Int]]) = callback()["key"]
+puts(StringErrors.new(1, []).error().length())
+puts(StringErrors[Int].new(2, ["fixed array"]).error()[0])
+puts(arrays(produce))
+puts(MaybeError.new(3, nil).error() == nil)
+puts(MaybeError.new(4, "union").error())
+puts(TimeError.new(5, Time.now()) is TimeSource)
+puts(CallbackError.new(6, label).error()())
+block_error = CallbackError.new(8) do
+  "fixed callback block"
+end
+puts(block_error.error()())
+puts(InterfaceError.new(7, Labeler.new()).error().label())
+hash = HashBox.new({"key" => 42})
+puts(hash.key())
+puts(hash.item())
+puts(read(hash))
+puts(hash_ref(hash.value))
+puts(HashBox[String, Int].new({"key" => 43}).item())
+puts(hash is HashSource)
+begin
+  StringErrors.new(0, [1])
+rescue error: TypeError
+  puts("fixed array rejected")
+end

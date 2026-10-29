@@ -1,0 +1,21 @@
+interface StringError
+  def error() -> String
+end
+class Result[T, E]
+  def initialize(value: T, error: E)
+    @value = value
+    @error = error
+  end
+  def value() -> T = @value
+  def error() -> E = @error
+end
+class StringResult[T] < Result[T, String]
+  def own() -> T = @value
+end
+def worker[U](value, unrelated: U)
+  puts(value is StringError)
+  value.dup()
+end
+def read(value: Result[Int, String]) -> String = value.error()
+def spawn[U](value, unrelated: U) = Thread.new(worker, value, unrelated).join()
+puts(read(spawn(StringResult.new(42, "copied"), false)))

@@ -716,7 +716,9 @@ static bool fixed_class_bindings_valid(const DiamondProgram *program,const Diamo
         if(class->fixed_type_arguments||class->swaps_parent_arguments||variables==0||
            class->superclass>=program->class_count||class->superclass==class->index)return false;
         unsigned occurrences[2]={};
-        for(size_t i=0;i<variables;i++) {
+        const size_t parent_count=DIAMOND_CLASS_TYPE_PARAMETER_COUNT(program->classes[class->superclass]);
+        if(parent_count==0)return false;
+        for(size_t i=0;i<parent_count;i++) {
             const DiamondTypeBinding *binding=&class->parent_type_bindings[i];
             uint16_t reachable=0;const bool zero=false;
             if(memcmp(&binding->invalid,&zero,sizeof zero)!=0||binding->node_count==0||
@@ -741,7 +743,8 @@ static bool fixed_class_bindings_valid(const DiamondProgram *program,const Diamo
         if(class->superclass>=program->class_count||class->superclass==class->index)return false;
         const DiamondClass *parent=program->classes[class->superclass];
         return !parent->fixed_type_arguments&&
-            DIAMOND_CLASS_TYPE_PARAMETER_COUNT(parent)==DIAMOND_CLASS_TYPE_PARAMETER_COUNT(class);
+            (class->transforms_parent_arguments||
+             DIAMOND_CLASS_TYPE_PARAMETER_COUNT(parent)==DIAMOND_CLASS_TYPE_PARAMETER_COUNT(class));
     }
     if(class->superclass==DIAMOND_NO_CLASS||class->superclass>=program->class_count||
        class->superclass==class->index)return false;
@@ -830,7 +833,7 @@ enum { DIAMOND_CACHE_MAGIC_LENGTH = 8 };
  * 9: classes store a type parameter; methods distinguish its instance binding.
  * 10: NEW_TYPED constructs explicitly specialized generic instances.
  * 11: generic class methods bind method variables after the receiver slot. */
-enum { DIAMOND_CACHE_FORMAT_VERSION = 15 };
+enum { DIAMOND_CACHE_FORMAT_VERSION = 16 };
 
 /* A checksum of the compiler's own sources and prelude (every .c and .h
  * file under src/, plus lib/core.d6 and lib/core/), passed in by the

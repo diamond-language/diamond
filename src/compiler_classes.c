@@ -1339,8 +1339,8 @@ uint16_t compile_class(Compiler *compiler) {
         if(parent==index) {fail(compiler,superclass_span,"a class cannot inherit from itself");return 0;}
         const DiamondClass *generic_parent=compiler->program->classes[parent];
         if(subclass_parameters>0) {
-            if(generic_parent->fixed_type_arguments||
-               DIAMOND_CLASS_TYPE_PARAMETER_COUNT(generic_parent)!=subclass_parameters) {
+            const size_t parent_parameters=DIAMOND_CLASS_TYPE_PARAMETER_COUNT(generic_parent);
+            if(generic_parent->fixed_type_arguments||parent_parameters==0) {
                 fail(compiler,superclass_span,"parameterized subclasses require corresponding generic parent parameters");return 0;
             }
             if(compiler->current.kind!=DIAMOND_TOKEN_LEFT_BRACKET) {
@@ -1355,8 +1355,8 @@ uint16_t compile_class(Compiler *compiler) {
             snprintf(header->type_variables[1],sizeof header->type_variables[1],"%s",class->second_type_parameter);
             compiler->function=header;
             unsigned occurrences[2]={};
-            bool simple=true;uint8_t first=0;
-            for(size_t variable=0;variable<subclass_parameters&&!compiler->failed;variable++) {
+            bool simple=parent_parameters==subclass_parameters;uint8_t first=0;
+            for(size_t variable=0;variable<parent_parameters&&!compiler->failed;variable++) {
                 const uint16_t argument=(uint16_t)parse_type_annotation(compiler);
                 if(compiler->failed)break;
                 DiamondTypeBinding *binding=&class->parent_type_bindings[variable];
@@ -1377,13 +1377,13 @@ uint16_t compile_class(Compiler *compiler) {
                    binding->nodes[0].members[0].id>=DIAMOND_TYPE_VARIABLE_BASE+subclass_parameters)simple=false;
                 else if(variable==0)first=(uint8_t)(binding->nodes[0].members[0].id-DIAMOND_TYPE_VARIABLE_BASE);
                 skip_newlines(compiler);
-                const DiamondTokenKind separator=variable+1==subclass_parameters?
+                const DiamondTokenKind separator=variable+1==parent_parameters?
                     DIAMOND_TOKEN_RIGHT_BRACKET:DIAMOND_TOKEN_COMMA;
                 if(compiler->current.kind!=separator) {
                     fail(compiler,compiler->current.span,"wrong number of superclass type arguments");break;
                 }
                 advance_token(compiler);
-                if(variable+1<subclass_parameters)skip_newlines(compiler);
+                if(variable+1<parent_parameters)skip_newlines(compiler);
             }
             compiler->function=outer;diamond_function_free_arrays(header);free(header);
             if(compiler->failed)return 0;
