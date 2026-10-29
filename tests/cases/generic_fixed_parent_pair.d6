@@ -1,0 +1,27 @@
+class Pair[T, E]
+  def initialize(value: T, error: E)
+    @value = value
+    @error = error
+  end
+  def value() -> T = @value
+  def error() -> E = @error
+  def echo[U](value: U) -> U = value
+end
+class Result < Pair[String, Int]
+end
+class Nested < Pair[Array[String], Hash[String, Int]]
+end
+class Callback < Pair[Callable[[Int], Int], Time]
+end
+def read(value: Pair[String, Int]) -> String = value.value()
+def increment(value: Int) -> Int = value + 1
+result = Result.new("pair", 42)
+puts(read(result))
+puts(result.error())
+puts(result.echo[String]("method"))
+nested = Nested.new(["nested"], {"count" => 2})
+puts(nested.value()[0])
+puts(nested.error()["count"])
+callback = Callback.new(increment, Time.now())
+puts(callback.value()(41))
+puts(callback.error() is Time)

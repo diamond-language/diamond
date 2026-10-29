@@ -91,6 +91,30 @@ static void check_specialized_constructor_bytecode(const DiamondProgram *program
     check(!diamond_verify_bytecode(&chunk),"non-generic class specialization rejected");
 }
 
+static void check_fixed_binding_rejection(DiamondProgram *program) {
+    for(size_t i=0;i<program->class_count;i++) {
+        DiamondClass *class=program->classes[i];
+        if(strcmp(class->name,"IntBox")!=0)continue;
+        DiamondBoundTypeMember *member=&class->fixed_type_bindings[0].nodes[0].members[0];
+        const uint8_t saved=member->argument_node;
+        member->argument_node=0;
+        char *bytes=nullptr;size_t length=0;
+        FILE *file=open_memstream(&bytes,&length);
+        check(file!=nullptr,"invalid fixed-binding image stream opens");
+        if(file!=nullptr) {
+            check(diamond_program_write_compiled(program,file),"invalid fixed-binding image is written for validation");
+            fclose(file);
+            DiamondProgram *copy=alloc_program();diamond_program_init(copy);
+            check(!diamond_program_read_compiled((const uint8_t *)bytes,length,copy),
+                "malformed fixed superclass graph is rejected on restore");
+            diamond_program_free(copy);free(copy);free(bytes);
+        }
+        member->argument_node=saved;
+        return;
+    }
+    check(false,"fixed superclass found for invalid-image validation");
+}
+
 static void check_generic_class_round_trip(const DiamondProgram *template) {
     static const char source[]=
         "class Box[T]\n"
@@ -99,6 +123,11 @@ static void check_generic_class_round_trip(const DiamondProgram *template) {
         "  def wrong() -> T = \"wrong\"\n"
         "  def echo[U](value: U) -> U = value\n"
         "end\nstruct Payload[T, E](value: T, error: E)\nend\n"
+        "class IntBox < Box[Int]\nend\n"
+        "class GrandIntBox < IntBox\nend\n"
+        "class IntPayload < Payload[Int, String]\nend\n"
+        "class CallbackBox < Box[Callable[[Int], Int]]\nend\n"
+        "class TimeBox < Box[Time]\nend\n"
         "interface IntSource\n  def value() -> Int\nend\n"
         "interface IntEcho\n  def echo(value: Int) -> Int\nend\n"
         "interface MixedEcho\n  def both(left: Int, right: String) -> Int | String\nend\n"
@@ -118,6 +147,7 @@ static void check_generic_class_round_trip(const DiamondProgram *template) {
     const bool compiled=diamond_compile_incremental(source,program,template,&diagnostic);
     check(compiled,"generic class compiles against restored template");
     if(compiled) {
+        check_fixed_binding_rejection(program);
         char *bytes=nullptr;size_t length=0;
         FILE *file=open_memstream(&bytes,&length);
         check(file!=nullptr,"generic class serialization stream opens");
@@ -134,6 +164,45 @@ static void check_generic_class_round_trip(const DiamondProgram *template) {
                     strcmp(rendered_constructor,"42")==0,
                     "serialized explicit generic constructor executes");
                 DiamondProgram *use=alloc_program();
+                const bool inherited=diamond_compile_incremental(
+                    "GrandIntBox.new(42).value()\n",use,copy,&diagnostic);
+                check(inherited,"restored fixed superclass accepts construction");
+                if(inherited) {
+                    char rendered[64];
+                    check(run_and_get_string(use,rendered,sizeof rendered)&&strcmp(rendered,"42")==0,
+                        "restored fixed superclass retains inherited binding");
+                }
+                const bool inherited_interface=diamond_compile_incremental(
+                    "read_source(IntBox.new(42))\n",use,copy,&diagnostic);
+                check(inherited_interface,"restored fixed superclass satisfies inherited interface");
+                if(inherited_interface) {
+                    char rendered[64];
+                    check(run_and_get_string(use,rendered,sizeof rendered)&&strcmp(rendered,"42")==0,
+                        "restored inherited interface dispatches with fixed arguments");
+                }
+                const bool inherited_pair=diamond_compile_incremental(
+                    "IntPayload.new(42, \"abc\").value()\n",use,copy,&diagnostic);
+                check(inherited_pair,"restored fixed superclass retains two arguments");
+                if(inherited_pair) {
+                    char rendered[64];
+                    check(run_and_get_string(use,rendered,sizeof rendered)&&strcmp(rendered,"42")==0,
+                        "restored inherited struct reader uses the fixed binding");
+                }
+                const bool inherited_callback=diamond_compile_incremental(
+                    "read_callback(CallbackBox.new(increment))\n",use,copy,&diagnostic);
+                check(inherited_callback,"restored fixed superclass retains Callable arguments");
+                if(inherited_callback) {
+                    char rendered[64];
+                    check(run_and_get_string(use,rendered,sizeof rendered)&&strcmp(rendered,"42")==0,
+                        "restored fixed Callable argument executes");
+                }
+                const bool inherited_native=diamond_compile_incremental(
+                    "TimeBox.new(Time.now()).value().year()\n",use,copy,&diagnostic);
+                check(inherited_native,"restored fixed superclass retains native arguments");
+                if(inherited_native) {
+                    char rendered[64];
+                    check(run_and_get_string(use,rendered,sizeof rendered),"restored fixed native argument executes");
+                }
                 const bool good=diamond_compile_incremental("Box.new(42).value()\n",
                     use,copy,&diagnostic);
                 check(good,"restored generic class accepts new construction");

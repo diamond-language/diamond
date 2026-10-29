@@ -1,0 +1,72 @@
+interface StringSource
+  def value() -> String
+end
+interface IntSource
+  def value() -> Int
+end
+class Box[T]
+  def initialize(value: T)
+    @value = value
+  end
+  def value() -> T = @value
+  def replace(value: T)
+    @value = value
+  end
+  def echo[U](value: U) -> U = value
+end
+class StringBox < Box[String]
+  def label() -> String = self.value()
+end
+class Grandchild < StringBox
+end
+class Override < StringBox
+  def initialize(value: String)
+    super(value)
+  end
+  def value() -> String = super() + "!"
+end
+class Empty[T]
+  def label() -> String = "empty"
+end
+class EmptyString < Empty[String]
+end
+class WrongReturn < StringBox
+  def value() -> Int = 42
+end
+def read(value: Box[String]) -> String = value.value()
+def source(value: StringSource) -> String = value.value()
+def read_subclass(value: StringBox) -> String = value.value()
+def dynamic(value)
+  puts(value is Box)
+  puts(value is StringSource)
+  puts(value is IntSource)
+  source(value)
+end
+value = StringBox.new("hello")
+puts(value.label())
+puts(read(value))
+puts(source(value))
+puts(Grandchild.new("grand").value())
+puts(Override.new("super").value())
+puts(value.echo(42))
+puts(value.echo[String]("method"))
+puts(dynamic(value))
+value.replace("changed")
+puts(value.value())
+puts(EmptyString.new().label())
+puts(read(value.dup()))
+puts(StringBox.new(*["spread"]).value())
+puts(StringBox.new(value: "keyword").value())
+puts(read_subclass(value))
+puts(WrongReturn.new("wrong") is StringSource)
+puts(WrongReturn.new("wrong") is IntSource)
+begin
+  StringBox.new(42)
+rescue error: TypeError
+  puts("wrong constructor rejected")
+end
+begin
+  value.replace(42)
+rescue error: TypeError
+  puts("wrong replacement rejected")
+end

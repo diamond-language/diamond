@@ -243,13 +243,52 @@ static uint16_t constructor_value_hint(Compiler *compiler,uint16_t source,size_t
     return result;
 }
 
+/* Fixed superclass arguments own graphs, independent of the declaration's
+ * function table. Import them into the caller's table for receiver facts. */
+static uint16_t import_fixed_binding(Compiler *compiler,const DiamondTypeBinding *binding) {
+    if(binding->invalid||binding->node_count==0||
+       !reserve_type_sets(compiler,binding->node_count))return DIAMOND_NO_TYPE_SET;
+    const uint16_t base=(uint16_t)compiler->function->type_set_count;
+    compiler->function->type_set_count+=binding->node_count;
+    for(size_t node=0;node<binding->node_count;node++) {
+        DiamondTypeSet set={.count=binding->nodes[node].count};
+        for(size_t i=0;i<set.count;i++) {
+            const DiamondBoundTypeMember from=binding->nodes[node].members[i];
+            DiamondTypeMember member={.id=from.id,
+                .argument_set=from.argument_node==UINT8_MAX?DIAMOND_NO_TYPE_SET:(uint16_t)(base+from.argument_node),
+                .second_argument_set=from.second_argument_node==UINT8_MAX?DIAMOND_NO_TYPE_SET:(uint16_t)(base+from.second_argument_node),
+                .callable_arity=from.id==DIAMOND_TYPE_NATIVE?from.native_kind:UINT8_MAX,
+                .callable_return_set=DIAMOND_NO_TYPE_SET};
+            if(from.id==DIAMOND_TYPE_CALLABLE&&from.signature<binding->signature_count) {
+                const DiamondBoundSignature signature=binding->signatures[from.signature];
+                member.callable_arity=signature.arity;
+                member.callable_parameters_typed=signature.parameters_typed;
+                if(signature.return_node!=UINT8_MAX)member.callable_return_set=(uint16_t)(base+signature.return_node);
+                if(signature.parameters_typed)
+                    for(size_t p=0;p<signature.arity;p++)
+                        member.callable_parameter_sets[p]=signature.parameter_nodes[p]==UINT8_MAX?
+                            DIAMOND_NO_TYPE_SET:(uint16_t)(base+signature.parameter_nodes[p]);
+            }
+            set.members[i]=member;
+        }
+        compiler->function->type_sets[base+node]=set;
+    }
+    return base;
+}
+
 static void publish_constructor_type(Compiler *compiler,uint16_t reg,int class_index,
         const ConstructorInference *inference,uint16_t explicit_type) {
     compiler->known_types[reg]=(uint16_t)(DIAMOND_TYPE_CLASS_BASE+class_index);
     if(compiler->program->classes[class_index]->type_parameter[0]=='\0')return;
     const size_t count=DIAMOND_CLASS_TYPE_PARAMETER_COUNT(compiler->program->classes[class_index]);
     uint16_t arguments[2]={DIAMOND_NO_TYPE_SET,DIAMOND_NO_TYPE_SET};
-    if(explicit_type!=DIAMOND_NO_TYPE_SET) {
+    const DiamondClass *class=compiler->program->classes[class_index];
+    if(class->fixed_type_arguments) {
+        for(size_t variable=0;variable<count;variable++) {
+            arguments[variable]=import_fixed_binding(compiler,&class->fixed_type_bindings[variable]);
+            if(arguments[variable]==DIAMOND_NO_TYPE_SET)return;
+        }
+    } else if(explicit_type!=DIAMOND_NO_TYPE_SET) {
         if(count==1)arguments[0]=explicit_type;
         else {
             const DiamondTypeMember descriptor=compiler->function->type_sets[explicit_type].members[0];
@@ -278,7 +317,7 @@ static void publish_constructor_type(Compiler *compiler,uint16_t reg,int class_i
         .id=(uint16_t)(DIAMOND_TYPE_CLASS_BASE+class_index),
         .argument_set=arguments[0],.second_argument_set=arguments[1],
         .callable_arity=UINT8_MAX,.callable_return_set=DIAMOND_NO_TYPE_SET}}};
-    if(explicit_type!=DIAMOND_NO_TYPE_SET||inference->exact)
+    if(class->fixed_type_arguments||explicit_type!=DIAMOND_NO_TYPE_SET||inference->exact)
         publish_known_type_set(compiler,reg,set);
     else compiler->tooling_type_sets[reg]=(int32_t)set;
 }
@@ -602,6 +641,9 @@ uint16_t parse_name(Compiler *compiler) {
         uint16_t arguments[8];size_t count=0;
         if(!parse_explicit_type_arguments(compiler,arguments,&count))return 0;
         const DiamondClass *class=compiler->program->classes[class_index];
+        if(class->fixed_type_arguments) {
+            fail(compiler,name,"inherited type arguments are fixed by the superclass");return 0;
+        }
         if(class->type_parameter[0]=='\0'||count!=DIAMOND_CLASS_TYPE_PARAMETER_COUNT(class)) {
             fail(compiler,name,DIAMOND_CLASS_TYPE_PARAMETER_COUNT(class)==2?
                 "class specialization requires exactly two declared type arguments":

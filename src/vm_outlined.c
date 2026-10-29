@@ -2240,7 +2240,7 @@ DiamondVmStatus new_instance_from_array(DiamondVm *vm,const DiamondChunk *chunk,
     registers[dest]=DIAMOND_OBJECT(instance);
     const DiamondMethod *initialize=lookup_method(chunk,class,
         "initialize",sizeof("initialize")-1);
-    if(instance->type_binding!=nullptr&&initialize==nullptr&&explicit_type==DIAMOND_NO_TYPE_SET)
+    if(instance->type_binding!=nullptr&&initialize==nullptr&&explicit_type==DIAMOND_NO_TYPE_SET&&!class->fixed_type_arguments)
         VM_RETURN(DIAMOND_VM_TYPE_ERROR);
     if(explicit_type!=DIAMOND_NO_TYPE_SET) {
         if(instance->type_binding==nullptr||

@@ -998,6 +998,8 @@ struct DiamondClass {
     /* Up to two constructor-bound instance type parameters. */
     char type_parameter[DIAMOND_MAX_FUNCTION_NAME];
     char second_type_parameter[DIAMOND_MAX_FUNCTION_NAME];
+    bool fixed_type_arguments;
+    DiamondTypeBinding fixed_type_bindings[2];
     /* This class's own position in its program's classes[] table (set when
      * the class is created or deserialized). Lets a class pointer be mapped
      * to the same class in a copy of the program without pointer arithmetic
@@ -2283,6 +2285,8 @@ bool diamond_native_method_satisfies(uint16_t receiver_type,const char *name,
  * Channel, Supervisor, Time, ...) that src/vm.c's copy already covered,
  * found the hard way while writing bench/tensor_matmul.d6. */
 void diamond_format_value_type(char *buffer, size_t capacity, DiamondValue value);
+bool diamond_bind_fixed_type(const DiamondTypeSet *sets,size_t count,uint16_t index,
+                            DiamondTypeBinding *binding);
 /* Writes a Time value's default string representation ("2026-08-30
  * 12:30:00 UTC", "... +0000", or a fixed-offset zone) into `buffer`,
  * returning the length written, 0 on failure. Exported so src/value.c's

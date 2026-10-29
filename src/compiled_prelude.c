@@ -150,6 +150,9 @@ static bool write_class(FILE *file, const DiamondClass *class) {
     if (!write_all(file, class->name, sizeof class->name)) return false;
     if (!write_all(file, class->type_parameter, sizeof class->type_parameter)) return false;
     if (!write_all(file, class->second_type_parameter, sizeof class->second_type_parameter)) return false;
+    const uint8_t fixed=class->fixed_type_arguments?1:0;
+    if(!write_all(file,&fixed,sizeof fixed))return false;
+    if(fixed&&!write_all(file,class->fixed_type_bindings,sizeof class->fixed_type_bindings))return false;
     if (!write_all(file, &class->declaration_line, sizeof class->declaration_line)) return false;
     if (!write_all(file, &class->declaration_column, sizeof class->declaration_column)) return false;
     if (!write_all(file, &class->declaration_start, sizeof class->declaration_start)) return false;
@@ -421,6 +424,11 @@ static bool read_class(const uint8_t **cursor, const uint8_t *end, DiamondClass 
     if (!read_bytes(cursor, end, out->second_type_parameter, sizeof out->second_type_parameter)) return false;
     if(memchr(out->second_type_parameter,'\0',sizeof out->second_type_parameter)==nullptr)return false;
     if(out->second_type_parameter[0]!='\0'&&out->type_parameter[0]=='\0')return false;
+    uint8_t fixed=0;
+    if(!read_bytes(cursor,end,&fixed,sizeof fixed)||fixed>1)return false;
+    out->fixed_type_arguments=fixed!=0;
+    if(fixed&&(!read_bytes(cursor,end,out->fixed_type_bindings,sizeof out->fixed_type_bindings)||
+       DIAMOND_CLASS_TYPE_PARAMETER_COUNT(out)==0))return false;
     if (!read_bytes(cursor, end, &out->declaration_line, sizeof out->declaration_line)) return false;
     if (!read_bytes(cursor, end, &out->declaration_column, sizeof out->declaration_column)) return false;
     if (!read_bytes(cursor, end, &out->declaration_start, sizeof out->declaration_start)) return false;
@@ -614,8 +622,13 @@ static bool read_program_body(const uint8_t *data, size_t size, DiamondProgram *
     return true;
 }
 
+static bool fixed_class_bindings_valid(const DiamondProgram *program,const DiamondClass *class);
+
 bool diamond_program_read_compiled(const uint8_t *data, size_t size, DiamondProgram *out) {
-    return read_program_body(data, size, out, nullptr, 0);
+    if(!read_program_body(data,size,out,nullptr,0))return false;
+    for(size_t i=0;i<out->class_count;i++)
+        if(!fixed_class_bindings_valid(out,out->classes[i]))return false;
+    return true;
 }
 
 /* Semantic checks over a program read back from disk, run before anything
@@ -638,6 +651,68 @@ static bool constants_are_scalar(const DiamondFunction *function) {
     return true;
 }
 
+static bool fixed_binding_node_valid(const DiamondProgram *program,const DiamondTypeBinding *binding,
+        uint8_t node,uint16_t active,uint16_t *reachable) {
+    if(node==UINT8_MAX)return true;
+    if(node>=binding->node_count||(active&(uint16_t)(1u<<node))!=0)return false;
+    active|=(uint16_t)(1u<<node);
+    *reachable|=(uint16_t)(1u<<node);
+    const DiamondBoundTypeNode *set=&binding->nodes[node];
+    if(set->count==0||set->count>DIAMOND_BOUND_TYPE_MEMBERS)return false;
+    for(size_t i=0;i<set->count;i++) {
+        const DiamondBoundTypeMember member=set->members[i];
+        const bool class_type=member.id>=DIAMOND_TYPE_CLASS_BASE&&member.id<DIAMOND_TYPE_CLASS_LIMIT;
+        if(member.id>=DIAMOND_TYPE_CLASS_LIMIT&&member.id<DIAMOND_TYPE_INTERFACE_BASE&&
+           member.id!=DIAMOND_TYPE_NATIVE)return false;
+        if(member.argument_node!=UINT8_MAX&&!class_type&&member.id!=DIAMOND_TYPE_ARRAY&&
+           member.id!=DIAMOND_TYPE_HASH)return false;
+        if(member.second_argument_node!=UINT8_MAX&&!class_type&&member.id!=DIAMOND_TYPE_HASH)return false;
+        if(member.id>=DIAMOND_TYPE_VARIABLE_BASE&&member.id<DIAMOND_TYPE_INTERFACE_BASE)return false;
+        if(member.id>=DIAMOND_TYPE_INTERFACE_BASE&&
+           (size_t)(member.id-DIAMOND_TYPE_INTERFACE_BASE)>=program->interface_count)return false;
+        if(member.id>=DIAMOND_TYPE_CLASS_BASE&&member.id<DIAMOND_TYPE_CLASS_LIMIT&&
+           (size_t)(member.id-DIAMOND_TYPE_CLASS_BASE)>=program->class_count)return false;
+        if(member.id==DIAMOND_TYPE_NATIVE&&
+           strcmp(diamond_native_type_name(member.native_kind),"<native>")==0)return false;
+        if(!fixed_binding_node_valid(program,binding,member.argument_node,active,reachable)||
+           !fixed_binding_node_valid(program,binding,member.second_argument_node,active,reachable))return false;
+        if(member.id==DIAMOND_TYPE_CALLABLE&&member.signature!=UINT8_MAX) {
+            if(member.signature>=binding->signature_count)return false;
+            const DiamondBoundSignature *signature=&binding->signatures[member.signature];
+            const bool zero=false,one=true;
+            if((memcmp(&signature->parameters_typed,&zero,sizeof zero)!=0&&
+                memcmp(&signature->parameters_typed,&one,sizeof one)!=0)||
+               memcmp(&signature->variadic,&zero,sizeof zero)!=0||
+               signature->required_arity!=signature->arity||
+               (signature->parameters_typed&&signature->arity>16))return false;
+            if(signature->parameters_typed)
+                for(size_t p=0;p<signature->arity;p++)
+                    if(!fixed_binding_node_valid(program,binding,signature->parameter_nodes[p],active,reachable))return false;
+            if(!fixed_binding_node_valid(program,binding,signature->return_node,active,reachable))return false;
+        }
+    }
+    return true;
+}
+
+static bool fixed_class_bindings_valid(const DiamondProgram *program,const DiamondClass *class) {
+    if(!class->fixed_type_arguments)return true;
+    if(class->superclass==DIAMOND_NO_CLASS||class->superclass>=program->class_count||
+       class->superclass==class->index)return false;
+    const DiamondClass *parent=program->classes[class->superclass];
+    const size_t count=DIAMOND_CLASS_TYPE_PARAMETER_COUNT(class);
+    if(count==0||count!=DIAMOND_CLASS_TYPE_PARAMETER_COUNT(parent))return false;
+    const bool zero=false;
+    for(size_t i=0;i<count;i++) {
+        const DiamondTypeBinding *binding=&class->fixed_type_bindings[i];
+        uint16_t reachable=0;
+        if(memcmp(&binding->invalid,&zero,sizeof zero)!=0||binding->node_count==0||
+           binding->node_count>DIAMOND_BOUND_TYPE_NODES||binding->signature_count>DIAMOND_BOUND_SIGNATURES||
+           !fixed_binding_node_valid(program,binding,0,0,&reachable)||
+           reachable!=(uint16_t)((1u<<binding->node_count)-1u))return false;
+    }
+    return true;
+}
+
 static bool program_is_valid(const DiamondProgram *program) {
     if (!constants_are_scalar(&program->entry)) return false;
     for (size_t index = 0; index < program->function_count; index++)
@@ -645,6 +720,7 @@ static bool program_is_valid(const DiamondProgram *program) {
     for (size_t index = 0; index < program->class_count; index++) {
         const DiamondClass *class = program->classes[index];
         if (class->superclass != DIAMOND_NO_CLASS && class->superclass >= program->class_count) return false;
+        if(!fixed_class_bindings_valid(program,class))return false;
         if (!method_table_valid(class->methods, class->method_count, program->function_count) ||
             !method_table_valid(class->singleton_methods, class->singleton_method_count,
                 program->function_count))
@@ -705,7 +781,7 @@ enum { DIAMOND_CACHE_MAGIC_LENGTH = 8 };
  * 9: classes store a type parameter; methods distinguish its instance binding.
  * 10: NEW_TYPED constructs explicitly specialized generic instances.
  * 11: generic class methods bind method variables after the receiver slot. */
-enum { DIAMOND_CACHE_FORMAT_VERSION = 12 };
+enum { DIAMOND_CACHE_FORMAT_VERSION = 13 };
 
 /* A checksum of the compiler's own sources and prelude (every .c and .h
  * file under src/, plus lib/core.d6 and lib/core/), passed in by the

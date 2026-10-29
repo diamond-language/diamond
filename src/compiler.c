@@ -354,6 +354,17 @@ static bool generic_interface_signature(const Compiler *compiler,
     free(arena.sets);free(arena.signature_map);free(arena.argument_map);free(arena.method_map);return found;
 }
 
+static const DiamondMethod *inherited_interface_method(const Compiler *compiler,
+        const DiamondClass *class,const char *name) {
+    for(size_t depth=0;depth<compiler->program->class_count;depth++) {
+        for(size_t method=0;method<class->method_count;method++)
+            if(strcmp(class->methods[method].name,name)==0)return &class->methods[method];
+        if(class->superclass==DIAMOND_NO_CLASS||class->superclass>=compiler->program->class_count)break;
+        class=compiler->program->classes[class->superclass];
+    }
+    return nullptr;
+}
+
 static bool generic_class_satisfies_interface(const Compiler *compiler,
         const DiamondTypeSet *arguments,DiamondTypeMember receiver,uint16_t expected) {
     if(generic_interface_depth>=32)return false;
@@ -368,8 +379,8 @@ static bool generic_class_satisfies_interface(const Compiler *compiler,
     for(size_t required=0;required<interface->method_count&&matches;required++) {
         const DiamondInterfaceMethod *wanted=&interface->methods[required];
         bool found=false;
-        for(size_t method=0;method<class->method_count&&!found;method++) {
-            const DiamondMethod *candidate=&class->methods[method];
+        for(const DiamondMethod *candidate=inherited_interface_method(compiler,class,wanted->name);
+            candidate!=nullptr&&!found;candidate=nullptr) {
             if(strcmp(candidate->name,wanted->name)!=0||wanted->arity<candidate->required_arity||
                wanted->arity>candidate->arity||candidate->function_index>=compiler->program->function_count||
                candidate->source_chunk!=nullptr)continue;
@@ -2612,7 +2623,8 @@ int parse_type_annotation(Compiler *compiler) {
                  (type>=DIAMOND_TYPE_CLASS_BASE&&type<DIAMOND_TYPE_CLASS_LIMIT)))||
                 (type>=DIAMOND_TYPE_CLASS_BASE&&type<DIAMOND_TYPE_VARIABLE_BASE&&
                  (size_t)(type-DIAMOND_TYPE_CLASS_BASE)<compiler->program->class_count&&
-                 compiler->program->classes[type-DIAMOND_TYPE_CLASS_BASE]->type_parameter[0]!='\0')) {
+                 compiler->program->classes[type-DIAMOND_TYPE_CLASS_BASE]->type_parameter[0]!='\0'&&
+                 !compiler->program->classes[type-DIAMOND_TYPE_CLASS_BASE]->fixed_type_arguments)) {
                 advance_token(compiler);
                 skip_newlines(compiler);
                 argument_set=(uint16_t)parse_type_annotation(compiler);

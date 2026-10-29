@@ -256,8 +256,14 @@ bool bind_explicit_class_type(const DiamondChunk *chunk,uint16_t index,
     return !binding->invalid;
 }
 
+bool diamond_bind_fixed_type(const DiamondTypeSet *sets,size_t count,uint16_t index,
+                            DiamondTypeBinding *binding) {
+    const DiamondChunk context={.type_sets=sets,.type_set_count=count};
+    return bind_explicit_class_type(&context,index,binding);
+}
+
 bool bind_explicit_instance_types(const DiamondChunk *chunk,uint16_t index,DiamondInstance *instance) {
-    if(index>=chunk->type_set_count||instance->type_binding==nullptr)return false;
+    if(index>=chunk->type_set_count||instance->type_binding==nullptr||instance->class->fixed_type_arguments)return false;
     if(DIAMOND_CLASS_TYPE_PARAMETER_COUNT(instance->class)==1)
         return bind_explicit_class_type(chunk,index,instance->type_binding);
     const DiamondTypeSet *set=&chunk->type_sets[index];
@@ -360,8 +366,8 @@ static bool generic_class_implements(const DiamondChunk *chunk,const DiamondClas
     for(size_t required=0;required<interface->method_count&&matches;required++) {
         const DiamondInterfaceMethod *wanted=&interface->methods[required];
         bool found=false;
-        for(size_t method=0;method<class->method_count&&!found;method++) {
-            const DiamondMethod *candidate=&class->methods[method];
+        for(const DiamondMethod *candidate=lookup_method(chunk,class,wanted->name,strlen(wanted->name));
+            candidate!=nullptr&&!found;candidate=nullptr) {
             if(strcmp(candidate->name,wanted->name)!=0||wanted->arity<candidate->required_arity||
                wanted->arity>candidate->arity||candidate->function_index>=chunk->function_count||
                candidate->source_chunk!=nullptr)continue;

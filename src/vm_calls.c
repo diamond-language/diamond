@@ -837,6 +837,7 @@ __attribute__((noinline))
 DiamondVmStatus bind_instance_constructor_type(DiamondVm *vm,
         const DiamondChunk *chunk,const DiamondFunction *fn,
         const DiamondValue *arguments,size_t count,DiamondInstance *instance) {
+    if(instance->class->fixed_type_arguments)return DIAMOND_VM_OK;
     if(!fn->class_type_variable||fn->class_type_variable>fn->type_variable_count||
        fn->type_variable_count>8||
        fn->class_type_variable!=DIAMOND_CLASS_TYPE_PARAMETER_COUNT(instance->class))
@@ -881,7 +882,7 @@ DiamondVmStatus diamond_jit_new_instance(DiamondVm *vm, const DiamondChunk *chun
     registers[dest]=DIAMOND_OBJECT(instance);
     const DiamondMethod *init=lookup_method(
         chunk,class,"initialize",sizeof("initialize")-1);
-    if(instance->type_binding!=nullptr&&init==nullptr)return DIAMOND_VM_TYPE_ERROR;
+    if(instance->type_binding!=nullptr&&init==nullptr&&!class->fixed_type_arguments)return DIAMOND_VM_TYPE_ERROR;
     if(init!=nullptr) {
         if(argc<init->required_arity||
            (argc>init->arity && !init->has_variadic))
