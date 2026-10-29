@@ -9,6 +9,7 @@
 - **Budget is tight.** Do not build compatibility shims for an out-of-date dependency: bump it and relock. Do not over-engineer for scale: the registry is a tiny VM serving a mostly static repository of skins with a few social features, with no budget for more (karma races were waved off for that reason). Do not build features the roadmap says need "a concrete use case" without one.
 - **Scripts go in files.** Never paste a long script, heredoc or chained command block into a shell call. Write it to a file (the session scratchpad, or `tools/` when it is worth keeping) and run it by path. Background commands are echoed to the owner when they finish, so keep them to one short line. Use `git commit -F file` for long messages. Report results in a few plain sentences, not pasted output.
 - **Check before claiming.** Reviewers (human or model) over-claim: verify a finding against the code before fixing it. Report outcomes as they are, including a merge or step that went wrong.
+- **Keep the changelog current.** Include user-visible language and tooling changes in `CHANGELOG.md` under `Unreleased` in the same pull request. Summarize capability milestones rather than every implementation step.
 - Use they/them for people whose pronouns are not stated.
 
 ## Landing a change
