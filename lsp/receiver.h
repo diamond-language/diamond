@@ -28,6 +28,9 @@ bool receiver_has_explicit_receiver(const char *source,size_t stop_offset);
  * or single-class instance-method call result, plus a generic call whose class
  * bindings can be inferred from bare type-variable parameters or supplied
  * explicitly as plain class names or nested class-element `Array` shapes.
+ * Qualified class names and qualified generic type arguments are supported,
+ * including nested specializations and whitespace around `::`; every constant
+ * path must match its full declaration name.
  * Inference also descends through matching parameterized shapes such as
  * `Array[T]`/`Array[Pet | Leaf]` and
  * `Hash[String, T]`/`Hash[String, Pet | Leaf]`.

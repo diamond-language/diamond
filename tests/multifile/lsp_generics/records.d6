@@ -1,0 +1,19 @@
+require "models"
+module ImportedRecords
+  class Box[T]
+    def initialize(value: T)
+      @value = value
+    end
+    def value() -> T = @value
+    def all() -> Array[T] = [@value]
+    def echo[U](value: U) -> U = value
+  end
+  class Rows[T] < Box[Array[T]]
+  end
+  struct Pair[T, E](value: T, error: E)
+  end
+  struct Tagged[T, U](tag: U) < Pair[T, ImportedModels::Leaf]
+  end
+  def self.make_pet() -> Box[ImportedModels::Pet] = Box[ImportedModels::Pet].new(ImportedModels::Pet.new())
+end
+def imported_identity[T](value: T) -> T = value

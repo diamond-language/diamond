@@ -314,7 +314,13 @@ search over a real (if scoped) lexical symbol table:
     Capturing/boxing a local preserves the separate tooling fact through the
     capture cell, including when the loaded value is assigned to another local.
     Module-qualified class names work as receivers (`Shapes::Table.new().describe()`,
-    `Outer::Inner::Deep.new().dive()`), and a module's singleton method
+    `Outer::Inner::Deep.new().dive()`), including explicit generic construction such
+    as `Records::Box[Models::Pet].new(...).value().`. Qualified names also work in
+    nested class/Array arguments and explicit function or method type arguments.
+    Inherited readers and indexed returns retain those bindings across imports;
+    whitespace around `::` is accepted, and names are matched by their full path.
+    Unsaved dependency edits refresh member lists and definition locations.
+    A module's singleton method
     (`Shapes.build().describe()`, `def self.build` or `module_function`) publishes its
     result class like a top-level function. A call on a module with no resolvable
     return stays unresolved. Any other receiver this

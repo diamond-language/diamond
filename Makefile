@@ -714,6 +714,7 @@ test-lsp: $(BUILD_DIR)/diamond-lsp $(BUILD_DIR)/receiver_test $(BUILD_DIR)/json_
 	$(BUILD_DIR)/formatting_test $$(find tests/cases examples packages lib -name '*.d6' | sort)
 	bash tests/analysis_cache_test.sh
 	bash tests/v3_editor_test.sh
+	bash tests/lsp_imported_generics_test.sh
 	bash tests/lsp_test.sh
 
 DAP_SOURCES := $(wildcard dap/*.c)

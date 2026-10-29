@@ -1,0 +1,20 @@
+require "records"
+def inspect_imports()
+  ImportedRecords::Box[ImportedModels::Pet].new(ImportedModels::Pet.new()).value().title()
+  ImportedRecords::Box.new(ImportedModels::Pet.new()).value().title()
+  ImportedRecords::Box[ImportedModels::Pet].new(ImportedModels::Pet.new()).all()[0].title()
+  ImportedRecords::Box.new(ImportedModels::Pet.new()).echo[ImportedModels::Leaf](ImportedModels::Leaf.new()).ping()
+  imported_identity[ImportedModels::Pet](ImportedModels::Pet.new()).title()
+  ImportedRecords::Rows[ImportedModels::Pet].new([ImportedModels::Pet.new()]).value()[0].title()
+  ImportedRecords::Tagged[ImportedModels::Pet, ImportedModels::Pet].new(ImportedModels::Pet.new(), ImportedModels::Leaf.new(), ImportedModels::Pet.new()).error().ping()
+  ImportedRecords::Tagged.new(ImportedModels::Pet.new(), ImportedModels::Leaf.new(), ImportedModels::Pet.new()).tag().title()
+  ImportedRecords::Box[ImportedRecords::Box[ImportedModels::Pet]].new(ImportedRecords::Box.new(ImportedModels::Pet.new())).value().value().title()
+  ImportedRecords.make_pet().value().title()
+  ImportedRecords :: Box[ImportedModels :: Pet].new(ImportedModels::Pet.new()).all()[0].title()
+  ImportedRecords::Box[ImportedModels::Nested::Pet].new(ImportedModels::Nested::Pet.new()).value().deep()
+  ImportedRecords::Box[Array[ImportedModels::Pet]].new([ImportedModels::Pet.new()]).value()[0].title()
+  ImportedRecords::Box[plain_model].new(plain_model.new()).value().lower()
+end
+def inspect_unknown(value)
+  ImportedRecords::Box.new(value).value().title()
+end
