@@ -701,6 +701,8 @@ static bool fixed_class_bindings_valid(const DiamondProgram *program,const Diamo
     const DiamondClass *parent=program->classes[class->superclass];
     const size_t count=DIAMOND_CLASS_TYPE_PARAMETER_COUNT(class);
     if(count==0||count!=DIAMOND_CLASS_TYPE_PARAMETER_COUNT(parent))return false;
+    if(parent->fixed_type_arguments&&memcmp(class->fixed_type_bindings,parent->fixed_type_bindings,
+        sizeof class->fixed_type_bindings)!=0)return false;
     const bool zero=false;
     for(size_t i=0;i<count;i++) {
         const DiamondTypeBinding *binding=&class->fixed_type_bindings[i];

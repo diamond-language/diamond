@@ -2287,6 +2287,8 @@ bool diamond_native_method_satisfies(uint16_t receiver_type,const char *name,
 void diamond_format_value_type(char *buffer, size_t capacity, DiamondValue value);
 bool diamond_bind_fixed_type(const DiamondTypeSet *sets,size_t count,uint16_t index,
                             DiamondTypeBinding *binding);
+bool diamond_binding_type_sets(const DiamondTypeBinding *binding,DiamondTypeSet *sets,
+                              size_t capacity,uint16_t base);
 /* Writes a Time value's default string representation ("2026-08-30
  * 12:30:00 UTC", "... +0000", or a fixed-offset zone) into `buffer`,
  * returning the length written, 0 on failure. Exported so src/value.c's

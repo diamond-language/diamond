@@ -249,30 +249,9 @@ static uint16_t import_fixed_binding(Compiler *compiler,const DiamondTypeBinding
     if(binding->invalid||binding->node_count==0||
        !reserve_type_sets(compiler,binding->node_count))return DIAMOND_NO_TYPE_SET;
     const uint16_t base=(uint16_t)compiler->function->type_set_count;
+    if(!diamond_binding_type_sets(binding,compiler->function->type_sets+base,binding->node_count,base))
+        return DIAMOND_NO_TYPE_SET;
     compiler->function->type_set_count+=binding->node_count;
-    for(size_t node=0;node<binding->node_count;node++) {
-        DiamondTypeSet set={.count=binding->nodes[node].count};
-        for(size_t i=0;i<set.count;i++) {
-            const DiamondBoundTypeMember from=binding->nodes[node].members[i];
-            DiamondTypeMember member={.id=from.id,
-                .argument_set=from.argument_node==UINT8_MAX?DIAMOND_NO_TYPE_SET:(uint16_t)(base+from.argument_node),
-                .second_argument_set=from.second_argument_node==UINT8_MAX?DIAMOND_NO_TYPE_SET:(uint16_t)(base+from.second_argument_node),
-                .callable_arity=from.id==DIAMOND_TYPE_NATIVE?from.native_kind:UINT8_MAX,
-                .callable_return_set=DIAMOND_NO_TYPE_SET};
-            if(from.id==DIAMOND_TYPE_CALLABLE&&from.signature<binding->signature_count) {
-                const DiamondBoundSignature signature=binding->signatures[from.signature];
-                member.callable_arity=signature.arity;
-                member.callable_parameters_typed=signature.parameters_typed;
-                if(signature.return_node!=UINT8_MAX)member.callable_return_set=(uint16_t)(base+signature.return_node);
-                if(signature.parameters_typed)
-                    for(size_t p=0;p<signature.arity;p++)
-                        member.callable_parameter_sets[p]=signature.parameter_nodes[p]==UINT8_MAX?
-                            DIAMOND_NO_TYPE_SET:(uint16_t)(base+signature.parameter_nodes[p]);
-            }
-            set.members[i]=member;
-        }
-        compiler->function->type_sets[base+node]=set;
-    }
     return base;
 }
 

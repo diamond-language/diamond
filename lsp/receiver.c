@@ -1069,6 +1069,11 @@ static bool resolve_target_bindings(const DiamondProgram *program,
             if(ancestor!=function->owner_class)return false;
         }
         for(size_t variable=0;variable<function->class_type_variable;variable++) {
+            if(chunk->classes[receiver_class]->fixed_type_arguments) {
+                if(!binding_from_graph(chunk,&chunk->classes[receiver_class]->fixed_type_bindings[variable],
+                    0,&bindings[variable],depth+1))return false;
+                continue;
+            }
             const uint8_t child=variable==0?member.argument_node:member.second_argument_node;
             if(!binding_from_graph(chunk,&receiver.graph,child,&bindings[variable],depth+1))return false;
         }

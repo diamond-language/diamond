@@ -522,6 +522,23 @@ static bool type_set_satisfies(const Compiler *compiler,uint16_t known_index,
     return true;
 }
 
+/* Keep the temporary fixed-argument table out of ordinary comparison
+ * frames: only a bare fixed subclass compared to a typed ancestor needs it. */
+__attribute__((noinline))
+static bool fixed_member_satisfies(const Compiler *compiler,DiamondTypeMember known,
+        const DiamondTypeSet *expected_sets,DiamondTypeMember expected) {
+    const DiamondClass *fixed=compiler->program->classes[known.id-DIAMOND_TYPE_CLASS_BASE];
+    DiamondTypeSet sets[2*DIAMOND_BOUND_TYPE_NODES];size_t count=0;
+    for(size_t variable=0;variable<DIAMOND_CLASS_TYPE_PARAMETER_COUNT(fixed);variable++) {
+        if(!diamond_binding_type_sets(&fixed->fixed_type_bindings[variable],sets+count,
+            2*DIAMOND_BOUND_TYPE_NODES-count,(uint16_t)count))return false;
+        if(variable==0)known.argument_set=(uint16_t)count;
+        else known.second_argument_set=(uint16_t)count;
+        count+=fixed->fixed_type_bindings[variable].node_count;
+    }
+    return type_members_satisfy_across(compiler,sets,known,expected_sets,expected);
+}
+
 bool type_members_satisfy_across(const Compiler *compiler,
     const DiamondTypeSet *known_sets,DiamondTypeMember known,
     const DiamondTypeSet *expected_sets,DiamondTypeMember expected) {
@@ -533,6 +550,16 @@ bool type_members_satisfy_across(const Compiler *compiler,
        DIAMOND_CLASS_TYPE_PARAMETER_COUNT(compiler->program->classes[known.id-DIAMOND_TYPE_CLASS_BASE])>0)
         return generic_class_satisfies_interface(compiler,known_sets,known,expected.id);
     if(!known_type_satisfies_one(compiler,known.id,expected.id))return false;
+    if(expected.id>=DIAMOND_TYPE_CLASS_BASE&&expected.id<DIAMOND_TYPE_CLASS_LIMIT&&
+       (size_t)(expected.id-DIAMOND_TYPE_CLASS_BASE)<compiler->program->class_count&&
+       compiler->program->classes[expected.id-DIAMOND_TYPE_CLASS_BASE]->fixed_type_arguments)return true;
+    if(known.id>=DIAMOND_TYPE_CLASS_BASE&&known.id<DIAMOND_TYPE_CLASS_LIMIT&&
+       (size_t)(known.id-DIAMOND_TYPE_CLASS_BASE)<compiler->program->class_count&&
+       compiler->program->classes[known.id-DIAMOND_TYPE_CLASS_BASE]->fixed_type_arguments&&
+       known.argument_set==DIAMOND_NO_TYPE_SET&&expected.argument_set!=DIAMOND_NO_TYPE_SET) {
+        return fixed_member_satisfies(compiler,known,expected_sets,expected);
+    }
+
     if(expected.id==DIAMOND_TYPE_CALLABLE) {
         if(expected.callable_arity!=UINT8_MAX&&
            known.callable_arity!=expected.callable_arity)return false;

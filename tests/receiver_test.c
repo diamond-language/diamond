@@ -204,6 +204,7 @@ int main(void) {
         "  read_generic_pet(GenericRecords[Pet].new(Pet.new())).bark()\n"
         "  read_generic_pet(GenericRecords.new(Pet.new())).bark()\n"
         "  FixedPetRecords.new(Pet.new()).value().bark()\n"
+        "  GenericRecords[FixedPetRecords].new(FixedPetRecords.new(Pet.new())).value().value().bark()\n"
         "end\n"
         "struct MultiRecord[T, E](value: T, error: E)\n"
         "  def echo[U](value: U) -> U = value\n"
@@ -1146,6 +1147,7 @@ int main(void) {
     failed|=check_receiver(program,&chunk,combined,"read_generic_pet(GenericRecords[Pet].new(Pet.new())).","Pet",false);
     failed|=check_receiver(program,&chunk,combined,"read_generic_pet(GenericRecords.new(Pet.new())).","Pet",false);
     failed|=check_receiver(program,&chunk,combined,"FixedPetRecords.new(Pet.new()).value().","Pet",false);
+    failed|=check_receiver(program,&chunk,combined,"GenericRecords[FixedPetRecords].new(FixedPetRecords.new(Pet.new())).value().value().","Pet",false);
     failed|=check_receiver(program,&chunk,combined,"multi.error().","Leaf",false);
     failed|=check_receiver(program,&chunk,combined,"multi.value().","Pet",false);
     failed|=check_receiver(program,&chunk,combined,"multi.echo[Pet](Pet.new()).","Pet",false);
