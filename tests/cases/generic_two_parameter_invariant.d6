@@ -1,0 +1,4 @@
+struct Pair[T, E](first: T, second: E)
+end
+def accept(pair: Pair[Int, Int]) = pair
+accept(Pair[Int, String].new(1, "wrong"))

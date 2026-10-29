@@ -337,10 +337,10 @@ DiamondVmStatus invoke_resolved_method_helper(DiamondVm *vm,
     const DiamondChunk *function_chunk=
         method->source_chunk!=nullptr?method->source_chunk:owner_chunk;
     const DiamondFunction *fn=function_chunk->functions[method->function_index];
-    const size_t class_offset=fn->class_type_variable?1u:0u;
+    const size_t class_offset=fn->class_type_variable;
     if(typed&&(fn->type_variable_count>8||fn->type_variable_count<class_offset||
        type_argument_count!=fn->type_variable_count-class_offset)) {
-        if(fn->class_type_variable&&fn->type_variable_count==1)
+        if(fn->class_type_variable&&fn->type_variable_count==fn->class_type_variable)
             snprintf(vm->error,sizeof vm->error,
                 "generic class type arguments are fixed by construction");
         return DIAMOND_VM_TYPE_ERROR;
@@ -835,7 +835,9 @@ __attribute__((noinline))
 DiamondVmStatus bind_instance_constructor_type(DiamondVm *vm,
         const DiamondChunk *chunk,const DiamondFunction *fn,
         const DiamondValue *arguments,size_t count,DiamondInstance *instance) {
-    if(!fn->class_type_variable||fn->type_variable_count==0||fn->type_variable_count>8)
+    if(!fn->class_type_variable||fn->class_type_variable>fn->type_variable_count||
+       fn->type_variable_count>8||
+       fn->class_type_variable!=DIAMOND_CLASS_TYPE_PARAMETER_COUNT(instance->class))
         return DIAMOND_VM_TYPE_ERROR;
     DiamondTypeBinding bindings[8]={};
     for(size_t parameter=0;parameter<count&&
@@ -845,12 +847,13 @@ DiamondVmStatus bind_instance_constructor_type(DiamondVm *vm,
         if(set!=DIAMOND_NO_TYPE_SET&&set<fn->type_set_count)
             infer_from_value(chunk,arguments[parameter],fn->type_sets,set,bindings);
     }
-    if(bindings[0].node_count==0||bindings[0].nodes[0].count==0) {
+    for(size_t variable=0;variable<DIAMOND_CLASS_TYPE_PARAMETER_COUNT(instance->class);variable++)
+    if(bindings[variable].node_count==0||bindings[variable].nodes[0].count==0) {
         snprintf(vm->error,sizeof vm->error,
             "cannot infer generic class type parameter from constructor arguments");
         return DIAMOND_VM_TYPE_ERROR;
     }
-    *instance->type_binding=bindings[0];
+    memcpy(instance->type_binding,bindings,DIAMOND_CLASS_TYPE_PARAMETER_COUNT(instance->class)*sizeof(DiamondTypeBinding));
     return DIAMOND_VM_OK;
 }
 

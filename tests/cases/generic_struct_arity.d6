@@ -1,2 +1,2 @@
-struct Item[T, U](value: T)
+struct Item[T, U, V](value: T)
 end

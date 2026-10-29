@@ -107,9 +107,11 @@ task unchanged; missing projects and duplicate project names become field
 errors. Project/status filters run in SQL and projects are explicitly preloaded
 in a batch. Text search uses those rows and associations without extra queries.
 
-`BoardWrite[T]` is a generic struct used for write results by both the CLI and
+`BoardWrite[T, E]` is a generic struct used for write results by both the CLI and
 terminal controller. Its generated initializer checks the model payload and
-validation changeset; `value()` returns the model type after a successful write.
+validation changeset; `value()` returns the model type after a successful write,
+and `error()` returns the independently bound error type. The store specializes
+`E` as `Mjolnir::Changeset`.
 
 `BoardRecords[T]` checks model rows at the Mjolnir read boundary: projects use
 `BoardRecords[BoardProject]`, tasks use `BoardRecords[BoardTask]`, and single-row

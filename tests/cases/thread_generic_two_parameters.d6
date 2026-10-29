@@ -1,0 +1,10 @@
+struct Pair[T, E](value: T, error: E)
+end
+def worker(pair: Pair[Int, String]) -> Pair[Int, String]
+  puts(pair.value())
+  puts(pair.error())
+  pair.dup()
+end
+pair = Thread.new(worker, Pair[Int, String].new(42, "copied")).join()
+puts(pair.value())
+puts(pair.error())

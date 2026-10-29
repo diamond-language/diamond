@@ -1,0 +1,21 @@
+class Deferred[T, E]
+end
+class Defaulted[T, E]
+  def initialize(value: T, error: E = "default")
+    @value = value
+    @error = error
+  end
+  def value() -> T = @value
+  def error() -> E = @error
+end
+class Blocked[T, E]
+  def initialize(value: T, callback: Callable[[T], E])
+    @error = callback(value)
+  end
+  def error() -> E = @error
+end
+def verify(value: Deferred[Int, String]) = true
+puts(verify(Deferred[Int, String].new()))
+puts(Defaulted[Int, String].new(1).error())
+puts(Defaulted.new(error: "inferred", value: 2).error())
+puts(Blocked[Int, String].new(3) do |value| value.to_s() end.error())

@@ -816,7 +816,7 @@ static void infer_contextual_type_set(Compiler *compiler,
 static void infer_contextual_argument(Compiler *compiler,
         const DiamondFunction *target,size_t parameter,uint16_t argument,
         uint16_t *bindings) {
-    if((target->class_type_variable&&target->type_variable_count==1)||
+    if((target->class_type_variable&&target->type_variable_count==target->class_type_variable)||
        parameter>=DIAMOND_MAX_DECLARED_PARAMETERS)return;
     const uint16_t expected=target->parameter_type_sets[parameter];
     if(expected==DIAMOND_NO_TYPE_SET||expected>=target->type_set_count)return;
@@ -837,7 +837,7 @@ static bool constructor_parameter_binds_class(const DiamondFunction *target,
     const DiamondTypeSet *set=&target->type_sets[index];
     for(size_t member=0;member<set->count;member++) {
         const DiamondTypeMember type=set->members[member];
-        if(type.id==DIAMOND_TYPE_VARIABLE_BASE)return true;
+        if(type.id>=DIAMOND_TYPE_VARIABLE_BASE&&type.id<DIAMOND_TYPE_VARIABLE_BASE+target->class_type_variable)return true;
         if(constructor_parameter_binds_class(target,type.argument_set,depth+1)||
            constructor_parameter_binds_class(target,type.second_argument_set,depth+1)||
            constructor_parameter_binds_class(target,type.callable_return_set,depth+1))return true;
@@ -857,7 +857,7 @@ static bool constructor_input_complete(const Compiler *compiler,
     const DiamondTypeSet *known=&compiler->function->type_sets[actual];
     if(wanted->count!=1||known->count==0)return false;
     const DiamondTypeMember type=wanted->members[0];
-    if(type.id==DIAMOND_TYPE_VARIABLE_BASE)
+    if(type.id>=DIAMOND_TYPE_VARIABLE_BASE&&type.id<DIAMOND_TYPE_VARIABLE_BASE+target->class_type_variable)
         return !type_set_contains_variable(compiler,actual);
     if(known->count!=1||known->members[0].id!=type.id)return false;
     const DiamondTypeMember value=known->members[0];
@@ -898,7 +898,7 @@ bool infer_constructor_argument(Compiler *compiler,const DiamondFunction *target
     if(!constructor_input_complete(compiler,target,expected,(uint16_t)actual,0))return false;
     const DiamondTypeSet *wanted=&target->type_sets[expected];
     const DiamondTypeSet *known=&compiler->function->type_sets[actual];
-    if(wanted->count!=1||wanted->members[0].id!=DIAMOND_TYPE_VARIABLE_BASE||
+    if(wanted->count!=1||(wanted->members[0].id<DIAMOND_TYPE_VARIABLE_BASE||wanted->members[0].id>=DIAMOND_TYPE_VARIABLE_BASE+target->class_type_variable)||
        known->count!=1||
        !(known->members[0].id<=DIAMOND_TYPE_NIL||known->members[0].id==DIAMOND_TYPE_SYMBOL))
         *exact=false;

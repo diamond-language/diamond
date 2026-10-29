@@ -315,7 +315,11 @@ bool type_members_satisfy_across(const Compiler *compiler,
                                  expected_sets,expected.argument_set))return false;
     if(expected.id>=DIAMOND_TYPE_CLASS_BASE&&expected.id<DIAMOND_TYPE_VARIABLE_BASE)
         return type_sets_satisfy_across(compiler,expected_sets,expected.argument_set,
-            known_sets,known.argument_set);
+            known_sets,known.argument_set)&&
+            (expected.second_argument_set==DIAMOND_NO_TYPE_SET||
+             (known.second_argument_set!=DIAMOND_NO_TYPE_SET&&
+              type_sets_satisfy_across(compiler,known_sets,known.second_argument_set,expected_sets,expected.second_argument_set)&&
+              type_sets_satisfy_across(compiler,expected_sets,expected.second_argument_set,known_sets,known.second_argument_set)));
     if(expected.id!=DIAMOND_TYPE_HASH)return true;
     return known.second_argument_set!=DIAMOND_NO_TYPE_SET&&
         type_sets_satisfy_across(compiler,known_sets,known.second_argument_set,
@@ -366,7 +370,11 @@ static bool type_member_satisfies(const Compiler *compiler,
        !type_set_satisfies(compiler,known.argument_set,expected.argument_set))
         return false;
     if(expected.id>=DIAMOND_TYPE_CLASS_BASE&&expected.id<DIAMOND_TYPE_VARIABLE_BASE)
-        return type_set_satisfies(compiler,expected.argument_set,known.argument_set);
+        return type_set_satisfies(compiler,expected.argument_set,known.argument_set)&&
+            (expected.second_argument_set==DIAMOND_NO_TYPE_SET||
+             (known.second_argument_set!=DIAMOND_NO_TYPE_SET&&
+              type_set_satisfies(compiler,known.second_argument_set,expected.second_argument_set)&&
+              type_set_satisfies(compiler,expected.second_argument_set,known.second_argument_set)));
     if(expected.id!=DIAMOND_TYPE_HASH)return true;
     return known.second_argument_set!=DIAMOND_NO_TYPE_SET&&
         expected.second_argument_set!=DIAMOND_NO_TYPE_SET&&
@@ -2394,11 +2402,17 @@ int parse_type_annotation(Compiler *compiler) {
                 advance_token(compiler);
                 skip_newlines(compiler);
                 argument_set=(uint16_t)parse_type_annotation(compiler);
-                if(type==DIAMOND_TYPE_HASH) {
+                if(type==DIAMOND_TYPE_HASH||
+                   (type>=DIAMOND_TYPE_CLASS_BASE&&type<DIAMOND_TYPE_CLASS_LIMIT&&
+                    (size_t)(type-DIAMOND_TYPE_CLASS_BASE)<compiler->program->class_count&&
+                    DIAMOND_CLASS_TYPE_PARAMETER_COUNT(compiler->program->classes[type-DIAMOND_TYPE_CLASS_BASE])==2)||
+                   (compiler->discovery_pass&&compiler->current.kind==DIAMOND_TOKEN_COMMA)) {
                     skip_newlines(compiler);
                     if(compiler->current.kind!=DIAMOND_TOKEN_COMMA) {
                         fail(compiler,compiler->current.span,
-                             "expected ',' between Hash key and value types");break;
+                             type==DIAMOND_TYPE_HASH?
+                             "expected ',' between Hash key and value types":
+                             "expected ',' between class type arguments");break;
                     }
                     advance_token(compiler);
                     skip_newlines(compiler);

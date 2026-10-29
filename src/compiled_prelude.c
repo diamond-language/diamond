@@ -149,6 +149,7 @@ static void assert_methods_are_plain(const DiamondMethod *methods, size_t count)
 static bool write_class(FILE *file, const DiamondClass *class) {
     if (!write_all(file, class->name, sizeof class->name)) return false;
     if (!write_all(file, class->type_parameter, sizeof class->type_parameter)) return false;
+    if (!write_all(file, class->second_type_parameter, sizeof class->second_type_parameter)) return false;
     if (!write_all(file, &class->declaration_line, sizeof class->declaration_line)) return false;
     if (!write_all(file, &class->declaration_column, sizeof class->declaration_column)) return false;
     if (!write_all(file, &class->declaration_start, sizeof class->declaration_start)) return false;
@@ -326,6 +327,8 @@ static bool read_function(const uint8_t **cursor, const uint8_t *end,
     /* Every count below comes straight off disk: bound it by the bytes that
      * remain before multiplying, so a corrupted count can't wrap a size_t
      * product into a small, in-bounds-looking take(). */
+    if(view.type_variable_count>8||view.class_type_variable>2||
+       view.class_type_variable>view.type_variable_count)return false;
     const size_t remaining = (size_t)(end - *cursor);
     if (view.code_count > remaining / sizeof *view.code ||
         view.constant_count > remaining / sizeof *view.constants ||
@@ -415,6 +418,9 @@ static bool read_class(const uint8_t **cursor, const uint8_t *end, DiamondClass 
     if (!read_bytes(cursor, end, out->name, sizeof out->name)) return false;
     if (!read_bytes(cursor, end, out->type_parameter, sizeof out->type_parameter)) return false;
     if(memchr(out->type_parameter,'\0',sizeof out->type_parameter)==nullptr)return false;
+    if (!read_bytes(cursor, end, out->second_type_parameter, sizeof out->second_type_parameter)) return false;
+    if(memchr(out->second_type_parameter,'\0',sizeof out->second_type_parameter)==nullptr)return false;
+    if(out->second_type_parameter[0]!='\0'&&out->type_parameter[0]=='\0')return false;
     if (!read_bytes(cursor, end, &out->declaration_line, sizeof out->declaration_line)) return false;
     if (!read_bytes(cursor, end, &out->declaration_column, sizeof out->declaration_column)) return false;
     if (!read_bytes(cursor, end, &out->declaration_start, sizeof out->declaration_start)) return false;
@@ -699,7 +705,7 @@ enum { DIAMOND_CACHE_MAGIC_LENGTH = 8 };
  * 9: classes store a type parameter; methods distinguish its instance binding.
  * 10: NEW_TYPED constructs explicitly specialized generic instances.
  * 11: generic class methods bind method variables after the receiver slot. */
-enum { DIAMOND_CACHE_FORMAT_VERSION = 11 };
+enum { DIAMOND_CACHE_FORMAT_VERSION = 12 };
 
 /* A checksum of the compiler's own sources and prelude (every .c and .h
  * file under src/, plus lib/core.d6 and lib/core/), passed in by the

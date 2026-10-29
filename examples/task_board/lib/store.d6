@@ -50,14 +50,14 @@ class BoardStore
     end
   end
 
-  def create_project(attrs) -> BoardWrite[BoardProject]
+  def create_project(attrs) -> BoardWrite[BoardProject, Mjolnir::Changeset]
     changeset = Mjolnir::Changeset.cast(@projects, nil, attrs, ["name"])
       .validate_required(["name"]).validate_length("name", 1, 80).unique_constraint("name")
     result = @repo.insert(changeset)
     if result.err?()
-      BoardWrite[BoardProject].new(nil, result.error())
+      BoardWrite[BoardProject, Mjolnir::Changeset].new(nil, result.error())
     else
-      BoardWrite[BoardProject].new(result.value(), nil)
+      BoardWrite[BoardProject, Mjolnir::Changeset].new(result.value(), nil)
     end
   end
 
@@ -88,23 +88,23 @@ class BoardStore
     changeset
   end
 
-  def create_task(attrs) -> BoardWrite[BoardTask]
+  def create_task(attrs) -> BoardWrite[BoardTask, Mjolnir::Changeset]
     result = @repo.insert(task_changeset(nil, attrs))
     if result.err?()
-      BoardWrite[BoardTask].new(nil, result.error())
+      BoardWrite[BoardTask, Mjolnir::Changeset].new(nil, result.error())
     else
-      BoardWrite[BoardTask].new(result.value(), nil)
+      BoardWrite[BoardTask, Mjolnir::Changeset].new(result.value(), nil)
     end
   end
 
-  def update_task(id, attrs) -> BoardWrite[BoardTask]
+  def update_task(id, attrs) -> BoardWrite[BoardTask, Mjolnir::Changeset]
     entity = task(id)
     if entity == nil then raise ArgumentError.new("task not found") end
     result = @repo.update(task_changeset(entity, attrs))
     if result.err?()
-      BoardWrite[BoardTask].new(nil, result.error())
+      BoardWrite[BoardTask, Mjolnir::Changeset].new(nil, result.error())
     else
-      BoardWrite[BoardTask].new(result.value(), nil)
+      BoardWrite[BoardTask, Mjolnir::Changeset].new(result.value(), nil)
     end
   end
 

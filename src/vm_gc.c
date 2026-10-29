@@ -386,7 +386,7 @@ static void sweep_list(DiamondVm *vm, DiamondObject **list_head,
         } else if(unreached->kind==DIAMOND_OBJECT_INSTANCE) {
             const DiamondInstance *instance=(const DiamondInstance *)unreached;
             size=sizeof(DiamondInstance)+instance->field_count*sizeof(DiamondValue)+
-                (instance->type_binding!=nullptr?sizeof(DiamondTypeBinding):0);
+                DIAMOND_CLASS_TYPE_PARAMETER_COUNT(instance->class)*sizeof(DiamondTypeBinding);
         } else if(unreached->kind==DIAMOND_OBJECT_ARRAY) {
             DiamondArray *array=(DiamondArray *)unreached;
             size=sizeof(DiamondArray)+array->capacity*sizeof(DiamondValue);

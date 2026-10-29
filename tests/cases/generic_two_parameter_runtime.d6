@@ -1,0 +1,11 @@
+class Pair[T, E]
+  def initialize(first: T, second: E)
+    @first = first
+    @second = second
+  end
+  def replace(second: E)
+    @second = second
+  end
+end
+def replace(pair, value) = pair.replace(value)
+replace(Pair[Int, String].new(1, "text"), 2)

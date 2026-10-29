@@ -2244,7 +2244,7 @@ DiamondVmStatus new_instance_from_array(DiamondVm *vm,const DiamondChunk *chunk,
         VM_RETURN(DIAMOND_VM_TYPE_ERROR);
     if(explicit_type!=DIAMOND_NO_TYPE_SET) {
         if(instance->type_binding==nullptr||
-           !bind_explicit_class_type(chunk,explicit_type,instance->type_binding)) {
+           !bind_explicit_instance_types(chunk,explicit_type,instance)) {
             snprintf(vm->error,sizeof vm->error,"unsupported explicit class type argument");
             VM_RETURN(DIAMOND_VM_TYPE_ERROR);
         }
@@ -2646,11 +2646,11 @@ DiamondVmStatus outlined_invoke_spread(DiamondVm *vm,const DiamondChunk *chunk,D
         method->source_chunk!=nullptr?method->source_chunk:owner;
     const DiamondFunction *fn=
         function_chunk->functions[method->function_index];
-    const size_t class_offset=fn->class_type_variable?1u:0u;
+    const size_t class_offset=fn->class_type_variable;
     if(type_argument_count>0&&(fn->type_variable_count>8||
        fn->type_variable_count<class_offset||
        type_argument_count!=fn->type_variable_count-class_offset)) {
-        if(fn->class_type_variable&&fn->type_variable_count==1)
+        if(fn->class_type_variable&&fn->type_variable_count==fn->class_type_variable)
             snprintf(vm->error,sizeof vm->error,
                 "generic class type arguments are fixed by construction");
         free(args);VM_RETURN(DIAMOND_VM_TYPE_ERROR);
@@ -2659,7 +2659,7 @@ DiamondVmStatus outlined_invoke_spread(DiamondVm *vm,const DiamondChunk *chunk,D
      * and through .type_variable_bindings); zeroing all eight cost about
      * 3 KB of memset on every call, typed or not. */
     DiamondTypeBinding explicit_bindings[8];
-    if(type_argument_count>0&&class_offset!=0)explicit_bindings[0]=(DiamondTypeBinding){};
+    if(type_argument_count>0&&class_offset!=0)memset(explicit_bindings,0,class_offset*sizeof explicit_bindings[0]);
     for(size_t index=0;index<type_argument_count;index++) {
         DiamondTypeBinding *binding=&explicit_bindings[index+class_offset];
         *binding=(DiamondTypeBinding){};

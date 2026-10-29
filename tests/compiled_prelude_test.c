@@ -98,7 +98,7 @@ static void check_generic_class_round_trip(const DiamondProgram *template) {
         "  def value() -> T = @value\n"
         "  def wrong() -> T = \"wrong\"\n"
         "  def echo[U](value: U) -> U = value\n"
-        "end\nstruct Payload[T](value: T)\nend\nBox[Int].new(42).value()\n";
+        "end\nstruct Payload[T, E](value: T, error: E)\nend\nBox[Int].new(42).value()\n";
     DiamondProgram *program=alloc_program();
     DiamondDiagnostic diagnostic;
     const bool compiled=diamond_compile_incremental(source,program,template,&diagnostic);
@@ -129,7 +129,7 @@ static void check_generic_class_round_trip(const DiamondProgram *template) {
                         strcmp(rendered,"42")==0,"restored generic class retains binding");
                 }
                 const bool record=diamond_compile_incremental(
-                    "Payload[String].new(\"abc\").value().length()\n",use,copy,&diagnostic);
+                    "Payload[Int, String].new(42, \"abc\").error().length()\n",use,copy,&diagnostic);
                 check(record,"restored generic struct accepts construction");
                 if(record) {
                     char rendered[64];

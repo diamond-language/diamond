@@ -147,10 +147,11 @@ static void compile_attribute_named(Compiler *compiler,bool writer,bool predicat
         (uint16_t)compiler->current_class:DIAMOND_OWNER_MODULE;
     if(compiler->current_class>=0&&
        compiler->program->classes[compiler->current_class]->type_parameter[0]!='\0') {
-        function->class_type_variable=true;
-        function->type_variable_count=1;
+        function->class_type_variable=(uint8_t)DIAMOND_CLASS_TYPE_PARAMETER_COUNT(compiler->program->classes[compiler->current_class]);
+        function->type_variable_count=function->class_type_variable;
         snprintf(function->type_variables[0],sizeof function->type_variables[0],"%s",
             compiler->program->classes[compiler->current_class]->type_parameter);
+        if(function->class_type_variable==2)snprintf(function->type_variables[1],sizeof function->type_variables[1],"%s",compiler->program->classes[compiler->current_class]->second_type_parameter);
     }
     function->arity=writer?2:1;function->required_arity=function->arity;
     function->return_type_set=DIAMOND_NO_TYPE_SET;
@@ -1297,8 +1298,21 @@ uint16_t compile_class(Compiler *compiler) {
             compiler->current.span.length);
         class->type_parameter[compiler->current.span.length]='\0';
         advance_token(compiler);
+        if(compiler->current.kind==DIAMOND_TOKEN_COMMA) {
+            advance_token(compiler);
+            if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER||
+               compiler->current.span.length>=sizeof class->second_type_parameter) {
+                fail(compiler,compiler->current.span,"expected second class type parameter");return 0;
+            }
+            memcpy(class->second_type_parameter,compiler->source+compiler->current.span.start,compiler->current.span.length);
+            class->second_type_parameter[compiler->current.span.length]='\0';
+            if(strcmp(class->type_parameter,class->second_type_parameter)==0) {
+                fail(compiler,compiler->current.span,"duplicate class type parameter");return 0;
+            }
+            advance_token(compiler);
+        }
         if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_BRACKET) {
-            fail(compiler,compiler->current.span,"generic classes require exactly one type parameter");
+            fail(compiler,compiler->current.span,"generic classes require one or two type parameters");
             return 0;
         }
         advance_token(compiler);
@@ -1649,8 +1663,9 @@ static void emit_struct_initialize(Compiler *compiler, DiamondClass *class,
         (void)snprintf(init->name,sizeof init->name,"initialize");
         init->owner_class=(uint16_t)index;
         if(class->type_parameter[0]!='\0') {
-            init->class_type_variable=true;init->type_variable_count=1;
+            init->class_type_variable=(uint8_t)DIAMOND_CLASS_TYPE_PARAMETER_COUNT(class);init->type_variable_count=init->class_type_variable;
             snprintf(init->type_variables[0],sizeof init->type_variables[0],"%s",class->type_parameter);
+            if(init->class_type_variable==2)snprintf(init->type_variables[1],sizeof init->type_variables[1],"%s",class->second_type_parameter);
         }
         init->arity=(uint8_t)(total_count+1);
         init->required_arity=init->arity;
@@ -1899,13 +1914,27 @@ uint16_t compile_struct(Compiler *compiler) {
         memcpy(class->type_parameter,compiler->source+compiler->current.span.start,compiler->current.span.length);
         class->type_parameter[compiler->current.span.length]='\0';
         advance_token(compiler);
+        if(compiler->current.kind==DIAMOND_TOKEN_COMMA) {
+            advance_token(compiler);
+            if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER||
+               compiler->current.span.length>=sizeof class->second_type_parameter) {
+                fail(compiler,compiler->current.span,"expected second class type parameter");return 0;
+            }
+            memcpy(class->second_type_parameter,compiler->source+compiler->current.span.start,compiler->current.span.length);
+            class->second_type_parameter[compiler->current.span.length]='\0';
+            if(strcmp(class->type_parameter,class->second_type_parameter)==0) {
+                fail(compiler,compiler->current.span,"duplicate class type parameter");return 0;
+            }
+            advance_token(compiler);
+        }
         if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_BRACKET) {
-            fail(compiler,compiler->current.span,"generic structs require exactly one type parameter");return 0;
+            fail(compiler,compiler->current.span,"generic structs require one or two type parameters");return 0;
         }
         header=calloc(1,sizeof *header);
         if(header==nullptr) {fail(compiler,name,"out of memory");return 0;}
-        header->type_variable_count=1;
+        header->type_variable_count=(uint8_t)DIAMOND_CLASS_TYPE_PARAMETER_COUNT(class);
         snprintf(header->type_variables[0],sizeof header->type_variables[0],"%s",class->type_parameter);
+        if(header->type_variable_count==2)snprintf(header->type_variables[1],sizeof header->type_variables[1],"%s",class->second_type_parameter);
         compiler->function=header;
     }
     if(!parse_struct_fields(compiler,class,field_name_spans,field_type_sets,&field_count)) {

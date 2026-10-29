@@ -1,0 +1,2 @@
+struct Pair[T, T](first: T)
+end

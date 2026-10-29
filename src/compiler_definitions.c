@@ -1819,10 +1819,11 @@ uint16_t compile_definition(Compiler *compiler, bool captures_self) {
     if(!copy_definition_name(compiler,function,name,is_index_operator))return 0;
     if(direct_class_member&&
        compiler->program->classes[compiler->current_class]->type_parameter[0]!='\0') {
-        function->class_type_variable=true;
-        function->type_variable_count=1;
+        function->class_type_variable=(uint8_t)DIAMOND_CLASS_TYPE_PARAMETER_COUNT(compiler->program->classes[compiler->current_class]);
+        function->type_variable_count=function->class_type_variable;
         (void)snprintf(function->type_variables[0],sizeof function->type_variables[0],
             "%s",compiler->program->classes[compiler->current_class]->type_parameter);
+        if(function->class_type_variable==2)snprintf(function->type_variables[1],sizeof function->type_variables[1],"%s",compiler->program->classes[compiler->current_class]->second_type_parameter);
     }
     parse_generic_type_parameters(compiler,function);
     if (compiler->current.kind != DIAMOND_TOKEN_LEFT_PAREN) {

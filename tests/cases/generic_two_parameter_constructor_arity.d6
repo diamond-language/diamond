@@ -1,0 +1,3 @@
+struct Pair[T, E](first: T, second: E)
+end
+Pair[Int].new(1, 2)
