@@ -1,8 +1,7 @@
 #ifndef DIAMOND_INTERFACE_INFERENCE_H
 #define DIAMOND_INTERFACE_INFERENCE_H
 
-/* Method witnesses use the same bounded graph as ordinary call inference.
- * Do not prove contracts whose native/Callable payload that graph would lose. */
+/* Method witnesses use the same bounded, owned graph as ordinary calls. */
 static bool interface_binding_supported(const DiamondTypeSet *sets,uint16_t index,
         size_t *nodes) {
     if(index==DIAMOND_NO_TYPE_SET||++*nodes>DIAMOND_BOUND_TYPE_NODES)return false;
@@ -10,11 +9,15 @@ static bool interface_binding_supported(const DiamondTypeSet *sets,uint16_t inde
     if(set->count==0||set->count>DIAMOND_BOUND_TYPE_MEMBERS)return false;
     for(size_t i=0;i<set->count;i++) {
         const DiamondTypeMember member=set->members[i];
-        if(member.id==DIAMOND_TYPE_NATIVE||
-           (member.id>=DIAMOND_TYPE_VARIABLE_BASE&&member.id<DIAMOND_TYPE_INTERFACE_BASE)||
-           (member.id==DIAMOND_TYPE_CALLABLE&&(member.callable_arity!=UINT8_MAX||
-            member.callable_parameters_typed||member.callable_return_set!=DIAMOND_NO_TYPE_SET)))return false;
-        for(size_t j=0;j<i;j++)if(set->members[j].id==member.id)return false;
+        if(member.id>=DIAMOND_TYPE_VARIABLE_BASE&&member.id<DIAMOND_TYPE_INTERFACE_BASE)return false;
+        for(size_t j=0;j<i;j++)if(set->members[j].id==member.id&&
+            (member.id!=DIAMOND_TYPE_NATIVE||set->members[j].callable_arity==member.callable_arity))return false;
+        if(member.callable_return_set!=DIAMOND_NO_TYPE_SET&&
+           !interface_binding_supported(sets,member.callable_return_set,nodes))return false;
+        if(member.callable_parameters_typed)
+            for(size_t p=0;p<member.callable_arity;p++)
+                if(member.callable_parameter_sets[p]!=DIAMOND_NO_TYPE_SET&&
+                   !interface_binding_supported(sets,member.callable_parameter_sets[p],nodes))return false;
         if(member.argument_set!=DIAMOND_NO_TYPE_SET&&
            !interface_binding_supported(sets,member.argument_set,nodes))return false;
         if(member.second_argument_set!=DIAMOND_NO_TYPE_SET&&

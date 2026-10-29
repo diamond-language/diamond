@@ -122,8 +122,10 @@ capture an enclosing type variable are rejected instead of losing that binding.
 This native-compiler slice supports up to two class parameters in directly declared
 instance methods and generated struct fields. Generic inheritance, reopening,
 and referring to the class
-parameter from nested definitions remain future work. Native objects and
-Callable types are not yet supported as explicit class type arguments. Unions
+parameter from nested definitions remain future work. Native types such as
+`Time` and typed Callable signatures work as explicit or inferred class
+arguments. Bindings retain native kinds, Callable arity, parameter types, and
+return types, including through duplication and thread copies. Unions
 combining a type variable with other members, repeated outer types with different
 arguments, and contracts beyond the runtime binding graph's capacity are also
 rejected rather than weakened. Calls retain runtime checks. On a receiver with a
@@ -200,9 +202,10 @@ then pass parameter and return variance checks. Receiver variables stay fixed;
 an unrelated caller's variables cannot supply a witness. Return-only variables
 cannot establish a concrete return contract. This is conservative inference:
 it does not search for a union witness across conflicting inputs. Witnesses
-must fit the bounded type graph; concrete native kinds and typed Callable
-values cannot themselves be witnesses (variables inside Callable signatures
-are supported). Foreign dynamically compiled method bodies are not specialized
+must fit the bounded type graph, including native kinds and typed Callable
+values. Callable parameters remain contravariant and returns covariant.
+Incompatible Callable alternatives sharing a binding are rejected rather than
+merged into a broader signature. Foreign dynamically compiled method bodies are not specialized
 by this check. Recursive checks that cannot establish a
 finite proof are rejected conservatively. An unconstrained collection binding
 cannot promise a typed element contract.

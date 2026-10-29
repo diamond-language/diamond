@@ -1,0 +1,58 @@
+interface TimeSource
+  def value() -> Time
+end
+interface FileSource
+  def value() -> File
+end
+interface IntCallbackSource
+  def value() -> Callable[[Int], Int]
+end
+interface StringCallbackSource
+  def value() -> Callable[[String], String]
+end
+interface NativeIdentity
+  def identity(value: Time) -> Time
+end
+interface CallableIdentity
+  def identity(value: Callable[[Int], Int]) -> Callable[[Int], Int]
+end
+interface CallbackArraySource
+  def value() -> Array[Callable[[Int], Int]]
+end
+interface TimeArraySource
+  def value() -> Array[Time]
+end
+struct Box[T](value: T)
+end
+class Identity
+  def identity[U](value: U) -> U = value
+end
+def increment(value: Int) -> Int = value + 1
+def text(value: String) -> String = value
+def identity[U](value: U) -> U = value
+def read_time(value: TimeSource) -> Time = value.value()
+def read_callback(value: IntCallbackSource) -> Int = value.value()(41)
+def native_identity(value: NativeIdentity, clock: Time) -> Time = value.identity(clock)
+def callback_identity(value: CallableIdentity) -> Int = value.identity(increment)(41)
+def checks(value)
+  puts(value is TimeSource)
+  puts(value is FileSource)
+  puts(value is IntCallbackSource)
+  puts(value is StringCallbackSource)
+end
+clock = Time.now()
+native = Box.new(clock)
+checks(native)
+puts(read_time(native) is Time)
+checks(Box[Time].new(clock).dup())
+callback = Box.new(increment)
+checks(callback)
+puts(read_callback(callback))
+checks(Box[Callable[[Int], Int]].new(increment).dup())
+puts(identity(clock) is Time)
+puts(identity(increment)(41))
+puts(native_identity(Identity.new(), clock) is Time)
+puts(callback_identity(Identity.new()))
+checks(Box.new(text))
+puts(Box.new([increment]) is CallbackArraySource)
+puts(Box.new([clock]) is TimeArraySource)

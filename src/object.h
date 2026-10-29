@@ -156,12 +156,23 @@ typedef struct DiamondTypeSet DiamondTypeSet;
 typedef struct DiamondInterface DiamondInterface;
 typedef struct DiamondChunk DiamondChunk;
 
-enum { DIAMOND_BOUND_TYPE_NODES=16,DIAMOND_BOUND_TYPE_MEMBERS=8 };
+enum { DIAMOND_BOUND_TYPE_NODES=16,DIAMOND_BOUND_TYPE_MEMBERS=8,
+       DIAMOND_BOUND_SIGNATURES=16 };
 typedef struct DiamondBoundTypeMember {
     uint16_t id;
     uint8_t argument_node;
     uint8_t second_argument_node;
+    uint8_t native_kind;
+    uint8_t signature;
 } DiamondBoundTypeMember;
+typedef struct DiamondBoundSignature {
+    uint8_t arity;
+    uint8_t required_arity;
+    bool variadic;
+    bool parameters_typed;
+    uint8_t parameter_nodes[16];
+    uint8_t return_node;
+} DiamondBoundSignature;
 typedef struct DiamondBoundTypeNode {
     DiamondBoundTypeMember members[DIAMOND_BOUND_TYPE_MEMBERS];
     uint8_t count;
@@ -169,6 +180,9 @@ typedef struct DiamondBoundTypeNode {
 typedef struct DiamondTypeBinding {
     DiamondBoundTypeNode nodes[DIAMOND_BOUND_TYPE_NODES];
     uint8_t node_count;
+    /* Owned indexes, never pointers into a function's type table. */
+    DiamondBoundSignature signatures[DIAMOND_BOUND_SIGNATURES];
+    uint8_t signature_count;
     /* A failed graph join must never become an unconstrained binding. */
     bool invalid;
 } DiamondTypeBinding;

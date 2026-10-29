@@ -101,6 +101,10 @@ static void check_generic_class_round_trip(const DiamondProgram *template) {
         "end\nstruct Payload[T, E](value: T, error: E)\nend\n"
         "interface IntSource\n  def value() -> Int\nend\n"
         "interface IntEcho\n  def echo(value: Int) -> Int\nend\n"
+        "interface TimeSource\n  def value() -> Time\nend\n"
+        "interface CallbackSource\n  def value() -> Callable[[Int], Int]\nend\n"
+        "def increment(value: Int) -> Int = value + 1\n"
+        "def read_callback(value: CallbackSource) -> Int = value.value()(41)\n"
         "def read_source(value: IntSource) -> Int = value.value()\n"
         "def read_echo(value: IntEcho) -> Int = value.echo(42)\n"
         "Box[Box[Int]].new(Box.new(42)).value().value()\n";
@@ -160,6 +164,23 @@ static void check_generic_class_round_trip(const DiamondProgram *template) {
                     char rendered[64];
                     check(run_and_get_string(use,rendered,sizeof rendered)&&strcmp(rendered,"42")==0,
                         "restored interface isolates method witness from receiver");
+                }
+                const bool callback=diamond_compile_incremental(
+                    "read_callback(Box[Callable[[Int], Int]].new(increment))\n",use,copy,&diagnostic);
+                check(callback,"restored interface accepts Callable binding payload");
+                if(callback) {
+                    char rendered[64];
+                    check(run_and_get_string(use,rendered,sizeof rendered)&&strcmp(rendered,"42")==0,
+                        "restored Callable binding retains parameter and return contracts");
+                }
+                const bool native=diamond_compile_incremental(
+                    "def take_clock(value: TimeSource) -> Time = value.value()\n"
+                    "take_clock(Box[Time].new(Time.now())).year()\n",use,copy,&diagnostic);
+                check(native,"restored interface accepts native binding payload");
+                if(native) {
+                    char rendered[64];
+                    check(run_and_get_string(use,rendered,sizeof rendered),
+                        "restored native binding executes with its kind intact");
                 }
                 const bool record=diamond_compile_incremental(
                     "Payload[Int, String].new(42, \"abc\").error().length()\n",use,copy,&diagnostic);

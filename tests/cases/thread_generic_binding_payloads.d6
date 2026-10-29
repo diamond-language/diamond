@@ -1,0 +1,30 @@
+interface TimeSource
+  def value() -> Time
+end
+interface FileSource
+  def value() -> File
+end
+interface IntCallbackSource
+  def value() -> Callable[[Int], Int]
+end
+interface StringCallbackSource
+  def value() -> Callable[[String], String]
+end
+struct Box[T](value: T)
+end
+class NativeFactory[T]
+  def initialize(value: T)
+  end
+  def value() -> T = Time.now()
+end
+def increment(value: Int) -> Int = value + 1
+def worker[U](native, callback, unrelated: U)
+  puts(native is TimeSource)
+  puts(native is FileSource)
+  puts(callback is IntCallbackSource)
+  puts(callback is StringCallbackSource)
+  callback.dup()
+end
+def spawn[U](native, callback, unrelated: U) = Thread.new(worker, native, callback, unrelated).join()
+def read(value: IntCallbackSource) -> Int = value.value()(41)
+puts(read(spawn(NativeFactory.new(Time.now()), Box.new(increment), false)))
