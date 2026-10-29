@@ -894,6 +894,9 @@ DiamondInstance *allocate_instance(DiamondVm *vm,const DiamondClass *class,
     instance->type_binding=generic?
         (DiamondTypeBinding *)(instance->fields+instance->field_count):nullptr;
     if(generic)memset(instance->type_binding,0,DIAMOND_CLASS_TYPE_PARAMETER_COUNT(class)*sizeof(DiamondTypeBinding));
+    if(class->fixed_type_arguments)
+        memcpy(instance->type_binding,class->fixed_type_bindings,
+            DIAMOND_CLASS_TYPE_PARAMETER_COUNT(class)*sizeof(DiamondTypeBinding));
     for(size_t i=0;i<instance->field_count;i++) instance->fields[i]=DIAMOND_NIL;
     vm->young_objects=&instance->object; vm->bytes_allocated+=size; return instance;
 }

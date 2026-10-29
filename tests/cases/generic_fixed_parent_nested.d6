@@ -1,0 +1,26 @@
+interface StringSource
+  def value() -> String
+end
+class Box[T]
+  def initialize(value: T)
+    @value = value
+  end
+  def value() -> T = @value
+end
+class StringBox < Box[String]
+end
+class Outer < Box[StringBox]
+end
+def read(value: Box[String]) -> String = value.value()
+def forward(value: StringBox) -> String = read(value)
+def nested(value: Box[StringBox]) -> String = value.value().value()
+def callback(value: Callable[[], Box[String]]) -> String = value().value()
+def build() -> StringBox = StringBox.new("callback")
+def source(value: StringSource) -> String = value.value()
+def generic[U](value, unrelated: U) -> String = source(value)
+puts(forward(StringBox.new("forward")))
+puts(nested(Box.new(StringBox.new("nested"))))
+puts(nested(Box[StringBox].new(StringBox.new("explicit"))))
+puts(Outer.new(StringBox.new("outer")).value().value())
+puts(callback(build))
+puts(generic(StringBox.new("interface"), 42))

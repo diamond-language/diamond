@@ -1225,6 +1225,10 @@ uint16_t compile_class(Compiler *compiler) {
             class->field_count=0;
             class->class_variable_count=0;
             class->superclass=DIAMOND_NO_CLASS;
+            if(class->fixed_type_arguments) {
+                class->type_parameter[0]='\0';class->second_type_parameter[0]='\0';
+                class->fixed_type_arguments=false;
+            }
             class->sealed=false;
             class->declared_by_discovery=false;
             superclass_decided=false;
@@ -1334,8 +1338,40 @@ uint16_t compile_class(Compiler *compiler) {
         }
         const int parent=find_class_qualified_or_scoped(compiler,superclass_name);
         if(parent<0) { fail(compiler,superclass_span,"undefined superclass"); return 0; }
-        if(compiler->program->classes[parent]->type_parameter[0]!='\0') {
-            fail(compiler,superclass_span,"generic class inheritance is not supported");return 0;
+        const DiamondClass *generic_parent=compiler->program->classes[parent];
+        if(generic_parent->type_parameter[0]!='\0') {
+            const size_t count=DIAMOND_CLASS_TYPE_PARAMETER_COUNT(generic_parent);
+            if(generic_parent->fixed_type_arguments) {
+                memcpy(class->fixed_type_bindings,generic_parent->fixed_type_bindings,
+                    sizeof class->fixed_type_bindings);
+            } else {
+                if(compiler->current.kind!=DIAMOND_TOKEN_LEFT_BRACKET) {
+                    fail(compiler,superclass_span,"generic superclass requires fixed type arguments");return 0;
+                }
+                advance_token(compiler);skip_newlines(compiler);
+                for(size_t variable=0;variable<count;variable++) {
+                    const uint16_t argument=(uint16_t)parse_type_annotation(compiler);
+                    if(compiler->failed)return 0;
+                    if(!diamond_bind_fixed_type(compiler->function->type_sets,
+                        compiler->function->type_set_count,argument,&class->fixed_type_bindings[variable])) {
+                        fail(compiler,superclass_span,"superclass type arguments must be concrete and fit the binding graph");return 0;
+                    }
+                    skip_newlines(compiler);
+                    if(variable+1<count) {
+                        if(compiler->current.kind!=DIAMOND_TOKEN_COMMA) {
+                            fail(compiler,superclass_span,"wrong number of superclass type arguments");return 0;
+                        }
+                        advance_token(compiler);skip_newlines(compiler);
+                    }
+                }
+                if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_BRACKET) {
+                    fail(compiler,superclass_span,"wrong number of superclass type arguments");return 0;
+                }
+                advance_token(compiler);
+            }
+            class->fixed_type_arguments=true;
+            snprintf(class->type_parameter,sizeof class->type_parameter,"$parent0");
+            if(count==2)snprintf(class->second_type_parameter,sizeof class->second_type_parameter,"$parent1");
         }
         if(!superclass_decided) {
             class->superclass=(uint16_t)parent;

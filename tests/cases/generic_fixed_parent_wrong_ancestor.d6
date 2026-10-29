@@ -1,0 +1,9 @@
+class Box[T]
+  def initialize(value: T)
+  end
+end
+class StringBox < Box[String]
+end
+def use(value: Box[Int]) = nil
+def wrong(value: StringBox) = use(value)
+wrong(StringBox.new("wrong"))

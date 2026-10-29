@@ -305,7 +305,7 @@ void format_value_type_detailed(char *buffer,size_t capacity,
     if(value.kind!=DIAMOND_VALUE_OBJECT)return;
     if(value.as.object->kind==DIAMOND_OBJECT_INSTANCE) {
         const DiamondInstance *instance=(const DiamondInstance *)value.as.object;
-        if(instance->type_binding!=nullptr) {
+        if(instance->type_binding!=nullptr&&!instance->class->fixed_type_arguments) {
             append_bounded(buffer,capacity,"[");
             for(size_t variable=0;variable<DIAMOND_CLASS_TYPE_PARAMETER_COUNT(instance->class);variable++) {
                 if(variable!=0)append_bounded(buffer,capacity,", ");

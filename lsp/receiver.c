@@ -1057,8 +1057,23 @@ static bool resolve_target_bindings(const DiamondProgram *program,
         if(!resolve_expression_binding(program,chunk,source,tokens,call->start,receiver_end,&receiver,depth+1)||
            receiver.array_depth!=0||receiver.graph.node_count==0||receiver.graph.nodes[0].count!=1)return false;
         const DiamondBoundTypeMember member=receiver.graph.nodes[0].members[0];
-        if(member.id!=DIAMOND_TYPE_CLASS_BASE+function->owner_class)return false;
+        size_t receiver_class;
+        if(!decode_class_type(chunk,member.id,&receiver_class))return false;
+        if(receiver_class!=function->owner_class) {
+            if(!chunk->classes[receiver_class]->fixed_type_arguments)return false;
+            size_t ancestor=receiver_class;
+            for(size_t step=0;step<chunk->class_count&&ancestor!=function->owner_class;step++) {
+                ancestor=chunk->classes[ancestor]->superclass;
+                if(ancestor==DIAMOND_NO_CLASS||ancestor>=chunk->class_count)return false;
+            }
+            if(ancestor!=function->owner_class)return false;
+        }
         for(size_t variable=0;variable<function->class_type_variable;variable++) {
+            if(chunk->classes[receiver_class]->fixed_type_arguments) {
+                if(!binding_from_graph(chunk,&chunk->classes[receiver_class]->fixed_type_bindings[variable],
+                    0,&bindings[variable],depth+1))return false;
+                continue;
+            }
             const uint8_t child=variable==0?member.argument_node:member.second_argument_node;
             if(!binding_from_graph(chunk,&receiver.graph,child,&bindings[variable],depth+1))return false;
         }
@@ -1107,7 +1122,12 @@ static bool resolve_expression_binding(const DiamondProgram *program,const Diamo
         const DiamondClass *class=chunk->classes[class_index];
         count=DIAMOND_CLASS_TYPE_PARAMETER_COUNT(class);
         if(count>0) {
-            if(start+1<call.callee_index&&tokens[start+1].kind==DIAMOND_TOKEN_LEFT_BRACKET) {
+            if(class->fixed_type_arguments) {
+                if(start+1<call.callee_index&&tokens[start+1].kind==DIAMOND_TOKEN_LEFT_BRACKET)return false;
+                for(size_t variable=0;variable<count;variable++)
+                    if(!binding_from_graph(chunk,&class->fixed_type_bindings[variable],0,
+                        &arguments[variable],depth+1))return false;
+            } else if(start+1<call.callee_index&&tokens[start+1].kind==DIAMOND_TOKEN_LEFT_BRACKET) {
                 if(explicit_type_bindings(chunk,source,tokens,start+2,call.callee_index-3,arguments,count)!=count)return false;
             } else {
                 const DiamondMethod *init=receiver_lookup_method(chunk,class_index,false,"initialize",10);

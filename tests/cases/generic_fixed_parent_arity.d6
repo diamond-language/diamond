@@ -1,0 +1,4 @@
+class Pair[T, E]
+end
+class Bad < Pair[String]
+end

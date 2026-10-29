@@ -256,8 +256,45 @@ bool bind_explicit_class_type(const DiamondChunk *chunk,uint16_t index,
     return !binding->invalid;
 }
 
+bool diamond_binding_type_sets(const DiamondTypeBinding *binding,DiamondTypeSet *sets,
+        size_t capacity,uint16_t base) {
+    if(binding->invalid||binding->node_count==0||binding->node_count>capacity||
+       binding->node_count>DIAMOND_BOUND_TYPE_NODES||
+       (size_t)base+binding->node_count>DIAMOND_NO_TYPE_SET)return false;
+    for(size_t node=0;node<binding->node_count;node++) {
+        DiamondTypeSet set={.count=binding->nodes[node].count};
+        for(size_t i=0;i<set.count;i++) {
+            const DiamondBoundTypeMember from=binding->nodes[node].members[i];
+            DiamondTypeMember member={.id=from.id,
+                .argument_set=from.argument_node==UINT8_MAX?DIAMOND_NO_TYPE_SET:(uint16_t)(base+from.argument_node),
+                .second_argument_set=from.second_argument_node==UINT8_MAX?DIAMOND_NO_TYPE_SET:(uint16_t)(base+from.second_argument_node),
+                .callable_arity=from.id==DIAMOND_TYPE_NATIVE?from.native_kind:UINT8_MAX,
+                .callable_return_set=DIAMOND_NO_TYPE_SET};
+            if(from.id==DIAMOND_TYPE_CALLABLE&&from.signature<binding->signature_count) {
+                const DiamondBoundSignature signature=binding->signatures[from.signature];
+                member.callable_arity=signature.arity;
+                member.callable_parameters_typed=signature.parameters_typed;
+                if(signature.return_node!=UINT8_MAX)member.callable_return_set=(uint16_t)(base+signature.return_node);
+                if(signature.parameters_typed)
+                    for(size_t p=0;p<signature.arity;p++)
+                        member.callable_parameter_sets[p]=signature.parameter_nodes[p]==UINT8_MAX?
+                            DIAMOND_NO_TYPE_SET:(uint16_t)(base+signature.parameter_nodes[p]);
+            }
+            set.members[i]=member;
+        }
+        sets[node]=set;
+    }
+    return true;
+}
+
+bool diamond_bind_fixed_type(const DiamondTypeSet *sets,size_t count,uint16_t index,
+                            DiamondTypeBinding *binding) {
+    const DiamondChunk context={.type_sets=sets,.type_set_count=count};
+    return bind_explicit_class_type(&context,index,binding);
+}
+
 bool bind_explicit_instance_types(const DiamondChunk *chunk,uint16_t index,DiamondInstance *instance) {
-    if(index>=chunk->type_set_count||instance->type_binding==nullptr)return false;
+    if(index>=chunk->type_set_count||instance->type_binding==nullptr||instance->class->fixed_type_arguments)return false;
     if(DIAMOND_CLASS_TYPE_PARAMETER_COUNT(instance->class)==1)
         return bind_explicit_class_type(chunk,index,instance->type_binding);
     const DiamondTypeSet *set=&chunk->type_sets[index];
@@ -355,13 +392,17 @@ static void bind_context_members(DiamondTypeBinding *binding,uint8_t node,
 static bool generic_class_implements(const DiamondChunk *chunk,const DiamondClass *class,
         const DiamondTypeBinding *bindings,size_t count,const DiamondInterface *interface) {
     if(runtime_generic_interface_depth>=32)return false;
+    if(class->fixed_type_arguments&&count==0) {
+        bindings=class->fixed_type_bindings;
+        count=DIAMOND_CLASS_TYPE_PARAMETER_COUNT(class);
+    }
     runtime_generic_interface_depth++;
     bool matches=true;
     for(size_t required=0;required<interface->method_count&&matches;required++) {
         const DiamondInterfaceMethod *wanted=&interface->methods[required];
         bool found=false;
-        for(size_t method=0;method<class->method_count&&!found;method++) {
-            const DiamondMethod *candidate=&class->methods[method];
+        for(const DiamondMethod *candidate=lookup_method(chunk,class,wanted->name,strlen(wanted->name));
+            candidate!=nullptr&&!found;candidate=nullptr) {
             if(strcmp(candidate->name,wanted->name)!=0||wanted->arity<candidate->required_arity||
                wanted->arity>candidate->arity||candidate->function_index>=chunk->function_count||
                candidate->source_chunk!=nullptr)continue;
@@ -743,6 +784,28 @@ static bool runtime_graph_satisfies(const DiamondChunk *chunk,
                 continue;
             }
             if(!runtime_type_id_satisfies(chunk,actual.id,wanted.id))continue;
+            if(wanted.id>=DIAMOND_TYPE_CLASS_BASE&&wanted.id<DIAMOND_TYPE_CLASS_LIMIT&&
+               (size_t)(wanted.id-DIAMOND_TYPE_CLASS_BASE)<chunk->class_count&&
+               chunk->classes[wanted.id-DIAMOND_TYPE_CLASS_BASE]->fixed_type_arguments) {
+                accepted=true;continue;
+            }
+            if(actual.id>=DIAMOND_TYPE_CLASS_BASE&&actual.id<DIAMOND_TYPE_CLASS_LIMIT&&
+               (size_t)(actual.id-DIAMOND_TYPE_CLASS_BASE)<chunk->class_count&&
+               chunk->classes[actual.id-DIAMOND_TYPE_CLASS_BASE]->fixed_type_arguments&&
+               actual.argument_node==UINT8_MAX&&wanted.argument_node!=UINT8_MAX) {
+                const DiamondClass *fixed=chunk->classes[actual.id-DIAMOND_TYPE_CLASS_BASE];
+                DiamondTypeBinding materialized={.node_count=1,.nodes={{.count=1,.members={{
+                    .id=actual.id,.argument_node=UINT8_MAX,.second_argument_node=UINT8_MAX,
+                    .native_kind=UINT8_MAX,.signature=UINT8_MAX}}}}};
+                for(size_t variable=0;variable<DIAMOND_CLASS_TYPE_PARAMETER_COUNT(fixed);variable++) {
+                    const uint8_t child=binding_node(&materialized);
+                    if(variable==0)materialized.nodes[0].members[0].argument_node=child;
+                    else materialized.nodes[0].members[0].second_argument_node=child;
+                    if(child!=UINT8_MAX)bind_bound_node(&materialized,child,&fixed->fixed_type_bindings[variable],0);
+                }
+                accepted=runtime_graph_satisfies(chunk,&materialized,0,expected,b,depth+1);
+                continue;
+            }
             if(wanted.id==DIAMOND_TYPE_NATIVE) {
                 accepted=wanted.native_kind==UINT8_MAX||actual.native_kind==wanted.native_kind;
                 continue;
@@ -821,6 +884,20 @@ static bool runtime_member_satisfies(const DiamondChunk *chunk,
        DIAMOND_CLASS_TYPE_PARAMETER_COUNT(chunk->classes[known.id-DIAMOND_TYPE_CLASS_BASE])>0)
         return generic_member_implements(chunk,known_sets,known,expected.id);
     if(!runtime_type_id_satisfies(chunk,known.id,expected.id))return false;
+    if(expected.id>=DIAMOND_TYPE_CLASS_BASE&&expected.id<DIAMOND_TYPE_CLASS_LIMIT&&
+       (size_t)(expected.id-DIAMOND_TYPE_CLASS_BASE)<chunk->class_count&&
+       chunk->classes[expected.id-DIAMOND_TYPE_CLASS_BASE]->fixed_type_arguments)return true;
+    if(known.id>=DIAMOND_TYPE_CLASS_BASE&&known.id<DIAMOND_TYPE_CLASS_LIMIT&&
+       (size_t)(known.id-DIAMOND_TYPE_CLASS_BASE)<chunk->class_count&&
+       chunk->classes[known.id-DIAMOND_TYPE_CLASS_BASE]->fixed_type_arguments&&
+       expected.argument_set!=DIAMOND_NO_TYPE_SET) {
+        const DiamondTypeSet actual={.count=1,.members={known}},wanted={.count=1,.members={expected}};
+        DiamondTypeBinding a={.node_count=1},b={.node_count=1};
+        bind_context_members(&a,0,chunk,known_sets,&actual);
+        bind_context_members(&b,0,chunk,expected_sets,&wanted);
+        return runtime_graph_satisfies(chunk,&a,0,&b,0,0);
+    }
+
     if(expected.id==DIAMOND_TYPE_CALLABLE) {
         if(expected.callable_arity!=UINT8_MAX&&
            known.callable_arity!=expected.callable_arity)return false;
@@ -1233,14 +1310,15 @@ static void bind_value_graph(const DiamondChunk *chunk,DiamondTypeBinding *bindi
             .callable_return_set=function->return_type_set};
         for(size_t p=0;p<arity;p++)signature.callable_parameter_sets[p]=function->parameter_type_sets[p];
         /* Function-owned variables have no relation to the caller's slots. */
-        const DiamondChunk context={};
+        DiamondChunk context=*chunk;
+        context.type_variable_bindings=nullptr;context.type_variable_count=0;
         bind_callable_metadata(binding,member,&context,function->type_sets,signature,
             ignores?0:(uint8_t)(function->required_arity-diamond_function_self_offset(function)),
             ignores||function->has_variadic);
     } else if(type>=DIAMOND_TYPE_CLASS_BASE&&type<DIAMOND_TYPE_CLASS_LIMIT) {
         const DiamondInstance *instance=(const DiamondInstance *)value.as.object;
         const size_t count=DIAMOND_CLASS_TYPE_PARAMETER_COUNT(instance->class);
-        if(count==0)return;
+        if(count==0||instance->class->fixed_type_arguments)return;
         if(instance->type_binding==nullptr) {binding->invalid=true;return;}
         for(size_t variable=0;variable<count;variable++) {
             uint8_t *child=variable==0?&member->argument_node:&member->second_argument_node;
@@ -1276,9 +1354,10 @@ static void bind_value_graph(const DiamondChunk *chunk,DiamondTypeBinding *bindi
     }
 }
 
-static void bind_known_set(DiamondTypeBinding *binding,uint8_t node,
+static void bind_known_set(const DiamondChunk *chunk,DiamondTypeBinding *binding,uint8_t node,
                            const DiamondTypeSet *sets,uint16_t set_index) {
-    const DiamondChunk context={};
+    DiamondChunk context=*chunk;
+    context.type_variable_bindings=nullptr;context.type_variable_count=0;
     bind_context_set(binding,node,&context,sets,set_index);
 }
 
@@ -1352,7 +1431,12 @@ static void bind_bound_node(DiamondTypeBinding *target,uint8_t target_node,
 static void bind_context_members(DiamondTypeBinding *binding,uint8_t node,
     const DiamondChunk *context,const DiamondTypeSet *sets,const DiamondTypeSet *set) {
     for(size_t index=0;index<set->count;index++) {
-        const DiamondTypeMember known=set->members[index];
+        DiamondTypeMember known=set->members[index];
+        if(known.id>=DIAMOND_TYPE_CLASS_BASE&&known.id<DIAMOND_TYPE_CLASS_LIMIT&&
+           (size_t)(known.id-DIAMOND_TYPE_CLASS_BASE)<context->class_count&&
+           context->classes[known.id-DIAMOND_TYPE_CLASS_BASE]->fixed_type_arguments) {
+            known.argument_set=DIAMOND_NO_TYPE_SET;known.second_argument_set=DIAMOND_NO_TYPE_SET;
+        }
         if(known.id>=DIAMOND_TYPE_VARIABLE_BASE&&
            known.id<DIAMOND_TYPE_INTERFACE_BASE) {
             const size_t variable=(size_t)(known.id-DIAMOND_TYPE_VARIABLE_BASE);
@@ -1456,7 +1540,7 @@ static void infer_from_known_set(const DiamondChunk *chunk,
                 (uint8_t)(wanted.id-DIAMOND_TYPE_VARIABLE_BASE);
             if(bindings[variable].node_count==0)
                 (void)binding_node(&bindings[variable]);
-            bind_known_set(&bindings[variable],0,known_sets,known_index);
+            bind_known_set(chunk,&bindings[variable],0,known_sets,known_index);
         } else {
             for(size_t source=0;source<known->count;source++) {
                 const DiamondTypeMember actual=known->members[source];
