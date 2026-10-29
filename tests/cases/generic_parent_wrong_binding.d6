@@ -1,0 +1,6 @@
+class Box[T]
+end
+class Child[A] < Box[A]
+end
+def use(value: Box[Int]) = nil
+def wrong(value: Child[String]) = use(value)

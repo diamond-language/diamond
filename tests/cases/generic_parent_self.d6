@@ -1,0 +1,2 @@
+class Loop[T] < Loop[T]
+end

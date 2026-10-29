@@ -1324,9 +1324,7 @@ uint16_t compile_class(Compiler *compiler) {
         fail(compiler,name,"generic classes cannot be reopened");return 0;
     }
     if(compiler->current.kind==DIAMOND_TOKEN_LESS) {
-        if(class->type_parameter[0]!='\0') {
-            fail(compiler,name,"generic class inheritance is not supported");return 0;
-        }
+        const size_t subclass_parameters=DIAMOND_CLASS_TYPE_PARAMETER_COUNT(class);
         advance_token(compiler);
         if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER) {
             fail(compiler,compiler->current.span,"expected superclass name after '<'"); return 0;
@@ -1338,8 +1336,33 @@ uint16_t compile_class(Compiler *compiler) {
         }
         const int parent=find_class_qualified_or_scoped(compiler,superclass_name);
         if(parent<0) { fail(compiler,superclass_span,"undefined superclass"); return 0; }
+        if(parent==index) {fail(compiler,superclass_span,"a class cannot inherit from itself");return 0;}
         const DiamondClass *generic_parent=compiler->program->classes[parent];
-        if(generic_parent->type_parameter[0]!='\0') {
+        if(subclass_parameters>0) {
+            if(generic_parent->fixed_type_arguments||
+               DIAMOND_CLASS_TYPE_PARAMETER_COUNT(generic_parent)!=subclass_parameters) {
+                fail(compiler,superclass_span,"parameterized subclasses require corresponding generic parent parameters");return 0;
+            }
+            if(compiler->current.kind!=DIAMOND_TOKEN_LEFT_BRACKET) {
+                fail(compiler,superclass_span,"generic superclass requires forwarded type arguments");return 0;
+            }
+            advance_token(compiler);skip_newlines(compiler);
+            for(size_t variable=0;variable<subclass_parameters;variable++) {
+                const char *parameter=variable==0?class->type_parameter:class->second_type_parameter;
+                if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER||
+                   !name_equals(compiler,parameter,compiler->current.span,false)) {
+                    fail(compiler,compiler->current.span,"parent arguments must forward subclass parameters in declaration order");return 0;
+                }
+                advance_token(compiler);skip_newlines(compiler);
+                const DiamondTokenKind separator=variable+1==subclass_parameters?
+                    DIAMOND_TOKEN_RIGHT_BRACKET:DIAMOND_TOKEN_COMMA;
+                if(compiler->current.kind!=separator) {
+                    fail(compiler,compiler->current.span,"parent arguments must forward subclass parameters in declaration order");return 0;
+                }
+                advance_token(compiler);
+                if(variable+1<subclass_parameters)skip_newlines(compiler);
+            }
+        } else if(generic_parent->type_parameter[0]!='\0') {
             const size_t count=DIAMOND_CLASS_TYPE_PARAMETER_COUNT(generic_parent);
             if(generic_parent->fixed_type_arguments) {
                 memcpy(class->fixed_type_bindings,generic_parent->fixed_type_bindings,
