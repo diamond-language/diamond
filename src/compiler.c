@@ -403,8 +403,7 @@ static bool generic_class_satisfies_interface(const Compiler *compiler,
                wanted->arity>candidate->arity||candidate->function_index>=compiler->program->function_count||
                candidate->source_chunk!=nullptr)continue;
             const DiamondFunction *implementation=compiler->program->functions[candidate->function_index];
-            if(implementation->class_type_variable!=0&&
-               implementation->class_type_variable!=DIAMOND_CLASS_TYPE_PARAMETER_COUNT(class))continue;
+            if(implementation->class_type_variable>2)continue;
             found=generic_interface_signature(compiler,implementation,wanted,arguments,interface_argument_count(compiler,arguments),receiver);
         }
         matches=found;

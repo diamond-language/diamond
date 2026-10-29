@@ -27,9 +27,14 @@ authoritative fine-grained record.
   or reordered (`Swapped[A, B] < Pair[B, A]`), or transformed
   (`Collection[T] < Box[Array[T]]`). Constructor inference, inherited methods,
   `super`, method references, runtime checks, and language-server receiver queries
-  use the appropriate ancestor bindings. Parameterized children currently require
-  the same parameter count as their parent and exactly one occurrence of each
-  child parameter across the parent arguments.
+  use the appropriate ancestor bindings. Each child parameter must occur exactly
+  once across the parent arguments.
+- Parameterized subclasses can mix fixed and inferred parent slots with different
+  parameter counts: `StringResult[T] < Result[T, String]` exposes one child
+  parameter while inherited methods retain both parent bindings. Fixed slots keep
+  their declared contracts for omitted defaults, empty collections, native types,
+  interfaces, and typed Callables. Nested transformations can also combine two
+  child parameters into one parent argument, such as `Box[Hash[A, B]]`.
 - Cursor-based terminal task-board editing, with Home/End, Delete, UTF-8-safe
   insertion/removal, and caret-following notes navigation and scrolling.
 - Live search and task details with persistent multiline notes in the terminal

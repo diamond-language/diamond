@@ -1180,10 +1180,12 @@ static bool resolve_expression_binding(const DiamondProgram *program,const Diamo
                    infer_class_bindings(program,chunk,source,tokens,call.left+1,end-1,
                        chunk->functions[init->function_index],arguments,depth+1)==0)return false;
                 DiamondTypeBinding parent[2]={},child[2]={};
-                for(size_t v=0;v<count;v++) {
+                for(size_t v=0;v<chunk->functions[init->function_index]->class_type_variable;v++) {
                     parent[v].node_count=1;
-                    if(!receiver_graph_append_binding(&parent[v],0,&arguments[v],depth+1))return false;
+                    if(!receiver_graph_append_binding(&parent[v],0,&arguments[v],depth+1))parent[v]=(DiamondTypeBinding){};
                 }
+                if(!diamond_seed_fixed_parent_bindings(chunk->classes,chunk->class_count,class_index,
+                    chunk->functions[init->function_index]->owner_class,parent))return false;
                 if(!diamond_map_class_bindings(chunk->classes,chunk->class_count,class_index,
                     chunk->functions[init->function_index]->owner_class,parent,child,true))return false;
                 for(size_t v=0;v<count;v++)

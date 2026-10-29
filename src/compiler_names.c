@@ -151,20 +151,59 @@ static uint16_t parse_module_singleton_call(Compiler *compiler, DiamondSpan name
 
 typedef struct ConstructorInference {
     uint16_t bindings[8];
+    bool fixed[2];
     bool complete;
     bool exact;
 } ConstructorInference;
 
-static ConstructorInference constructor_inference(void) {
+static uint16_t import_fixed_binding(Compiler *compiler,const DiamondTypeBinding *binding);
+
+__attribute__((noinline))
+static ConstructorInference constructor_inference(Compiler *compiler,int class_index,
+        const DiamondFunction *initializer) {
     ConstructorInference inference={.complete=true,.exact=true};
     for(size_t index=0;index<8;index++)inference.bindings[index]=DIAMOND_NO_TYPE_SET;
+    if(initializer==nullptr||initializer->class_type_variable==0||
+       compiler->program->classes[class_index]->fixed_type_arguments)return inference;
+    DiamondTypeBinding fixed[2]={};
+    if(!diamond_seed_fixed_parent_bindings(compiler->program->classes,compiler->program->class_count,
+        (size_t)class_index,initializer->owner_class,fixed)) {inference.complete=false;return inference;}
+    for(size_t variable=0;variable<initializer->class_type_variable&&variable<2;variable++)
+        if(fixed[variable].node_count!=0) {
+            inference.fixed[variable]=true;
+            inference.bindings[variable]=import_fixed_binding(compiler,&fixed[variable]);
+            if(inference.bindings[variable]==DIAMOND_NO_TYPE_SET)inference.complete=false;
+        }
     return inference;
+}
+
+static bool constructor_has_inference_variable(const DiamondFunction *initializer,
+        uint16_t set,const ConstructorInference *inference,size_t depth) {
+    if(set>=initializer->type_set_count||depth>32)return false;
+    for(size_t i=0;i<initializer->type_sets[set].count;i++) {
+        const DiamondTypeMember member=initializer->type_sets[set].members[i];
+        if(member.id>=DIAMOND_TYPE_VARIABLE_BASE&&member.id<DIAMOND_TYPE_INTERFACE_BASE) {
+            const size_t variable=member.id-DIAMOND_TYPE_VARIABLE_BASE;
+            if(variable>=2||!inference->fixed[variable])return true;
+        }
+        if(constructor_has_inference_variable(initializer,member.argument_set,inference,depth+1)||
+           constructor_has_inference_variable(initializer,member.second_argument_set,inference,depth+1)||
+           constructor_has_inference_variable(initializer,member.callable_return_set,inference,depth+1))return true;
+        if(member.callable_parameters_typed)
+            for(size_t n=0;n<member.callable_arity;n++)
+                if(constructor_has_inference_variable(initializer,member.callable_parameter_sets[n],inference,depth+1))return true;
+    }
+    return false;
 }
 
 static void infer_constructor_input(Compiler *compiler,const DiamondFunction *initializer,
         ConstructorInference *inference,size_t parameter,uint16_t argument) {
+    if(initializer==nullptr||parameter>=DIAMOND_MAX_DECLARED_PARAMETERS||
+       !constructor_has_inference_variable(initializer,initializer->parameter_type_sets[parameter],inference,0))return;
+    const uint16_t fixed[2]={inference->bindings[0],inference->bindings[1]};
     if(!infer_constructor_argument(compiler,initializer,parameter,argument,
             inference->bindings,&inference->exact))inference->complete=false;
+    for(size_t i=0;i<2;i++)if(inference->fixed[i])inference->bindings[i]=fixed[i];
 }
 
 /* Consume the parser's positional layout before compiling a block can replace
@@ -200,7 +239,7 @@ static uint16_t compile_constructor_block(Compiler *compiler,int class_index,
     if(explicit_type!=DIAMOND_NO_TYPE_SET&&initializer!=nullptr) {
         DiamondTypeMember descriptor={.id=(uint16_t)(DIAMOND_TYPE_CLASS_BASE+class_index),
             .argument_set=explicit_type,.second_argument_set=DIAMOND_NO_TYPE_SET};
-        if(initializer->class_type_variable==2) {
+        if(DIAMOND_CLASS_TYPE_PARAMETER_COUNT(compiler->program->classes[class_index])==2) {
             const DiamondTypeMember pair=compiler->function->type_sets[explicit_type].members[0];
             descriptor.argument_set=pair.argument_set;descriptor.second_argument_set=pair.second_argument_set;
         }
@@ -295,7 +334,8 @@ static void publish_constructor_type(Compiler *compiler,uint16_t reg,int class_i
         if(!inference->complete)return;
         const DiamondFunction *initializer=constructor_signature(compiler,class_index);
         DiamondTypeBinding parent[2]={},child[2]={};
-        for(size_t variable=0;variable<count;variable++) {
+        const size_t parent_count=initializer==nullptr?count:initializer->class_type_variable;
+        for(size_t variable=0;variable<parent_count;variable++) {
             if(!diamond_bind_type_template(compiler->function->type_sets,compiler->function->type_set_count,
                 inference->bindings[variable],&parent[variable]))return;
         }
@@ -336,7 +376,7 @@ static uint16_t parse_class_new_keywords(Compiler *compiler, int class_index,
     size_t keyword_count=0;
     const uint16_t positional=parse_dynamic_keyword_arguments(compiler,
         keyword_names,keyword_values,&keyword_count,initializer);
-    ConstructorInference inference=constructor_inference();
+    ConstructorInference inference=constructor_inference(compiler,class_index,initializer);
     infer_constructor_positionals(compiler,initializer,&inference);
     if(has_spread&&!compiler->positional_spread_literal)inference.complete=false;
     if(initializer!=nullptr)
@@ -383,7 +423,7 @@ static uint16_t parse_class_new_spread(Compiler *compiler, int class_index,
         nullptr,nullptr,nullptr,initializer,
         initializer==nullptr||initializer->arity==0?0:
             initializer->arity-1);
-    ConstructorInference inference=constructor_inference();
+    ConstructorInference inference=constructor_inference(compiler,class_index,initializer);
     infer_constructor_positionals(compiler,initializer,&inference);
     if(!compiler->positional_spread_literal)inference.complete=false;
     if(compiler->current.kind==DIAMOND_TOKEN_DO) {
@@ -441,7 +481,7 @@ static uint16_t parse_class_new_call(Compiler *compiler, int class_index) {
         fail(compiler, compiler->current.span, "expected ')' after arguments"); return 0;
     }
     advance_token(compiler);
-    ConstructorInference inference=constructor_inference();
+    ConstructorInference inference=constructor_inference(compiler,class_index,initializer);
     for(size_t index=0;index<count;index++)
         infer_constructor_input(compiler,initializer,&inference,index,args[index]);
     if(compiler->current.kind==DIAMOND_TOKEN_DO) {

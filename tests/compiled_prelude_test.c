@@ -135,6 +135,7 @@ static void check_generic_class_round_trip(const DiamondProgram *template) {
         "class ForwardGrand[V] < ForwardBox[V]\nend\n"
         "class ForwardPair[A, B] < Payload[A, B]\nend\n"
         "class SwappedPair[A, B] < Payload[B, A]\nend\n"
+        "class StringPayload[T] < Payload[T, String]\nend\n"
         "class TwicePair[C, D] < SwappedPair[D, C]\nend\n"
         "class FixedSwapped < SwappedPair[String, Int]\nend\n"
         "interface IntSource\n  def value() -> Int\nend\n"
@@ -157,6 +158,25 @@ static void check_generic_class_round_trip(const DiamondProgram *template) {
     check(compiled,"generic class compiles against restored template");
     if(compiled) {
         check_fixed_binding_rejection(program);
+        for(size_t i=0;i<program->class_count;i++) {
+            DiamondClass *class=program->classes[i];
+            if(strcmp(class->name,"StringPayload")!=0)continue;
+            DiamondBoundTypeMember *fixed=&class->parent_type_bindings[1].nodes[0].members[0];
+            const uint16_t saved=fixed->id;fixed->id=DIAMOND_TYPE_VARIABLE_BASE+1;
+            char *invalid=nullptr;size_t invalid_length=0;
+            FILE *invalid_file=open_memstream(&invalid,&invalid_length);
+            check(invalid_file!=nullptr,"invalid mixed parent image stream opens");
+            if(invalid_file!=nullptr) {
+                check(diamond_program_write_compiled(program,invalid_file),"invalid mixed parent image writes");
+                fclose(invalid_file);
+                DiamondProgram *rejected=alloc_program();diamond_program_init(rejected);
+                check(!diamond_program_read_compiled((const uint8_t *)invalid,invalid_length,rejected),
+                    "second parent template rejects an undeclared child variable on restore");
+                diamond_program_free(rejected);free(rejected);free(invalid);
+            }
+            fixed->id=saved;break;
+        }
+
         for(size_t i=0;i<program->class_count;i++) {
             DiamondClass *class=program->classes[i];
             if(strcmp(class->name,"ArrayBox")!=0)continue;
@@ -234,6 +254,22 @@ static void check_generic_class_round_trip(const DiamondProgram *template) {
                     char rendered[64];
                     check(run_and_get_string(use,rendered,sizeof rendered)&&strcmp(rendered,"42")==0,
                         "restored Callable template retains its signature");
+                }
+                const bool mixed_parent=diamond_compile_incremental(
+                    "StringPayload.new(42, \"fixed\").value()\n",use,copy,&diagnostic);
+                check(mixed_parent,"restored mixed parent infers its child argument");
+                if(mixed_parent) {
+                    char rendered[64];
+                    check(run_and_get_string(use,rendered,sizeof rendered)&&strcmp(rendered,"42")==0,
+                        "restored mixed parent uses the ancestor's wider prefix");
+                }
+                const bool mixed_explicit=diamond_compile_incremental(
+                    "StringPayload[Int].new(43, \"fixed\").error().length()\n",use,copy,&diagnostic);
+                check(mixed_explicit,"restored mixed parent accepts explicit child specialization");
+                if(mixed_explicit) {
+                    char rendered[64];
+                    check(run_and_get_string(use,rendered,sizeof rendered)&&strcmp(rendered,"5")==0,
+                        "restored mixed parent retains its fixed second argument");
                 }
                 const bool swapped=diamond_compile_incremental(
                     "SwappedPair[String, Int].new(42, \"abc\").value()\n",use,copy,&diagnostic);

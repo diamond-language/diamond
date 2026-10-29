@@ -1,0 +1,4 @@
+class Result[T, E]
+end
+class Child[T] < Result[T]
+end

@@ -1,0 +1,99 @@
+class Result[T, E]
+  def initialize(value: T, error: E = "default")
+    @value = value
+    @error = error
+  end
+  def value() -> T = @value
+  def error() -> E = @error
+  def replace_error(error: E)
+    @error = error
+  end
+  def echo[U](value: U) -> U = value
+  def project[U](callback: Callable[[T], U]) -> U = callback(@value)
+end
+class StringResult[T] < Result[T, String]
+  def own() -> T = @value
+end
+class StringValue[T] < Result[String, T]
+  def own() -> T = @error
+end
+class Grand[T] < StringResult[T]
+end
+class Fixed < StringResult[Int]
+end
+class Swap[A, B] < Result[B, A]
+end
+class MixedSwap[T] < Swap[String, T]
+end
+class ArrayResult[T] < Result[Array[T], String]
+end
+class Override[T] < StringResult[T]
+  def initialize(value: T, error: String)
+    super(value, error)
+  end
+  def error() -> String = super()
+end
+interface IntValue
+  def value() -> Int
+end
+interface StringError
+  def error() -> String
+end
+interface WrongError
+  def error() -> Int
+end
+interface PickError
+  def pick(value: StringResult[Int]) -> String
+end
+class Picker[T]
+  def initialize(value: T)
+    @value = value
+  end
+  def pick[A, B](value: Result[A, B]) -> B = value.error()
+end
+def read(value: Result[Int, String]) -> Int = value.value()
+def own(value: StringResult[Int]) -> Int = value.own()
+def infer[T, E](value: Result[T, E]) -> E = value.error()
+def callback(value: Callable[[], String]) -> String = value()
+def describe(value: Int) -> String = value.to_s()
+def pick(value: PickError) -> String = value.pick(StringResult.new(0, "picked"))
+def checks[U](value, unrelated: U)
+  puts(value is IntValue)
+  puts(value is StringError)
+  puts(value is WrongError)
+  puts(read(value))
+end
+value = StringResult.new(42, "error")
+puts(read(value))
+puts(own(value))
+puts(infer(value))
+puts(callback(value.error))
+puts(value.project(describe))
+puts(value.echo[Bool](true))
+puts(StringResult[Int].new(43, "explicit").value())
+puts(StringResult.new(value: 44, error: "keyword").value())
+puts(StringResult.new(*[45, "spread"]).value())
+puts(StringResult.new(46).error())
+puts(StringValue.new("fixed first", 47).own())
+puts(StringValue[Int].new("explicit first", 48).error())
+puts(Grand.new(49, "grand").value())
+puts(Fixed.new(50, "fixed").error())
+puts(MixedSwap.new(51, "swapped").value())
+puts(ArrayResult.new([52], "array").value()[0])
+puts(Override.new(53, "override").error())
+puts(read(value.dup()))
+puts(Picker.new(false) is PickError)
+puts(pick(Picker.new(false)))
+checks(value, 1.5)
+value.replace_error("replaced")
+puts(value.error())
+begin
+  value.replace_error(0)
+rescue error: TypeError
+  puts("fixed replacement rejected")
+end
+begin
+  StringResult.new(0, 1)
+rescue error: TypeError
+  puts("fixed constructor rejected")
+end

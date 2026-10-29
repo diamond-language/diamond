@@ -1338,6 +1338,8 @@ static inline bool bind_receiver_prefix(const DiamondChunk *chunk,const DiamondI
     if(owner==SIZE_MAX)
         for(size_t i=0;i<chunk->function_count;i++)
             if(chunk->functions[i]->code==chunk->code) {owner=chunk->functions[i]->owner_class;break;}
+    if(owner>=chunk->class_count||
+       chunk->class_type_variable!=DIAMOND_CLASS_TYPE_PARAMETER_COUNT(chunk->classes[owner]))return false;
     return diamond_map_class_bindings(chunk->classes,chunk->class_count,
         self->class->index,owner,self->type_binding,bindings,false);
 }

@@ -1,0 +1,10 @@
+class Result[T, E]
+  def initialize(value: T, error: E)
+    @value = value
+    @error = error
+  end
+end
+class StringResult[T] < Result[T, String]
+end
+def use(value: Result[Int, Int]) = value
+use(StringResult[Int].new(42, "wrong ancestor"))
