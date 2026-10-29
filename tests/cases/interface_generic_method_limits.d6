@@ -1,0 +1,27 @@
+interface Mixed
+  def same(left: Int, right: String) -> Int
+end
+interface Repeated
+  def same(left: Int, right: Int) -> Int
+end
+interface NativeIdentity
+  def identity(value: Time) -> Time
+end
+interface CallableIdentity
+  def identity(value: Callable[[Int], Int]) -> Callable[[Int], Int]
+end
+interface UnionReturn
+  def identity(value: Int | String) -> Int
+end
+class Identity
+  def identity[U](value: U) -> U = value
+  def same[U](left: U, right: U) -> U = left
+end
+def checks(value)
+  puts(value is Mixed)
+  puts(value is Repeated)
+  puts(value is NativeIdentity)
+  puts(value is CallableIdentity)
+  puts(value is UnionReturn)
+end
+checks(Identity.new())

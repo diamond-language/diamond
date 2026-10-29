@@ -100,7 +100,9 @@ static void check_generic_class_round_trip(const DiamondProgram *template) {
         "  def echo[U](value: U) -> U = value\n"
         "end\nstruct Payload[T, E](value: T, error: E)\nend\n"
         "interface IntSource\n  def value() -> Int\nend\n"
+        "interface IntEcho\n  def echo(value: Int) -> Int\nend\n"
         "def read_source(value: IntSource) -> Int = value.value()\n"
+        "def read_echo(value: IntEcho) -> Int = value.echo(42)\n"
         "Box[Box[Int]].new(Box.new(42)).value().value()\n";
     DiamondProgram *program=alloc_program();
     DiamondDiagnostic diagnostic;
@@ -151,6 +153,14 @@ static void check_generic_class_round_trip(const DiamondProgram *template) {
                 const bool rejected=diamond_compile_incremental(
                     "read_source(Box.new(\"wrong\"))\n",use,copy,&diagnostic);
                 check(!rejected,"restored interface rejects incompatible receiver binding");
+                const bool echo=diamond_compile_incremental(
+                    "read_echo(Box.new(\"receiver\"))\n",use,copy,&diagnostic);
+                check(echo,"restored interface specializes method-owned variable");
+                if(echo) {
+                    char rendered[64];
+                    check(run_and_get_string(use,rendered,sizeof rendered)&&strcmp(rendered,"42")==0,
+                        "restored interface isolates method witness from receiver");
+                }
                 const bool record=diamond_compile_incremental(
                     "Payload[Int, String].new(42, \"abc\").error().length()\n",use,copy,&diagnostic);
                 check(record,"restored generic struct accepts construction");

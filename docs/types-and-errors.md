@@ -191,9 +191,19 @@ collection, and Callable signatures. Parameters remain contravariant and returns
 covariant. Known incompatible specializations are compile errors; unknown or
 symbolic receiver arguments retain runtime checks. `is Interface` checks the
 actual instance bindings, including after duplication or a thread copy.
-Unrelated generic methods do not prevent conformance. Required methods that
-introduce their own type parameters, or use a foreign dynamically compiled body,
-are not specialized by this check. Recursive checks that cannot establish a
+Unrelated generic methods do not prevent conformance. A required method may
+introduce its own type parameters: `identity[U](value: U) -> U` satisfies a
+method taking and returning `Int`, for example. Each method variable takes its
+first witness from the interface's supplied parameter types, including nested
+collection and Callable signatures. The complete specialized signature must
+then pass parameter and return variance checks. Receiver variables stay fixed;
+an unrelated caller's variables cannot supply a witness. Return-only variables
+cannot establish a concrete return contract. This is conservative inference:
+it does not search for a union witness across conflicting inputs. Witnesses
+must fit the bounded type graph; concrete native kinds and typed Callable
+values cannot themselves be witnesses (variables inside Callable signatures
+are supported). Foreign dynamically compiled method bodies are not specialized
+by this check. Recursive checks that cannot establish a
 finite proof are rejected conservatively. An unconstrained collection binding
 cannot promise a typed element contract.
 

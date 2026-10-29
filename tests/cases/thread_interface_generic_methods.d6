@@ -1,0 +1,20 @@
+interface IntIdentity
+  def identity(value: Int) -> Int
+end
+interface WrongReturn
+  def identity(value: Int) -> String
+end
+class Identity[T]
+  def initialize(value: T)
+    @value = value
+  end
+  def identity[U](value: U) -> U = value
+end
+def worker[U](value, unrelated: U)
+  puts(value is IntIdentity)
+  puts(value is WrongReturn)
+  value.dup()
+end
+def read(value: IntIdentity) -> Int = value.identity(42)
+def spawn[U](value, unrelated: U) = Thread.new(worker, value, unrelated).join()
+puts(read(spawn(Identity.new("receiver"), false)))

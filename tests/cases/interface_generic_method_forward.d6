@@ -1,0 +1,9 @@
+def run(value: IntIdentity) -> Int = value.identity(42)
+def forward() -> Int = run(Forward.new())
+interface IntIdentity
+  def identity(value: Int) -> Int
+end
+class Forward
+  def identity[U](value: U) -> U = value
+end
+puts(forward())
