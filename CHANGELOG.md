@@ -8,6 +8,28 @@ authoritative fine-grained record.
 
 ### Added
 
+- Generic classes and structs support up to two type parameters, with explicit
+  specialization (`Box[Int].new(42)`) or constructor inference (`Box.new(42)`).
+  Parameterized annotations check the stored instance arguments, including nested
+  instances and collections; duplication and thread copies retain those bindings.
+- Instance methods can declare their own type parameters alongside the receiver's
+  parameters. Explicit or inferred method arguments, typed callbacks, contextual
+  blocks, and bound method references retain specialized parameter and return types.
+- Generic instances satisfy structural interfaces using their receiver bindings.
+  Method-owned variables can be inferred from interface inputs, including union
+  witnesses shared across multiple parameters; complete signatures still undergo
+  parameter and return variance checks.
+- Generic class bindings preserve native kinds and typed Callable signatures,
+  including arity, parameter types, and return types. Conflicting invariant
+  bindings and graphs beyond the supported capacity raise errors instead of
+  discarding an inner contract.
+- Generic superclass arguments can be fixed (`StringBox < Box[String]`), forwarded
+  or reordered (`Swapped[A, B] < Pair[B, A]`), or transformed
+  (`Collection[T] < Box[Array[T]]`). Constructor inference, inherited methods,
+  `super`, method references, runtime checks, and language-server receiver queries
+  use the appropriate ancestor bindings. Parameterized children currently require
+  the same parameter count as their parent and exactly one occurrence of each
+  child parameter across the parent arguments.
 - Cursor-based terminal task-board editing, with Home/End, Delete, UTF-8-safe
   insertion/removal, and caret-following notes navigation and scrolling.
 - Live search and task details with persistent multiline notes in the terminal
