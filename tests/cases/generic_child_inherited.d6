@@ -1,0 +1,46 @@
+class Box[T]
+  def initialize(value: T)
+    @value = value
+  end
+  def value() -> T = @value
+end
+class Extra[T, U] < Box[T]
+  def extra(value: U) -> U = value
+end
+class Grand[A, B] < Extra[B, A]
+end
+class StringBox < Box[String]
+end
+class Fixed[T] < StringBox
+  def extra(value: T) -> T = value
+end
+class Plain
+  def initialize(value: Int)
+    @value = value
+  end
+  def value() -> Int = @value
+end
+class PlainChild[T] < Plain
+  def extra(value: T) -> T = value
+end
+puts(Extra[Int, String].new(42).value())
+puts(Extra[Int, String].new(43).extra("tag"))
+puts(Grand[String, Int].new(44).value())
+puts(Fixed[Int].new("fixed").value())
+puts(Fixed[Int].new("fixed").extra(45))
+puts(PlainChild[String].new(46).extra("plain"))
+begin
+  Extra.new(42)
+rescue TypeError
+  puts("missing child binding rejected")
+end
+begin
+  Fixed.new("fixed")
+rescue TypeError
+  puts("fixed parent cannot infer child")
+end
+begin
+  PlainChild.new(47)
+rescue TypeError
+  puts("plain parent cannot infer child")
+end

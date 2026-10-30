@@ -8,6 +8,11 @@ authoritative fine-grained record.
 
 ### Added
 
+- Ordinary generic subclasses can introduce child-only parameters, inherit
+  nongeneric or fixed parents, and infer their own bindings from an overridden
+  constructor. For example, `Tagged[T, U] < Box[T]` can infer `U` from a tag
+  argument. An inherited constructor requires explicit type arguments when the
+  parent view cannot determine every child parameter.
 - Generic parent arguments may repeat a child parameter:
   `Point[T] < Pair[T, T]` joins constructor witnesses into one shared binding.
   Both inherited slots retain that binding, including through nested containers,
@@ -39,8 +44,7 @@ authoritative fine-grained record.
   or reordered (`Swapped[A, B] < Pair[B, A]`), or transformed
   (`Collection[T] < Box[Array[T]]`). Constructor inference, inherited methods,
   `super`, method references, runtime checks, and language-server receiver queries
-  use the appropriate ancestor bindings. Each ordinary class parameter must
-  occur at least once across the parent arguments.
+  use the appropriate ancestor bindings.
 - Parameterized subclasses can mix fixed and inferred parent slots with different
   parameter counts: `StringResult[T] < Result[T, String]` exposes one child
   parameter while inherited methods retain both parent bindings. Fixed slots keep

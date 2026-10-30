@@ -1,0 +1,10 @@
+42
+tag
+44
+fixed
+45
+plain
+missing child binding rejected
+fixed parent cannot infer child
+plain parent cannot infer child
+nil

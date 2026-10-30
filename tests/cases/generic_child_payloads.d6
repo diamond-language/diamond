@@ -1,0 +1,55 @@
+class Box[T]
+  def initialize(value: T)
+    @value = value
+  end
+  def value() -> T = @value
+end
+class Batch[T, U] < Box[Array[T]]
+  def initialize(values: Array[T], tag: U)
+    super(values)
+    @tag = tag
+  end
+  def tag() -> U = @tag
+end
+class Fixed[T] < Box[String]
+  def initialize(value: String, data: T)
+    super(value)
+    @data = data
+  end
+  def data() -> T = @data
+end
+class Callback[T, U] < Box[T]
+  def initialize(value: T, tag: U, block: Callable[[T, U], U])
+    super(value)
+    @tag = block(value, tag)
+  end
+  def tag() -> U = @tag
+end
+class Repeated[T, U] < Box[Hash[T, T]]
+  def initialize(values: Hash[T, T], tag: U)
+    super(values)
+    @tag = tag
+  end
+  def tag() -> U = @tag
+end
+def answer(value: Int) -> Int = value + 1
+def use(value: Box[Array[Int]]) -> Int = value.value()[0]
+puts(use(Batch.new([42], Time.now())))
+puts(Fixed.new("fixed", answer).data()(42))
+callback = Callback.new(42, "callback") do |value, tag|
+  tag
+end
+puts(callback.tag())
+puts(callback.value())
+puts(Repeated.new({1: "one"}, false).tag())
+puts(Batch[Int, String].new([], "empty").tag())
+begin
+  Batch.new([], "missing")
+rescue TypeError
+  puts("empty binding rejected")
+end
+begin
+  Fixed[Callable[[Int], Int]].new("fixed", "bad")
+rescue TypeError
+  puts("Callable binding checked")
+end

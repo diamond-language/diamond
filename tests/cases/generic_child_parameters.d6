@@ -1,0 +1,65 @@
+class Box[T]
+  def initialize(value: T)
+    @value = value
+  end
+  def value() -> T = @value
+  def echo(value: T) -> T = value
+end
+class Tagged[T, U] < Box[T]
+  def initialize(value: T, tag: U)
+    super(value)
+    @tag = tag
+  end
+  def tag() -> U = @tag
+end
+class Grand[A, B] < Tagged[B, A]
+end
+class StringBox < Box[String]
+end
+class Labelled[U] < StringBox
+  def initialize(value: String, label: U)
+    super(value)
+    @label = label
+  end
+  def label() -> U = @label
+end
+class Base
+  def initialize(name: String)
+    @name = name
+  end
+  def name() -> String = @name
+end
+class Own[T] < Base
+  def initialize(name: String, data: T)
+    super(name)
+    @data = data
+  end
+  def data() -> T = @data
+end
+def read(value: Box[Int]) -> Int = value.value()
+def tag(value: Tagged[Int, String]) -> String = value.tag()
+value = Tagged.new(42, "tag")
+puts(read(value))
+puts(tag(value))
+puts(value.echo(43))
+reader = value.tag
+puts(reader())
+puts(Tagged[Int, String].new(tag: "keyword", value: 44).value())
+puts(Tagged.new(*[45, "spread"]).tag())
+puts(Grand.new(46, "grand").tag())
+puts(Grand[String, Int].new(47, "explicit").value())
+puts(value.dup().tag())
+puts(Labelled.new("fixed", 48).value())
+puts(Labelled[Int].new("parent", 49).label())
+puts(Own.new("base", 50).data())
+puts(Own[Int].new("named", 51).name())
+begin
+  value.echo("bad")
+rescue TypeError
+  puts("parent binding checked")
+end
+begin
+  Tagged[Int, String].new(1, false)
+rescue TypeError
+  puts("child binding checked")
+end
