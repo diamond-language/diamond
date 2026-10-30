@@ -47,6 +47,7 @@ static uint16_t emit_singleton_call_head(Compiler *compiler,DiamondOpCode opcode
 
 static int32_t homogeneous_spread_expectation(Compiler *compiler,
         const DiamondFunction *target,size_t first,size_t parameter_count);
+static uint16_t argument_expectation(Compiler *compiler,const DiamondFunction *target,size_t parameter);
 static uint16_t compile_callable_value_block(Compiler *compiler,
         int32_t callable_set_index);
 
@@ -217,20 +218,19 @@ bool call_arguments_have_spread(Compiler *compiler) {
 
 static int32_t homogeneous_spread_expectation(Compiler *compiler,
         const DiamondFunction *target,size_t first,size_t parameter_count) {
-    if(target==nullptr||first>=parameter_count||parameter_count>target->arity)
-        return -1;
-    const uint16_t source=target->parameter_type_sets[first];
-    if(source==DIAMOND_NO_TYPE_SET||source>=target->type_set_count)return -1;
+    if(target==nullptr)return -1;
+    const size_t arity=target->arity-diamond_function_self_offset(target);
+    if(parameter_count>arity)parameter_count=arity;
+    if(first>=parameter_count)return -1;
+    const uint16_t element=argument_expectation(compiler,target,first);
+    if(element==DIAMOND_NO_TYPE_SET)return -1;
     for(size_t parameter=first+1;parameter<parameter_count;parameter++) {
-        const uint16_t other=target->parameter_type_sets[parameter];
-        if(other==DIAMOND_NO_TYPE_SET||other>=target->type_set_count||
-           !type_sets_structurally_equal(target->type_sets,
-               target->type_set_count,source,target->type_sets,
-               target->type_set_count,other,0))return -1;
+        const uint16_t other=argument_expectation(compiler,target,parameter);
+        if(other==DIAMOND_NO_TYPE_SET||
+           !type_sets_structurally_equal(compiler->function->type_sets,
+               compiler->function->type_set_count,element,compiler->function->type_sets,
+               compiler->function->type_set_count,other,0))return -1;
     }
-    const uint16_t element=target==compiler->function?source:
-        clone_type_set_into_current(compiler,target->type_sets,
-            target->type_set_count,source);
     if(element==DIAMOND_NO_TYPE_SET||!reserve_type_sets(compiler,1))return -1;
     const size_t array_index=compiler->function->type_set_count++;
     DiamondTypeSet *array=&compiler->function->type_sets[array_index];
@@ -945,20 +945,30 @@ bool infer_constructor_argument(Compiler *compiler,const DiamondFunction *target
  * expression itself. This is deliberately a one-expression conduit: generic
  * method references can consume it bidirectionally, while every nested or
  * subsequent expression sees the prior context restored. */
+static uint16_t argument_expectation(Compiler *compiler,const DiamondFunction *target,size_t parameter) {
+    if(target==nullptr||parameter>=target->arity||parameter>=DIAMOND_MAX_DECLARED_PARAMETERS)
+        return DIAMOND_NO_TYPE_SET;
+    const uint16_t source=target->parameter_type_sets[parameter];
+    if(source==DIAMOND_NO_TYPE_SET||source>=target->type_set_count)return DIAMOND_NO_TYPE_SET;
+    if(target==compiler->argument_context_target) {
+        const size_t original=compiler->function->type_set_count;
+        bool resolved=true;
+        const uint16_t result=clone_substituted_type_set(compiler,target,source,
+            compiler->argument_context_bindings,target->type_variable_count,&resolved);
+        if(resolved)return result;
+        compiler->function->type_set_count=original;
+        return DIAMOND_NO_TYPE_SET;
+    }
+    return target==compiler->function?source:clone_type_set_into_current(compiler,
+        target->type_sets,target->type_set_count,source);
+}
+
 uint16_t parse_expected_argument(Compiler *compiler,
         const DiamondFunction *target,size_t parameter) {
     const int32_t outer=compiler->expected_expression_type_set;
     compiler->expected_expression_type_set=-1;
-    if(target!=nullptr&&parameter<target->arity) {
-        const uint16_t source=target->parameter_type_sets[parameter];
-        if(source!=DIAMOND_NO_TYPE_SET&&source<target->type_set_count) {
-            const uint16_t cloned=target==compiler->function?source:
-                clone_type_set_into_current(compiler,target->type_sets,
-                    target->type_set_count,source);
-            if(cloned!=DIAMOND_NO_TYPE_SET)
-                compiler->expected_expression_type_set=(int32_t)cloned;
-        }
-    }
+    const uint16_t expected=argument_expectation(compiler,target,parameter);
+    if(expected!=DIAMOND_NO_TYPE_SET)compiler->expected_expression_type_set=(int32_t)expected;
     const uint16_t result=parse_expression(compiler);
     compiler->expected_expression_type_set=outer;
     return result;

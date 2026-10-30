@@ -8,6 +8,11 @@ authoritative fine-grained record.
 
 ### Added
 
+- Generic instance receivers supply their bound type arguments to contextual
+  Callable inference in positional, keyword, and spread arguments, including
+  nested literals. Inherited mappings, fixed subclasses, `self`, and explicit
+  method arguments retain the correct slots; nested calls restore the outer
+  argument context instead of borrowing another invocation's bindings.
 - Bare top-level generic function references infer specialization from an
   expected typed Callable contract, including nested containers, keyword and
   spread arguments, constructors, and annotated returns. Compatible optional

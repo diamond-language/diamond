@@ -2510,7 +2510,7 @@ static uint16_t parse_invoke_spread_call(Compiler *compiler,const InvokeSite *si
 /* parse_invoke after `.name` has been consumed -- also reached from
  * parse_call for a bare `name(...)` inside a method, with self as the
  * receiver. */
-uint16_t parse_invoke_named(Compiler *compiler, uint16_t receiver,
+static uint16_t parse_invoke_named_impl(Compiler *compiler, uint16_t receiver,
         uint16_t mutation_receiver, int32_t receiver_set_index, DiamondSpan name) {
     const DiamondFunction *contextual_target=
         instance_call_signature(compiler,receiver,name,false);
@@ -2562,6 +2562,10 @@ uint16_t parse_invoke_named(Compiler *compiler, uint16_t receiver,
         if(!parse_explicit_type_arguments(compiler,type_arguments,&type_argument_count))
             return 0;
     }
+    if(contextual_target!=nullptr&&contextual_target==compiler->argument_context_target&&
+       type_argument_count==contextual_target->type_variable_count-contextual_target->class_type_variable)
+        for(size_t i=0;i<type_argument_count;i++)
+            compiler->argument_context_bindings[i+contextual_target->class_type_variable]=type_arguments[i];
     /* `recv.attr = value` -- sugar for `recv.attr=(value)`. Only a plain
      * assignment is supported (mirrors compile_assignment's own RHS): one
      * expression, no trailing '(', no do-block (a setter takes exactly one
@@ -2668,6 +2672,47 @@ uint16_t parse_invoke_named(Compiler *compiler, uint16_t receiver,
     publish_array_map_tooling_type(compiler,result,receiver,name,args,count);
     publish_array_push_return_type(compiler,result,mutation_receiver,name,args,
         count);
+    return result;
+}
+
+/* Keep binding graph scratch out of recursive argument parsing frames. */
+__attribute__((noinline))
+static void prepare_receiver_argument_context(Compiler *compiler,const DiamondFunction *target,
+        uint16_t receiver,int32_t receiver_set_index) {
+    if(receiver_set_index>=0&&(size_t)receiver_set_index<compiler->function->type_set_count) {
+        const DiamondTypeSet known=compiler->function->type_sets[receiver_set_index];
+        if(known.count==1)(void)bind_receiver_type_arguments(compiler,target,
+            known.members[0],compiler->argument_context_bindings);
+    } else if(receiver==0&&compiler->function->class_type_variable>0)
+        (void)bind_reference_self_arguments(compiler,target,compiler->argument_context_bindings);
+    else {
+        const uint16_t type=compiler->known_types[receiver];
+        if(type>=DIAMOND_TYPE_CLASS_BASE&&type<DIAMOND_TYPE_CLASS_LIMIT&&
+           compiler->program->classes[type-DIAMOND_TYPE_CLASS_BASE]->fixed_type_arguments) {
+            DiamondTypeBinding fixed[2]={};
+            if(diamond_seed_fixed_parent_bindings(compiler->program->classes,compiler->program->class_count,
+                type-DIAMOND_TYPE_CLASS_BASE,target->owner_class,fixed))
+                for(size_t i=0;i<target->class_type_variable;i++)
+                    if(fixed[i].node_count>0)compiler->argument_context_bindings[i]=import_fixed_binding(compiler,&fixed[i]);
+        }
+    }
+}
+
+/* Receiver-owned slots are projected into the method owner's namespace.
+ * The saved context also isolates nested calls, even to the same method. */
+uint16_t parse_invoke_named(Compiler *compiler,uint16_t receiver,
+        uint16_t mutation_receiver,int32_t receiver_set_index,DiamondSpan name) {
+    const DiamondFunction *saved=compiler->argument_context_target;
+    uint16_t saved_bindings[8];
+    memcpy(saved_bindings,compiler->argument_context_bindings,sizeof saved_bindings);
+    const DiamondFunction *target=instance_call_signature(compiler,receiver,name,false);
+    compiler->argument_context_target=target!=nullptr&&target->type_variable_count>0?target:nullptr;
+    for(size_t i=0;i<8;i++)compiler->argument_context_bindings[i]=DIAMOND_NO_TYPE_SET;
+    if(target!=nullptr&&target->class_type_variable>0)
+        prepare_receiver_argument_context(compiler,target,receiver,receiver_set_index);
+    const uint16_t result=parse_invoke_named_impl(compiler,receiver,mutation_receiver,receiver_set_index,name);
+    compiler->argument_context_target=saved;
+    memcpy(compiler->argument_context_bindings,saved_bindings,sizeof saved_bindings);
     return result;
 }
 

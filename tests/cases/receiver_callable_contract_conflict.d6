@@ -1,0 +1,8 @@
+def identity[T](value: T) -> T = value
+class Receiver[T]
+  def initialize(value: T)
+    @value = value
+  end
+  def apply(callback: Callable[[T], String]) -> String = callback(@value)
+end
+Receiver.new(42).apply(identity)

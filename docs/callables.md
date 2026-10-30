@@ -30,6 +30,13 @@ and Hash literals, keyword/spread calls, constructors, and annotated returns.
 Optional and variadic signatures must accept the expected arity, and every type
 parameter must have a consistent binding. Without such a context, a bare generic
 function value retains its existing inference on each call.
+For a generic instance method, the receiver's bindings specialize its expected
+argument types first: `box.accept(identity)` can infer `Int` when `box` is a
+`Box[Int]` and `accept` takes `Callable[[T], T]`. This also works through
+inherited parent mappings, fixed subclasses, nested literals, keywords, and
+spread calls. Explicit method type arguments supply their own slots separately.
+Unresolved method variables provide no contextual hint, and nested calls restore
+the outer receiver's argument context.
 
 ### Tail-call optimization
 
