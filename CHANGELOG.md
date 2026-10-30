@@ -8,6 +8,10 @@ authoritative fine-grained record.
 
 ### Added
 
+- Forward module-function and class-singleton calls accept keyword and spread
+  arguments, including mixed calls, explicit or inferred generics, defaults,
+  variadics, and trailing blocks. The final pass retains contextual types from
+  the discovered signature; runtime argument and type checks remain enforced.
 - Forward-referenced module functions accept explicit generic arguments in
   positional calls and bare references, for both `module_function` and
   `def self.name` declarations. The final compilation pass validates the
