@@ -117,6 +117,9 @@ static void check_fixed_binding_rejection(DiamondProgram *program) {
 
 static void check_generic_class_round_trip(const DiamondProgram *template) {
     static const char source[]=
+        "module ForwardTyped\n"
+        "  def self.run() -> Int = ForwardTyped.identity[Int](42)\n"
+        "  def self.identity[T](value: T) -> T = value\nend\n"
         "class Box[T]\n"
         "  def initialize(value: T)\n    @value = value\n  end\n"
         "  def value() -> T = @value\n"
@@ -341,6 +344,14 @@ static void check_generic_class_round_trip(const DiamondProgram *template) {
                     char rendered[64];
                     check(run_and_get_string(use,rendered,sizeof rendered)&&strcmp(rendered,"42")==0,
                         "restored fixed parent bindings cannot replace the child's own parameter");
+                }
+                const bool restored_forward=diamond_compile_incremental(
+                    "ForwardTyped.run()\n",use,copy,&diagnostic);
+                check(restored_forward,"restored forward generic module call compiles");
+                if(restored_forward) {
+                    char rendered[64];
+                    check(run_and_get_string(use,rendered,sizeof rendered)&&strcmp(rendered,"42")==0,
+                        "restored forward generic module call retains its explicit binding");
                 }
                 const bool restored_own=diamond_compile_incremental(
                     "OwnBox.new(40, 2).value() + OwnBox.new(40, 2).tag()\n",use,copy,&diagnostic);

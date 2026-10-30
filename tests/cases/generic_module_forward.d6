@@ -1,0 +1,54 @@
+module Forward
+  module_function
+  def run()
+    puts(Forward.identity[Int](42))
+    puts(Forward.identity[Array[String]](["nested"])[0])
+    reader = Forward.identity[String]
+    puts(reader("reference"))
+    defaulted = Forward.defaulted[Int]
+    puts(defaulted())
+    rest = Forward.rest[String]
+    puts(rest("a", "b"))
+    puts(Forward.apply[Int](43) do |value|
+      value + 1
+    end)
+    begin
+      Forward.identity[Int]("bad")
+    rescue TypeError
+      puts("forward contract checked")
+    end
+  end
+  def relay[T](value: T) -> T = Forward.identity[T](value)
+  def identity[T](value: T) -> T = value
+  def defaulted[T](value: T = 45) -> T = value
+  def rest[T](head: T, *values) -> Int = values.length() + 1
+  def apply[T](value: T, block: Callable[[T], T]) -> T = block(value)
+end
+module SelfForward
+  def self.run()
+    puts(SelfForward.identity[String]("self"))
+    reader = SelfForward.identity[Int]
+    puts(reader(46))
+  end
+  def self.identity[T](value: T) -> T = value
+end
+module Recursive
+  module_function
+  def first[T](value: T, count: Int) -> T
+    if count == 0
+      value
+    else
+      Recursive.second[T](value, count - 1)
+    end
+  end
+  def second[T](value: T, count: Int) -> T = Recursive.first[T](value, count)
+end
+Forward.run()
+puts(Forward.relay[String]("enclosing"))
+SelfForward.run()
+puts(Recursive.first[String]("recursive", 3))
+begin
+  Forward.identity[Int]("bad")
+rescue TypeError
+  puts("contract checked")
+end

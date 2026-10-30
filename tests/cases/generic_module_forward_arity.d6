@@ -1,0 +1,5 @@
+module Forward
+  def self.run() = Forward.identity[Int, String](42)
+  def self.identity[T](value: T) -> T = value
+end
+Forward.run()
