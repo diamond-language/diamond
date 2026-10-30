@@ -8,6 +8,10 @@ authoritative fine-grained record.
 
 ### Added
 
+- Bound method references can retain enclosing generic arguments, including
+  receiver-owned and method-owned slots. Escaping references preserve their
+  creation-time bindings for calls, typed Callable checks, generic inference,
+  and nested payload metadata instead of rebinding to a later caller.
 - Forward module-function and class-singleton calls accept keyword and spread
   arguments, including mixed calls, explicit or inferred generics, defaults,
   variadics, and trailing blocks. The final pass retains contextual types from

@@ -2037,16 +2037,30 @@ void publish_instance_return_type(Compiler *compiler,uint16_t reg,
 /* `receiver.method` -- a capturing, variadic Callable whose single captured
  * value is the receiver and whose collected positional arguments are forwarded
  * through the ordinary dynamic INVOKE_SPREAD matrix. */
+__attribute__((noinline))
+static bool bind_reference_self_arguments(Compiler *compiler,const DiamondFunction *target,
+        uint16_t bindings[8]) {
+    DiamondTypeBinding own[2]={},parent[2]={};
+    for(size_t i=0;i<compiler->function->class_type_variable;i++) {
+        own[i].node_count=1;own[i].nodes[0].count=1;
+        own[i].nodes[0].members[0]=(DiamondBoundTypeMember){
+            .id=(uint16_t)(DIAMOND_TYPE_VARIABLE_BASE+i),.argument_node=UINT8_MAX,
+            .second_argument_node=UINT8_MAX,.native_kind=UINT8_MAX,.signature=UINT8_MAX};
+    }
+    if(!diamond_map_class_bindings(compiler->program->classes,compiler->program->class_count,
+        compiler->function->owner_class,target->owner_class,own,parent,false))return false;
+    for(size_t i=0;i<target->class_type_variable;i++) {
+        bindings[i]=import_fixed_binding(compiler,&parent[i]);
+        if(bindings[i]==DIAMOND_NO_TYPE_SET)return false;
+    }
+    return true;
+}
+
 static uint16_t parse_bound_method_reference(Compiler *compiler,uint16_t receiver,
         DiamondSpan method_name,const uint16_t *type_arguments,
         size_t type_argument_count) {
     const DiamondFunction *target=
         instance_call_signature(compiler,receiver,method_name,true);
-    for(size_t i=0;i<type_argument_count;i++)
-        if(type_set_contains_variable(compiler,type_arguments[i])) {
-            fail(compiler,method_name,"bound method references require concrete type arguments");
-            return 0;
-        }
     uint16_t inferred_arguments[8];
     if(target!=nullptr&&target->type_variable_count>0&&
        type_argument_count==0&&infer_reference_type_arguments(compiler,target,
@@ -2064,7 +2078,8 @@ static uint16_t parse_bound_method_reference(Compiler *compiler,uint16_t receive
         if(receiver_set>=0) {
             const DiamondTypeSet *known=&compiler->function->type_sets[receiver_set];
             if(known->count==1)(void)bind_receiver_type_arguments(compiler,target,known->members[0],class_bindings);
-        }
+        } else if(receiver==0&&compiler->function->class_type_variable>0)
+            (void)bind_reference_self_arguments(compiler,target,class_bindings);
         for(size_t i=0;i<type_argument_count&&i+target->class_type_variable<8;i++)class_bindings[i+target->class_type_variable]=type_arguments[i];
         contract_arguments=class_bindings;contract_count=target->type_variable_count;
     }
@@ -2098,12 +2113,6 @@ static uint16_t parse_bound_method_reference(Compiler *compiler,uint16_t receive
                     &resolved):clone_type_set_into_current(compiler,
                     target->type_sets,target->type_set_count,
                     target->return_type_set);
-        if(target->class_type_variable) {
-            for(size_t i=0;i<DIAMOND_MAX_DECLARED_PARAMETERS;i++)
-                if(parameter_sets[i]!=DIAMOND_NO_TYPE_SET&&
-                   type_set_contains_variable(compiler,parameter_sets[i]))resolved=false;
-            if(return_set!=DIAMOND_NO_TYPE_SET&&type_set_contains_variable(compiler,return_set))resolved=false;
-        }
         if(!resolved) {
             compiler->function->type_set_count=original_count;
             return_set=DIAMOND_NO_TYPE_SET;
@@ -2116,6 +2125,16 @@ static uint16_t parse_bound_method_reference(Compiler *compiler,uint16_t receive
     if(wrapper==nullptr) {fail(compiler,method_name,"out of memory");return 0;}
     (void)snprintf(wrapper->name,sizeof wrapper->name,"<bound method>");
     wrapper->owner_class=DIAMOND_OWNER_NONE;wrapper->nested=true;
+    bool lexical=false;
+    for(size_t i=0;i<type_argument_count;i++)
+        lexical|=type_set_contains_variable(compiler,type_arguments[i]);
+    for(size_t i=0;i<DIAMOND_MAX_DECLARED_PARAMETERS;i++)
+        if(parameter_sets[i]!=DIAMOND_NO_TYPE_SET)
+            lexical|=type_set_contains_variable(compiler,parameter_sets[i]);
+    if(return_set!=DIAMOND_NO_TYPE_SET)lexical|=type_set_contains_variable(compiler,return_set);
+    wrapper->type_variable_count=lexical?compiler->function->type_variable_count:0;
+    wrapper->captures_type_variables=wrapper->type_variable_count>0;
+    memcpy(wrapper->type_variables,compiler->function->type_variables,sizeof wrapper->type_variables);
     wrapper->arity=typed_wrapper?(uint8_t)(target->arity-1):1;
     wrapper->required_arity=typed_wrapper?
         (uint8_t)(target->required_arity>0?target->required_arity-1:0):0;

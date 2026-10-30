@@ -389,6 +389,8 @@ static void free_object_list(const DiamondVm *vm,DiamondObject *object) {
             for(size_t index=0;index<array->constraint_count;index++)
                 free(array->constraints[index].type_variable_bindings);
             free(array->values);free(array->dirty_cards);
+        } else if(object->kind==DIAMOND_OBJECT_CLOSURE) {
+            free(((DiamondClosure *)object)->type_bindings);
         } else if(object->kind==DIAMOND_OBJECT_FIBER) {
             diamond_fiber_free(((DiamondFiberHandle *)object)->fiber);
         } else if(object->kind==DIAMOND_OBJECT_FILE) {

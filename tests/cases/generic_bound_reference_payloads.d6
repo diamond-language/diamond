@@ -1,0 +1,42 @@
+class Worker
+  def echo[T](value: T) -> T = value
+  def count[T](head: T, *rest) -> Int = rest.length() + 1
+end
+class Box[T]
+  def initialize(value: T)
+    @value = value
+  end
+  def value() -> T = @value
+  def reader() = self.value
+end
+class Rows[T] < Box[Array[T]]
+  def reader() = self.value
+end
+def map_reference[T](worker: Worker) = worker.echo[Hash[String, T]]
+def callback_reference[T](worker: Worker) = worker.echo[Callable[[T], T]]
+def count_reference[T](worker: Worker) = worker.count[T]
+def typed_reader(value: Callable[[], Int]) -> Int = value()
+def array_reader(value: Callable[[], Array[Int]]) -> Int = value()[0]
+def answer(value: Int) -> Int = value + 1
+worker = Worker.new()
+map = map_reference[Int](worker)
+puts(map({"value": 42})["value"])
+callable = callback_reference[Int](worker)
+puts(callable(answer)(42))
+counter = count_reference[String](worker)
+puts(counter("one", 2, false))
+reader = Box[Int].new(44).reader()
+puts(typed_reader(reader))
+times = Box[Time].new(Time.now()).reader()
+puts(times() is Time)
+puts(array_reader(Rows.new([45]).reader()))
+begin
+  map({"value": "bad"})
+rescue TypeError
+  puts("nested binding checked")
+end
+begin
+  counter(1)
+rescue TypeError
+  puts("variadic prefix checked")
+end

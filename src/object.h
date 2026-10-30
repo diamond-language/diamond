@@ -342,6 +342,9 @@ typedef struct DiamondClosure {
      * closure and for a compile_method result with no bound_values. */
     const DiamondValue *bound_values;
     uint8_t bound_value_count;
+    /* Owned pointer-free lexical type graphs for generated method references. */
+    DiamondTypeBinding *type_bindings;
+    uint8_t type_binding_count;
     /* The captured cells/values, `capture_count` of them, allocated inline after the struct
      * (see allocate_closure), so a closure pays only for what it captures. */
     DiamondValue captures[];

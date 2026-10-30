@@ -339,6 +339,11 @@ static bool read_function(const uint8_t **cursor, const uint8_t *end,
      * product into a small, in-bounds-looking take(). */
     if(view.type_variable_count>8||view.class_type_variable>2||
        view.class_type_variable>view.type_variable_count)return false;
+    const bool no=false,yes=true;
+    if((memcmp(&view.captures_type_variables,&no,sizeof no)!=0&&
+        memcmp(&view.captures_type_variables,&yes,sizeof yes)!=0)||
+       (view.captures_type_variables&&(!view.nested||view.type_variable_count==0||
+            view.class_type_variable!=0)))return false;
     const size_t remaining = (size_t)(end - *cursor);
     if (view.code_count > remaining / sizeof *view.code ||
         view.constant_count > remaining / sizeof *view.constants ||
@@ -834,7 +839,7 @@ enum { DIAMOND_CACHE_MAGIC_LENGTH = 8 };
  * 9: classes store a type parameter; methods distinguish its instance binding.
  * 10: NEW_TYPED constructs explicitly specialized generic instances.
  * 11: generic class methods bind method variables after the receiver slot. */
-enum { DIAMOND_CACHE_FORMAT_VERSION = 19 };
+enum { DIAMOND_CACHE_FORMAT_VERSION = 20 };
 
 /* A checksum of the compiler's own sources and prelude (every .c and .h
  * file under src/, plus lib/core.d6 and lib/core/), passed in by the

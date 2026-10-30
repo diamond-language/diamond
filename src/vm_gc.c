@@ -401,8 +401,10 @@ static void sweep_list(DiamondVm *vm, DiamondObject **list_head,
                 free(hash->constraints[index].type_variable_bindings);
             free(hash->entries);free(hash->buckets);free(hash->dirty_cards);
         } else if(unreached->kind==DIAMOND_OBJECT_CLOSURE) {
+            free(((DiamondClosure *)unreached)->type_bindings);
             size=sizeof(DiamondClosure)+
-                ((DiamondClosure *)unreached)->capture_count*sizeof(DiamondValue);
+                ((DiamondClosure *)unreached)->capture_count*sizeof(DiamondValue)+
+                ((DiamondClosure *)unreached)->type_binding_count*sizeof(DiamondTypeBinding);
         } else if(unreached->kind==DIAMOND_OBJECT_FIBER) {
             size=sizeof(DiamondFiberHandle);
             diamond_fiber_free(((DiamondFiberHandle *)unreached)->fiber);
