@@ -1,0 +1,90 @@
+def identity[T](value: T) -> T = value
+class Processor[T]
+  def initialize(value: T, callback: Callable[[T], T])
+    @value = callback(value)
+    @callback = callback
+  end
+  def value() -> T = @value
+  def callback() -> Callable[[T], T] = @callback
+end
+class Rows[T] < Processor[Array[T]]
+end
+class Fixed < Processor[Int]
+end
+class Pair[A, B]
+  def initialize(left: A, first: Callable[[A], A], right: B, second: Callable[[B], B])
+    @left = first(left)
+    @right = second(right)
+  end
+  def left() -> A = @left
+  def right() -> B = @right
+end
+class Swapped[A, B] < Pair[B, A]
+end
+class FixedSwap < Swapped[String, Int]
+end
+class Mixed[T] < Pair[T, String]
+end
+class Shared[T] < Pair[T, T]
+end
+class Plain
+  def initialize(callback: Callable[[Int], Int])
+    @value = callback(45)
+  end
+  def value() -> Int = @value
+end
+class BlockProcessor[T]
+  def initialize(value: T, block: Callable[[T], T])
+    @value = block(value)
+  end
+  def value() -> T = @value
+end
+class FixedBlock < BlockProcessor[Int]
+end
+class PairBlock[A, B]
+  def initialize(left: A, right: B, block: Callable[[B], B])
+    @right = block(right)
+  end
+  def right() -> B = @right
+end
+class MixedBlock[T] < PairBlock[T, String]
+end
+class Factory[Z]
+  def initialize(unused: Z)
+    @unused = unused
+  end
+  def make[U](value: U) = Processor[U].new(value, identity)
+end
+def dynamic(value) = value
+def opaque(callback) = callback(42)
+def make[U](value: U) = Processor[U].new(value, identity)
+puts(Processor[Int].new(42, identity).value())
+puts(Processor[String].new(callback: identity, value: "keyword").value())
+puts(Processor[Int].new(*[43, identity]).value())
+puts(Processor[String].new(*["mixed"], callback: identity).value())
+puts(Rows[Int].new([44], identity).value()[0])
+puts(Fixed.new(45, identity).value())
+puts(Fixed.new(callback: identity, value: 46).value())
+puts(Swapped[String, Int].new(47, identity, "swapped", identity).right())
+puts(FixedSwap.new(48, identity, "fixed swap", identity).left())
+puts(Mixed.new(49, identity[Int], "fixed slot", identity).right())
+puts(Shared[Int | String].new(1, identity, "shared", identity).right())
+puts(Processor[Int].new(Processor[String].new("nested", identity).value().length(), identity).value())
+puts(Plain.new(identity).value())
+fixed_block = FixedBlock.new(dynamic(46)) do |value|
+  value + 1
+end
+puts(fixed_block.value())
+mixed_block = MixedBlock.new(opaque(identity), "fixed block") do |value|
+  value
+end
+puts(mixed_block.right())
+puts(Factory[Int].new(0).make[String]("method slot").value())
+retained = make[Int](50).callback()
+puts(retained(51))
+puts(Thread.new(retained, 52).join())
+begin
+  retained("bad")
+rescue TypeError
+  puts("constructor contract retained")
+end

@@ -124,6 +124,10 @@ static void check_generic_class_round_trip(const DiamondProgram *template) {
         "def function_reference[T]() = later_identity[T]\n"
         "def contextual_function_reference() -> Callable[[Int], Int] = later_identity\n"
         "def later_identity[T](value: T) -> T = value\n"
+        "class ConstructorCallback[T]\n"
+        "  def initialize(value: T, callback: Callable[[T], T])\n    @value = callback(value)\n  end\n"
+        "  def value() -> T = @value\nend\n"
+        "class FixedConstructorCallback < ConstructorCallback[Int]\nend\n"
         "class Box[T]\n"
         "  def initialize(value: T)\n    @value = value\n  end\n"
         "  def value() -> T = @value\n"
@@ -351,6 +355,15 @@ static void check_generic_class_round_trip(const DiamondProgram *template) {
                     char rendered[64];
                     check(run_and_get_string(use,rendered,sizeof rendered)&&strcmp(rendered,"42")==0,
                         "restored fixed parent bindings cannot replace the child's own parameter");
+                }
+                const bool restored_constructor_context=diamond_compile_incremental(
+                    "ConstructorCallback[Int].new(40, later_identity).value() + "
+                    "FixedConstructorCallback.new(2, later_identity).value()\n",use,copy,&diagnostic);
+                check(restored_constructor_context,"restored constructor supplies known Callable argument bindings");
+                if(restored_constructor_context) {
+                    char rendered[64];
+                    check(run_and_get_string(use,rendered,sizeof rendered)&&strcmp(rendered,"42")==0,
+                        "restored explicit and fixed constructors preserve contextual contracts");
                 }
                 const bool restored_receiver_context=diamond_compile_incremental(
                     "Box[Int].new(40).apply(later_identity) + Box[Int].new(2).own_apply()\n",use,copy,&diagnostic);

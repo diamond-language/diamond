@@ -8,6 +8,10 @@ authoritative fine-grained record.
 
 ### Added
 
+- Constructors project explicit class arguments and fixed parent slots into
+  expected Callable arguments, including positional, keyword, spread, and
+  trailing-block forms. Inherited mappings and nested constructor calls keep
+  independent type contexts; unresolved constructor slots remain private.
 - Generic instance receivers supply their bound type arguments to contextual
   Callable inference in positional, keyword, and spread arguments, including
   nested literals. Inherited mappings, fixed subclasses, `self`, and explicit

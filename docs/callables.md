@@ -37,6 +37,13 @@ inherited parent mappings, fixed subclasses, nested literals, keywords, and
 spread calls. Explicit method type arguments supply their own slots separately.
 Unresolved method variables provide no contextual hint, and nested calls restore
 the outer receiver's argument context.
+Constructors also use known class bindings. For example,
+`Processor[Int].new(42, identity)` supplies `Int` to an initializer parameter
+typed as `Callable[[T], T]`. Fixed subclasses and fixed parent slots provide the
+same context, with inherited arguments projected into the initializer owner's
+view. Positional, keyword, spread, and trailing-block forms use these bindings;
+nested constructor calls restore the outer context. Slots that still depend on
+constructor argument inference provide no contextual hint at this stage.
 
 ### Tail-call optimization
 
