@@ -378,7 +378,10 @@ wrapper matching the method's required/optional and variadic arity. Works for
 a class `self.` method and a module singleton function alike. Variadic wrappers
 collect and forward through singleton spread. Generic references accept
 explicit bindings at the reference site (`Tools.identity[Int]`); the wrapper
-bakes those bindings into its forwarded call. A direct, statically resolved
+bakes concrete bindings into its forwarded call and snapshots enclosing generic
+bindings when necessary (`Tools.identity[T]` inside a generic factory). These
+saved type graphs also survive thread transfers when the reference has no captured
+value cells. A direct, statically resolved
 Callable argument may instead provide those bindings contextually. Without
 either source, a bare unbound generic reference remains a compile error.
 

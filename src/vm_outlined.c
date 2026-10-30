@@ -1186,6 +1186,11 @@ DiamondVmStatus outlined_thread_new(DiamondVm *vm,const DiamondChunk *chunk,Diam
             copy_failed=true;break;
         }
     }
+    new_thread->args[argc]=DIAMOND_NIL;
+    if(!copy_failed&&callable->type_binding_count>0&&
+       !copy_value_into_vm(child_vm,registers[callable_reg],nullptr,
+            chunk->classes,child_program->classes,nullptr,&new_thread->args[argc]))
+        copy_failed=true;
     gc_unprotect(child_vm,args_mark);
     if(copy_failed) {
         free_thread(new_thread);

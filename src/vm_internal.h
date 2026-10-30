@@ -586,7 +586,8 @@ typedef struct DiamondThread {
     DiamondVm *child_vm;
     DiamondProgram *child_program;
     uint16_t function_index;
-    DiamondValue args[DIAMOND_MAX_ARGUMENTS];
+    /* The final slot optionally roots the entry Callable's type environment. */
+    DiamondValue args[DIAMOND_MAX_ARGUMENTS+1];
     uint8_t arg_count;
     /* Three, mutually exclusive outcomes once `finished` is true:
      * (1) plain return -- `raised`/`internal_failure` both false, `result`
@@ -659,7 +660,7 @@ typedef struct DiamondSupervisorChild {
     DiamondProgram *program_template;
     uint16_t function_index;
     DiamondVm *args_vm;
-    DiamondValue args[DIAMOND_MAX_ARGUMENTS];
+    DiamondValue args[DIAMOND_MAX_ARGUMENTS+1];
     uint8_t arg_count;
     pthread_t handle;
     DiamondSupervisor *supervisor;

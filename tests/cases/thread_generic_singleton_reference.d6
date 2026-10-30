@@ -1,0 +1,50 @@
+module Worker
+  def self.echo[T](value: T) -> T = value
+  def self.send_value[T](channel, attempts, value)
+    attempt = attempts.receive()
+    channel.send(Worker.echo[T](value))
+    if attempt == 0
+      attempts.send(1)
+      raise "retry"
+    end
+  end
+end
+def reference[T]() = Worker.echo[T]
+def sender[T]() = Worker.send_value[T]
+def invoke[U](callback: Callable[[Int], Int], unrelated: U) -> Int = callback(43)
+def return_reference(callback) = callback
+def receive_before(channel, deadline)
+  while channel.size() == 0 && Time.monotonic() < deadline
+    channel.wait_readable([], deadline)
+  end
+  channel.try_receive()
+end
+ints = reference[Int]()
+puts(Thread.new(ints, 42).join())
+puts(Thread.new(invoke, ints, "caller").join())
+returned = Thread.new(return_reference, reference[String]()).join()
+puts(returned("returned"))
+begin
+  returned(1)
+rescue TypeError
+  puts("returned binding checked")
+end
+begin
+  Thread.new(ints, "bad").join()
+rescue TypeError
+  puts("thread binding checked")
+end
+channel = Channel.new(2)
+attempts = Channel.new(1)
+attempts.send(0)
+supervisor = Supervisor.new()
+supervisor.add_child(sender[Int](), channel, attempts, 44)
+deadline = Time.monotonic() + 2.0
+begin
+  puts(receive_before(channel, deadline))
+  puts(receive_before(channel, deadline))
+rescue WouldBlockError
+  puts("supervisor timed out")
+end
+puts(supervisor.restart_count(0) == 1)
+supervisor.stop()

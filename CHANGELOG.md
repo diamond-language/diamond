@@ -8,6 +8,10 @@ authoritative fine-grained record.
 
 ### Added
 
+- Generic module-function and class-singleton references retain enclosing type
+  arguments after their factory returns. Typed Callable checks, inference, and
+  thread transfers of references without captured value cells preserve the saved
+  binding graphs. Supervised workers retain these bindings across restarts.
 - Bound method references can retain enclosing generic arguments, including
   receiver-owned and method-owned slots. Escaping references preserve their
   creation-time bindings for calls, typed Callable checks, generic inference,

@@ -123,6 +123,11 @@ generic instance methods also retain receiver-owned and method-owned slots
 independently. Their typed Callable contracts use these saved bindings rather
 than the later caller's type variables. Capturing bound references retain the
 existing thread-transfer restriction on captured closures.
+Module-function and class-singleton references also retain enclosing bindings:
+`def reference[T]() = Helpers.identity[T]` returns a Callable specialized to that
+invocation's `T`. These references have no captured value cells, so threads can
+copy their immutable type graphs when used as workers, arguments, or results.
+Supervised workers retain the same saved type environment across attempts.
 
 This native-compiler slice supports up to two class parameters in directly declared
 instance methods and generated struct fields. A concrete subclass can fix its

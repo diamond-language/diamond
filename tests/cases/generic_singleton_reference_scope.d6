@@ -1,0 +1,51 @@
+module Helpers
+  module_function
+  def identity[T](value: T) -> T = value
+  def defaulted[T](value: T = 42) -> T = value
+  def count[T](head: T, *rest) -> Int = rest.length() + 1
+end
+module SelfHelpers
+  def self.identity[T](value: T) -> T = value
+end
+class HelpersClass
+  def self.identity[T](value: T) -> T = value
+end
+class Factory[T]
+  def initialize(value: T)
+    @value = value
+  end
+  def reference() = Helpers.identity[T]
+  def method_reference[U]() = SelfHelpers.identity[U]
+end
+def reference[T]() = Helpers.identity[T]
+def nested[T]() = SelfHelpers.identity[Array[T]]
+def class_reference[T]() = HelpersClass.identity[T]
+def defaulted[T]() = Helpers.defaulted[T]
+def counter[T]() = Helpers.count[T]
+def consume(callback: Callable[[Int], Int]) -> Int = callback(43)
+def unrelated[V](callback: Callable[[Int], Int], value: V) -> Int = callback(44)
+def infer_only[U](callback: Callable[[U], U]) -> U = callback(45)
+ints = reference[Int]()
+strings = reference[String]()
+puts(ints(42))
+puts(strings("saved"))
+puts(consume(ints))
+puts(unrelated[String](ints, "caller"))
+puts(infer_only(ints))
+puts(nested[String]()(["nested"])[0])
+puts(class_reference[String]()("class"))
+puts(defaulted[Int]()())
+puts(counter[String]()("head", 1, false))
+factory = Factory[Int].new(46)
+puts(factory.reference()(47))
+puts(factory.method_reference[String]()("method"))
+begin
+  ints("bad")
+rescue TypeError
+  puts("saved contract checked")
+end
+begin
+  consume(strings)
+rescue TypeError
+  puts("Callable contract checked")
+end
