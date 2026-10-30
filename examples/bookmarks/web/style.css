@@ -1,0 +1,26 @@
+.card h2 {
+  margin-bottom:6px;
+}
+.card a {
+  overflow-wrap:anywhere;
+}
+.card small {
+  display:block;
+  overflow-wrap:anywhere;
+}
+.card .badge {
+  cursor:pointer;
+}
+.stack {
+  align-content:start;
+}
+details summary {
+  cursor:pointer;
+  font-weight:600;
+}
+#import {
+  margin-top:16px;
+}
+#search {
+  width:270px;
+}

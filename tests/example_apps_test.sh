@@ -27,6 +27,12 @@ echo "== chat"
 echo "== bookmarks"
 (cd examples/bookmarks && install_cuts && "$diamond" smoke_test.d6 2>&1 | grep -q "bookmarks smoke test passed")
 
+echo "== local web apps"
+DIAMOND_BIN="$diamond" bash examples/web_apps_test.sh
+
+echo "== site checker"
+DIAMOND_BIN="$diamond" bash examples/site_checker/smoke_test.sh
+
 echo "== library"
 (
     cd examples/library

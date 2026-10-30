@@ -1,0 +1,109 @@
+# Small strict CSV reader: quoted commas, escaped quotes, CRLF, and embedded
+# newlines are supported. Limit input at the HTTP boundary and rows here.
+def contact_csv(text)
+  rows = []
+  row = []
+  field = ""
+  quoted = false
+  closed = false
+  index = 0
+  while index < text.length()
+    char = text[index]
+    if quoted
+      if char == "\""
+        if index + 1 < text.length() && text[index + 1] == "\""
+          field += "\""
+          index += 1
+        else
+          quoted = false
+          closed = true
+        end
+      else
+        field += char
+      end
+    elsif char == ","
+      row.push(field)
+      field = ""
+      closed = false
+    elsif char == "\n" || char == "\r"
+      index += 1 if char == "\r" && index + 1 < text.length() && text[index + 1] == "\n"
+      row.push(field)
+      rows.push(row)
+      raise ArgumentError.new("at most 1000 contact rows") if rows.length() > 1001
+      row = []
+      field = ""
+      closed = false
+    elsif char == "\"" && field == "" && !closed
+      quoted = true
+    else
+      raise ArgumentError.new("unexpected character after quoted CSV field") if closed || char == "\""
+      field += char
+    end
+    index += 1
+  end
+  raise ArgumentError.new("unclosed CSV quote") if quoted
+  if field != "" || !row.empty?() || closed
+    row.push(field)
+    rows.push(row)
+  end
+  raise ArgumentError.new("CSV must start with name,email") unless rows[0] == ["name", "email"]
+  rows.shift()
+  raise ArgumentError.new("CSV must contain 1..1000 contacts") if rows.empty?() || rows.length() > 1000
+  rows
+end
+
+def import_checkpoint(db, id, source)
+  source.token().checkpoint()
+  if db.query("SELECT cancel_requested FROM jobs WHERE id = ?", [id])[0]["cancel_requested"] == 1
+    source.cancel()
+    source.token().checkpoint()
+  end
+end
+
+def job_import_contacts(db, row, args, source)
+  rows = contact_csv(args["csv"])
+  id = row["id"]
+  db.execute("UPDATE jobs SET total = ?, progress = 0, summary = NULL WHERE id = ?", [rows.length(), id])
+  contacts = []
+  errors = []
+  rows.each_with_index() do |fields, index|
+    import_checkpoint(db, id, source)
+    if fields.length() != 2
+      errors.push({"row": index + 2, "error": "expected name,email"})
+    else
+      name = fields[0].strip()
+      email = fields[1].strip().downcase()
+      # This is a contact-list format check, not proof that an address exists.
+      if name.empty?() || name.length() > 160 || !Regexp.new("^[^@ \\t\\r\\n]+@[^@ \\t\\r\\n]+\\.[^@ \\t\\r\\n]+$").match?(email) || email.length() > 254
+        errors.push({"row": index + 2, "error": "name (1..160) and an email address are required"})
+      else
+        contacts.push([name, email])
+      end
+    end
+    db.execute("UPDATE jobs SET progress = ? WHERE id = ?", [index + 1, id])
+  end
+  unless errors.empty?()
+    db.execute("UPDATE jobs SET summary = ? WHERE id = ?", [JSON.stringify({"errors": errors}), id])
+    JobStore.finish(db, id, "failed", "CSV validation failed; no contacts imported")
+    return nil
+  end
+  import_checkpoint(db, id, source)
+  # Publish contacts and terminal state in one transaction. A retry/restart
+  # upserts by email, so replay cannot duplicate contacts. Validation errors
+  # and cancellation never publish a partial import.
+  db.execute("BEGIN IMMEDIATE")
+  begin
+    import_checkpoint(db, id, source)
+    contacts.each() do |contact|
+      source.token().checkpoint()
+      db.execute("INSERT INTO contacts (name, email) VALUES (?, ?) ON CONFLICT(email) DO UPDATE SET name = excluded.name", contact)
+    end
+    source.token().checkpoint()
+    db.execute("UPDATE jobs SET status = 'succeeded', result = ?, summary = ?, finished_at = ?, locked_at = NULL WHERE id = ?",
+      [contacts.length(), JSON.stringify({"imported": contacts.length()}), Time.now().to_i(), id])
+    db.execute("COMMIT")
+  rescue error
+    db.execute("ROLLBACK")
+    raise error
+  end
+end

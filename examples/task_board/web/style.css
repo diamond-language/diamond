@@ -1,0 +1,42 @@
+.board {
+  display:grid;
+  grid-template-columns:repeat(3,minmax(0,1fr));
+  gap:20px;
+}
+.column {
+  background:var(--line);
+  border-radius:12px;
+  padding:16px;
+  min-height:260px;
+}
+.column h2 {
+  display:flex;
+  justify-content:space-between;
+}
+.card h3 {
+  overflow-wrap:anywhere;
+}
+.card .actions {
+  justify-content:space-between;
+}
+.toolbar #search {
+  width:280px;
+}
+#project-form {
+  display:flex;
+  align-items:end;
+  gap:8px;
+  margin-left:auto;
+}
+#form-error {
+  color:#d54a60;
+  white-space:pre-wrap;
+}
+@media(max-width:760px) {
+  .board {
+    grid-template-columns:1fr;
+  }
+  #project-form {
+    margin-left:0;
+  }
+}

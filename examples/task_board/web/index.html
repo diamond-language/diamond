@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Task board · Diamond</title>
+<link rel="stylesheet" href="/base.css">
+<link rel="stylesheet" href="/style.css">
+<script type="module" src="/app.js">
+</script>
+</head>
+<body>
+<header>
+<div>
+<div class="eyebrow">Diamond examples / Mjolnir</div>
+<h1>Task board</h1>
+<p class="muted">One board. Terminal, command line, and browser.</p>
+</div>
+<button id="new-task" class="primary">+ New task</button>
+</header>
+<main>
+<div id="message" role="status" aria-live="polite">
+</div>
+<div class="toolbar">
+<label>Project<select id="filter">
+<option value="">All projects</option>
+</select>
+</label>
+<label>Search<input id="search" type="search" placeholder="Title, notes, or project">
+</label>
+<button id="refresh">Refresh</button>
+<form id="project-form">
+<label>New project<input name="name" required maxlength="80" placeholder="Project name">
+</label>
+<button>Add project</button>
+</form>
+</div>
+<div id="board" class="board">
+</div>
+</main>
+<dialog id="editor">
+<form id="task-form" class="stack">
+<h2 id="editor-title">New task</h2>
+<input name="id" type="hidden">
+<label>Title<input name="title" required maxlength="160">
+</label>
+<label>Project<select name="project_id" required>
+</select>
+</label>
+<label>Status<select name="status">
+<option value="todo">To do</option>
+<option value="doing">In progress</option>
+<option value="done">Done</option>
+</select>
+</label>
+<label>Notes<textarea name="notes" maxlength="10000">
+</textarea>
+</label>
+<p id="form-error" role="alert">
+</p>
+<div class="actions">
+<button type="button" id="close">Cancel</button>
+<button class="primary">Save task</button>
+</div>
+</form>
+</dialog>
+</body>
+</html>

@@ -1,4 +1,4 @@
-# Terminal task board
+# Task board: CLI, terminal, and web
 
 A small interactive terminal and command-line task board built with Mjolnir and SQLite. Create projects,
 add and edit tasks, move them through `todo`, `doing` and `done`, and filter by
@@ -19,7 +19,23 @@ build/diamond examples/task_board/app.d6 projects
 build/diamond examples/task_board/app.d6 notes 1 "Keep benchmark results here"
 build/diamond examples/task_board/app.d6 show 1
 bash examples/task_board/board
+build/diamond examples/task_board/web.d6
+# Open http://127.0.0.1:18110
 ```
+
+The browser shows the same three columns with project/search filters, project
+creation, task editing, notes, and a status selector on each card. It calls
+`BoardStore` directly, so validation and schema upgrades are shared across all
+three interfaces. Press Refresh in the browser or `r` in the TUI to see another
+interface's edits. The layout collapses to one column on a narrow window.
+
+`web.d6 [PORT [DATABASE [ASSETS_DIRECTORY]]]` defaults to port 18110 and the
+same `BOARD_DATABASE_PATH` / `task_board.db` as the other interfaces. Run the
+command above from the repository root; when launching elsewhere, pass the
+absolute path to `examples/task_board/web` as the third argument. The server
+binds to loopback, checks Host/Origin, and closes its store on Ctrl-C. It is a
+single-user local example. The separate [project board](../project_board)
+demonstrates an authenticated ActiveRecord web application.
 
 The interactive board shows `todo`, `doing`, and `done` side by side. It uses
 the same database and validated store as the CLI. Launch it in a POSIX terminal
@@ -107,8 +123,8 @@ task unchanged; missing projects and duplicate project names become field
 errors. Project/status filters run in SQL and projects are explicitly preloaded
 in a batch. Text search uses those rows and associations without extra queries.
 
-`BoardWrite[T, E]` is a generic struct used for write results by both the CLI and
-terminal controller. Its generated initializer checks the model payload and
+`BoardWrite[T, E]` is a generic struct used for write results by the CLI,
+terminal controller, and web handler. Its generated initializer checks the model payload and
 validation changeset; `value()` returns the model type after a successful write,
 and `error()` returns the independently bound error type. The store specializes
 `E` as `Mjolnir::Changeset`.

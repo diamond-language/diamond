@@ -8,6 +8,11 @@ authoritative fine-grained record.
 
 ### Added
 
+- Runnable application examples now include a web interface sharing the task
+  board's CLI/TUI store, a concurrent site-checking CLI with JSON output,
+  a persistent bookmark shelf with tags and import/export, and a durable CSV
+  import dashboard with progress, cancellation, and retry. An examples index
+  provides launch commands; CI exercises HTTP, persistence, and failure paths.
 - Constructors project explicit class arguments and fixed parent slots into
   expected Callable arguments, including positional, keyword, spread, and
   trailing-block forms. Inherited mappings and nested constructor calls keep

@@ -1,0 +1,118 @@
+# A bounded worker pool doing useful I/O. Each worker owns its HTTP connections.
+require_cut "http"
+require_cut "cancellation"
+
+def site_check(url, timeout)
+  began = Time.monotonic()
+  begin
+    # HEAD avoids downloading bodies. Redirects use the HTTP cut's relative-URL
+    # resolution, cross-origin credential rules, and five-hop bound.
+    response = http_head(url, {}, {"connect_timeout_ms": timeout,
+      "read_timeout_ms": timeout, "write_timeout_ms": timeout,
+      "follow_redirects": true, "max_redirects": 5})
+    status = response["status"]
+    {"url": url, "status": status, "ok": status >= 200 && status < 400,
+      "elapsed_ms": ((Time.monotonic() - began) * 1000).to_i(), "error": nil}
+  rescue error: StandardError
+    {"url": url, "status": nil, "ok": false,
+      "elapsed_ms": ((Time.monotonic() - began) * 1000).to_i(), "error": error.message()}
+  end
+end
+
+def site_feed(jobs, urls, token)
+  urls.each_with_index() do |url, index| token.send(jobs, [index, url]) end
+rescue error: Cancellation::Cancelled
+  nil
+ensure
+  jobs.close()
+end
+
+def site_worker(jobs, results, timeout, token)
+  loop do
+    job = token.receive(jobs)
+    break if job == nil
+    result = site_check(job[1], timeout)
+    token.send(results, [job[0], result])
+  end
+rescue error: Cancellation::Cancelled
+  nil
+end
+
+def site_number(text, minimum, maximum)
+  number = text.to_i()
+  unless number.to_s() == text && number >= minimum && number <= maximum
+    raise ArgumentError.new("expected an integer in #{minimum}..#{maximum}")
+  end
+  number
+end
+
+def site_main(argv)
+  workers = 4
+  timeout = 2000
+  json = false
+  file = nil
+  index = 0
+  while index < argv.length()
+    arg = argv[index]
+    if arg == "--json"
+      json = true
+    elsif arg == "--workers" || arg == "--timeout-ms"
+      index += 1
+      raise ArgumentError.new("missing value for #{arg}") if index >= argv.length()
+      if arg == "--workers"
+        workers = site_number(argv[index], 1, 16)
+      else
+        timeout = site_number(argv[index], 1, 30000)
+      end
+    elsif arg.start_with?("--") || file != nil
+      raise ArgumentError.new("unexpected argument #{arg}")
+    else
+      file = arg
+    end
+    index += 1
+  end
+  raise ArgumentError.new("provide a URL-list file") if file == nil
+  urls = File.read(file).split("\n").map() do |line| line.strip() end.reject() do |line| line.empty?() || line.start_with?("#") end
+  raise ArgumentError.new("list must contain 1..1000 URLs") if urls.empty?() || urls.length() > 1000
+  # Validate before starting any threads or making requests.
+  urls.each() do |url| http_parse_url(url) end
+  source = Cancellation::Source.new()
+  token = source.token()
+  def stop_checks() = source.cancel()
+  Signal.trap("INT", stop_checks)
+  Signal.trap("TERM", stop_checks)
+  jobs = Channel.new(workers)
+  results = Channel.new(workers)
+  pool = []
+  feeder = nil
+  begin
+    feeder = Thread.new(site_feed, jobs, urls, token)
+    workers.times() do |_| pool.push(Thread.new(site_worker, jobs, results, timeout, token)) end
+    answers = []
+    urls.length().times() do |_| answers.push(token.receive(results)) end
+    ordered = answers.sort_by() do |pair| pair[0] end.map() do |pair| pair[1] end
+    if json
+      puts(JSON.stringify(ordered))
+    else
+      ordered.each() do |row|
+        label = if row["ok"] then "OK" else "FAIL" end
+        detail = row["error"] || row["status"].to_s()
+        puts("#{label} #{row["url"]} — #{detail} (#{row["elapsed_ms"]} ms)")
+      end
+    end
+    if ordered.all?() do |row| row["ok"] end then 0 else 1 end
+  rescue error: Cancellation::Cancelled
+    warn("site check cancelled")
+    130
+  ensure
+    source.cancel()
+    feeder.join() if feeder != nil
+    pool.each() do |thread| thread.join() end
+    results.close()
+  end
+rescue error: ArgumentError | IOError
+  warn("#{error.message()}\nusage: check.d6 [--json] [--workers 1..16] [--timeout-ms 1..30000] URLS_FILE")
+  64
+end
+
+exit(site_main(ARGV))

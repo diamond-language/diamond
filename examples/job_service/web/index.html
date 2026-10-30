@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Import desk · Diamond</title>
+<link rel="stylesheet" href="/base.css">
+<link rel="stylesheet" href="/style.css">
+<script type="module" src="/app.js">
+</script>
+</head>
+<body>
+<header>
+<div>
+<div class="eyebrow">Diamond examples / Jobs + cancellation</div>
+<h1>Import desk</h1>
+<p class="muted">Durable CSV jobs, with progress you can see.</p>
+</div>
+<span class="badge">Refreshes every second</span>
+</header>
+<main>
+<div id="message" role="status" aria-live="polite">
+</div>
+<div class="split">
+<aside>
+<form id="import" class="panel stack">
+<h2>Import contacts</h2>
+<label>CSV file<input id="file" type="file" accept=".csv,text/csv">
+</label>
+<label>CSV contents<textarea name="csv" required rows="10">name,email
+Ada Lovelace,ada@example.com
+Grace Hopper,grace@example.com</textarea>
+</label>
+<p class="muted">Header: name,email. Up to 1,000 rows / 64 KiB. Existing email addresses update their contact name. An invalid row rejects the whole import.</p>
+<label>Deadline (milliseconds)<input name="timeout_ms" type="number" min="0" max="60000" value="5000" required>
+</label>
+<button class="primary">Queue import</button>
+</form>
+</aside>
+<section class="stack">
+<div class="panel scroll">
+<h2>Recent jobs</h2>
+<div id="jobs">
+</div>
+</div>
+<div class="panel scroll">
+<h2>Imported contacts <small>(latest 100)</small>
+</h2>
+<table>
+<thead>
+<tr>
+<th>Name</th>
+<th>Email</th>
+</tr>
+</thead>
+<tbody id="contacts">
+</tbody>
+</table>
+</div>
+</section>
+</div>
+</main>
+</body>
+</html>

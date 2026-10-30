@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Bookmarks · Diamond</title>
+<link rel="stylesheet" href="/base.css">
+<link rel="stylesheet" href="/style.css">
+<script type="module" src="/app.js">
+</script>
+</head>
+<body>
+<header>
+<div>
+<div class="eyebrow">Diamond examples / Mjolnir + HTTP</div>
+<h1>Your reading shelf</h1>
+<p class="muted">Save a link. Give it a place. Come back later.</p>
+</div>
+<button id="export">Export JSON</button>
+</header>
+<main>
+<div id="message" role="status" aria-live="polite">
+</div>
+<div class="split">
+<aside class="stack">
+<form id="add" class="panel stack">
+<h2>Add a bookmark</h2>
+<label>URL<input type="url" name="url" required placeholder="https://example.com">
+</label>
+<label>Title<input name="title" required maxlength="160">
+</label>
+<label>Tags<input name="tags" maxlength="300" placeholder="reading, diamond">
+</label>
+<button class="primary">Save bookmark</button>
+</form>
+<details class="panel">
+<summary>Import links</summary>
+<form id="import" class="stack">
+<p class="muted">Paste URL + title lines, or a JSON export. Existing URLs are refused.</p>
+<label>Links<textarea name="text" required>
+</textarea>
+</label>
+<button>Import</button>
+</form>
+</details>
+</aside>
+<section>
+<div class="toolbar">
+<label>Search<input id="search" type="search" placeholder="Title, URL, or tag">
+</label>
+<label>Tag<select id="tag">
+<option value="">All tags</option>
+</select>
+</label>
+<button id="refresh">Refresh</button>
+</div>
+<p id="count" class="muted">
+</p>
+<div id="bookmarks">
+</div>
+</section>
+</div>
+</main>
+</body>
+</html>
