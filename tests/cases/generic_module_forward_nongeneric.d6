@@ -1,0 +1,6 @@
+module Forward
+  module_function
+  def run() = Forward.identity[Int](42)
+  def identity(value) = value
+end
+Forward.run()

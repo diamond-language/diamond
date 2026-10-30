@@ -2018,12 +2018,14 @@ static bool parse_singleton_type_arguments(Compiler *compiler,const DiamondFunct
     size_t type_argument_count=0;
     if(!parse_explicit_type_arguments(compiler,type_arguments,&type_argument_count))
         return false;
-    if(function==nullptr) {
+    if(function==nullptr&&!compiler->discovery_pass) {
         fail(compiler,name,
             "explicit generic arguments are not supported on a forward-"
             "referenced module_function call");return false;
     }
-    if(type_argument_count!=function->type_variable_count) {
+    /* Discovery knows the sibling's arity but not its type contract yet.
+     * The real pass validates these arguments against the discovered function. */
+    if(function!=nullptr&&type_argument_count!=function->type_variable_count) {
         fail(compiler,name,"wrong number of generic arguments");return false;
     }
     *type_argument_count_out=type_argument_count;

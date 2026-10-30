@@ -8,6 +8,10 @@ authoritative fine-grained record.
 
 ### Added
 
+- Forward-referenced module functions accept explicit generic arguments in
+  positional calls and bare references, for both `module_function` and
+  `def self.name` declarations. The final compilation pass validates the
+  discovered signature and retains contextual parameter and return types.
 - Ordinary generic subclasses can introduce child-only parameters, inherit
   nongeneric or fixed parents, and infer their own bindings from an overridden
   constructor. For example, `Tagged[T, U] < Box[T]` can infer `U` from a tag

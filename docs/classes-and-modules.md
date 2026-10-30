@@ -350,9 +350,12 @@ have no superclass chain and nothing to virtually dispatch against.
 Class singleton declarations are visible throughout their class body. A
 method or constant initializer can call a later `ClassName.method(...)`
 definition, and singleton methods can call each other recursively. Positional
-calls and bare method references support this ordering; forward calls with
-keyword, spread, or explicit generic arguments retain the same restrictions
-as forward module singleton calls. Duplicate definitions remain errors.
+calls and bare method references support this ordering, including explicit
+generic arguments. Module functions (`module_function` and `def self.name`)
+also support forward positional calls and references such as
+`Helpers.identity[Int](42)` or `Helpers.identity[Int]`; the final compilation
+pass validates the discovered signature. Forward calls with keyword or spread
+arguments remain unsupported. Duplicate definitions remain errors.
 
 ### Bare singleton method references
 

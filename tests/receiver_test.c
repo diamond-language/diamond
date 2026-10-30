@@ -779,6 +779,8 @@ int main(void) {
         "  hash_value(map).bark()\n"
         "end\n"
         "module Qualified\n"
+        "  def self.forward() -> Int = Qualified.later[Pet](Pet.new()).bark()\n"
+        "  def self.later[T](value: T) -> T = value\n"
         "  class Widget\n"
         "    def spin()\n"
         "      1\n"
@@ -1234,6 +1236,7 @@ int main(void) {
     const DiamondChunk chunk=diamond_program_chunk(program);
     int failed=check_generic_return_rejections();
     failed|=check_imported_generics();
+    failed|=check_receiver(program,&chunk,combined,"Qualified.later[Pet](Pet.new()).","Pet",false);
     failed|=check_receiver(program,&chunk,combined,"OwnRecords.new(Pet.new(), Leaf.new()).value().","Pet",false);
     failed|=check_receiver(program,&chunk,combined,"OwnRecords.new(Pet.new(), Leaf.new()).tag().","Leaf",false);
     failed|=check_receiver(program,&chunk,combined,"InheritedOwn[Pet, Leaf].new(Pet.new()).value().","Pet",false);
