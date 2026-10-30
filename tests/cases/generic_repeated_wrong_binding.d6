@@ -1,0 +1,6 @@
+struct Pair[A, B](left: A, right: B)
+end
+class Point[T] < Pair[T, T]
+end
+def use(value: Pair[Int, String]) = value
+use(Point[Int].new(1, 2))

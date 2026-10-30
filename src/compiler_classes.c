@@ -1197,11 +1197,11 @@ static bool parse_generic_parent_arguments(Compiler *compiler,DiamondClass *clas
         compiler->function=outer;diamond_function_free_arrays(header);free(header);
         if(compiler->failed)return false;
         for(size_t variable=0;variable<subclass_parameters;variable++)
-            if(occurrences[variable]>1||(!allow_own_parameters&&occurrences[variable]!=1)) {
-                fail(compiler,superclass_span,allow_own_parameters?
-                    "parent arguments may use each struct parameter at most once":
-                    "parent arguments must use each subclass parameter exactly once");return false;
+            if(!allow_own_parameters&&occurrences[variable]==0) {
+                fail(compiler,superclass_span,"parent arguments must use every subclass parameter");return false;
             }
+        for(size_t variable=0;variable<subclass_parameters;variable++)
+            if(occurrences[variable]!=1)simple=false;
         class->transforms_parent_arguments=!simple;
         class->swaps_parent_arguments=simple&&first==1;
     } else if(generic_parent->type_parameter[0]!='\0') {

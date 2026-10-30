@@ -84,7 +84,7 @@ static int check_receiver_after(const DiamondProgram *program,const DiamondChunk
        strcmp(chunk->classes[classes[0]]->name,expected)!=0||
        actual_singleton!=singleton) {
         fprintf(stderr,"unexpected receiver for %s: count=%zu class=%s singleton=%d\n",
-            needle,count,count==1&classes[0]<chunk->class_count
+            needle,count,count==1&&classes[0]<chunk->class_count
                 ?chunk->classes[classes[0]]->name:"<none>",actual_singleton);
         return 1;
     }
@@ -265,10 +265,16 @@ int main(void) {
         "class PetErrorRecord[T] < MultiRecord[T, Pet]\n"
         "  def own() -> T = @value\nend\n"
         "class GrandPetError[T] < PetErrorRecord[T]\nend\n"
+        "class RepeatedRecord[T] < MultiRecord[T, T]\nend\n"
+        "struct RepeatedTagged[T, U](tag: U) < MultiRecord[T, T]\nend\n"
         "class SwappedRecord[A, B] < MultiRecord[B, A]\n"
         "  def own() -> A = @error\n"
         "end\n"
         "def multi_record_receivers()\n"
+        "  RepeatedRecord[Pet].new(Pet.new(), Pet.new()).error().bark()\n"
+        "  RepeatedRecord.new(Pet.new(), Leaf.new()).value().bark()\n"
+        "  RepeatedTagged.new(Pet.new(), Leaf.new(), Pet.new()).error().bark()\n"
+        "  RepeatedTagged.new(Pet.new(), Pet.new(), Leaf.new()).tag().ping()\n"
         "  TaggedRecord[Pet, Leaf].new(Pet.new(), Pet.new(), Leaf.new()).value().bark()\n"
         "  TaggedRecord.new(Pet.new(), Pet.new(), Leaf.new()).error().bark()\n"
         "  TaggedRecord.new(Pet.new(), Pet.new(), Leaf.new()).tag().ping()\n"
@@ -1214,6 +1220,10 @@ int main(void) {
     const DiamondChunk chunk=diamond_program_chunk(program);
     int failed=check_generic_return_rejections();
     failed|=check_imported_generics();
+    failed|=check_receiver(program,&chunk,combined,"RepeatedRecord[Pet].new(Pet.new(), Pet.new()).error().","Pet",false);
+    failed|=check_receiver_pair(program,&chunk,combined,"RepeatedRecord.new(Pet.new(), Leaf.new()).value().","Pet","Leaf");
+    failed|=check_receiver_pair(program,&chunk,combined,"RepeatedTagged.new(Pet.new(), Leaf.new(), Pet.new()).error().","Pet","Leaf");
+    failed|=check_receiver(program,&chunk,combined,"RepeatedTagged.new(Pet.new(), Pet.new(), Leaf.new()).tag().","Leaf",false);
     failed|=check_receiver(program,&chunk,combined,"TaggedRecord[Pet, Leaf].new(Pet.new(), Pet.new(), Leaf.new()).value().","Pet",false);
     failed|=check_receiver(program,&chunk,combined,"TaggedRecord.new(Pet.new(), Pet.new(), Leaf.new()).error().","Pet",false);
     failed|=check_receiver(program,&chunk,combined,"TaggedRecord.new(Pet.new(), Pet.new(), Leaf.new()).tag().","Leaf",false);
@@ -1271,7 +1281,7 @@ int main(void) {
         "GenericRecords.new(42).value().",true,DIAMOND_TYPE_INT);
     failed|=check_receiver(program,&chunk,combined,"array_model.value()[0].","Pet",false);
     failed|=check_receiver(program,&chunk,combined,"incomplete_pair.first().",nullptr,false);
-    failed|=check_receiver(program,&chunk,combined,"conflicting_pair.first().",nullptr,false);
+    failed|=check_receiver_pair(program,&chunk,combined,"conflicting_pair.first().","Pet","Leaf");
     failed|=check_receiver(program,&chunk,combined,"nested_model.value().value().","Pet",false);
     failed|=check_receiver(program,&chunk,combined,"GenericRecords.new(GenericRecords[Pet].new(Pet.new())).value().value().","Pet",false);
     failed|=check_receiver(program,&chunk,combined,"GenericRecords[GenericRecords[Pet]].new(GenericRecords[Pet].new(Pet.new())).value().value().","Pet",false);

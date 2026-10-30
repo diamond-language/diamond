@@ -727,8 +727,10 @@ The generated constructor takes inherited fields first and new fields last.
 Parent field annotations are specialized into the child's parameter namespace,
 so `TaggedCell` infers `T` from `value` and `U` from its own `tag` field. Inherited
 readers and methods keep the parent bindings; generated `==` and `to_s` include
-all fields. Each child parameter may occur at most once across the parent
-arguments; parameters used only by new fields need not appear there. A generic
+all fields. Repeated parent parameters share one inferred binding; parameters
+used only by new fields need not appear in the parent arguments. For example,
+`struct TaggedPair[T, U](tag: U) < Pair[T, T]` infers the shared `T` from both
+inherited fields and infers `U` independently from `tag`. A generic
 child may also extend a nongeneric or fixed struct parent. A nongeneric child
 can fix a generic parent's arguments, for example
 `struct NamedInt(name: String) < Cell[Int]`.

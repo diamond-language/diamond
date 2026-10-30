@@ -1562,9 +1562,7 @@ static bool match_parent_template(const DiamondTypeBinding *pattern,uint8_t p,
     if(node->count==1&&node->members[0].id>=DIAMOND_TYPE_VARIABLE_BASE&&
        node->members[0].id<DIAMOND_TYPE_VARIABLE_BASE+2) {
         const size_t variable=node->members[0].id-DIAMOND_TYPE_VARIABLE_BASE;
-        if(output[variable].node_count!=0)
-            return bound_nodes_equal(&output[variable],0,actual,a,0);
-        output[variable].node_count=1;
+        if(output[variable].node_count==0)output[variable].node_count=1;
         bind_bound_node(&output[variable],0,actual,a);
         return !output[variable].invalid;
     }

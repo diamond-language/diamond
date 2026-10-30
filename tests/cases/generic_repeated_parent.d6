@@ -1,0 +1,84 @@
+class Pair[A, B]
+  def initialize(left: A, right: B)
+    @left = left
+    @right = right
+  end
+  def left() -> A = @left
+  def right() -> B = @right
+  def replace_right(value: B)
+    @right = value
+  end
+  def echo[U](value: U) -> U = value
+end
+class Point[T] < Pair[T, T]
+  def own() -> T = @left
+end
+class Nested[T] < Pair[Array[T], Array[T]]
+end
+class Grand[T] < Point[T]
+end
+class Fixed < Point[Int]
+end
+class CallbackPair[A, B]
+  def initialize(left: A, right: B, callback: Callable[[A, B], A])
+    @left = callback(left, right)
+    @right = right
+  end
+  def left() -> A = @left
+end
+class CallbackPoint[T] < CallbackPair[T, T]
+end
+interface Both
+  def left() -> Int | String
+  def right() -> Int | String
+end
+interface IntLeft
+  def left() -> Int
+end
+def read(value: Pair[Int | String, Int | String]) = value.right()
+def inferred[A, B](value: Pair[A, B]) -> B = value.right()
+def callback(value: Callable[[], Int | String]) = value()
+def ints(left: Int, right: Int) -> Int = left
+value = Point.new(1, "two")
+puts(value.left())
+puts(read(value))
+puts(value.own())
+puts(inferred(value))
+puts(callback(value.right))
+puts(value.echo[Bool](true))
+puts(Point[Int].new(3, 4).right())
+puts(Point[Int | String].new(5, "explicit").right())
+puts(Point.new(left: 6, right: "keyword").right())
+puts(Point.new(*[7, "spread"]).right())
+puts(Grand.new(8, "grand").right())
+puts(Fixed.new(9, 10).right())
+puts(value is Both)
+puts(value is IntLeft)
+puts(read(value.dup()))
+puts(Nested.new([], ["empty contribution"]).right()[0])
+puts(Nested.new([1], ["joined arrays"]).right()[0])
+inferred_block = CallbackPoint.new(11, "joined block") do |left, right|
+  right
+end
+puts(inferred_block.left())
+explicit_block = CallbackPoint[Int | String].new(12, "explicit block") do |left, right|
+  right
+end
+puts(explicit_block.left())
+value.replace_right(13)
+puts(value.right())
+begin
+  value.replace_right(false)
+rescue error: TypeError
+  puts("new alternative rejected")
+end
+begin
+  CallbackPoint.new(1, "unsafe callback", ints)
+rescue error: TypeError
+  puts("narrow callback rejected")
+end
+begin
+  Nested.new([], [])
+rescue error: TypeError
+  puts("empty-only inference rejected")
+end

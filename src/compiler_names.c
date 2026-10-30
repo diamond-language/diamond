@@ -232,6 +232,28 @@ static void infer_constructor_positionals(Compiler *compiler,
     }
 }
 
+/* An inherited constructor may infer distinct parent slots that share a
+ * child variable. Type its block using the canonical child's forward view,
+ * rather than advertising narrower independent contracts for those slots. */
+__attribute__((noinline))
+static bool normalize_constructor_context(Compiler *compiler,int class_index,
+        const DiamondFunction *initializer,uint16_t context[8]) {
+    if(initializer->owner_class==(size_t)class_index)return true;
+    DiamondTypeBinding parent[2]={},child[2]={},normalized[2]={};
+    for(size_t i=0;i<initializer->class_type_variable;i++)
+        if(!diamond_bind_type_template(compiler->function->type_sets,compiler->function->type_set_count,
+            context[i],&parent[i]))return false;
+    if(!diamond_map_class_bindings(compiler->program->classes,compiler->program->class_count,
+        (size_t)class_index,initializer->owner_class,parent,child,true)||
+       !diamond_map_class_bindings(compiler->program->classes,compiler->program->class_count,
+        (size_t)class_index,initializer->owner_class,child,normalized,false))return false;
+    for(size_t i=0;i<initializer->class_type_variable;i++) {
+        context[i]=import_fixed_binding(compiler,&normalized[i]);
+        if(context[i]==DIAMOND_NO_TYPE_SET)return false;
+    }
+    return true;
+}
+
 static uint16_t compile_constructor_block(Compiler *compiler,int class_index,
         const DiamondFunction *initializer,const ConstructorInference *inference,
         uint16_t explicit_type) {
@@ -246,8 +268,7 @@ static uint16_t compile_constructor_block(Compiler *compiler,int class_index,
         if(!bind_receiver_type_arguments(compiler,initializer,descriptor,context))return 0;
     }
     else if(initializer!=nullptr&&initializer->class_type_variable&&
-            initializer->type_variable_count==initializer->class_type_variable&&
-            !inference->complete)
+            (!inference->complete||!normalize_constructor_context(compiler,class_index,initializer,context)))
         for(size_t variable=0;variable<initializer->class_type_variable;variable++)context[variable]=DIAMOND_NO_TYPE_SET;
     /* Complete constructor facts provide contextual block types. Parameter
      * and return guards still validate advisory container facts at runtime. */
