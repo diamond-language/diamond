@@ -2092,6 +2092,9 @@ uint16_t parse_identifier(Compiler *compiler) {
          * function's own nested def by bare name. */
         const int function_index = find_function(compiler, compiler->previous.span);
         if (function_index >= 0) {
+            uint16_t contextual=0;
+            if(compile_contextual_function_reference(compiler,(size_t)function_index,
+                    compiler->previous.span,&contextual))return contextual;
             const uint16_t destination = allocate_register(compiler);
             emit_opcode(compiler, DIAMOND_OP_CLOSURE);
             emit_register(compiler,destination);

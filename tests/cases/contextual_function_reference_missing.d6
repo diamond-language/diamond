@@ -1,0 +1,3 @@
+def unused[T, U](value: T) -> T = value
+def accept(callback: Callable[[Int], Int]) = callback(42)
+accept(unused)

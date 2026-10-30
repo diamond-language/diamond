@@ -1327,7 +1327,7 @@ static bool parse_call_type_arguments(Compiler *compiler, const DiamondFunction 
 
 static uint16_t parse_singleton_reference(Compiler *compiler,const DiamondMethod *method,
         DiamondSpan namespace_name,int receiver_class_index,const uint16_t *type_arguments,
-        size_t type_argument_count);
+        size_t type_argument_count,bool append);
 
 /* Discovery cannot type a reference to a later function yet, but must reserve
  * the wrapper slot that the real pass will claim. Its bytecode is discarded. */
@@ -1591,7 +1591,7 @@ uint16_t parse_call(Compiler *compiler, DiamondSpan name) {
         const DiamondMethod reference={.function_index=(uint16_t)function_index,
             .arity=function->arity,.required_arity=function->required_arity,
             .has_variadic=function->has_variadic};
-        return parse_singleton_reference(compiler,&reference,name,-1,type_arguments,type_argument_count);
+        return parse_singleton_reference(compiler,&reference,name,-1,type_arguments,type_argument_count,false);
     }
     advance_token(compiler);
     skip_newlines(compiler);
@@ -1834,11 +1834,14 @@ bool infer_reference_type_arguments(Compiler *compiler,
     const DiamondTypeSet *expected=&compiler->function->type_sets[
         (size_t)compiler->expected_expression_type_set];
     if(expected->count!=1||expected->members[0].id!=DIAMOND_TYPE_CALLABLE||
-       !expected->members[0].callable_parameters_typed||
-       expected->members[0].callable_arity!=arity)return false;
+       !expected->members[0].callable_parameters_typed)return false;
     const DiamondTypeMember callable=expected->members[0];
+    const size_t self_offset=diamond_function_self_offset(target);
+    const size_t required=target->required_arity>=self_offset?target->required_arity-self_offset:0;
+    if(callable.callable_arity<required||
+       (callable.callable_arity>arity&&!target->has_variadic))return false;
     for(size_t index=0;index<8;index++)bindings[index]=DIAMOND_NO_TYPE_SET;
-    for(size_t parameter=0;parameter<arity;parameter++) {
+    for(size_t parameter=0;parameter<callable.callable_arity&&parameter<arity;parameter++) {
         const size_t target_parameter=parameter+parameter_offset;
         if(target_parameter>=target->arity) return false;
         const uint16_t wanted=target->parameter_type_sets[target_parameter];
@@ -1884,7 +1887,7 @@ static uint16_t parse_singleton_reference(Compiler *compiler,
                                          DiamondSpan namespace_name,
                                          int receiver_class_index,
                                          const uint16_t *type_arguments,
-                                         size_t type_argument_count) {
+                                         size_t type_argument_count,bool append) {
     const DiamondFunction *target=
         method->function_index==DIAMOND_UNRESOLVED_SINGLETON_FUNCTION?nullptr:
         compiler->program->functions[method->function_index];
@@ -1931,7 +1934,11 @@ static uint16_t parse_singleton_reference(Compiler *compiler,
         return 0;
     }
     size_t function_index=0;
-    DiamondFunction *function=compiler_add_function(compiler,&function_index);
+    /* Contextual bare function references exist only in the real pass. Append
+     * them without consuming a slot reserved for a discovered declaration. */
+    DiamondFunction *function=append?diamond_program_add_function(compiler->program):
+        compiler_add_function(compiler,&function_index);
+    if(append&&function!=nullptr)function_index=compiler->program->function_count-1;
     if(function==nullptr) {
         fail(compiler,namespace_name,"out of memory");
         return 0;
@@ -2049,6 +2056,29 @@ static uint16_t parse_singleton_reference(Compiler *compiler,
     emit_function_index(compiler,function_index);emit_byte(compiler,0);
     publish_function_callable_type(compiler,result,function);
     return result;
+}
+
+bool compile_contextual_function_reference(Compiler *compiler,size_t function_index,
+        DiamondSpan name,uint16_t *result) {
+    if(compiler->discovery_pass||compiler->expected_expression_type_set<0||
+       (size_t)compiler->expected_expression_type_set>=compiler->function->type_set_count)
+        return false;
+    const DiamondFunction *target=compiler->program->functions[function_index];
+    if(target->type_variable_count==0)return false;
+    const DiamondTypeSet *expected=&compiler->function->type_sets[
+        (size_t)compiler->expected_expression_type_set];
+    if(expected->count!=1||expected->members[0].id!=DIAMOND_TYPE_CALLABLE||
+       !expected->members[0].callable_parameters_typed)return false;
+    uint16_t bindings[8];
+    if(!infer_reference_type_arguments(compiler,target,0,target->arity,bindings)) {
+        fail(compiler,name,"could not infer generic function reference bindings");
+        *result=0;return true;
+    }
+    const DiamondMethod reference={.function_index=(uint16_t)function_index,
+        .arity=target->arity,.required_arity=target->required_arity,
+        .has_variadic=target->has_variadic};
+    *result=parse_singleton_reference(compiler,&reference,name,-1,bindings,target->type_variable_count,true);
+    return true;
 }
 
 /* `Namespace.method[Type, ...]`: the current token is the '['. */
@@ -2205,7 +2235,7 @@ uint16_t parse_singleton_call(Compiler *compiler,
          * (`Namespace.method[T]`) are baked into the reference
          * wrapper's typed call. */
         return parse_singleton_reference(compiler,method,namespace_name,
-            receiver_class_index,type_arguments,type_argument_count);
+            receiver_class_index,type_arguments,type_argument_count,false);
     }
     advance_token(compiler);
     skip_newlines(compiler);

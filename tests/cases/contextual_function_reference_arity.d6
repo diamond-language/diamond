@@ -1,0 +1,3 @@
+def pair[T](left: T, right: T) -> T = left
+def accept(callback: Callable[[Int], Int]) = callback(42)
+accept(pair)

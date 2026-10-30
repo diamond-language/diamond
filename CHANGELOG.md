@@ -8,6 +8,11 @@ authoritative fine-grained record.
 
 ### Added
 
+- Bare top-level generic function references infer specialization from an
+  expected typed Callable contract, including nested containers, keyword and
+  spread arguments, constructors, and annotated returns. Compatible optional
+  and variadic references can infer bindings too; incomplete or conflicting
+  contracts fail without borrowing another invocation's type slots.
 - Top-level generic functions accept specialized references such as
   `identity[Int]` and `identity[T]` without a call. References retain parameter,
   return, default, and variadic contracts, including forward declarations,

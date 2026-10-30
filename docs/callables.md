@@ -23,6 +23,14 @@ that retains that invocation's `T`. Specialized references preserve defaults,
 variadic arguments, and parameter names, including before the function's
 declaration. Closures are invoked directly as `f(x)`; there is no `.call` method.
 
+A bare generic name can also infer its specialization from an expected typed
+Callable: `accept(identity)` specializes `identity[T]` to `Int` when `accept`'s
+parameter is `Callable[[Int], Int]`. The same context flows through nested Array
+and Hash literals, keyword/spread calls, constructors, and annotated returns.
+Optional and variadic signatures must accept the expected arity, and every type
+parameter must have a consistent binding. Without such a context, a bare generic
+function value retains its existing inference on each call.
+
 ### Tail-call optimization
 
 Each Diamond function call is an ordinary recursive call in the native
