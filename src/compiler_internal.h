@@ -313,6 +313,9 @@ typedef struct Compiler {
      * publish them as tooling facts, never as checked ones. */
     bool contextual_block_tooling_only;
     int32_t expected_expression_type_set;
+    /* Call-scoped argument hints in the caller's type-set table. */
+    const DiamondFunction *argument_context_target;
+    uint16_t argument_context_bindings[8];
     bool positional_spread_literal;
     size_t positional_spread_first;
     size_t positional_spread_count;

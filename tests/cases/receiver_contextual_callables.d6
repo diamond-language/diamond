@@ -1,0 +1,47 @@
+def identity[T](value: T) -> T = value
+class Receiver[T]
+  def initialize(value: T)
+    @value = value
+  end
+  def apply(callback: Callable[[T], T]) -> T = callback(@value)
+  def all(callbacks: Array[Callable[[T], T]]) -> T = callbacks[0](@value)
+  def mapped(callbacks: Hash[String, Callable[[T], T]]) -> T = callbacks["chosen"](@value)
+  def pair(first: Callable[[T], T], second: Callable[[T], T]) -> T = second(first(@value))
+  def choose(ignored: String, callback: Callable[[T], T]) -> T = callback(@value)
+  def both[U](first: Callable[[T], T], second: Callable[[U], U], other: U) -> T
+    puts(second(other))
+    first(@value)
+  end
+  def retained(callback: Callable[[T], T]) -> Callable[[T], T] = callback
+  def within() -> T = self.apply(identity)
+end
+class Rows[T] < Receiver[Array[T]]
+end
+class Fixed < Receiver[Int]
+end
+def unrelated[U](receiver: Receiver[Int], other: U) -> Int = receiver.apply(identity)
+ints = Receiver.new(42)
+strings = Receiver.new("string")
+puts(ints.apply(identity))
+puts(strings.apply(callback: identity))
+puts(ints.all([identity]))
+puts(strings.mapped({"chosen": identity}))
+puts(ints.pair(*[identity, identity]))
+puts(ints.pair(*(if true then [identity, identity] else [identity, identity] end)))
+puts(strings.pair(*[identity], second: identity))
+puts(ints.pair(*(if true then [identity] else [identity] end), second: identity))
+puts(ints.choose(strings.choose("inner", identity), identity))
+puts(ints.both[String](identity, identity, "method"))
+puts(ints.both[String](first: identity, second: identity, other: "keyword"))
+puts(unrelated[String](ints, "caller"))
+puts(ints.within())
+puts(Rows.new([43]).apply(identity)[0])
+puts(Fixed.new(44).apply(identity))
+retained = ints.retained(identity)
+puts(retained(45))
+puts(Thread.new(retained, 46).join())
+begin
+  retained("bad")
+rescue TypeError
+  puts("receiver contract retained")
+end

@@ -130,6 +130,8 @@ static void check_generic_class_round_trip(const DiamondProgram *template) {
         "  def wrong() -> T = \"wrong\"\n"
         "  def echo[U](value: U) -> U = value\n"
         "  def reference[U]() = self.echo[U]\n"
+        "  def apply(callback: Callable[[T], T]) -> T = callback(@value)\n"
+        "  def own_apply() -> T = self.apply(later_identity)\n"
         "end\nstruct Payload[T, E](value: T, error: E)\nend\n"
         "class IntBox < Box[Int]\nend\n"
         "class GrandIntBox < IntBox\nend\n"
@@ -349,6 +351,14 @@ static void check_generic_class_round_trip(const DiamondProgram *template) {
                     char rendered[64];
                     check(run_and_get_string(use,rendered,sizeof rendered)&&strcmp(rendered,"42")==0,
                         "restored fixed parent bindings cannot replace the child's own parameter");
+                }
+                const bool restored_receiver_context=diamond_compile_incremental(
+                    "Box[Int].new(40).apply(later_identity) + Box[Int].new(2).own_apply()\n",use,copy,&diagnostic);
+                check(restored_receiver_context,"restored generic receiver supplies Callable argument bindings");
+                if(restored_receiver_context) {
+                    char rendered[64];
+                    check(run_and_get_string(use,rendered,sizeof rendered)&&strcmp(rendered,"42")==0,
+                        "restored receiver and self calls retain their contextual contracts");
                 }
                 const bool restored_contextual=diamond_compile_incremental(
                     "ref = contextual_function_reference()\nref(42)\n",use,copy,&diagnostic);
