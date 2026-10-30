@@ -14,9 +14,14 @@ add_forty(2)
 ```
 
 `def` always requires parentheses, even for a zero-argument function
-(`def foo()`). Only *nested* `def`s produce a referenceable closure value —
-a top-level `def`'s name is not itself a value. Closures are invoked
-directly as `f(x)`; there is no `.call` method.
+(`def foo()`). A nested `def` produces a closure that can capture enclosing
+locals. A top-level function's bare name is also a Callable value. Generic
+functions can be specialized as references with `identity[Int]`; adding
+parentheses, `identity[Int](42)`, invokes the function instead. An enclosing
+type variable works too: `def reference[T]() = identity[T]` returns a Callable
+that retains that invocation's `T`. Specialized references preserve defaults,
+variadic arguments, and parameter names, including before the function's
+declaration. Closures are invoked directly as `f(x)`; there is no `.call` method.
 
 ### Tail-call optimization
 

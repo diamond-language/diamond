@@ -1311,7 +1311,7 @@ bool parse_explicit_type_arguments(Compiler *compiler,uint16_t *type_arguments,
     return true;
 }
 
-/* Explicit generic arguments, `name[Type, ...](...)`: the current token is
+/* Explicit generic call/reference arguments, `name[Type, ...]`: the current token is
  * the '['. */
 static bool parse_call_type_arguments(Compiler *compiler, const DiamondFunction *function,
         DiamondSpan name, uint16_t *type_arguments, size_t *type_argument_count_out) {
@@ -1321,12 +1321,28 @@ static bool parse_call_type_arguments(Compiler *compiler, const DiamondFunction 
     if(type_argument_count!=function->type_variable_count) {
         fail(compiler,name,"wrong number of generic arguments");return false;
     }
-    if(compiler->current.kind!=DIAMOND_TOKEN_LEFT_PAREN) {
-        fail(compiler,compiler->current.span,
-             "expected '(' after generic arguments");return false;
-    }
     *type_argument_count_out=type_argument_count;
     return true;
+}
+
+static uint16_t parse_singleton_reference(Compiler *compiler,const DiamondMethod *method,
+        DiamondSpan namespace_name,int receiver_class_index,const uint16_t *type_arguments,
+        size_t type_argument_count);
+
+/* Discovery cannot type a reference to a later function yet, but must reserve
+ * the wrapper slot that the real pass will claim. Its bytecode is discarded. */
+static uint16_t discovery_function_reference(Compiler *compiler,DiamondSpan name) {
+    size_t index=0;
+    DiamondFunction *wrapper=compiler_add_function(compiler,&index);
+    if(wrapper==nullptr) {fail(compiler,name,"out of memory");return 0;}
+    wrapper->owner_class=DIAMOND_OWNER_NONE;wrapper->nested=true;
+    wrapper->register_count=1;wrapper->return_type_set=DIAMOND_NO_TYPE_SET;
+    for(size_t i=0;i<DIAMOND_MAX_DECLARED_PARAMETERS;i++)
+        wrapper->parameter_type_sets[i]=DIAMOND_NO_TYPE_SET;
+    (void)snprintf(wrapper->name,sizeof wrapper->name,"<method reference>");
+    const uint16_t result=allocate_register(compiler);
+    emit_instruction(compiler,DIAMOND_OP_NIL,result,0,0,1);
+    return result;
 }
 
 /* A function call whose arguments include a spread: the current token is the
@@ -1554,6 +1570,13 @@ uint16_t parse_call(Compiler *compiler, DiamondSpan name) {
      * of a program that defines its own `p`. */
     if(function_index<0&&!compiler->discovery_pass&&name_equals(compiler,"p",name,false))
         return parse_p_call(compiler);
+    if(function_index<0&&compiler->discovery_pass&&
+       compiler->current.kind==DIAMOND_TOKEN_LEFT_BRACKET) {
+        uint16_t arguments[8];size_t count=0;
+        if(!parse_explicit_type_arguments(compiler,arguments,&count))return 0;
+        if(compiler->current.kind!=DIAMOND_TOKEN_LEFT_PAREN)
+            return discovery_function_reference(compiler,name);
+    }
     if (function_index < 0)
         return parse_unknown_function_call(compiler,name);
     const DiamondFunction *function =
@@ -1564,6 +1587,12 @@ uint16_t parse_call(Compiler *compiler, DiamondSpan name) {
        !parse_call_type_arguments(compiler,function,name,type_arguments,
            &type_argument_count))
         return 0;
+    if(compiler->current.kind!=DIAMOND_TOKEN_LEFT_PAREN) {
+        const DiamondMethod reference={.function_index=(uint16_t)function_index,
+            .arity=function->arity,.required_arity=function->required_arity,
+            .has_variadic=function->has_variadic};
+        return parse_singleton_reference(compiler,&reference,name,-1,type_arguments,type_argument_count);
+    }
     advance_token(compiler);
     skip_newlines(compiler);
     if(call_arguments_have_spread(compiler))

@@ -6,6 +6,8 @@ class Factory[T]
 end
 def Factory[T](value: T) -> T = value
 puts(Factory[Int](42))
+reference = Factory[Int]
+puts(reference(44))
 puts(Factory.new("class").value())
 puts(Factory[Int].new(43).value())
 nil

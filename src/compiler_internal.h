@@ -932,6 +932,7 @@ DIAMOND_INTERNAL uint16_t compile_class(Compiler *compiler);
 DIAMOND_INTERNAL uint16_t compile_struct(Compiler *compiler);
 DIAMOND_INTERNAL void prescan_singleton_signatures(Compiler *compiler,DiamondMethod **methods,
         size_t *method_count,size_t *method_capacity,bool class_scope);
+DIAMOND_INTERNAL bool top_level_function_declared(Compiler *compiler,DiamondSpan name);
 DIAMOND_INTERNAL uint16_t compile_module(Compiler *compiler);
 DIAMOND_INTERNAL uint16_t compile_interface(Compiler *compiler);
 DIAMOND_INTERNAL uint16_t compile_assignment_store(Compiler *compiler, DiamondSpan name,

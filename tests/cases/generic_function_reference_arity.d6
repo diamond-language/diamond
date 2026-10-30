@@ -1,0 +1,2 @@
+def identity[T](value: T) -> T = value
+ref = identity[Int, String]

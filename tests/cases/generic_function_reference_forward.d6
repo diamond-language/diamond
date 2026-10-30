@@ -1,0 +1,25 @@
+first = one[Int]
+second = two[String]
+box = Later[Int].new(44)
+def lookup(index: Int) -> Int = VALUES[index]
+def make[T]() = three[T]
+def one[T](value: T) -> T = value
+if true
+  def two[T](value: T) -> T = value
+end
+def three[T](value: T) -> T = value
+class Later[T]
+  def initialize(value: T)
+    @value = value
+  end
+  def value() -> T = @value
+end
+class Decoy
+  def VALUES[T](value: T) -> T = value
+end
+VALUES = [45]
+puts(first(42))
+puts(second("forward"))
+puts(make[Int]()(43))
+puts(box.value())
+puts(lookup(0))
