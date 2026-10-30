@@ -305,6 +305,11 @@ each attempt's own heap, so a `Channel` argument stays the same channel
 across restarts, but a plain Array argument does not accumulate mutations
 from a previous, crashed attempt).
 
+Generic singleton references with no captured value cells may carry immutable
+type bindings from their factory. Threads copy these binding graphs along with
+Callable workers, arguments, and results. A supervisor keeps its worker's saved
+bindings across attempts rather than inferring replacements from restart arguments.
+
 A clean, non-raising return ends that child for good -- v1 restarts on
 crash only, never on an ordinary return. By default there is a fixed 20ms
 delay between a crash and the next restart attempt, a safety valve bounding

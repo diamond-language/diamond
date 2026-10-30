@@ -242,8 +242,10 @@ void *thread_entry_trampoline(void *argument) {
     thread->child_vm->range_class_index=thread->child_program->range_class_index;
     thread->child_vm->root_chunk=&child_chunk;
     DiamondValue run_result=DIAMOND_NIL;
+    const DiamondClosure *entry=thread->args[thread->arg_count].kind==DIAMOND_VALUE_OBJECT?
+        (const DiamondClosure *)thread->args[thread->arg_count].as.object:nullptr;
     const DiamondVmStatus run_status=run_chunk(&child_chunk,thread->child_vm,
-        thread->args,thread->arg_count,0,nullptr,&run_result);
+        thread->args,thread->arg_count,0,entry,&run_result);
     if(run_status==DIAMOND_VM_EXCEPTION) {
         thread->result=thread->child_vm->exception;thread->raised=true;
     } else if(run_status!=DIAMOND_VM_OK) {
@@ -279,6 +281,8 @@ static DiamondChunk supervisor_child_chunk(const DiamondSupervisorChild *child) 
         .interface_count=child->program_template->interface_count,
         .parameter_type_sets=target_fn->parameter_type_sets,
         .type_variable_count=target_fn->type_variable_count,
+        .type_variable_bindings=child->args[child->arg_count].kind==DIAMOND_VALUE_OBJECT?
+            ((const DiamondClosure *)child->args[child->arg_count].as.object)->type_bindings:nullptr,
         .class_type_variable=target_fn->class_type_variable,
         .binding_owner_plus_one=(uint16_t)(target_fn->owner_class+1u),
         .parameter_offset=target_fn->owner_class==DIAMOND_OWNER_NONE?0:1,
@@ -1272,6 +1276,11 @@ static DiamondVmStatus supervisor_add_child_method(DiamondVm *vm,const DiamondCh
             copy_failed=true;break;
         }
     }
+    new_child->args[forwarded_argc]=DIAMOND_NIL;
+    if(!copy_failed&&callable->type_binding_count>0&&
+       !copy_value_into_vm(args_vm,registers[base],nullptr,
+            chunk->classes,program_template->classes,nullptr,&new_child->args[forwarded_argc]))
+        copy_failed=true;
     gc_unprotect(args_vm,args_mark);
     if(copy_failed) {
         diamond_vm_free(args_vm);free(args_vm);
@@ -1287,7 +1296,7 @@ static DiamondVmStatus supervisor_add_child_method(DiamondVm *vm,const DiamondCh
         return DIAMOND_VM_TYPE_ERROR;
     }
     args_vm->extra_roots=new_child->args;
-    args_vm->extra_root_count=forwarded_argc;
+    args_vm->extra_root_count=(size_t)forwarded_argc+1;
     if(!diamond_reserve_thread_slot()) {
         diamond_vm_free(args_vm);free(args_vm);
         diamond_program_free(program_template);free(program_template);

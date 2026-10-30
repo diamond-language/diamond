@@ -1909,6 +1909,16 @@ static uint16_t parse_singleton_reference(Compiler *compiler,
     }
     function->owner_class=DIAMOND_OWNER_NONE;
     function->nested=true;
+    bool lexical=false;
+    for(size_t i=0;i<type_argument_count;i++)
+        lexical|=type_set_contains_variable(compiler,type_arguments[i]);
+    for(size_t i=0;i<DIAMOND_MAX_DECLARED_PARAMETERS;i++)
+        if(parameter_sets[i]!=DIAMOND_NO_TYPE_SET)
+            lexical|=type_set_contains_variable(compiler,parameter_sets[i]);
+    if(return_set!=DIAMOND_NO_TYPE_SET)lexical|=type_set_contains_variable(compiler,return_set);
+    function->type_variable_count=lexical?compiler->function->type_variable_count:0;
+    function->captures_type_variables=function->type_variable_count>0;
+    memcpy(function->type_variables,compiler->function->type_variables,sizeof function->type_variables);
     function->return_type_set=return_set;
     function->arity=method->arity;
     function->required_arity=method->required_arity;

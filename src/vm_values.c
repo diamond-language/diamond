@@ -200,6 +200,15 @@ static bool copy_closure_step(DiamondVm *dest_vm,DiamondValue value,
         allocate_closure(dest_vm,source->function_index,nullptr,0);
     if(copy==nullptr)return false;
     copy->is_block=source->is_block;
+    if(source->type_binding_count>0) {
+        if(source->type_binding_count>8||source->type_bindings==nullptr)return false;
+        copy->type_bindings=malloc(source->type_binding_count*sizeof *copy->type_bindings);
+        if(copy->type_bindings==nullptr)return false;
+        copy->type_binding_count=source->type_binding_count;
+        memcpy(copy->type_bindings,source->type_bindings,
+            source->type_binding_count*sizeof *copy->type_bindings);
+        dest_vm->bytes_allocated+=source->type_binding_count*sizeof *copy->type_bindings;
+    }
     *out=DIAMOND_OBJECT(copy);return true;
 }
 
