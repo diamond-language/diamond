@@ -160,7 +160,10 @@ search over a real (if scoped) lexical symbol table:
     `Hash[String, Pet | Leaf]`. Constructor witnesses for a shared variable
     can join representable class unions, including repeated parent parameters
     such as `Point[T] < Pair[T, T]`. Conflicting invariant arguments and
-    unrepresentable editor shapes remain unresolved. Direct `Hash[K, V]`
+    unrepresentable editor shapes remain unresolved. Own constructors also
+    retain child-only parameters, including with fixed parents. An inherited
+    constructor missing a child binding stays unresolved unless explicit type
+    arguments supply it. Direct `Hash[K, V]`
     indexing remains unresolved because its real result is `V | Nil`. Saving a
     declared or structurally inferred Hash lookup in a local preserves that
     nullable type. Existing nil

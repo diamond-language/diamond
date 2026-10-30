@@ -137,6 +137,16 @@ static void check_generic_class_round_trip(const DiamondProgram *template) {
         "class SwappedPair[A, B] < Payload[B, A]\nend\n"
         "class StringPayload[T] < Payload[T, String]\nend\n"
         "class RepeatedPayload[T] < Payload[T, T]\nend\n"
+        "class OwnBox[T, U] < Box[T]\n"
+        "  def initialize(value: T, tag: U)\n    super(value)\n    @tag = tag\n  end\n"
+        "  def tag() -> U = @tag\nend\n"
+        "class OwnFixed[T] < IntBox\n"
+        "  def initialize(value: Int, tag: T)\n    super(value)\n    @tag = tag\n  end\n"
+        "  def tag() -> T = @tag\nend\n"
+        "class PlainBase\nend\n"
+        "class OwnPlain[T] < PlainBase\n"
+        "  def initialize(tag: T)\n    @tag = tag\n  end\n"
+        "  def tag() -> T = @tag\nend\n"
         "struct RepeatedTagged[T, U](tag: U) < Payload[T, T]\nend\n"
         "struct TaggedPayload[T, U](tag: U) < Payload[T, String]\nend\n"
         "struct FixedPayload(tag: String) < Payload[Int, String]\nend\n"
@@ -176,8 +186,8 @@ static void check_generic_class_round_trip(const DiamondProgram *template) {
                 check(diamond_program_write_compiled(program,invalid_file),"invalid struct marker image writes");
                 fclose(invalid_file);
                 DiamondProgram *rejected=alloc_program();diamond_program_init(rejected);
-                check(!diamond_program_read_compiled((const uint8_t *)invalid,invalid_length,rejected),
-                    "child-only parameters require a generated struct on restore");
+                check(diamond_program_read_compiled((const uint8_t *)invalid,invalid_length,rejected),
+                    "child-only parameters also restore on ordinary classes");
                 diamond_program_free(rejected);free(rejected);free(invalid);
             }
             class->generated_struct=true;break;
@@ -331,6 +341,22 @@ static void check_generic_class_round_trip(const DiamondProgram *template) {
                     char rendered[64];
                     check(run_and_get_string(use,rendered,sizeof rendered)&&strcmp(rendered,"42")==0,
                         "restored fixed parent bindings cannot replace the child's own parameter");
+                }
+                const bool restored_own=diamond_compile_incremental(
+                    "OwnBox.new(40, 2).value() + OwnBox.new(40, 2).tag()\n",use,copy,&diagnostic);
+                check(restored_own,"restored ordinary class infers a child-only parameter");
+                if(restored_own) {
+                    char rendered[64];
+                    check(run_and_get_string(use,rendered,sizeof rendered)&&strcmp(rendered,"42")==0,
+                        "restored own constructor retains parent and child bindings");
+                }
+                const bool restored_own_fixed=diamond_compile_incremental(
+                    "OwnFixed.new(40, 1).value() + OwnPlain.new(2).tag()\n",use,copy,&diagnostic);
+                check(restored_own_fixed,"restored ordinary classes support fixed and plain parents");
+                if(restored_own_fixed) {
+                    char rendered[64];
+                    check(run_and_get_string(use,rendered,sizeof rendered)&&strcmp(rendered,"42")==0,
+                        "restored fixed parent cannot replace the child's own binding");
                 }
                 const bool restored_repeated=diamond_compile_incremental(
                     "RepeatedPayload.new(42, \"other\").error().to_s().length()\n",use,copy,&diagnostic);

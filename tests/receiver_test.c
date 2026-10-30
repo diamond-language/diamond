@@ -266,11 +266,25 @@ int main(void) {
         "  def own() -> T = @value\nend\n"
         "class GrandPetError[T] < PetErrorRecord[T]\nend\n"
         "class RepeatedRecord[T] < MultiRecord[T, T]\nend\n"
+        "class OwnRecords[T, U] < GenericRecords[T]\n"
+        "  def initialize(value: T, tag: U)\n    super(value)\n    @tag = tag\n  end\n"
+        "  def tag() -> U = @tag\nend\n"
+        "class InheritedOwn[T, U] < GenericRecords[T]\n"
+        "  def tag(value: U) -> U = value\nend\n"
+        "class OwnFixed[T] < FixedPetRecords\n"
+        "  def initialize(value: Pet, tag: T)\n    super(value)\n    @tag = tag\n  end\n"
+        "  def tag() -> T = @tag\nend\n"
         "struct RepeatedTagged[T, U](tag: U) < MultiRecord[T, T]\nend\n"
         "class SwappedRecord[A, B] < MultiRecord[B, A]\n"
         "  def own() -> A = @error\n"
         "end\n"
         "def multi_record_receivers()\n"
+        "  OwnRecords.new(Pet.new(), Leaf.new()).value().bark()\n"
+        "  OwnRecords.new(Pet.new(), Leaf.new()).tag().ping()\n"
+        "  InheritedOwn[Pet, Leaf].new(Pet.new()).value().bark()\n"
+        "  InheritedOwn.new(Pet.new()).value().bark()\n"
+        "  OwnFixed.new(Pet.new(), Leaf.new()).value().bark()\n"
+        "  OwnFixed.new(Pet.new(), Leaf.new()).tag().ping()\n"
         "  RepeatedRecord[Pet].new(Pet.new(), Pet.new()).error().bark()\n"
         "  RepeatedRecord.new(Pet.new(), Leaf.new()).value().bark()\n"
         "  RepeatedTagged.new(Pet.new(), Leaf.new(), Pet.new()).error().bark()\n"
@@ -1220,6 +1234,12 @@ int main(void) {
     const DiamondChunk chunk=diamond_program_chunk(program);
     int failed=check_generic_return_rejections();
     failed|=check_imported_generics();
+    failed|=check_receiver(program,&chunk,combined,"OwnRecords.new(Pet.new(), Leaf.new()).value().","Pet",false);
+    failed|=check_receiver(program,&chunk,combined,"OwnRecords.new(Pet.new(), Leaf.new()).tag().","Leaf",false);
+    failed|=check_receiver(program,&chunk,combined,"InheritedOwn[Pet, Leaf].new(Pet.new()).value().","Pet",false);
+    failed|=check_receiver(program,&chunk,combined,"InheritedOwn.new(Pet.new()).value().",nullptr,false);
+    failed|=check_receiver(program,&chunk,combined,"OwnFixed.new(Pet.new(), Leaf.new()).value().","Pet",false);
+    failed|=check_receiver(program,&chunk,combined,"OwnFixed.new(Pet.new(), Leaf.new()).tag().","Leaf",false);
     failed|=check_receiver(program,&chunk,combined,"RepeatedRecord[Pet].new(Pet.new(), Pet.new()).error().","Pet",false);
     failed|=check_receiver_pair(program,&chunk,combined,"RepeatedRecord.new(Pet.new(), Leaf.new()).value().","Pet","Leaf");
     failed|=check_receiver_pair(program,&chunk,combined,"RepeatedTagged.new(Pet.new(), Leaf.new(), Pet.new()).error().","Pet","Leaf");

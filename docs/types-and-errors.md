@@ -131,8 +131,7 @@ from its constructor values. Fixed parent arguments must be concrete and fit
 the bounded binding graph. A parameterized subclass may instead forward its
 parameters: `class Child[A] < Box[A]`, `class Result[A, B] < Pair[A, B]`, or
 `class Swapped[A, B] < Pair[B, A]`. Parameters may have different names from the
-parent's, but each ordinary class parameter must appear at least once across the
-parent arguments.
+parent's. Child parameters may also be used only by the child's own methods.
 Explicit or inferred constructor arguments then bind the inherited slots;
 inherited methods, `super`, method references, and further subclasses retain
 those bindings in the correct ancestor view. Constructor inference maps the
@@ -153,8 +152,7 @@ inference still requires an explicit argument. Repetitions can occur inside
 containers or Callable signatures, and contextual constructor blocks use the
 same coherent ancestor view. Conflicting invariant instance or Callable graphs
 and bindings beyond the graph budget are rejected rather than weakened.
-Every ordinary class parameter must occur in its parent arguments, and a type
-variable still cannot be a union alternative. Parent and child may have different parameter
+Type variables still cannot be union alternatives. Parent and child may have different parameter
 counts: `class StringResult[T] < Result[T, String]` fixes the parent's second
 slot while inferring the child's `T` from the first. `StringResult.new(42, "error")`
 and `StringResult[Int].new(42, "error")` both retain the parent view
@@ -167,8 +165,16 @@ Structs also support these parent mappings. Their generated constructors
 specialize inherited field annotations and can infer additional child parameters
 from new fields; those parameters need not occur in the parent arguments.
 See [generic struct inheritance](classes-and-modules.md#struct-declarations).
-Parameterized ordinary classes inheriting a fixed parent,
-reopening these classes, and referring to class parameters from nested
+Ordinary classes may also introduce child-only parameters. For example,
+`class Tagged[T, U] < Box[T]` can define `initialize(value: T, tag: U)`, call
+`super(value)`, and infer both bindings from `Tagged.new(42, "label")`.
+An inherited constructor cannot infer a child parameter absent from its parent
+view; supply explicit arguments such as `Tagged[Int, String].new(42)` if the
+child inherits `Box`'s constructor instead. Parameterized classes can inherit
+nongeneric or fixed parents as well: `class Labelled[T] < StringBox` retains
+`StringBox`'s fixed bindings while its own constructor infers `T`. Missing or
+empty-only witnesses still fail rather than dropping a child binding.
+Reopening these classes and referring to class parameters from nested
 definitions remain future work. Native types such as
 `Time` and typed Callable signatures work as explicit or inferred class
 arguments. Bindings retain native kinds, Callable arity, parameter types, and

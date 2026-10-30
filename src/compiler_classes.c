@@ -1130,27 +1130,24 @@ static void compile_class_body(Compiler *compiler, DiamondClass *class) {
     if(!compiler->failed)snapshot_ivar_known_classes(compiler,class);
 }
 
-/* Structs may introduce parameters used only by their new fields. Classes
- * require every parameter to be forwarded, since inherited constructors must
- * infer their complete canonical prefix from the parent view. */
+/* Child parameters need not occur in the parent view. An inherited constructor
+ * cannot infer those missing bindings; an own constructor or explicit arguments
+ * must supply them. */
 static bool parse_generic_parent_arguments(Compiler *compiler,DiamondClass *class,
-        const DiamondClass *generic_parent,DiamondSpan superclass_span,bool allow_own_parameters) {
+        const DiamondClass *generic_parent,DiamondSpan superclass_span) {
     const size_t subclass_parameters=DIAMOND_CLASS_TYPE_PARAMETER_COUNT(class);
     if(subclass_parameters>0) {
         const size_t parent_parameters=DIAMOND_CLASS_TYPE_PARAMETER_COUNT(generic_parent);
-        if(allow_own_parameters&&parent_parameters==0) {
+        if(parent_parameters==0) {
             if(compiler->current.kind==DIAMOND_TOKEN_LEFT_BRACKET) {
                 fail(compiler,superclass_span,"non-generic superclass does not accept type arguments");return false;
             }
             return true;
         }
-        if(allow_own_parameters&&generic_parent->fixed_type_arguments) {
+        if(generic_parent->fixed_type_arguments) {
             memcpy(class->parent_type_bindings,generic_parent->fixed_type_bindings,sizeof class->parent_type_bindings);
             class->transforms_parent_arguments=true;
             return true;
-        }
-        if(generic_parent->fixed_type_arguments||parent_parameters==0) {
-            fail(compiler,superclass_span,"parameterized subclasses require corresponding generic parent parameters");return false;
         }
         if(compiler->current.kind!=DIAMOND_TOKEN_LEFT_BRACKET) {
             fail(compiler,superclass_span,"generic superclass requires forwarded type arguments");return false;
@@ -1196,10 +1193,6 @@ static bool parse_generic_parent_arguments(Compiler *compiler,DiamondClass *clas
         }
         compiler->function=outer;diamond_function_free_arrays(header);free(header);
         if(compiler->failed)return false;
-        for(size_t variable=0;variable<subclass_parameters;variable++)
-            if(!allow_own_parameters&&occurrences[variable]==0) {
-                fail(compiler,superclass_span,"parent arguments must use every subclass parameter");return false;
-            }
         for(size_t variable=0;variable<subclass_parameters;variable++)
             if(occurrences[variable]!=1)simple=false;
         class->transforms_parent_arguments=!simple;
@@ -1448,7 +1441,7 @@ uint16_t compile_class(Compiler *compiler) {
         if(parent<0) { fail(compiler,superclass_span,"undefined superclass"); return 0; }
         if(parent==index) {fail(compiler,superclass_span,"a class cannot inherit from itself");return 0;}
         const DiamondClass *generic_parent=compiler->program->classes[parent];
-        if(!parse_generic_parent_arguments(compiler,class,generic_parent,superclass_span,false))return 0;
+        if(!parse_generic_parent_arguments(compiler,class,generic_parent,superclass_span))return 0;
         if(!superclass_decided) {
             class->superclass=(uint16_t)parent;
             const DiamondClass *parent_class=compiler->program->classes[(size_t)parent];
@@ -1718,7 +1711,7 @@ static bool parse_struct_superclass(Compiler *compiler, DiamondClass *class,
              "a struct's superclass must be a struct declared earlier");
         return false;
     }
-    if(!parse_generic_parent_arguments(compiler,class,parent_class,superclass_span,true))return false;
+    if(!parse_generic_parent_arguments(compiler,class,parent_class,superclass_span))return false;
     for(size_t method=0;method<parent_class->method_count;method++)
         if(strcmp(parent_class->methods[method].name,"initialize")==0&&
            (size_t)parent_class->methods[method].function_index<

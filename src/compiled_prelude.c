@@ -723,7 +723,6 @@ static bool fixed_class_bindings_valid(const DiamondProgram *program,const Diamo
         const size_t variables=DIAMOND_CLASS_TYPE_PARAMETER_COUNT(class);
         if(class->fixed_type_arguments||class->swaps_parent_arguments||variables==0||
            class->superclass>=program->class_count||class->superclass==class->index)return false;
-        unsigned occurrences[2]={};
         const size_t parent_count=DIAMOND_CLASS_TYPE_PARAMETER_COUNT(program->classes[class->superclass]);
         if(parent_count==0)return false;
         for(size_t i=0;i<parent_count;i++) {
@@ -733,15 +732,7 @@ static bool fixed_class_bindings_valid(const DiamondProgram *program,const Diamo
                binding->node_count>DIAMOND_BOUND_TYPE_NODES||binding->signature_count>DIAMOND_BOUND_SIGNATURES||
                !fixed_binding_node_valid(program,binding,0,0,&reachable,variables)||
                reachable!=(uint16_t)((1u<<binding->node_count)-1u))return false;
-            for(size_t n=0;n<binding->node_count;n++)
-                for(size_t m=0;m<binding->nodes[n].count;m++) {
-                    const uint16_t id=binding->nodes[n].members[m].id;
-                    if(id>=DIAMOND_TYPE_VARIABLE_BASE&&id<DIAMOND_TYPE_VARIABLE_BASE+variables)
-                        occurrences[id-DIAMOND_TYPE_VARIABLE_BASE]++;
-                }
         }
-        for(size_t i=0;i<variables;i++)
-            if(!class->generated_struct&&occurrences[i]==0)return false;
     }
     if(class->swaps_parent_arguments&&(class->fixed_type_arguments||
        DIAMOND_CLASS_TYPE_PARAMETER_COUNT(class)!=2||class->superclass>=program->class_count||
@@ -751,9 +742,9 @@ static bool fixed_class_bindings_valid(const DiamondProgram *program,const Diamo
         if(DIAMOND_CLASS_TYPE_PARAMETER_COUNT(class)==0||class->superclass==DIAMOND_NO_CLASS)return true;
         if(class->superclass>=program->class_count||class->superclass==class->index)return false;
         const DiamondClass *parent=program->classes[class->superclass];
-        return (!parent->fixed_type_arguments||(class->generated_struct&&class->transforms_parent_arguments))&&
+        return (!parent->fixed_type_arguments||class->transforms_parent_arguments)&&
             (class->transforms_parent_arguments||
-             (class->generated_struct&&DIAMOND_CLASS_TYPE_PARAMETER_COUNT(parent)==0)||
+             DIAMOND_CLASS_TYPE_PARAMETER_COUNT(parent)==0||
              DIAMOND_CLASS_TYPE_PARAMETER_COUNT(parent)==DIAMOND_CLASS_TYPE_PARAMETER_COUNT(class));
     }
     if(class->superclass==DIAMOND_NO_CLASS||class->superclass>=program->class_count||
@@ -843,7 +834,7 @@ enum { DIAMOND_CACHE_MAGIC_LENGTH = 8 };
  * 9: classes store a type parameter; methods distinguish its instance binding.
  * 10: NEW_TYPED constructs explicitly specialized generic instances.
  * 11: generic class methods bind method variables after the receiver slot. */
-enum { DIAMOND_CACHE_FORMAT_VERSION = 18 };
+enum { DIAMOND_CACHE_FORMAT_VERSION = 19 };
 
 /* A checksum of the compiler's own sources and prelude (every .c and .h
  * file under src/, plus lib/core.d6 and lib/core/), passed in by the

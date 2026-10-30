@@ -1,0 +1,24 @@
+class Box[T]
+  def initialize(value: T)
+    @value = value
+  end
+  def value() -> T = @value
+end
+class Tagged[T, U] < Box[T]
+  def initialize(value: T, tag: U)
+    super(value)
+    @tag = tag
+  end
+  def tag() -> U = @tag
+end
+interface StringTag
+  def tag() -> String
+end
+def worker[U](value, unrelated: U)
+  puts(value is StringTag)
+  value.dup()
+end
+def read(value: Box[Int]) -> Int = value.value()
+copied = Thread.new(worker, Tagged.new(42, "copied"), false).join()
+puts(read(copied))
+puts(copied.tag())

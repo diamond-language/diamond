@@ -1,0 +1,13 @@
+class Box[T]
+  def initialize(value: T)
+    @value = value
+  end
+end
+class Tagged[T, U] < Box[T]
+  def initialize(value: T, tag: U)
+    super(value)
+    @tag = tag
+  end
+end
+def use(value: Box[String]) = value
+use(Tagged[Int, String].new(42, "tag"))
