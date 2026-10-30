@@ -118,7 +118,7 @@ static void check_fixed_binding_rejection(DiamondProgram *program) {
 static void check_generic_class_round_trip(const DiamondProgram *template) {
     static const char source[]=
         "module ForwardTyped\n"
-        "  def self.run() -> Int = ForwardTyped.identity[Int](42)\n"
+        "  def self.run() -> Int = ForwardTyped.identity[Int](value: 40) + ForwardTyped.identity[Int](*[2])\n"
         "  def self.identity[T](value: T) -> T = value\nend\n"
         "class Box[T]\n"
         "  def initialize(value: T)\n    @value = value\n  end\n"

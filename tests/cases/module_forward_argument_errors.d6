@@ -1,0 +1,42 @@
+module Forward
+  def self.run()
+    begin
+      Forward.pair(left: 1, unknown: 2)
+    rescue ArgumentError
+      puts("unknown keyword rejected")
+    end
+    begin
+      Forward.pair(*[1], left: 2, right: 3)
+    rescue ArgumentError
+      puts("collision rejected")
+    end
+    begin
+      Forward.pair(right: 2)
+    rescue ArgumentError
+      puts("missing argument rejected")
+    end
+    begin
+      Forward.pair(*[1, 2, 3])
+    rescue ArgumentError
+      puts("extra argument rejected")
+    end
+    begin
+      Forward.pair(*1)
+    rescue TypeError
+      puts("non-array spread rejected")
+    end
+    begin
+      Forward.identity[Int](value: "bad")
+    rescue TypeError
+      puts("keyword contract checked")
+    end
+    begin
+      Forward.identity[Int](*["bad"])
+    rescue TypeError
+      puts("spread contract checked")
+    end
+  end
+  def self.pair(left: Int, right: Int) -> Int = left + right
+  def self.identity[T](value: T) -> T = value
+end
+Forward.run()

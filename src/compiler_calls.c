@@ -2053,7 +2053,7 @@ static uint16_t parse_singleton_keyword_call(Compiler *compiler,const DiamondMet
     const uint16_t *resolved_arguments=type_argument_count>0?
         type_arguments:inferred_arguments;
     const size_t resolved_count=type_argument_count>0?
-        type_argument_count:function->type_variable_count;
+        type_argument_count:(function==nullptr?0:function->type_variable_count);
     bool has_block=false;uint16_t block=0;
     if(compiler->current.kind==DIAMOND_TOKEN_DO) {
         for(size_t index=0;index<keyword_count;index++) {
@@ -2170,22 +2170,9 @@ uint16_t parse_singleton_call(Compiler *compiler,
     }
     advance_token(compiler);
     skip_newlines(compiler);
-    if(function==nullptr&&
-       (call_arguments_have_keyword(compiler)||call_arguments_have_spread(compiler))) {
-        /* Keyword and spread-argument calls both need the real callee's
-         * declared parameter types/count for correct contextual
-         * inference (see e.g. this function's own function->
-         * type_variable_count reads just below, unguarded for good
-         * reason everywhere else in this file -- every *other* caller
-         * always has a real function). A forward-referenced module_
-         * function call only supports plain positional arguments;
-         * reject the rarer shapes with a clear error instead of
-         * building out (and fully auditing) contextual inference for a
-         * callee that doesn't exist yet. */
-        fail(compiler,name,
-            "keyword and spread arguments are not supported on a forward-"
-            "referenced module_function call");return 0;
-    }
+    /* Discovery can parse dynamic keyword/spread arguments without contextual
+     * hints. The final pass has the full discovered signature; call-head
+     * fixups keep the discovery bytecode's pending target well formed. */
     if(call_arguments_have_keyword(compiler))
         return parse_singleton_keyword_call(compiler,method,function,receiver_class_index,type_arguments,type_argument_count);
     if(call_arguments_have_spread(compiler))

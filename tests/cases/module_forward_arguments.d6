@@ -1,0 +1,56 @@
+module Forward
+  module_function
+  def run()
+    puts(Forward.combine(right: "keyword", left: 42))
+    puts(Forward.combine(*[43], right: "mixed"))
+    puts(Forward.combine(*[44, "literal"]))
+    values = [45, "local"]
+    puts(Forward.combine(*values))
+    puts(Forward.combine(46, *[]))
+    puts(Forward.identity[Int](value: 47))
+    puts(Forward.identity[String](*["explicit"]))
+    puts(Forward.identity(value: "inferred"))
+    puts(Forward.identity(*[48]))
+    puts(Forward.apply(value: 49) do |value|
+      value + 1
+    end)
+    puts(Forward.apply[Int](*[50]) do |value|
+      value + 1
+    end)
+    puts(Forward.count(1, *[2, 3]))
+    puts(Forward.first[String](value: "recursive", count: 2))
+  end
+  def relay[T](value: T) -> T = Forward.identity[T](value: value)
+  def combine(left: Int, right: String = "default") -> String = left.to_s() + ":" + right
+  def identity[T](value: T) -> T = value
+  def apply[T](value: T, block: Callable[[T], T]) -> T = block(value)
+  def count(head: Int, *rest) -> Int = rest.length() + 1
+  def first[T](value: T, count: Int) -> T
+    if count == 0
+      value
+    else
+      Forward.second[T](*[value], count: count - 1)
+    end
+  end
+  def second[T](value: T, count: Int) -> T = Forward.first[T](value: value, count: count)
+end
+module SelfForward
+  def self.run()
+    puts(SelfForward.combine(right: "self", left: 52))
+    puts(SelfForward.combine(*[53, "spread"]))
+    puts(SelfForward.identity[String](value: "self generic"))
+  end
+  def self.combine(left: Int, right: String) -> String = left.to_s() + ":" + right
+  def self.identity[T](value: T) -> T = value
+end
+class ClassForward
+  def self.run()
+    puts(ClassForward.combine(right: "class", left: 54))
+    puts(ClassForward.combine(*[55, "spread"]))
+  end
+  def self.combine(left: Int, right: String) -> String = left.to_s() + ":" + right
+end
+Forward.run()
+puts(Forward.relay[String]("enclosing"))
+SelfForward.run()
+ClassForward.run()
