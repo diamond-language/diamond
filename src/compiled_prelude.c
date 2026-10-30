@@ -741,7 +741,7 @@ static bool fixed_class_bindings_valid(const DiamondProgram *program,const Diamo
                 }
         }
         for(size_t i=0;i<variables;i++)
-            if(occurrences[i]>1||(!class->generated_struct&&occurrences[i]!=1))return false;
+            if(!class->generated_struct&&occurrences[i]==0)return false;
     }
     if(class->swaps_parent_arguments&&(class->fixed_type_arguments||
        DIAMOND_CLASS_TYPE_PARAMETER_COUNT(class)!=2||class->superclass>=program->class_count||
@@ -843,7 +843,7 @@ enum { DIAMOND_CACHE_MAGIC_LENGTH = 8 };
  * 9: classes store a type parameter; methods distinguish its instance binding.
  * 10: NEW_TYPED constructs explicitly specialized generic instances.
  * 11: generic class methods bind method variables after the receiver slot. */
-enum { DIAMOND_CACHE_FORMAT_VERSION = 17 };
+enum { DIAMOND_CACHE_FORMAT_VERSION = 18 };
 
 /* A checksum of the compiler's own sources and prelude (every .c and .h
  * file under src/, plus lib/core.d6 and lib/core/), passed in by the

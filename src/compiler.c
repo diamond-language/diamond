@@ -2603,6 +2603,9 @@ int parse_type_annotation(Compiler *compiler) {
     if(!reserve_type_sets(compiler,1))return 0;
     const size_t set_index=compiler->function->type_set_count++;
     DiamondTypeSet *set=&compiler->function->type_sets[set_index];
+    /* Failed advisory proofs rewind the count and can leave a populated slot
+     * behind. A new annotation must not inherit those discarded alternatives. */
+    *set=(DiamondTypeSet){};
     while(!compiler->failed) {
         if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER) {
             fail(compiler,compiler->current.span,"expected type annotation");break;

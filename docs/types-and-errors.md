@@ -131,7 +131,8 @@ from its constructor values. Fixed parent arguments must be concrete and fit
 the bounded binding graph. A parameterized subclass may instead forward its
 parameters: `class Child[A] < Box[A]`, `class Result[A, B] < Pair[A, B]`, or
 `class Swapped[A, B] < Pair[B, A]`. Parameters may have different names from the
-parent's, but each must appear exactly once across the parent arguments.
+parent's, but each ordinary class parameter must appear at least once across the
+parent arguments.
 Explicit or inferred constructor arguments then bind the inherited slots;
 inherited methods, `super`, method references, and further subclasses retain
 those bindings in the correct ancestor view. Constructor inference maps the
@@ -143,8 +144,17 @@ parent's `T` to `Array[String]`. Nested containers, class arguments, native type
 and Callable signatures retain their metadata through this substitution.
 Transformations compose with forwarding and reordered parents; inherited
 constructors infer child parameters by matching the parent argument structure.
-Each subclass parameter must occur exactly once across the parent arguments and
-cannot be a union alternative. Parent and child may have different parameter
+Repeated occurrences share one binding: `class Point[T] < Pair[T, T]`
+joins constructor witnesses for both parent slots. `Point.new(1, "two")` binds
+`T` to `Int | String` and exposes `Pair[Int | String, Int | String]` to inherited
+methods. Explicit specialization fixes that shared contract instead. Empty
+collection contributions can be completed by other occurrences; empty-only
+inference still requires an explicit argument. Repetitions can occur inside
+containers or Callable signatures, and contextual constructor blocks use the
+same coherent ancestor view. Conflicting invariant instance or Callable graphs
+and bindings beyond the graph budget are rejected rather than weakened.
+Every ordinary class parameter must occur in its parent arguments, and a type
+variable still cannot be a union alternative. Parent and child may have different parameter
 counts: `class StringResult[T] < Result[T, String]` fixes the parent's second
 slot while inferring the child's `T` from the first. `StringResult.new(42, "error")`
 and `StringResult[Int].new(42, "error")` both retain the parent view

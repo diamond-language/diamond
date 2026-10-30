@@ -1,4 +1,11 @@
 class Box[T]
+  def initialize(value: T)
+    @value = value
+  end
+  def value() -> T = @value
 end
 class Child[T] < Box[Hash[T, T]]
 end
+puts(Child.new({1 => 2}).value()[1])
+puts(Child.new({"key" => 3}).value()["key"])
+puts(Child[Int | String].new({"explicit" => 4}).value()["explicit"])

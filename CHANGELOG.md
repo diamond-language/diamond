@@ -8,6 +8,12 @@ authoritative fine-grained record.
 
 ### Added
 
+- Generic parent arguments may repeat a child parameter:
+  `Point[T] < Pair[T, T]` joins constructor witnesses into one shared binding.
+  Both inherited slots retain that binding, including through nested containers,
+  contextual constructor blocks, method references, caches, and thread copies.
+  Structs may combine repeated parent parameters with parameters used only by
+  their own fields. Conflicting invariant or Callable payloads still raise errors.
 - Generic structs can inherit earlier structs with fixed, forwarded, reordered,
   mixed, or transformed parent arguments. Generated constructors specialize the
   inherited field types; new fields may introduce child-only parameters.
@@ -33,8 +39,8 @@ authoritative fine-grained record.
   or reordered (`Swapped[A, B] < Pair[B, A]`), or transformed
   (`Collection[T] < Box[Array[T]]`). Constructor inference, inherited methods,
   `super`, method references, runtime checks, and language-server receiver queries
-  use the appropriate ancestor bindings. Each child parameter must occur exactly
-  once across the parent arguments.
+  use the appropriate ancestor bindings. Each ordinary class parameter must
+  occur at least once across the parent arguments.
 - Parameterized subclasses can mix fixed and inferred parent slots with different
   parameter counts: `StringResult[T] < Result[T, String]` exposes one child
   parameter while inherited methods retain both parent bindings. Fixed slots keep
@@ -74,6 +80,9 @@ authoritative fine-grained record.
 
 ### Fixed
 
+- A discarded advisory type proof no longer contaminates a later annotation when
+  the compiler reuses its type-table slot. Constructor union inference also keeps
+  contextual block contracts consistent with the instance's shared binding.
 - Language-server receiver queries retain qualified generic names across imports,
   including constructors such as `Records::Box[Models::Pet].new(...)`, nested type
   arguments, explicit method arguments, inherited readers, and indexed returns.

@@ -698,11 +698,30 @@ static bool resolve_expression_binding(const DiamondProgram *program,const Diamo
         const char *source,const DiamondToken *tokens,size_t start,size_t end,
         ReceiverTypeBinding *binding,unsigned depth);
 
+/* Shared constructor variables can carry a bounded class union. Other
+ * conflicting editor shapes stay unresolved, especially a bare collection
+ * whose unknown elements must not be treated as an empty contribution. */
+__attribute__((noinline))
+static bool join_constructor_receiver(const DiamondChunk *chunk,ReceiverTypeBinding *held,
+        const ReceiverTypeBinding *incoming,unsigned depth) {
+    if(!binding_present(held)) {*held=*incoming;return true;}
+    if(held->array_depth==incoming->array_depth&&held->graph.node_count>0&&
+       incoming->graph.node_count>0&&receiver_graph_equal(&held->graph,0,&incoming->graph,0,0))return true;
+    if(held->array_depth!=0||incoming->array_depth!=0||held->has_builtin||incoming->has_builtin)return false;
+    DiamondTypeBinding joined={.node_count=1},other={.node_count=1};
+    if(!receiver_graph_append_binding(&joined,0,held,depth+1)||
+       !receiver_graph_append_binding(&other,0,incoming,depth+1))return false;
+    diamond_join_type_binding(&joined,&other);
+    ReceiverTypeBinding result;
+    if(joined.invalid||!binding_from_graph(chunk,&joined,0,&result,depth+1))return false;
+    *held=result;return true;
+}
+
 static bool infer_structural_class_bindings(const DiamondChunk *chunk,
         const DiamondTypeSet *expected_sets,size_t expected_count,
         uint16_t expected_index,const DiamondTypeSet *actual_sets,
         size_t actual_count,uint16_t actual_index,ReceiverTypeBinding *bindings,
-        size_t binding_count,unsigned depth) {
+        size_t binding_count,unsigned depth,bool constructor) {
     if(depth>32||expected_index>=expected_count||actual_index>=actual_count)
         return false;
     const DiamondTypeSet *expected=&expected_sets[expected_index];
@@ -719,6 +738,7 @@ static bool infer_structural_class_bindings(const DiamondChunk *chunk,
         if(!binding_present(&bindings[variable])) {
             bindings[variable]=inferred;return true;
         }
+        if(constructor)return join_constructor_receiver(chunk,&bindings[variable],&inferred,depth);
         return bindings[variable].array_depth==inferred.array_depth&&
             bindings[variable].graph.node_count>0&&
             receiver_graph_equal(&bindings[variable].graph,0,&inferred.graph,0,0);
@@ -735,7 +755,7 @@ static bool infer_structural_class_bindings(const DiamondChunk *chunk,
         aligned.id=wanted->id;
         projected[ROOT]=(DiamondTypeSet){.count=1,.members={aligned}};
         const bool result=infer_structural_class_bindings(chunk,expected_sets,expected_count,
-            expected_index,projected,ROOT+1,ROOT,bindings,binding_count,depth+1);
+            expected_index,projected,ROOT+1,ROOT,bindings,binding_count,depth+1,constructor);
         free(projected);return result;
     }
     const DiamondTypeMember *known=&aligned;
@@ -743,13 +763,13 @@ static bool infer_structural_class_bindings(const DiamondChunk *chunk,
         if(known->argument_set==DIAMOND_NO_TYPE_SET||
            !infer_structural_class_bindings(chunk,expected_sets,expected_count,
                wanted->argument_set,actual_sets,actual_count,
-               known->argument_set,bindings,binding_count,depth+1))return false;
+               known->argument_set,bindings,binding_count,depth+1,constructor))return false;
     }
     if(wanted->second_argument_set!=DIAMOND_NO_TYPE_SET) {
         if(known->second_argument_set==DIAMOND_NO_TYPE_SET||
            !infer_structural_class_bindings(chunk,expected_sets,expected_count,
                wanted->second_argument_set,actual_sets,actual_count,
-               known->second_argument_set,bindings,binding_count,depth+1))
+               known->second_argument_set,bindings,binding_count,depth+1,constructor))
             return false;
     }
     if(wanted->id==DIAMOND_TYPE_CALLABLE&&wanted->callable_parameters_typed) {
@@ -759,12 +779,12 @@ static bool infer_structural_class_bindings(const DiamondChunk *chunk,
             if(wanted->callable_parameter_sets[parameter]!=DIAMOND_NO_TYPE_SET&&
                !infer_structural_class_bindings(chunk,expected_sets,expected_count,
                    wanted->callable_parameter_sets[parameter],actual_sets,actual_count,
-                   known->callable_parameter_sets[parameter],bindings,binding_count,depth+1))
+                   known->callable_parameter_sets[parameter],bindings,binding_count,depth+1,constructor))
                 return false;
         if(wanted->callable_return_set!=DIAMOND_NO_TYPE_SET&&
            !infer_structural_class_bindings(chunk,expected_sets,expected_count,
                wanted->callable_return_set,actual_sets,actual_count,
-               known->callable_return_set,bindings,binding_count,depth+1))return false;
+               known->callable_return_set,bindings,binding_count,depth+1,constructor))return false;
     }
     return true;
 }
@@ -958,10 +978,10 @@ static size_t resolve_indexed_expression(const DiamondProgram *program,
     *is_singleton=false;return count;
 }
 
-static size_t infer_class_bindings(const DiamondProgram *program,
+static size_t infer_class_bindings_impl(const DiamondProgram *program,
         const DiamondChunk *chunk,const char *source,const DiamondToken *tokens,
         size_t start,size_t end,const DiamondFunction *function,
-        ReceiverTypeBinding *bindings,unsigned depth) {
+        ReceiverTypeBinding *bindings,unsigned depth,bool constructor) {
     if(start>end||function->type_variable_count==0)return 0;
     if(end>=start+3&&tokens[start].kind==DIAMOND_TOKEN_STAR&&
        tokens[start+1].kind==DIAMOND_TOKEN_LEFT_BRACKET&&
@@ -1012,7 +1032,7 @@ static size_t infer_class_bindings(const DiamondProgram *program,
                                 chunk,function->type_sets,function->type_set_count,
                                 expected_index,owner->type_sets,
                                 owner->type_set_count,(uint16_t)actual,bindings,
-                                function->type_variable_count,0);
+                                function->type_variable_count,0,constructor);
                             if(!inferred_structurally)return 0;
                         }
                     } else if(local==nullptr&&expected->count==1&&
@@ -1025,7 +1045,7 @@ static size_t infer_class_bindings(const DiamondProgram *program,
                             inferred_structurally=infer_structural_class_bindings(chunk,
                                 function->type_sets,function->type_set_count,wanted,
                                 callback->type_sets,callback->type_set_count,
-                                callback->return_type_set,bindings,function->type_variable_count,0);
+                                callback->return_type_set,bindings,function->type_variable_count,0,constructor);
                             if(!inferred_structurally)return 0;
                         }
                     }
@@ -1037,10 +1057,14 @@ static size_t infer_class_bindings(const DiamondProgram *program,
                     const size_t bound_variable=(size_t)(expected->members[0].id-DIAMOND_TYPE_VARIABLE_BASE);
                     if(bound_variable<function->type_variable_count&&
                        resolve_expression_binding(program,chunk,source,tokens,argument_start,index-1,&argument_binding,depth+1)) {
-                        if(binding_present(&bindings[bound_variable])&&
-                           (bindings[bound_variable].array_depth!=argument_binding.array_depth||
-                            !receiver_graph_equal(&bindings[bound_variable].graph,0,&argument_binding.graph,0,0)))return 0;
-                        bindings[bound_variable]=argument_binding;
+                        if(constructor) {
+                            if(!join_constructor_receiver(chunk,&bindings[bound_variable],&argument_binding,depth))return 0;
+                        } else {
+                            if(binding_present(&bindings[bound_variable])&&
+                               (bindings[bound_variable].array_depth!=argument_binding.array_depth||
+                                !receiver_graph_equal(&bindings[bound_variable].graph,0,&argument_binding.graph,0,0)))return 0;
+                            bindings[bound_variable]=argument_binding;
+                        }
                         parameter++;argument_start=index+1;continue;
                     }
                     size_t classes[DIAMOND_MAX_UNION_TYPES];bool singleton=false;
@@ -1066,7 +1090,11 @@ static size_t infer_class_bindings(const DiamondProgram *program,
                             .count=1,.members={{.id=builtin,.argument_node=UINT8_MAX,.second_argument_node=UINT8_MAX}}}}};
                     } else {
                         if(singleton)return 0;
-                        if(!bind_classes(&bindings[variable],classes,count))return 0;
+                        if(constructor) {
+                            ReceiverTypeBinding incoming={};
+                            if(!bind_classes(&incoming,classes,count)||
+                               !join_constructor_receiver(chunk,&bindings[variable],&incoming,depth))return 0;
+                        } else if(!bind_classes(&bindings[variable],classes,count))return 0;
                     }
                 }
             }
@@ -1076,6 +1104,13 @@ static size_t infer_class_bindings(const DiamondProgram *program,
     for(size_t index=function->class_type_variable;index<function->type_variable_count;index++)
         if(!binding_present(&bindings[index]))return 0;
     return function->type_variable_count;
+}
+
+static size_t infer_class_bindings(const DiamondProgram *program,
+        const DiamondChunk *chunk,const char *source,const DiamondToken *tokens,
+        size_t start,size_t end,const DiamondFunction *function,
+        ReceiverTypeBinding *bindings,unsigned depth) {
+    return infer_class_bindings_impl(program,chunk,source,tokens,start,end,function,bindings,depth,false);
 }
 
 static bool resolve_target_bindings(const DiamondProgram *program,
@@ -1211,8 +1246,8 @@ static bool resolve_expression_binding(const DiamondProgram *program,const Diamo
             } else {
                 const DiamondMethod *init=receiver_lookup_method(chunk,class_index,false,"initialize",10);
                 if(init==nullptr||init->function_index>=chunk->function_count||
-                   infer_class_bindings(program,chunk,source,tokens,call.left+1,end-1,
-                       chunk->functions[init->function_index],arguments,depth+1)==0)return false;
+                   infer_class_bindings_impl(program,chunk,source,tokens,call.left+1,end-1,
+                       chunk->functions[init->function_index],arguments,depth+1,true)==0)return false;
                 DiamondTypeBinding parent[2]={},child[2]={};
                 for(size_t v=0;v<chunk->functions[init->function_index]->class_type_variable;v++) {
                     parent[v].node_count=1;

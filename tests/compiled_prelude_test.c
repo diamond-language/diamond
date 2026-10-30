@@ -136,6 +136,8 @@ static void check_generic_class_round_trip(const DiamondProgram *template) {
         "class ForwardPair[A, B] < Payload[A, B]\nend\n"
         "class SwappedPair[A, B] < Payload[B, A]\nend\n"
         "class StringPayload[T] < Payload[T, String]\nend\n"
+        "class RepeatedPayload[T] < Payload[T, T]\nend\n"
+        "struct RepeatedTagged[T, U](tag: U) < Payload[T, T]\nend\n"
         "struct TaggedPayload[T, U](tag: U) < Payload[T, String]\nend\n"
         "struct FixedPayload(tag: String) < Payload[Int, String]\nend\n"
         "struct FixedPayloadChild[T](child: T) < FixedPayload\nend\n"
@@ -329,6 +331,23 @@ static void check_generic_class_round_trip(const DiamondProgram *template) {
                     char rendered[64];
                     check(run_and_get_string(use,rendered,sizeof rendered)&&strcmp(rendered,"42")==0,
                         "restored fixed parent bindings cannot replace the child's own parameter");
+                }
+                const bool restored_repeated=diamond_compile_incremental(
+                    "RepeatedPayload.new(42, \"other\").error().to_s().length()\n",use,copy,&diagnostic);
+                check(restored_repeated,"restored repeated parent joins constructor witnesses");
+                if(restored_repeated) {
+                    char rendered[64];
+                    check(run_and_get_string(use,rendered,sizeof rendered)&&strcmp(rendered,"5")==0,
+                        "restored repeated parent keeps its shared union in both slots");
+                }
+                const bool restored_repeated_tag=diamond_compile_incremental(
+                    "value = RepeatedTagged.new(42, \"other\", false)\n"
+                    "if value.tag()\n  0\nelse\n  value.error().to_s().length()\nend\n",use,copy,&diagnostic);
+                check(restored_repeated_tag,"restored repeated struct keeps a child-only parameter");
+                if(restored_repeated_tag) {
+                    char rendered[64];
+                    check(run_and_get_string(use,rendered,sizeof rendered)&&strcmp(rendered,"5")==0,
+                        "restored repeated mapping cannot masquerade as a permutation");
                 }
                 const bool swapped=diamond_compile_incremental(
                     "SwappedPair[String, Int].new(42, \"abc\").value()\n",use,copy,&diagnostic);

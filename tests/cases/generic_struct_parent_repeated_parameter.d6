@@ -2,3 +2,19 @@ struct Pair[T, U](value: T, error: U)
 end
 struct Child[T](extra: Int) < Pair[T, T]
 end
+struct Tagged[T, U](tag: U) < Pair[T, T]
+end
+struct Item[T](value: T)
+end
+struct CallbackEntries[T](callback: Callable[[T], T]) < Item[Hash[T, T]]
+end
+puts(Child.new(1, "two", 3))
+puts(Child[Int].new(4, 5, 6).error())
+value = Tagged.new(7, "eight", false)
+puts(value.error())
+puts(value.tag())
+puts(value == Tagged[Int | String, Bool].new(7, "eight", false))
+entry = CallbackEntries.new({"key" => 42}) do |value|
+  value
+end
+puts(entry.callback()(43))

@@ -1,0 +1,73 @@
+class Pair[A, B]
+  def initialize(left: A, right: B)
+    @left = left
+    @right = right
+  end
+  def left() -> A = @left
+  def right() -> B = @right
+end
+class Point[T] < Pair[T, T]
+end
+class Box[T]
+  def initialize(value: T)
+    @value = value
+  end
+  def value() -> T = @value
+end
+class Nested[T] < Pair[Box[T], Box[T]]
+end
+class CallablePoint[T] < Box[Callable[[T], T]]
+end
+class Model
+  def bark() -> Int = 42
+end
+class Other
+  def ping() -> Int = 1
+end
+class Shared[T]
+  def initialize(first: T, second: T)
+    @first = first
+  end
+  def first() -> T = @first
+end
+def consume_model(value: Box[Model]) -> Int = value.value().bark()
+def annotation_after_union()
+  shared = Shared.new(Model.new(), Other.new())
+  shared.first().bark()
+  nested = Box[Model].new(Model.new())
+  consume_model(nested)
+end
+interface TimeUnion
+  def left() -> Time | Int
+  def right() -> Time | Int
+end
+def increment(value: Int) -> Int = value + 1
+def label(value: String) -> String = value
+def mismatch(value: Int) -> String = value.to_s()
+def read(value: Pair[Box[Int], Box[Int]]) = value.right().value()
+puts(Point.new(Time.now(), 1) is TimeUnion)
+puts(read(Point.new(Box[Int].new(41), Box[Int].new(42))))
+puts(CallablePoint.new(increment).value()(42))
+puts(CallablePoint[Int].new(increment).value()(43))
+puts(Nested.new(Box[Int].new(44), Box[Int].new(45)).right().value())
+puts(annotation_after_union())
+begin
+  Point.new(Box[Int].new(1), Box[String].new("wrong"))
+rescue error: TypeError
+  puts("conflicting invariant witnesses rejected")
+end
+begin
+  Nested.new(Box[Int].new(1), Box[String].new("wrong"))
+rescue error: TypeError
+  puts("widened invariant parent rejected")
+end
+begin
+  Point.new(increment, label)
+rescue error: TypeError
+  puts("conflicting Callable witnesses rejected")
+end
+begin
+  CallablePoint.new(mismatch)
+rescue error: TypeError
+  puts("narrow Callable input rejected")
+end

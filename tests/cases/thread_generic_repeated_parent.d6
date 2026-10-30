@@ -1,0 +1,21 @@
+class Pair[A, B]
+  def initialize(left: A, right: B)
+    @left = left
+    @right = right
+  end
+  def left() -> A = @left
+  def right() -> B = @right
+end
+class Point[T] < Pair[T, T]
+end
+interface Shared
+  def left() -> Int | String
+  def right() -> Int | String
+end
+def worker[U](value, unrelated: U)
+  puts(value is Shared)
+  value.dup()
+end
+def spawn[U](value, unrelated: U) = Thread.new(worker, value, unrelated).join()
+def read(value: Pair[Int | String, Int | String]) = value.right()
+puts(read(spawn(Point.new(42, "copied"), false)))

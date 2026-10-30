@@ -750,9 +750,27 @@ uint16_t compile_contextual_typed_block(Compiler *compiler,
     return block;
 }
 
-static void infer_contextual_type_set(Compiler *compiler,
+/* Constructor witnesses join as runtime bindings do. Keep invariant class
+ * and Callable conflicts, and graph limits, rather than inventing a wider
+ * signature or erasing a nested instance argument. These remain editor facts. */
+__attribute__((noinline))
+static uint16_t join_constructor_type_sets(Compiler *compiler,uint16_t left,uint16_t right) {
+    DiamondTypeBinding joined,incoming;
+    if(!diamond_bind_type_template(compiler->function->type_sets,compiler->function->type_set_count,left,&joined)||
+       !diamond_bind_type_template(compiler->function->type_sets,compiler->function->type_set_count,right,&incoming))
+        return (uint16_t)(DIAMOND_NO_TYPE_SET-1u);
+    diamond_join_type_binding(&joined,&incoming);
+    if(joined.invalid||!reserve_type_sets(compiler,joined.node_count))return (uint16_t)(DIAMOND_NO_TYPE_SET-1u);
+    const uint16_t result=(uint16_t)compiler->function->type_set_count;
+    if(!diamond_binding_type_sets(&joined,compiler->function->type_sets+result,joined.node_count,result))
+        return (uint16_t)(DIAMOND_NO_TYPE_SET-1u);
+    compiler->function->type_set_count+=joined.node_count;
+    return result;
+}
+
+static void infer_contextual_type_set_impl(Compiler *compiler,
         const DiamondFunction *target,uint16_t expected_index,
-        uint16_t actual_index,uint16_t *bindings) {
+        uint16_t actual_index,uint16_t *bindings,bool *constructor_exact) {
     if(expected_index>=target->type_set_count||
        actual_index>=compiler->function->type_set_count)return;
     const DiamondTypeSet expected_copy=target->type_sets[expected_index];
@@ -774,7 +792,12 @@ static void infer_contextual_type_set(Compiler *compiler,
                             compiler->function->type_set_count,
                             bindings[variable],compiler->function->type_sets,
                             compiler->function->type_set_count,actual_index,0))
-                    bindings[variable]=(uint16_t)(DIAMOND_NO_TYPE_SET-1u);
+                {
+                    if(constructor_exact!=nullptr) {
+                        bindings[variable]=join_constructor_type_sets(compiler,bindings[variable],actual_index);
+                        *constructor_exact=false;
+                    } else bindings[variable]=(uint16_t)(DIAMOND_NO_TYPE_SET-1u);
+                }
             }
             continue;
         }
@@ -783,13 +806,13 @@ static void infer_contextual_type_set(Compiler *compiler,
             if(!project_compiler_type_member(compiler,wanted.id,&known))continue;
             if(wanted.argument_set!=DIAMOND_NO_TYPE_SET&&
                known.argument_set!=DIAMOND_NO_TYPE_SET)
-                infer_contextual_type_set(compiler,target,wanted.argument_set,
-                    known.argument_set,bindings);
+                infer_contextual_type_set_impl(compiler,target,wanted.argument_set,
+                    known.argument_set,bindings,constructor_exact);
             if(wanted.second_argument_set!=DIAMOND_NO_TYPE_SET&&
                known.second_argument_set!=DIAMOND_NO_TYPE_SET)
-                infer_contextual_type_set(compiler,target,
+                infer_contextual_type_set_impl(compiler,target,
                     wanted.second_argument_set,known.second_argument_set,
-                    bindings);
+                    bindings,constructor_exact);
             if(wanted.id==DIAMOND_TYPE_CALLABLE&&
                wanted.callable_parameters_typed&&
                known.callable_parameters_typed&&
@@ -802,17 +825,22 @@ static void infer_contextual_type_set(Compiler *compiler,
                         known.callable_parameter_sets[parameter];
                     if(wanted_parameter!=DIAMOND_NO_TYPE_SET&&
                        known_parameter!=DIAMOND_NO_TYPE_SET)
-                        infer_contextual_type_set(compiler,target,
-                            wanted_parameter,known_parameter,bindings);
+                        infer_contextual_type_set_impl(compiler,target,
+                            wanted_parameter,known_parameter,bindings,constructor_exact);
                 }
                 if(wanted.callable_return_set!=DIAMOND_NO_TYPE_SET&&
                    known.callable_return_set!=DIAMOND_NO_TYPE_SET)
-                    infer_contextual_type_set(compiler,target,
+                    infer_contextual_type_set_impl(compiler,target,
                         wanted.callable_return_set,
-                        known.callable_return_set,bindings);
+                        known.callable_return_set,bindings,constructor_exact);
             }
         }
     }
+}
+
+static void infer_contextual_type_set(Compiler *compiler,const DiamondFunction *target,
+        uint16_t expected,uint16_t actual,uint16_t *bindings) {
+    infer_contextual_type_set_impl(compiler,target,expected,actual,bindings,nullptr);
 }
 
 static void infer_contextual_argument(Compiler *compiler,
@@ -909,7 +937,7 @@ bool infer_constructor_argument(Compiler *compiler,const DiamondFunction *target
           DIAMOND_CLASS_TYPE_PARAMETER_COUNT(compiler->program->classes[known->members[0].id-DIAMOND_TYPE_CLASS_BASE])>0&&
           known->members[0].argument_set!=DIAMOND_NO_TYPE_SET)))
         *exact=false;
-    infer_contextual_type_set(compiler,target,expected,(uint16_t)actual,bindings);
+    infer_contextual_type_set_impl(compiler,target,expected,(uint16_t)actual,bindings,exact);
     return true;
 }
 
