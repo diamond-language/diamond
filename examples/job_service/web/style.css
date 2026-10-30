@@ -1,0 +1,39 @@
+textarea {
+  font-family:ui-monospace,monospace;
+  font-size:.85rem;
+}
+.job {
+  padding:16px 0;
+  border-bottom:1px solid var(--line);
+}
+.job:last-child {
+  border-bottom:0;
+}
+.job-heading {
+  display:flex;
+  justify-content:space-between;
+  gap:12px;
+}
+.job .actions {
+  justify-content:start;
+}
+.job p {
+  font-size:.85rem;
+  overflow-wrap:anywhere;
+}
+.errors {
+  max-height:180px;
+  overflow:auto;
+  color:#d54a60;
+  font-size:.85rem;
+}
+.status-succeeded {
+  color:#27865d;
+}
+.status-failed,.status-timed_out {
+  color:#d54a60;
+}
+h2 small {
+  font-weight:400;
+  font-size:.75rem;
+}

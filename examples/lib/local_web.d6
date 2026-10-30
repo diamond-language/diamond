@@ -1,0 +1,56 @@
+# Shared plumbing for local, single-user examples. Keep application rules in their stores.
+require_cut "gremlin"
+require_cut "cancellation"
+
+def example_reply(status, value) = [status, {"Content-Type": "application/json", "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"}, JSON.stringify(value)]
+
+def example_body(request)
+  unless request["headers"]["content-type"] == "application/json"
+    raise ArgumentError.new("send application/json")
+  end
+  data = JSON.parse(request["body"])
+  unless data is Hash then raise ArgumentError.new("expected a JSON object") end
+  data
+end
+
+# Reject cross-site mutations and DNS rebinding; the listener is loopback only.
+def example_allowed(request)
+  host = request["headers"]["host"]
+  return false unless host is String
+  return false unless Regexp.new("\\A(localhost|127\\.0\\.0\\.1)(:[0-9]+)?\\z").match?(host)
+  origin = request["headers"]["origin"]
+  origin == nil || origin == "http://#{host}"
+end
+
+def example_asset(request, directory)
+  return nil unless request["method"] == "GET"
+  files = {"/": ["index.html", "text/html; charset=utf-8"], "/app.js": ["app.js", "text/javascript"], "/style.css": ["style.css", "text/css"],
+    "/common.js": ["../../lib/web.js", "text/javascript"], "/base.css": ["../../lib/web.css", "text/css"]}
+  file = files[request["path"]]
+  return nil if file == nil
+  [200, {"Content-Type": file[1], "Cache-Control": "no-cache", "X-Content-Type-Options": "nosniff",
+    "Content-Security-Policy": "default-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'"}, File.read("#{directory}/#{file[0]}")]
+end
+
+def example_serve(port, handler)
+  source = Cancellation::Source.new()
+  def stop_example() = source.cancel()
+  Signal.trap("TERM", stop_example)
+  Signal.trap("INT", stop_example)
+  puts("Open http://127.0.0.1:#{port}")
+  limits = {"line_bytes": 2048, "header_bytes": 8192, "header_count": 32,
+    "body_bytes": 131072, "connections": 16, "timeout_seconds": 3}
+  gremlin_serve(port, handler, 1, nil, nil, limits, true, source.token(), 0.5, "127.0.0.1")
+end
+
+def example_port(text)
+  port = text.to_i()
+  unless port > 0 && port <= 65535 && port.to_s() == text
+    raise ArgumentError.new("port must be 1..65535")
+  end
+  port
+end
+
+def example_arg(argv, index, fallback)
+  if index < argv.length() then argv[index] else fallback end
+end

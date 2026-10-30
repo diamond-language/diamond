@@ -13,6 +13,7 @@
 require_cut "cancellation"
 require_cut "jobs"
 require_cut "gremlin"
+require "../lib/local_web"
 require "./store"
 require "./worker"
 
@@ -21,15 +22,16 @@ require "./worker"
 # That leaves nowhere to keep the database handle but a class variable
 # (`@@db`), set once at startup by `boot`.
 class JobService
-  def self.boot(path)
+  def self.boot(path, assets = "examples/job_service/web")
     @@db = JobStore.open(path)
+    @@assets = assets
   end
 
   def self.close() = @@db.close()
 
   # Builds the [status, headers, body] triple the HTTP server expects,
   # with `value` serialized as JSON.
-  def self.reply(status, value) = [status, {"Content-Type": "application/json"}, JSON.stringify(value)]
+  def self.reply(status, value) = example_reply(status, value)
 
   # Reads an optional integer field from the request body. A missing (or
   # null) field takes `fallback`; a non-integer or an out-of-range value
@@ -51,8 +53,18 @@ class JobService
 
   # The one entry point for every request: a hand-written router.
   def self.handle(request, context)
+    return JobService.reply(403, {"error": "local origin required"}) unless example_allowed(request)
+    asset = example_asset(request, @@assets)
+    return asset if asset != nil
     path = request["path"]
     method = request["method"]
+
+    if method == "GET" && path == "/jobs"
+      return JobService.reply(200, @@db.query("SELECT id, kind, status, attempts, max_attempts, last_error, result, progress, total, summary FROM jobs ORDER BY id DESC LIMIT 50"))
+    end
+    if method == "GET" && path == "/contacts"
+      return JobService.reply(200, @@db.query("SELECT id, name, email FROM contacts ORDER BY id DESC LIMIT 100"))
+    end
 
     # Liveness probe.
     if path == "/health" && method == "GET"
@@ -63,7 +75,7 @@ class JobService
     # the database, so a bad request can never leave a half-made job.
     if path == "/jobs" && method == "POST"
       begin
-        data = JSON.parse(request["body"])
+        data = example_body(request)
         unless data is Hash then raise ArgumentError.new("expected a JSON object") end
 
         # `args` becomes the job's payload (the worker reads it back).
@@ -75,7 +87,15 @@ class JobService
 
         # max_attempts is a property of the job row, not of the payload.
         attempts = JobService.number(data, "max_attempts", 3, 1, 10)
-        id = Jobs.enqueue(@@db, kind: "count", args: args, max_attempts: attempts)
+        kind = "count"
+        if data.has_key?("csv")
+          unless data["csv"] is String && data["csv"].length() > 0 && data["csv"].length() <= 65536
+            raise ArgumentError.new("csv must be text of 1..65536 bytes")
+          end
+          args["csv"] = data["csv"]
+          kind = "import_csv"
+        end
+        id = Jobs.enqueue(@@db, kind: kind, args: args, max_attempts: attempts)
         return JobService.reply(202, {"id": id})
       rescue error: ArgumentError | JSONError
         return JobService.reply(400, {"error": error.message()})
@@ -97,12 +117,14 @@ class JobService
           # the flag, and the worker notices it at its next checkpoint.
           # Finished jobs are untouched (the status IN (...) guard).
           @@db.execute("UPDATE jobs SET cancel_requested = 1, status = CASE WHEN status = 'pending' THEN 'cancelled' ELSE status END WHERE id = ? AND status IN ('pending', 'running')", [id])
+        elsif parts.length() == 4 && parts[3] == "retry" && method == "POST"
+          @@db.execute("UPDATE jobs SET status = 'pending', attempts = 0, cancel_requested = 0, progress = 0, total = 0, summary = NULL, result = NULL, last_error = NULL, finished_at = NULL, locked_at = NULL, run_at = ? WHERE id = ? AND status IN ('failed', 'cancelled', 'timed_out')", [Time.now().to_i(), id])
         elsif !(parts.length() == 3 && method == "GET")
           return JobService.reply(404, {"error": "not found"})
         end
 
         # Both GET and the cancel POST answer with the job's current state.
-        rows = @@db.query("SELECT id, status, attempts, max_attempts, last_error, result FROM jobs WHERE id = ?", [id])
+        rows = @@db.query("SELECT id, kind, status, attempts, max_attempts, last_error, result, progress, total, summary FROM jobs WHERE id = ?", [id])
         if rows.length() > 0 then return JobService.reply(200, rows[0]) end
       end
     end
@@ -113,8 +135,8 @@ class JobService
 end
 
 def main(argv)
-  if argv.length() != 2
-    warn("usage: service.d6 PORT DATABASE")
+  if argv.length() < 2 || argv.length() > 3
+    warn("usage: service.d6 PORT DATABASE [ASSETS_DIRECTORY]")
     return 64
   end
 
@@ -122,7 +144,7 @@ def main(argv)
   if port < 1 || port > 65535 then raise ArgumentError.new("invalid port") end
 
   # Open this thread's DB connection; the worker opens its own.
-  JobService.boot(argv[1])
+  JobService.boot(argv[1], example_arg(argv, 2, "examples/job_service/web"))
 
   # One shared shutdown signal, plus a supervisor that owns the worker.
   source = Cancellation::Source.new()
@@ -143,12 +165,12 @@ def main(argv)
     # Tight request limits: this is a demo, and small caps keep a hostile
     # or buggy client from tying up the server.
     limits = {"line_bytes": 2048, "header_bytes": 8192, "header_count": 32,
-      "body_bytes": 4096, "connections": 16, "timeout_seconds": 2}
+      "body_bytes": 131072, "connections": 16, "timeout_seconds": 2}
 
     # Blocks serving requests until the token is cancelled, then drains
     # in-flight connections for up to the last argument's 0.5 seconds.
-    puts("job service starting on port #{port}")
-    gremlin_serve(port, JobService.handle, 1, nil, nil, limits, true, source.token(), 0.5)
+    puts("Open http://127.0.0.1:#{port}")
+    gremlin_serve(port, JobService.handle, 1, nil, nil, limits, true, source.token(), 0.5, "127.0.0.1")
   ensure
     # Shut down in dependency order, and do it even if the server raised:
     # cancel (so the worker stops), wait for the worker, and only then

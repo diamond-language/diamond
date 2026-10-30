@@ -8,30 +8,56 @@ require_cut "network_safety"
 require_cut "logger"
 require_cut "log_viewer"
 
-struct Bookmark(id: Int, url: String, title: String)
+struct Bookmark(id: Int, url: String, title: String, tags: String)
 end
 
-def build_bookmark(row) = Bookmark.new(row["id"], row["url"], row["title"])
+def build_bookmark(row) = Bookmark.new(row["id"], row["url"], row["title"], row["tags"])
 
 class Bookmarks
   def initialize(repo, log)
     @repo = repo
     @log = log
-    @schema = Mjolnir::Schema.new("bookmarks", {"id": :int, "url": :string, "title": :string}, build_bookmark)
+    @schema = Mjolnir::Schema.new("bookmarks", {"id": :int, "url": :string, "title": :string, "tags": :string}, build_bookmark)
   end
 
   # The connection comes from config/database.json, the entry named by `environment`.
   def self.open(environment: String, log)
     config = DatabaseConfig.load("config/database.json", environment)
     db = DatabaseConfig.open(config)
-    db.execute("CREATE TABLE IF NOT EXISTS bookmarks (id INTEGER PRIMARY KEY, url TEXT NOT NULL UNIQUE, title TEXT NOT NULL)")
-    Bookmarks.new(Mjolnir::Repo.new(db), log)
+    Bookmarks.prepare(db, log)
+  end
+
+  def self.connect(path, log) = Bookmarks.prepare(SQLite3.open(path), log)
+
+  def self.prepare(db, log)
+    db.execute("PRAGMA busy_timeout = 1000")
+    db.execute("BEGIN IMMEDIATE")
+    begin
+      db.execute("CREATE TABLE IF NOT EXISTS bookmarks (id INTEGER PRIMARY KEY, url TEXT NOT NULL UNIQUE, title TEXT NOT NULL, tags TEXT NOT NULL DEFAULT '')")
+      unless db.query("PRAGMA table_info(bookmarks)").any?() do |field| field["name"] == "tags" end
+        db.execute("ALTER TABLE bookmarks ADD COLUMN tags TEXT NOT NULL DEFAULT ''")
+      end
+      db.execute("COMMIT")
+      Bookmarks.new(Mjolnir::Repo.new(db), log)
+    rescue error
+      db.execute("ROLLBACK")
+      db.close()
+      raise error
+    end
   end
 
   def changeset(attrs: Hash)
-    set = Mjolnir::Changeset.cast(@schema, nil, attrs, ["url", "title"])
+    set = Mjolnir::Changeset.cast(@schema, nil, attrs, ["url", "title", "tags"])
       .validate_required(["url", "title"])
+      .validate_length("url", 1, 2048).validate_length("title", 1, 160)
       .unique_constraint("url")
+    tags = attrs.fetch("tags", "")
+    if tags is String && tags.length() <= 300
+      tags = tags.split(",").map() do |tag| tag.strip().downcase() end.select() do |tag| !tag.empty?() end
+      set = set.put_change("tags", tags.uniq().join(", "))
+    else
+      set = set.add_error("tags", "must be text up to 300 characters")
+    end
     return set unless set.valid?()
     begin
       resolve_public_hostname(set.get_field("url"))
@@ -42,8 +68,8 @@ class Bookmarks
   end
 
   # Ok(bookmark) or Err(changeset); either way one log line.
-  def add(url, title)
-    result = @repo.insert(self.changeset({"url": url, "title": title}))
+  def add(url, title, tags = "")
+    result = @repo.insert(self.changeset({"url": url, "title": title, "tags": tags}))
     case result
     when Mjolnir::Ok
       @log.info("bookmark.added", {"id": result.value().id(), "url": url})
@@ -60,9 +86,14 @@ class Bookmarks
     return nil if upload == nil
     file = upload["files"]["list"]
     return nil if file == nil
+    import_text(file["data"])
+  end
+
+  # Text lists use URL followed by an optional title; JSON exports round-trip tags too.
+  def import_text(text)
     added = 0
     refused = 0
-    file["data"].split("\n").each() do |line|
+    text.split("\n").each() do |line|
       next if line.strip() == ""
       space = line.index_of(" ")
       url = if space == nil then line.strip() else line.slice(0, space) end
@@ -77,6 +108,7 @@ class Bookmarks
 
   def all() = @repo.all(@schema.query().order_by("id"))
   def count() = @repo.count(@schema.query())
+  def close() = @repo.db().close()
 end
 
 # The log file's lines, formatted the way `diamond-log` prints them.

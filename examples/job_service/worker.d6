@@ -1,3 +1,5 @@
+require "./csv"
+
 # Runs one claimed job to completion. One worker owns its DB handle; the
 # HTTP thread has a separate connection.
 #
@@ -27,6 +29,17 @@ def job_service_run(db, row, shutdown)
       raise RuntimeError.new("demonstration retry")
     end
 
+    if row["kind"] == "import_csv"
+      begin
+        job_import_contacts(db, row, args, source)
+      rescue error: ArgumentError
+        # Invalid input will not improve on retry. The dashboard shows the reason.
+        JobStore.finish(db, row["id"], "failed", error.message())
+      end
+      return nil
+    end
+
+    # Keep the original deterministic count job for lifecycle tests and API demos.
     # Simulate work in 10ms slices. Each slice is a cancellation point,
     # and also polls the database for a cancel request made over HTTP by
     # the OTHER connection (the only way that thread can reach this one).

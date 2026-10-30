@@ -1,0 +1,56 @@
+require "../lib/local_web"
+require "./lib/store"
+
+class BoardWeb
+  def self.boot(path, assets)
+    @@store = BoardStore.new(SQLite3.open(path))
+    @@assets = assets
+  end
+  def self.close() = @@store.close()
+  def self.write(result)
+    if result.err?()
+      example_reply(422, {"errors": result.error().errors()})
+    else
+      example_reply(200, {"id": result.value().id()})
+    end
+  end
+  def self.handle(request, context)
+    return example_reply(403, {"error": "local origin required"}) unless example_allowed(request)
+    asset = example_asset(request, @@assets)
+    return asset if asset != nil
+    path = request["path"]
+    if request["method"] == "GET"
+      return example_reply(200, {"status": "ok"}) if path == "/health"
+      if path == "/api/board"
+        [tasks, projects] = @@store.tasks()
+        return example_reply(200, {"projects": @@store.projects().map() do |p| {"id": p.id(), "name": p.name()} end,
+          "tasks": tasks.map() do |t|
+            {"id": t.id(), "project_id": t.project_id(), "project": projects[t.id()].name(), "title": t.title(), "status": t.status(), "notes": t.notes()}
+          end})
+      end
+    elsif request["method"] == "POST"
+      data = example_body(request)
+      return BoardWeb.write(@@store.create_project(data)) if path == "/api/projects"
+      return BoardWeb.write(@@store.create_task(data)) if path == "/api/tasks"
+      parts = path.split("/")
+      if parts.length() == 4 && parts[1] == "api" && parts[2] == "tasks"
+        id = parts[3].to_i()
+        if id > 0 && id.to_s() == parts[3] && @@store.task(id) != nil
+          return BoardWeb.write(@@store.update_task(id, data))
+        end
+      end
+    end
+    example_reply(404, {"error": "not found"})
+  rescue error: ArgumentError | JSONError
+    example_reply(400, {"error": error.message()})
+  end
+end
+
+port = example_port(example_arg(ARGV, 0, "18110"))
+path = example_arg(ARGV, 1, ENV.fetch("BOARD_DATABASE_PATH", "task_board.db"))
+BoardWeb.boot(path, example_arg(ARGV, 2, "examples/task_board/web"))
+begin
+  example_serve(port, BoardWeb.handle)
+ensure
+  BoardWeb.close()
+end

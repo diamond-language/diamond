@@ -1,0 +1,53 @@
+require "../lib/local_web"
+require "./lib/bookmarks"
+
+class BookmarksWeb
+  def self.boot(path, assets)
+    @@bookmarks = Bookmarks.connect(path, Logger.new("bookmarks", "info", nil, "json"))
+    @@assets = assets
+  end
+  def self.close() = @@bookmarks.close()
+  def self.rows() = @@bookmarks.all().map() do |b| {"id": b.id(), "url": b.url(), "title": b.title(), "tags": b.tags()} end
+  def self.handle(request, context)
+    return example_reply(403, {"error": "local origin required"}) unless example_allowed(request)
+    asset = example_asset(request, @@assets)
+    return asset if asset != nil
+    path = request["path"]
+    if request["method"] == "GET"
+      return example_reply(200, {"status": "ok"}) if path == "/health"
+      return example_reply(200, BookmarksWeb.rows()) if path == "/api/bookmarks" || path == "/api/export"
+    elsif request["method"] == "POST"
+      data = example_body(request)
+      if path == "/api/bookmarks"
+        result = @@bookmarks.add(data["url"], data["title"], data.fetch("tags", ""))
+        return example_reply(422, {"errors": result.error().errors()}) if result.err?()
+        return example_reply(201, {"id": result.value().id()})
+      elsif path == "/api/import"
+        if data["text"] is String
+          return example_reply(200, @@bookmarks.import_text(data["text"]))
+        elsif data["bookmarks"] is Array
+          added = 0
+          refused = 0
+          data["bookmarks"].each() do |row|
+            unless row is Hash then raise ArgumentError.new("each bookmark must be an object") end
+            result = @@bookmarks.add(row["url"], row["title"], row.fetch("tags", ""))
+            if result.ok?() then added += 1 else refused += 1 end
+          end
+          return example_reply(200, {"added": added, "refused": refused})
+        end
+        raise ArgumentError.new("send text or a bookmarks array")
+      end
+    end
+    example_reply(404, {"error": "not found"})
+  rescue error: ArgumentError | JSONError
+    example_reply(400, {"error": error.message()})
+  end
+end
+
+port = example_port(example_arg(ARGV, 0, "18111"))
+BookmarksWeb.boot(example_arg(ARGV, 1, "bookmarks.db"), example_arg(ARGV, 2, "examples/bookmarks/web"))
+begin
+  example_serve(port, BookmarksWeb.handle)
+ensure
+  BookmarksWeb.close()
+end

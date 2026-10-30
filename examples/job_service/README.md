@@ -2,8 +2,8 @@
 
 A reference application for cooperative cancellation: bounded HTTP requests,
 SQLite persistence, one supervised worker, per-job deadlines, cancellation,
-retries, and graceful shutdown. The built-in job simulates small work units;
-replace it with checkpointed, idempotent application work.
+retries, and graceful shutdown. The browser dashboard imports real contact CSV
+files, shows progress and validation errors, and offers cancel/retry controls.
 
 From the repository root:
 
@@ -11,11 +11,32 @@ From the repository root:
 make debug
 bash tools/install_local_cuts.sh .
 build/diamond examples/job_service/service.d6 18090 /tmp/diamond-jobs.sqlite
+# Open http://127.0.0.1:18090
 ```
 
-The demo has no authentication. Gremlin's listener is network-accessible; run it
-on a development machine with appropriate network restrictions. It is not a
-public deployment configuration.
+The demo listens on loopback and checks Host/Origin for a single-user local
+session. All browser assets are served by Diamond. An optional third argument
+selects the asset directory (default `examples/job_service/web`, relative to
+the working directory).
+
+Paste CSV or choose a file with header `name,email` and up to 1,000 contacts /
+64 KiB. Quoted commas, doubled quotes, embedded newlines, and CRLF are supported.
+Names must contain 1–160 characters; emails receive a basic format check, not
+mailbox verification. Every row is validated before contacts are published.
+One invalid row fails the import with row numbers and leaves contacts unchanged.
+Successful imports upsert by email and commit contacts with their terminal job
+state in one transaction. This makes retry/restart replay safe. The progress
+bar counts validated rows; terminal state confirms publication. The dashboard
+shows the last 50 jobs and latest 100 contacts and refreshes every second.
+
+`POST /jobs` with `{"csv":"name,email\nAda,ada@example.com\n"}` queues an
+import. `GET /jobs` lists recent jobs; `GET /contacts` lists contacts.
+`POST /jobs/N/retry` requeues failed, cancelled, or timed-out jobs and resets
+their attempt/deadline state. Retry uses the original payload; fix invalid CSV
+by submitting a new import. Existing queue files migrate in place.
+
+The original count job remains available for deterministic cancellation,
+deadline, and retry demonstrations, as well as lifecycle regression tests:
 
 ```sh
 curl -H 'Content-Type: application/json' -d '{"work_ms":1000,"timeout_ms":5000}' http://localhost:18090/jobs
@@ -55,3 +76,7 @@ not at enqueue time; they are not persisted across process restarts.
 `bash examples/job_service/smoke_test.sh` runs the HTTP lifecycle checks against
 interpreted and compiled servers using temporary databases. No external database
 server is required.
+
+`bash examples/web_apps_test.sh` additionally covers CSV parsing, validation,
+atomic failure, cancellation, explicit retry, replay, and durable contacts.
+Both scripts run on CI.
