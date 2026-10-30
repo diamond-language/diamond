@@ -1,0 +1,54 @@
+class Worker
+  def echo[T](value: T) -> T = value
+  def defaulted[T](value: T = 42) -> T = value
+end
+class Box[T]
+  def initialize(value: T)
+    @value = value
+  end
+  def echo(value: T) -> T = value
+  def value() -> T = @value
+  def reference() = self.echo
+  def method[U](value: U) -> U = value
+  def method_reference[U]() = self.method[U]
+end
+def reference[T](worker: Worker) = worker.echo[T]
+def nested[T](worker: Worker) = worker.echo[Array[T]]
+def defaulted[T](worker: Worker) = worker.defaulted[T]
+def consume(callback: Callable[[Int], Int]) -> Int = callback(43)
+def apply[U](callback: Callable[[U], U], value: U) -> U = callback(value)
+def unrelated[V](callback: Callable[[Int], Int], value: V) -> Int = callback(47)
+def infer_only[U](callback: Callable[[U], U]) -> U = callback(48)
+worker = Worker.new()
+ints = reference[Int](worker)
+strings = reference[String](worker)
+puts(ints(42))
+puts(strings("retained"))
+puts(consume(ints))
+puts(apply(ints, 44))
+puts(unrelated[String](ints, "caller"))
+puts(infer_only(ints))
+puts(nested[String](worker)(["nested"])[0])
+puts(defaulted[Int](worker)())
+box = Box[Int].new(45)
+echo = box.reference()
+puts(echo(46))
+method = box.method_reference[String]()
+puts(method("method slot"))
+holder = Box.new(ints)
+puts(consume(holder.value()))
+begin
+  ints("bad")
+rescue TypeError
+  puts("lexical binding checked")
+end
+begin
+  echo("bad")
+rescue TypeError
+  puts("receiver binding checked")
+end
+begin
+  consume(strings)
+rescue TypeError
+  puts("Callable contract checked")
+end

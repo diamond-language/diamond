@@ -91,6 +91,13 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
         return DIAMOND_VM_STACK_OVERFLOW;
     }
     DiamondChunk execution;
+    if(closure!=nullptr&&closure->type_binding_count>0) {
+        if(closure->type_binding_count!=chunk->type_variable_count||closure->type_bindings==nullptr)
+            return DIAMOND_VM_INVALID_BYTECODE;
+        execution=*chunk;
+        execution.type_variable_bindings=closure->type_bindings;
+        chunk=&execution;
+    }
     /* Only the first chunk->type_variable_count entries are ever read:
      * copied from the chunk's own bindings just below, or zeroed for
      * inference in the unbound-generic branch after it. Zero-initializing
@@ -1671,6 +1678,17 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 if(created==nullptr)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
                 for(size_t i=0;i<count;i++){uint16_t reg=0;READ_SHORT(reg);created->captures[i]=registers[reg];}
                 created->is_block=strcmp(chunk->functions[index]->name,"<block>")==0;
+                if(chunk->functions[index]->captures_type_variables) {
+                    const uint8_t variables=chunk->functions[index]->type_variable_count;
+                    if(variables==0||variables>8||variables!=chunk->type_variable_count||
+                       chunk->type_variable_bindings==nullptr)VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                    created->type_bindings=malloc(variables*sizeof *created->type_bindings);
+                    if(created->type_bindings==nullptr)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                    created->type_binding_count=variables;
+                    vm->bytes_allocated+=variables*sizeof *created->type_bindings;
+                    memcpy(created->type_bindings,chunk->type_variable_bindings,
+                        variables*sizeof *created->type_bindings);
+                }
                 if(created->is_block) {
                     created->break_target=frame.serial;
                     created->return_target=frame.home;

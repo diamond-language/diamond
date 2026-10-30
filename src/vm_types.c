@@ -16,6 +16,30 @@ static bool runtime_set_satisfies(const DiamondChunk *chunk,
 
 static bool value_is_native_kind(DiamondValue value,uint8_t kind);
 
+/* A reference's variables belong to its creating frame, independently of
+ * the caller checking or inferring this Callable's signature. */
+__attribute__((noinline))
+static bool closure_signature_set(const DiamondChunk *chunk,const DiamondClosure *closure,
+        const DiamondFunction *function,uint16_t index,DiamondTypeSet *sets) {
+    if(index>=function->type_set_count)return false;
+    DiamondChunk context=*chunk;
+    context.type_variable_count=closure->type_binding_count;
+    context.type_variable_bindings=closure->type_bindings;
+    DiamondTypeBinding graph={.node_count=1};
+    bind_context_set(&graph,0,&context,function->type_sets,index);
+    return !graph.invalid&&graph.nodes[0].count>0&&
+        diamond_binding_type_sets(&graph,sets,DIAMOND_BOUND_TYPE_NODES,0);
+}
+
+__attribute__((noinline))
+static bool closure_signature_satisfies(const DiamondChunk *chunk,const DiamondClosure *closure,
+        const DiamondFunction *function,uint16_t actual,uint16_t expected,bool parameter) {
+    DiamondTypeSet sets[DIAMOND_BOUND_TYPE_NODES];
+    if(!closure_signature_set(chunk,closure,function,actual,sets))return false;
+    return parameter?runtime_set_satisfies(chunk,chunk->type_sets,expected,sets,0):
+        runtime_set_satisfies(chunk,sets,0,chunk->type_sets,expected);
+}
+
 /* Every native method String/Array/Hash actually implement, for
  * structural-interface matching (see diamond_native_method_satisfies
  * below). Kept next to the real DIAMOND_OP_INVOKE dispatch further
@@ -1067,17 +1091,23 @@ static bool value_matches_member(const DiamondChunk *chunk,DiamondValue value,
             for(size_t parameter=0;parameter<member->callable_arity;parameter++) {
                 const uint16_t actual=function->parameter_type_sets[parameter];
                 if(actual!=DIAMOND_NO_TYPE_SET&&
-                   !runtime_set_satisfies(chunk,chunk->type_sets,
+                   !(closure->type_binding_count>0?
+                     closure_signature_satisfies(chunk,closure,function,actual,
+                         member->callable_parameter_sets[parameter],true):
+                     runtime_set_satisfies(chunk,chunk->type_sets,
                        member->callable_parameter_sets[parameter],
-                       function->type_sets,actual))return false;
+                       function->type_sets,actual)))return false;
             }
         return member->callable_return_set==DIAMOND_NO_TYPE_SET||
             ((size_t)member->callable_return_set<chunk->type_set_count&&
              function->return_type_set!=DIAMOND_NO_TYPE_SET&&
              (size_t)function->return_type_set<function->type_set_count&&
-             runtime_set_satisfies(chunk,function->type_sets,
+             (closure->type_binding_count>0?
+              closure_signature_satisfies(chunk,closure,function,function->return_type_set,
+                  member->callable_return_set,false):
+              runtime_set_satisfies(chunk,function->type_sets,
                 function->return_type_set,chunk->type_sets,
-                member->callable_return_set));
+                member->callable_return_set)));
     }
     if(member->argument_set==DIAMOND_NO_TYPE_SET)return true;
     if((size_t)member->argument_set>=chunk->type_set_count)return false;
@@ -1348,7 +1378,8 @@ static void bind_value_graph(const DiamondChunk *chunk,DiamondTypeBinding *bindi
         for(size_t p=0;p<arity;p++)signature.callable_parameter_sets[p]=function->parameter_type_sets[p];
         /* Function-owned variables have no relation to the caller's slots. */
         DiamondChunk context=*chunk;
-        context.type_variable_bindings=nullptr;context.type_variable_count=0;
+        context.type_variable_bindings=closure->type_bindings;
+        context.type_variable_count=closure->type_binding_count;
         bind_callable_metadata(binding,member,&context,function->type_sets,signature,
             ignores?0:(uint8_t)(function->required_arity-diamond_function_self_offset(function)),
             ignores||function->has_variadic);
@@ -1780,6 +1811,19 @@ static void infer_from_known_set(const DiamondChunk *chunk,
     (void)chunk;
 }
 
+__attribute__((noinline))
+static void infer_from_closure_set(const DiamondChunk *chunk,const DiamondClosure *closure,
+        const DiamondFunction *function,uint16_t actual,const DiamondTypeSet *expected_sets,
+        uint16_t expected,DiamondTypeBinding bindings[8]) {
+    if(closure->type_binding_count==0) {
+        infer_from_known_set(chunk,function->type_sets,actual,expected_sets,expected,bindings);
+        return;
+    }
+    DiamondTypeSet sets[DIAMOND_BOUND_TYPE_NODES];
+    if(closure_signature_set(chunk,closure,function,actual,sets))
+        infer_from_known_set(chunk,sets,0,expected_sets,expected,bindings);
+}
+
 static void infer_from_bound_node(const DiamondChunk *chunk,const DiamondTypeBinding *binding,uint8_t node,
         const DiamondTypeSet *sets,uint16_t set,DiamondTypeBinding bindings[8],size_t depth) {
     if(node>=binding->node_count||depth>=DIAMOND_BOUND_TYPE_NODES)return;
@@ -1892,12 +1936,12 @@ void infer_from_value(const DiamondChunk *chunk,DiamondValue value,
                     for(size_t parameter=0;parameter<member.callable_arity;parameter++) {
                         const uint16_t actual=function->parameter_type_sets[parameter];
                         if(actual!=DIAMOND_NO_TYPE_SET)
-                            infer_from_known_set(chunk,function->type_sets,actual,
+                            infer_from_closure_set(chunk,closure,function,actual,
                                 sets,member.callable_parameter_sets[parameter],bindings);
                     }
                 if(function->return_type_set!=DIAMOND_NO_TYPE_SET)
                     if(member.callable_return_set!=DIAMOND_NO_TYPE_SET)
-                    infer_from_known_set(chunk,function->type_sets,
+                    infer_from_closure_set(chunk,closure,function,
                         function->return_type_set,sets,member.callable_return_set,
                         bindings);
             }

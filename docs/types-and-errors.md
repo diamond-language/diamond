@@ -116,8 +116,13 @@ also supply their class argument to contextual block typing.
 Explicit method arguments bind only method parameters. They cannot replace `T`,
 and a method cannot redeclare its class's parameter name. The total budget is
 eight variables shared between the class parameters and method parameters. Bound
-method references support concrete explicit arguments; references that would
-capture an enclosing type variable are rejected instead of losing that binding.
+method references support concrete arguments and enclosing type variables.
+For example, `def reference[U](box) = box.echo[U]` returns a Callable that
+retains that invocation's `U` after `reference` returns. References made inside
+generic instance methods also retain receiver-owned and method-owned slots
+independently. Their typed Callable contracts use these saved bindings rather
+than the later caller's type variables. Capturing bound references retain the
+existing thread-transfer restriction on captured closures.
 
 This native-compiler slice supports up to two class parameters in directly declared
 instance methods and generated struct fields. A concrete subclass can fix its

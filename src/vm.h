@@ -1350,6 +1350,8 @@ typedef struct DiamondFunction {
     uint8_t type_variable_count;
     /* Number of receiver-owned slots before method-owned type variables. */
     uint8_t class_type_variable;
+    /* A generated reference wrapper uses its creating frame's type slots. */
+    bool captures_type_variables;
     bool uses_instance_state;
     /* A nested def whose own body calls or names it (a recursive local
      * helper). Set by the compiler's discovery pass; the real pass then

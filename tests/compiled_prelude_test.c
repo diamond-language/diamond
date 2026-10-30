@@ -125,6 +125,7 @@ static void check_generic_class_round_trip(const DiamondProgram *template) {
         "  def value() -> T = @value\n"
         "  def wrong() -> T = \"wrong\"\n"
         "  def echo[U](value: U) -> U = value\n"
+        "  def reference[U]() = self.echo[U]\n"
         "end\nstruct Payload[T, E](value: T, error: E)\nend\n"
         "class IntBox < Box[Int]\nend\n"
         "class GrandIntBox < IntBox\nend\n"
@@ -344,6 +345,14 @@ static void check_generic_class_round_trip(const DiamondProgram *template) {
                     char rendered[64];
                     check(run_and_get_string(use,rendered,sizeof rendered)&&strcmp(rendered,"42")==0,
                         "restored fixed parent bindings cannot replace the child's own parameter");
+                }
+                const bool restored_reference=diamond_compile_incremental(
+                    "ref = Box[String].new(\"outer\").reference[Int]()\nref(42)\n",use,copy,&diagnostic);
+                check(restored_reference,"restored generic method builds a lexical bound reference");
+                if(restored_reference) {
+                    char rendered[64];
+                    check(run_and_get_string(use,rendered,sizeof rendered)&&strcmp(rendered,"42")==0,
+                        "restored reference keeps class and method slots independent");
                 }
                 const bool restored_forward=diamond_compile_incremental(
                     "ForwardTyped.run()\n",use,copy,&diagnostic);
