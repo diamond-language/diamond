@@ -258,6 +258,15 @@ static uint16_t compile_constructor_block(Compiler *compiler,int class_index,
         const DiamondFunction *initializer,const ConstructorInference *inference,
         uint16_t explicit_type) {
     uint16_t context[8];memcpy(context,inference->bindings,sizeof context);
+    if(!inference->complete)
+        for(size_t i=0;i<8;i++)context[i]=DIAMOND_NO_TYPE_SET;
+    bool statically_bound=initializer!=nullptr&&initializer==compiler->argument_context_target;
+    if(statically_bound)
+        for(size_t i=0;i<initializer->class_type_variable;i++) {
+            const uint16_t known=compiler->argument_context_bindings[i];
+            if(known<compiler->function->type_set_count)context[i]=known;
+            else statically_bound=false;
+        }
     if(explicit_type!=DIAMOND_NO_TYPE_SET&&initializer!=nullptr) {
         DiamondTypeMember descriptor={.id=(uint16_t)(DIAMOND_TYPE_CLASS_BASE+class_index),
             .argument_set=explicit_type,.second_argument_set=DIAMOND_NO_TYPE_SET};
@@ -268,8 +277,11 @@ static uint16_t compile_constructor_block(Compiler *compiler,int class_index,
         if(!bind_receiver_type_arguments(compiler,initializer,descriptor,context))return 0;
     }
     else if(initializer!=nullptr&&initializer->class_type_variable&&
-            (!inference->complete||!normalize_constructor_context(compiler,class_index,initializer,context)))
-        for(size_t variable=0;variable<initializer->class_type_variable;variable++)context[variable]=DIAMOND_NO_TYPE_SET;
+            (inference->complete||statically_bound)&&
+            !normalize_constructor_context(compiler,class_index,initializer,context))
+        for(size_t variable=0;variable<initializer->class_type_variable;variable++)
+            context[variable]=initializer==compiler->argument_context_target?
+                compiler->argument_context_bindings[variable]:DIAMOND_NO_TYPE_SET;
     /* Complete constructor facts provide contextual block types. Parameter
      * and return guards still validate advisory container facts at runtime. */
     return compile_contextual_typed_block(compiler,initializer,
@@ -474,7 +486,7 @@ static uint16_t parse_class_new_spread(Compiler *compiler, int class_index,
 }
 
 /* `Class.new(...)`: the current token is `new`. */
-static uint16_t parse_class_new_call(Compiler *compiler, int class_index) {
+static uint16_t parse_class_new_call_impl(Compiler *compiler, int class_index) {
     advance_token(compiler);
     const DiamondFunction *initializer=
         constructor_signature(compiler,class_index);
@@ -491,7 +503,8 @@ static uint16_t parse_class_new_call(Compiler *compiler, int class_index) {
     uint16_t args[DIAMOND_MAX_ARGUMENTS]; size_t count = 0;
     while (compiler->current.kind != DIAMOND_TOKEN_RIGHT_PAREN && !compiler->failed) {
         if (count == DIAMOND_MAX_ARGUMENTS) { fail(compiler, compiler->current.span, "too many arguments"); break; }
-        args[count++] = parse_expression(compiler);
+        args[count]=parse_expected_argument(compiler,initializer,count);
+        count++;
         skip_newlines(compiler);
         if (compiler->current.kind != DIAMOND_TOKEN_COMMA) break;
         advance_token(compiler);
@@ -543,8 +556,46 @@ static uint16_t parse_class_new_call(Compiler *compiler, int class_index) {
     return dest;
 }
 
-/* `Class.method(...)`, including `Class.new(...)`: the current token is the
- * '.'. */
+/* The class's own slots must be projected into the initializer owner's view.
+ * Unbound constructor variables remain private to that initializer. */
+static void prepare_constructor_argument_context(Compiler *compiler,int class_index,
+        const DiamondFunction *initializer,uint16_t explicit_type) {
+    if(initializer==nullptr||initializer->class_type_variable==0)return;
+    const DiamondClass *class=compiler->program->classes[class_index];
+    if(explicit_type!=DIAMOND_NO_TYPE_SET||class->fixed_type_arguments) {
+        DiamondTypeMember descriptor={.id=(uint16_t)(DIAMOND_TYPE_CLASS_BASE+class_index),
+            .argument_set=explicit_type,.second_argument_set=DIAMOND_NO_TYPE_SET};
+        if(class->fixed_type_arguments) {
+            descriptor.argument_set=import_fixed_binding(compiler,&class->fixed_type_bindings[0]);
+            if(DIAMOND_CLASS_TYPE_PARAMETER_COUNT(class)==2)
+                descriptor.second_argument_set=import_fixed_binding(compiler,&class->fixed_type_bindings[1]);
+        } else if(DIAMOND_CLASS_TYPE_PARAMETER_COUNT(class)==2) {
+            const DiamondTypeMember pair=compiler->function->type_sets[explicit_type].members[0];
+            descriptor.argument_set=pair.argument_set;descriptor.second_argument_set=pair.second_argument_set;
+        }
+        (void)bind_receiver_type_arguments(compiler,initializer,descriptor,compiler->argument_context_bindings);
+    } else {
+        const ConstructorInference inference=constructor_inference(compiler,class_index,initializer);
+        memcpy(compiler->argument_context_bindings,inference.bindings,sizeof inference.bindings);
+    }
+}
+
+static uint16_t parse_constructor_arguments(Compiler *compiler,int class_index,
+        const DiamondFunction *initializer,uint16_t explicit_type,bool keywords) {
+    const DiamondFunction *saved=compiler->argument_context_target;
+    uint16_t saved_bindings[8];
+    memcpy(saved_bindings,compiler->argument_context_bindings,sizeof saved_bindings);
+    compiler->argument_context_target=initializer!=nullptr&&initializer->type_variable_count>0?initializer:nullptr;
+    for(size_t i=0;i<8;i++)compiler->argument_context_bindings[i]=DIAMOND_NO_TYPE_SET;
+    prepare_constructor_argument_context(compiler,class_index,initializer,explicit_type);
+    const uint16_t result=keywords?parse_class_new_keywords(compiler,class_index,initializer,explicit_type):
+        parse_class_new_call_impl(compiler,class_index);
+    compiler->argument_context_target=saved;
+    memcpy(compiler->argument_context_bindings,saved_bindings,sizeof saved_bindings);
+    return result;
+}
+
+/* `Class.method(...)`, including `Class.new(...)`: the current token is the '.'. */
 static uint16_t parse_class_member_call(Compiler *compiler, DiamondSpan name,
         int class_index) {
     advance_token(compiler);
@@ -590,7 +641,8 @@ static uint16_t parse_class_member_call(Compiler *compiler, DiamondSpan name,
             "use one of its subclasses");
         return 0;
     }
-    return parse_class_new_call(compiler,class_index);
+    return parse_constructor_arguments(compiler,class_index,
+        constructor_signature(compiler,class_index),DIAMOND_NO_TYPE_SET,false);
 }
 
 /* Preserve generic function calls/references when a function and a class
@@ -728,8 +780,8 @@ uint16_t parse_name(Compiler *compiler) {
             fail(compiler,name,"expected '(' after 'new'");return 0;
         }
         advance_token(compiler);skip_newlines(compiler);
-        return parse_class_new_keywords(compiler,class_index,
-            constructor_signature(compiler,class_index),count==1?arguments[0]:(uint16_t)collection_type_set(compiler,DIAMOND_TYPE_HASH,arguments[0],arguments[1]));
+        return parse_constructor_arguments(compiler,class_index,
+            constructor_signature(compiler,class_index),count==1?arguments[0]:(uint16_t)collection_type_set(compiler,DIAMOND_TYPE_HASH,arguments[0],arguments[1]),true);
     }
     if (class_index >= 0 && compiler->current.kind == DIAMOND_TOKEN_DOT)
         return parse_class_member_call(compiler,name,class_index);

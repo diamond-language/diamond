@@ -1,0 +1,7 @@
+def identity[T](value: T) -> T = value
+class Processor[T]
+  def initialize(callback: Callable[[T], String])
+    @callback = callback
+  end
+end
+Processor[Int].new(identity)
