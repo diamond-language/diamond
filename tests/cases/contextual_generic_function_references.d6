@@ -1,0 +1,47 @@
+puts(apply_int(identity))
+def identity[T](value: T) -> T = value
+def defaulted[T](value: T = 42) -> T = value
+def count[T](head: T, *rest) -> Int = rest.length() + 1
+def apply_int(callback: Callable[[Int], Int]) -> Int = callback(41)
+def apply_string(callback: Callable[[String], String]) -> String = callback("string")
+def apply_all(callbacks: Array[Callable[[Int], Int]]) -> Int = callbacks[0](42)
+def apply_map(callbacks: Hash[String, Callable[[Int], Int]]) -> Int = callbacks["chosen"](43)
+def apply_pair(first: Callable[[Int], Int], second: Callable[[String], String]) -> Int
+  puts(second("spread"))
+  first(44)
+end
+def make_int() -> Callable[[Int], Int] = identity
+def make[U]() -> Callable[[U], U] = identity
+def make_default() -> Callable[[], Int] = defaulted
+def apply_count(callback: Callable[[String, Int, Bool], Int]) -> Int = callback("head", 1, false)
+class Consumer
+  def initialize(callback: Callable[[Int], Int])
+    @callback = callback
+  end
+  def run() -> Int = @callback(45)
+end
+puts(apply_int(identity))
+puts(apply_string(callback: identity))
+puts(apply_all([identity]))
+puts(apply_map({"chosen": identity}))
+puts(apply_pair(*[identity, identity]))
+puts(Consumer.new(identity).run())
+puts(make_int()(46))
+strings = make[String]()
+puts(strings("saved"))
+puts(make_default()())
+puts(Thread.new(strings, "thread").join())
+puts(apply_count(count))
+bare = identity
+puts(bare(47))
+puts(bare("polymorphic"))
+begin
+  strings(1)
+rescue TypeError
+  puts("saved binding checked")
+end
+begin
+  make_int()("bad")
+rescue TypeError
+  puts("contextual contract checked")
+end

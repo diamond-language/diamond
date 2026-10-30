@@ -763,6 +763,8 @@ DIAMOND_INTERNAL void emit_type_argument_trailer(Compiler *compiler,const uint16
 DIAMOND_INTERNAL bool infer_reference_type_arguments(Compiler *compiler,
         const DiamondFunction *target,size_t parameter_offset,size_t arity,
         uint16_t *bindings);
+DIAMOND_INTERNAL bool compile_contextual_function_reference(Compiler *compiler,size_t function_index,
+        DiamondSpan name,uint16_t *result);
 DIAMOND_INTERNAL uint16_t parse_singleton_call(Compiler *compiler,
                                     const DiamondMethod *method,
                                     DiamondSpan namespace_name,

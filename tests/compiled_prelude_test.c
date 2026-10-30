@@ -122,6 +122,7 @@ static void check_generic_class_round_trip(const DiamondProgram *template) {
         "  def self.identity[T](value: T) -> T = value\nend\n"
         "def singleton_reference[T]() = ForwardTyped.identity[T]\n"
         "def function_reference[T]() = later_identity[T]\n"
+        "def contextual_function_reference() -> Callable[[Int], Int] = later_identity\n"
         "def later_identity[T](value: T) -> T = value\n"
         "class Box[T]\n"
         "  def initialize(value: T)\n    @value = value\n  end\n"
@@ -348,6 +349,14 @@ static void check_generic_class_round_trip(const DiamondProgram *template) {
                     char rendered[64];
                     check(run_and_get_string(use,rendered,sizeof rendered)&&strcmp(rendered,"42")==0,
                         "restored fixed parent bindings cannot replace the child's own parameter");
+                }
+                const bool restored_contextual=diamond_compile_incremental(
+                    "ref = contextual_function_reference()\nref(42)\n",use,copy,&diagnostic);
+                check(restored_contextual,"restored contextual function reference compiles");
+                if(restored_contextual) {
+                    char rendered[64];
+                    check(run_and_get_string(use,rendered,sizeof rendered)&&strcmp(rendered,"42")==0,
+                        "restored contextual wrapper retains its inferred specialization");
                 }
                 const bool restored_function=diamond_compile_incremental(
                     "ref = function_reference[Int]()\nref(42)\n",use,copy,&diagnostic);
