@@ -128,6 +128,12 @@ Module-function and class-singleton references also retain enclosing bindings:
 invocation's `T`. These references have no captured value cells, so threads can
 copy their immutable type graphs when used as workers, arguments, or results.
 Supervised workers retain the same saved type environment across attempts.
+Top-level generic functions can also be specialized as values: `identity[Int]`
+is a typed Callable, while `identity[Int](42)` calls the function immediately.
+`def reference[T]() = identity[T]` saves the enclosing invocation's binding.
+References may precede their function declaration, and retain defaults,
+variadic parameters, and names for keyword calls. These wrappers have no
+captured value cells and support the same thread transfers as singleton references.
 
 This native-compiler slice supports up to two class parameters in directly declared
 instance methods and generated struct fields. A concrete subclass can fix its

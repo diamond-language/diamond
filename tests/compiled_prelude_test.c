@@ -121,6 +121,8 @@ static void check_generic_class_round_trip(const DiamondProgram *template) {
         "  def self.run() -> Int = ForwardTyped.identity[Int](value: 40) + ForwardTyped.identity[Int](*[2])\n"
         "  def self.identity[T](value: T) -> T = value\nend\n"
         "def singleton_reference[T]() = ForwardTyped.identity[T]\n"
+        "def function_reference[T]() = later_identity[T]\n"
+        "def later_identity[T](value: T) -> T = value\n"
         "class Box[T]\n"
         "  def initialize(value: T)\n    @value = value\n  end\n"
         "  def value() -> T = @value\n"
@@ -346,6 +348,14 @@ static void check_generic_class_round_trip(const DiamondProgram *template) {
                     char rendered[64];
                     check(run_and_get_string(use,rendered,sizeof rendered)&&strcmp(rendered,"42")==0,
                         "restored fixed parent bindings cannot replace the child's own parameter");
+                }
+                const bool restored_function=diamond_compile_incremental(
+                    "ref = function_reference[Int]()\nref(42)\n",use,copy,&diagnostic);
+                check(restored_function,"restored specialized function reference captures enclosing bindings");
+                if(restored_function) {
+                    char rendered[64];
+                    check(run_and_get_string(use,rendered,sizeof rendered)&&strcmp(rendered,"42")==0,
+                        "restored forward reference wrapper retains its saved binding");
                 }
                 const bool restored_singleton=diamond_compile_incremental(
                     "ref = singleton_reference[Int]()\nref(42)\n",use,copy,&diagnostic);

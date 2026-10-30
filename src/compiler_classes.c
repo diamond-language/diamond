@@ -2254,12 +2254,16 @@ static bool prescan_ends_value(DiamondTokenKind kind) {
     }
 }
 
-void prescan_singleton_signatures(Compiler *compiler,DiamondMethod **methods,
-        size_t *method_count,size_t *method_capacity,bool class_scope) {
+static void prescan_callable_signatures(Compiler *compiler,DiamondMethod **methods,
+        size_t *method_count,size_t *method_capacity,bool class_scope,bool top_level) {
     DiamondLexer lookahead=compiler->lexer;
     DiamondToken token=compiler->current;
-    size_t depth=0;
-    bool module_function_mode=false;
+    if(top_level) {
+        diamond_lexer_init(&lookahead,compiler->source);
+        token=diamond_lexer_next(&lookahead);
+    }
+    size_t depth=0,blocked_depth=0;
+    bool module_function_mode=top_level;
     bool pending_loop_do=false;
     DiamondTokenKind previous=DIAMOND_TOKEN_NEWLINE;
     while(token.kind!=DIAMOND_TOKEN_EOF) {
@@ -2277,11 +2281,18 @@ void prescan_singleton_signatures(Compiler *compiler,DiamondMethod **methods,
             depth++;pending_loop_do=true;
         } else if(token.kind==DIAMOND_TOKEN_DO) {
             if(pending_loop_do)pending_loop_do=false;
-            else depth++;
+            else {
+                if(top_level&&blocked_depth==0)blocked_depth=depth+1;
+                depth++;
+            }
         } else if(token.kind==DIAMOND_TOKEN_IF||token.kind==DIAMOND_TOKEN_UNLESS||
                    token.kind==DIAMOND_TOKEN_CASE||token.kind==DIAMOND_TOKEN_BEGIN||
                    token.kind==DIAMOND_TOKEN_CLASS||token.kind==DIAMOND_TOKEN_INTERFACE||
                    token.kind==DIAMOND_TOKEN_CLOSURE||token.kind==DIAMOND_TOKEN_MODULE) {
+            if(top_level&&blocked_depth==0&&
+               (token.kind==DIAMOND_TOKEN_CLASS||token.kind==DIAMOND_TOKEN_INTERFACE||
+                token.kind==DIAMOND_TOKEN_CLOSURE||token.kind==DIAMOND_TOKEN_MODULE))
+                blocked_depth=depth+1;
             depth++;
         } else if(token.kind==DIAMOND_TOKEN_MODULE_FUNCTION) {
             if(depth==0&&!class_scope) {
@@ -2303,8 +2314,11 @@ void prescan_singleton_signatures(Compiler *compiler,DiamondMethod **methods,
             /* An endless def has no `end` to balance: register it the same
              * way at depth 0, but don't count it as opening a body. */
             const bool endless=prescan_def_is_endless(lookahead);
-            const bool top_level_def=depth==0;
-            if(!endless)depth++;
+            const bool top_level_def=top_level?blocked_depth==0:depth==0;
+            if(!endless) {
+                if(top_level&&blocked_depth==0)blocked_depth=depth+1;
+                depth++;
+            }
             if(top_level_def) {
                 DiamondToken next=diamond_lexer_next(&lookahead);
                 bool is_module_singleton=false;
@@ -2418,9 +2432,24 @@ void prescan_singleton_signatures(Compiler *compiler,DiamondMethod **methods,
         } else if(token.kind==DIAMOND_TOKEN_END) {
             if(depth==0)return; /* the module's own terminating end */
             depth--;
+            if(blocked_depth>depth)blocked_depth=0;
         }
         token=diamond_lexer_next(&lookahead);
     }
+}
+
+void prescan_singleton_signatures(Compiler *compiler,DiamondMethod **methods,
+        size_t *method_count,size_t *method_capacity,bool class_scope) {
+    prescan_callable_signatures(compiler,methods,method_count,method_capacity,class_scope,false);
+}
+
+bool top_level_function_declared(Compiler *compiler,DiamondSpan name) {
+    DiamondMethod *methods=nullptr;size_t count=0,capacity=0;
+    prescan_callable_signatures(compiler,&methods,&count,&capacity,false,true);
+    bool found=false;
+    for(size_t i=0;i<count;i++)
+        if(name_equals(compiler,methods[i].name,name,false)) {found=true;break;}
+    free(methods);return found;
 }
 
 /* Finds or creates the module named by `name` and readies its slot for this

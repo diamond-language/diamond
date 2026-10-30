@@ -1,0 +1,44 @@
+forward = later[Int]
+def identity[T](value: T) -> T = value
+def later[T](value: T) -> T = value
+def defaulted[T](value: T = 42) -> T = value
+def count[T](head: T, *rest) -> Int = rest.length() + 1
+def reference[T]() = identity[T]
+def nested[T]() = identity[Array[T]]
+def consume(callback: Callable[[Int], Int]) -> Int = callback(43)
+def infer_only[U](callback: Callable[[U], U]) -> U = callback(44)
+def unrelated[V](callback: Callable[[Int], Int], value: V) -> Int = callback(45)
+class Factory[T]
+  def initialize(value: T)
+    @value = value
+  end
+  def reference() = identity[T]
+  def method_reference[U]() = identity[U]
+end
+ints = identity[Int]
+strings = reference[String]()
+puts(ints(42))
+puts(strings("saved"))
+puts(consume(ints))
+puts(infer_only(ints))
+puts(unrelated[String](ints, "caller"))
+puts(nested[String]()(["nested"])[0])
+puts(forward(46))
+defaults = defaulted[Int]
+puts(defaults())
+puts(defaults(value: 47))
+counter = count[String]
+puts(counter("head", 1, false))
+factory = Factory[Int].new(48)
+puts(factory.reference()(49))
+puts(factory.method_reference[String]()("method"))
+begin
+  ints("bad")
+rescue TypeError
+  puts("specialized contract checked")
+end
+begin
+  consume(strings)
+rescue TypeError
+  puts("Callable contract checked")
+end

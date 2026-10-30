@@ -736,6 +736,8 @@ uint16_t parse_name(Compiler *compiler) {
     if (compiler->current.kind == DIAMOND_TOKEN_LEFT_PAREN||
         (compiler->current.kind==DIAMOND_TOKEN_LEFT_BRACKET&&
          find_local(compiler,name)<0&&(find_function(compiler,name)>=0||
+          (compiler->discovery_pass&&class_index<0&&module_index<0&&
+           !specialized_constructor_ahead(compiler)&&top_level_function_declared(compiler,name))||
           (compiler->in_method&&compiler->current_class>=0&&generic_self_call_ahead(compiler))))) {
         return parse_call(compiler, name);
     }

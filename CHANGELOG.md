@@ -8,6 +8,10 @@ authoritative fine-grained record.
 
 ### Added
 
+- Top-level generic functions accept specialized references such as
+  `identity[Int]` and `identity[T]` without a call. References retain parameter,
+  return, default, and variadic contracts, including forward declarations,
+  enclosing generic bindings, and thread transfers.
 - Generic module-function and class-singleton references retain enclosing type
   arguments after their factory returns. Typed Callable checks, inference, and
   thread transfers of references without captured value cells preserve the saved
