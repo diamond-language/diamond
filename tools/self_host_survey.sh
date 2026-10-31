@@ -45,6 +45,8 @@ if [[ "${1:-}" == --case ]]; then
     exit 0
 fi
 
+# Programs that require_cut need the repository's cuts installed, as tests/run.sh does.
+bash tools/install_local_cuts.sh . >/dev/null
 output="${1:-/dev/stdout}"
 if [[ -n "${2:-}" ]]; then
     cases="$(cat "$2")"
