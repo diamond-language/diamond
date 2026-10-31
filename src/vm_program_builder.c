@@ -1330,6 +1330,26 @@ static DiamondVmStatus program_builder_native_type_id(DiamondValue *registers, u
     return DIAMOND_VM_OK;
 }
 
+/* Replaces the placeholder of a type set member once its class or interface
+ * has been declared: (function index, set index, member index, type id). */
+static DiamondVmStatus program_builder_patch_type_set_member(DiamondVm *vm, DiamondProgram *built,
+        DiamondValue *registers, uint16_t base, uint8_t argc, DiamondValue *result) {
+    if(argc!=4)return DIAMOND_VM_ARITY_ERROR;
+    for(size_t index=0;index<4;index++)
+        if(registers[(size_t)base+index].kind!=DIAMOND_VALUE_INT)return DIAMOND_VM_TYPE_ERROR;
+    const DiamondFunction *target=program_builder_target(built,registers[base].as.integer);
+    const int64_t set=registers[(size_t)base+1].as.integer;
+    const int64_t member=registers[(size_t)base+2].as.integer;
+    const int64_t type_id=registers[(size_t)base+3].as.integer;
+    if(target==nullptr||set<0||(uint64_t)set>=target->type_set_count||member<0||
+       member>=target->type_sets[set].count||type_id<DIAMOND_TYPE_CLASS_BASE||type_id>=DIAMOND_TYPE_NONE) {
+        snprintf(vm->error,sizeof vm->error,"ProgramBuilder#patch_type_set_member has an invalid index");
+        return DIAMOND_VM_TYPE_ERROR;
+    }
+    target->type_sets[set].members[member].id=(uint16_t)type_id;
+    *result=DIAMOND_NIL;return DIAMOND_VM_OK;
+}
+
 static DiamondVmStatus program_builder_declare_type_set(DiamondVm *vm, DiamondProgram *built,
         DiamondValue *registers, uint16_t base, uint8_t argc, DiamondValue *result) {
     if(argc!=2)return DIAMOND_VM_ARITY_ERROR;
@@ -2043,6 +2063,9 @@ DiamondVmStatus program_builder_invoke_helper(DiamondVm *vm,
        memcmp(method_name->chars,"set_captures_type_variables",
            sizeof("set_captures_type_variables")-1)==0)
         return program_builder_set_captures_type_variables(built,registers,base,argc,result);
+    if(method_name->length==sizeof("patch_type_set_member")-1&&
+       memcmp(method_name->chars,"patch_type_set_member",sizeof("patch_type_set_member")-1)==0)
+        return program_builder_patch_type_set_member(vm,built,registers,base,argc,result);
     if(method_name->length==sizeof("native_type_id")-1&&
        memcmp(method_name->chars,"native_type_id",sizeof("native_type_id")-1)==0)
         return program_builder_native_type_id(registers,base,argc,result);

@@ -36,7 +36,7 @@ if [[ "${1:-}" == --case ]]; then
     if [[ "$status" == 0 ]] && [[ "$(cat "$work/out")" == "$(cat "tests/cases/$name.expected")" ]]; then
         printf 'pass\t%s\t\n' "$name"
     else
-        reason="$(head -1 "$work/err" | tr '\t' ' ' | cut -c1-240)"
+        reason="$(head -1 "$work/err" | tr '\t' ' ' | sed "s#$PWD/##g" | cut -c1-240)"
         [[ -n "$reason" ]] || { [[ "$status" == 124 ]] && reason="timeout"; }
         [[ -n "$reason" ]] || reason="output differs"
         printf 'fail\t%s\t%s\n' "$name" "$reason"

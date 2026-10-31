@@ -254,6 +254,8 @@ module Type
   SIZED = 8
   SYMBOL = 9
   CLASS_BASE = 10
+  # No type has this id: an annotation's name not declared yet.
+  UNDECLARED = 65534
   # Keep the non-overlapping partitions in sync with DiamondTypeId in vm.h.
   VARIABLE_BASE = 61696
   INTERFACE_BASE = 61952
@@ -428,6 +430,11 @@ end
 # A statement starting with one of these runs to its own `end`.
 def block_expression_start?(kind)
   kind == :if || kind == :unless || kind == :while || kind == :until || kind == :case || kind == :begin
+end
+
+def undefined_name_message(name)
+  return "undefined namespaced class" if name.include?("::")
+  "undefined constant '" + name + "'"
 end
 
 def operator_method_token?(kind)
@@ -660,6 +667,10 @@ class Parser
     # `X.method(...)` sites [function index, operand offset, name, module,
     # token, method name, argument count, method name token].
     @forward_news = []
+    @forward_type_names = []
+    @self_capture_index = nil
+    @forward_is_types = []
+    @type_name_tokens = {}
     # The tail call bookkeeping: see maybe_rewrite_tail_call.
     @last_plain_call = nil
     @last_move = nil
@@ -1110,18 +1121,20 @@ class Parser
         elsif types.length() == 8
           self.fail("too many rescue types")
         else
-          name = self.token_text(@current)
-          type_id = self.resolve_type_name(name)
+          name_token = @current
+          name = self.consume_qualified_module_name()
+          # A class declared later: emit_rescue_type_test patches its id in.
+          type_id = self.annotation_type_id(name)
+          @type_name_tokens[name] = name_token unless @type_name_tokens.include_key?(name)
           duplicate = false
           index = 0
           while index < types.length()
-            duplicate = true if types[index] == type_id
+            duplicate = true if annotation[index][0] == name
             index = index + 1
           end
           self.fail("duplicate rescue type") if duplicate
           types.push(type_id)
           annotation.push([name, nil, nil, -1, nil, nil])
-          self.advance_token()
           if @current.kind() == :pipe
             self.advance_token()
           else
@@ -1130,8 +1143,9 @@ class Parser
         end
       end
     end
-    self.set_type_fact(exception, types[0]) if types.length() == 1
+    self.set_type_fact(exception, types[0]) if types.length() == 1 && types[0] != Type::UNDECLARED
     @declared_types.push([exception, annotation]) if annotation.length() > 0
+    @rescue_type_names = annotation
     types
   end
 
@@ -1224,7 +1238,7 @@ class Parser
   # --- statement sequencing ---
 
   def postfix_modifier_ahead()
-    return nil if @current.kind() == :def || @current.kind() == :class || @current.kind() == :interface || @current.kind() == :module
+    return nil if @current.kind() == :def || @current.kind() == :closure || @current.kind() == :class || @current.kind() == :interface || @current.kind() == :module
     lookahead = @lexer.clone()
     depth = if @current.kind() == :left_paren || @current.kind() == :left_bracket || @current.kind() == :left_brace
       1
@@ -1264,7 +1278,7 @@ class Parser
     kind = @current.kind()
     depth = 0
     while kind != :eof
-      return true if kind == :do || kind == :def
+      return true if kind == :do || kind == :def || kind == :closure
       if kind == :left_paren || kind == :left_bracket || kind == :left_brace
         depth = depth + 1
       elsif kind == :right_paren || kind == :right_bracket || kind == :right_brace
@@ -1301,7 +1315,7 @@ class Parser
     kind = @current.kind()
     depth = 0
     while kind != :eof
-      return true if kind == :def || kind == :do
+      return true if kind == :def || kind == :closure || kind == :do
       if kind == :if || kind == :unless || kind == :while || kind == :until ||
           kind == :loop || kind == :case || kind == :begin || kind == :class ||
           kind == :module || kind == :interface
@@ -1344,11 +1358,13 @@ class Parser
         0
       end
       body_start = @code_count
-      declaration_statement = @current.kind() == :def || @current.kind() == :class ||
+      declaration_statement = @current.kind() == :def || @current.kind() == :closure || @current.kind() == :class ||
         @current.kind() == :sealed || @current.kind() == :struct ||
         @current.kind() == :interface || @current.kind() == :module
       if @current.kind() == :def
         result = self.compile_definition()
+      elsif @current.kind() == :closure
+        result = self.compile_definition(true)
       elsif @current.kind() == :class || @current.kind() == :sealed
         result = self.compile_class()
       elsif @current.kind() == :struct
@@ -1643,7 +1659,13 @@ class Parser
     result
   end
 
-  def compile_definition()
+  # `closure name() ... end` is a nested def that also captures self: register
+  # 0 holds it, as in a method, though the closure's arity doesn't count it.
+  def compile_definition(captures_self = false)
+    if captures_self && !@in_method && !@in_singleton_method
+      self.fail("closure requires an enclosing method -- no 'self' is available here")
+      return 0
+    end
     self.advance_token()
     at_top_level = @function_nesting_depth == 0
     # A plain `def` (as opposed to a class body's own `def`, routed to
@@ -1713,9 +1735,15 @@ class Parser
     end
     required_arity = required_parameter_count(parsed_parameters)
     @parameter_shape = [parsed_parameters[4], has_block_parameter]
-    function_index = @builder.declare_function(name, arity + self_offset,
-      required_arity + self_offset)
-    if self_offset == 1
+    function_index = if captures_self
+      @builder.declare_function(name, arity, required_arity)
+    else
+      @builder.declare_function(name, arity + self_offset, required_arity + self_offset)
+    end
+    if captures_self
+      self_offset = 1
+      @builder.set_function_owner_class(function_index, 65533)
+    elsif self_offset == 1
       # 65534 (UINT16_MAX-1, DIAMOND_OWNER_MODULE) is the same module-method
       # sentinel declare_module_method's bridge handler uses -- distinct from
       # 65535 ("not a method"), so REDEFINE_METHOD's owner_class check (and
@@ -1744,6 +1772,7 @@ class Parser
       @locals
     end
 
+    @self_capture_index = if captures_self then enclosing_locals.length() else nil end
     self.compile_function_body(function_index, parameter_names, parameter_types,
                                parameter_defaults, return_type, enclosing_locals, self_offset)
     @current_type_variables = outer_type_variables
@@ -1754,7 +1783,7 @@ class Parser
       # own at_top_level branch exactly (no opcode needed).
       return self.allocate_register()
     end
-    self.emit_closure(function_index, enclosing_locals, name)
+    self.emit_closure(function_index, enclosing_locals, name, captures_self)
   end
 
   def parse_type_variables()
@@ -1928,6 +1957,7 @@ class Parser
         self.fail("expected type annotation")
       else
         name = self.token_text(@current)
+        name_token = @current
         self.advance_token()
         while !@failed && @current.kind() == :double_colon
           self.advance_token()
@@ -1998,6 +2028,7 @@ class Parser
             member = [name, argument, second_argument, callable_arity,
                       callable_return, callable_parameters]
             self.fail("duplicate type in union") if members.include?(member)
+            @type_name_tokens[name] = name_token unless @type_name_tokens.include_key?(name)
             members.push(member)
           end
         end
@@ -2066,6 +2097,15 @@ class Parser
   end
 
   def resolve_type_name(name)
+    type_id = self.find_type_name(name)
+    self.fail("unknown type annotation") if type_id == nil
+    type_id || 0
+  end
+
+  # An annotation may name a type declared later, which matches no known type.
+  def annotation_type_id(name) = self.find_type_name(name) || Type::UNDECLARED
+
+  def find_type_name(name)
     return Type::INT if name == "Int"
     return Type::FLOAT if name == "Float"
     return Type::STRING if name == "String"
@@ -2085,15 +2125,41 @@ class Parser
     if interface_entry != nil
       return Type::INTERFACE_BASE + interface_entry[1]
     end
-    class_entry = self.find_class(name)
+    class_entry = self.find_forward_class(name, @current_module_name)
     if class_entry != nil
       return Type::CLASS_BASE + class_entry[1]
     end
     # Native types come after classes, so a program's own Channel still wins.
     native = @builder.native_type_id(name)
-    return native if native != nil
-    self.fail("unknown type annotation")
-    0
+    native
+  end
+
+  # A type set can name a class or interface declared later, as compiler.c's
+  # discovery pass allows: a placeholder class stands in until every
+  # declaration is known. A name still unknown then is the error it looks like.
+  def resolve_forward_type_names()
+    index = 0
+    while index < @forward_type_names.length() && !@failed
+      entry = @forward_type_names[index]
+      name = entry[3]
+      interface_entry = self.find_interface(name)
+      class_entry = self.find_forward_class(name, entry[5])
+      type_id = if interface_entry != nil
+        Type::INTERFACE_BASE + interface_entry[1]
+      elsif class_entry != nil
+        Type::CLASS_BASE + class_entry[1]
+      else
+        nil
+      end
+      if type_id == nil
+        token = @type_name_tokens[name]
+        self.fail_at(token.start(), token.line(), token.column(), "unknown type annotation")
+      else
+        self.check_class_type_arguments(entry[4]) if entry[4][1] != nil
+        @builder.patch_type_set_member(entry[0], entry[1], entry[2], type_id) unless @failed
+      end
+      index = index + 1
+    end
   end
 
   def compile_interface()
@@ -2227,11 +2293,17 @@ class Parser
 
   def declare_annotation(type_annotation)
     descriptors = []
+    forward_members = []
     index = 0
     while index < type_annotation.length() && !@failed
       member = type_annotation[index]
-      type_id = self.resolve_type_name(member[0])
-      self.check_class_type_arguments(member) if member[1] != nil && !@failed
+      type_id = self.find_type_name(member[0])
+      if type_id == nil
+        forward_members.push([index, member])
+        type_id = Type::CLASS_BASE
+      elsif member[1] != nil
+        self.check_class_type_arguments(member)
+      end
       argument_set = if member[1] == nil
         -1
       else
@@ -2260,7 +2332,14 @@ class Parser
       index = index + 1
     end
     return 0 if @failed
-    @builder.declare_type_set(@current_function_index, descriptors)
+    set_index = @builder.declare_type_set(@current_function_index, descriptors)
+    index = 0
+    while index < forward_members.length()
+      entry = forward_members[index]
+      @forward_type_names.push([@current_function_index, set_index, entry[0], entry[1][0], entry[1], @current_module_name])
+      index = index + 1
+    end
+    set_index
   end
 
   def emit_type_check(reg, type_annotation)
@@ -2326,7 +2405,7 @@ class Parser
     index = 0
     while index < annotation.length()
       member = annotation[index]
-      if self.resolve_type_name(member[0]) == type_id
+      if self.annotation_type_id(member[0]) == type_id
         return member[1] == nil
       end
       index = index + 1
@@ -2347,7 +2426,7 @@ class Parser
     found = nil
     index = 0
     while index < annotation.length()
-      type_id = self.resolve_type_name(annotation[index][0])
+      type_id = self.annotation_type_id(annotation[index][0])
       if type_id != Type::NIL
         return nil if found != nil
         found = type_id
@@ -2361,7 +2440,7 @@ class Parser
     found = nil
     index = 0
     while index < annotation.length()
-      type_id = self.resolve_type_name(annotation[index][0])
+      type_id = self.annotation_type_id(annotation[index][0])
       if type_id != excluded
         return nil if found != nil
         found = type_id
@@ -2373,7 +2452,7 @@ class Parser
 
   def annotation_single_type(annotation)
     return nil if annotation == nil || annotation.length() != 1
-    self.resolve_type_name(annotation[0][0])
+    self.annotation_type_id(annotation[0][0])
   end
 
   def binary_result_fact(operator, left, right)
@@ -2415,7 +2494,7 @@ class Parser
     index = 0
     while index < annotation.length()
       result.push(annotation[index])
-      has_nil = true if self.resolve_type_name(annotation[index][0]) == Type::NIL
+      has_nil = true if self.annotation_type_id(annotation[index][0]) == Type::NIL
       index = index + 1
     end
     result.push(["Nil", nil, nil, -1, nil, nil]) unless has_nil
@@ -2472,8 +2551,10 @@ class Parser
     outer_declared_types = @declared_types
     outer_in_method = @in_method
     outer_in_singleton_method = @in_singleton_method
-    @in_method = self_offset == 1
-    @in_singleton_method = false
+    # A closure in a singleton method keeps calling self's singleton methods.
+    closure_in_singleton = @self_capture_index != nil && @in_singleton_method
+    @in_method = self_offset == 1 && !closure_in_singleton
+    @in_singleton_method = closure_in_singleton
 
     @locals = []
     @loop_captures_pending = false
@@ -2496,6 +2577,10 @@ class Parser
     @function_nesting_depth = @function_nesting_depth + 1
 
     self.allocate_register() if self_offset == 1
+    if @self_capture_index != nil
+      self.emit_instruction2(Opcode::GET_CAPTURE, 0, @self_capture_index)
+      @self_capture_index = nil
+    end
     self.bind_parameters(function_index, parameter_names, parameter_types, parameter_defaults, self_offset)
 
     # GET_CAPTURE_CELL for every enclosing local not shadowed by one of
@@ -2608,7 +2693,7 @@ class Parser
   # read/write of that name in the outer function also goes through
   # GET_CELL/SET_CELL from here on, matching compiler.c's own
   # once-boxed-always-boxed semantics exactly.
-  def emit_closure(function_index, enclosing_locals, name)
+  def emit_closure(function_index, enclosing_locals, name, captures_self = false)
     capture_registers = []
     index = 0
     while index < enclosing_locals.length()
@@ -2617,6 +2702,12 @@ class Parser
       entry[2] = true
       capture_registers.push(entry[1])
       index = index + 1
+    end
+    if captures_self
+      self_copy = self.allocate_register()
+      self.emit_instruction2(Opcode::MOVE, self_copy, 0)
+      self.emit_instruction1(Opcode::BOX_LOCAL, self_copy)
+      capture_registers.push(self_copy)
     end
     result = self.allocate_register()
     self.emit_byte(Opcode::CLOSURE)
@@ -3365,16 +3456,13 @@ class Parser
       self.fail("expected superclass name after '<'")
       return nil
     end
-    superclass_name = self.token_text(@current)
-    entry = self.find_class(superclass_name)
-    if entry == nil && @current_module_name != nil
-      entry = self.find_class(@current_module_name + "::" + superclass_name)
-    end
+    superclass_token = @current
+    superclass_name = self.consume_qualified_module_name()
+    entry = self.find_forward_class(superclass_name, @current_module_name)
     if entry == nil
-      self.fail("undefined superclass")
+      self.fail_at(superclass_token.start(), superclass_token.line(), superclass_token.column(), "undefined superclass")
       return nil
     end
-    self.advance_token()
     entry[1]
   end
 
@@ -3551,6 +3639,22 @@ class Parser
   # discovery pass instead. Each such reference was emitted with a
   # placeholder index and is patched here, once every declaration is known.
   def resolve_forward_references()
+    self.resolve_forward_type_names()
+    index = 0
+    while index < @forward_is_types.length() && !@failed
+      entry = @forward_is_types[index]
+      interface_entry = self.find_interface(entry[2])
+      class_entry = self.find_forward_class(entry[2], entry[4])
+      if interface_entry != nil
+        self.patch_index(entry[0], entry[1], Type::INTERFACE_BASE + interface_entry[1])
+      elsif class_entry != nil
+        self.patch_index(entry[0], entry[1], Type::CLASS_BASE + class_entry[1])
+      else
+        token = entry[3]
+        self.fail_at(token.start(), token.line(), token.column(), "unknown type annotation")
+      end
+      index = index + 1
+    end
     index = 0
     while index < @forward_constants.length() && !@failed
       entry = @forward_constants[index]
@@ -3564,7 +3668,7 @@ class Parser
       elsif constant_index == nil
         token = entry[4]
         self.fail_at(token.start(), token.line(), token.column(),
-          "undefined constant '" + entry[2] + "'")
+          undefined_name_message(entry[2]))
       else
         self.patch_index(entry[0], entry[1], constant_index)
       end
@@ -3610,7 +3714,7 @@ class Parser
       if class_entry == nil
         token = entry[4]
         self.fail_at(token.start(), token.line(), token.column(),
-          "undefined constant '" + entry[2] + "'")
+          undefined_name_message(entry[2]))
       elsif !self.fail_if_sealed(class_entry[1], entry[5])
         self.patch_index(entry[0], entry[1], class_entry[1])
       end
@@ -3628,7 +3732,7 @@ class Parser
       end
       if class_entry == nil
         self.fail_at(token.start(), token.line(), token.column(),
-          "undefined constant '" + entry[2] + "'")
+          undefined_name_message(entry[2]))
       elsif descriptor == nil
         method_token = entry[7]
         self.fail_at(method_token.start(), method_token.line(), method_token.column(),
@@ -3938,7 +4042,7 @@ class Parser
 
   # `X.new(...)` or `X.method(...)` where class X, or the singleton method,
   # is declared later. The current token is the '.'.
-  def compile_forward_class_call(name_token)
+  def compile_forward_class_call(name_token, class_name = self.token_text(name_token))
     self.advance_token()
     if @current.kind() != :identifier
       self.fail("expected method name after '.'")
@@ -3958,7 +4062,7 @@ class Parser
       destination = self.allocate_register()
       self.emit_call_opcode(Opcode::NEW)
       self.emit_register(destination)
-      @forward_news.push([@current_function_index, @code_count, self.token_text(name_token),
+      @forward_news.push([@current_function_index, @code_count, class_name,
                           @current_module_name, name_token, method_token])
       self.emit_register(0)
       self.emit_register(parsed[0])
@@ -3967,7 +4071,7 @@ class Parser
     end
     site = self.emit_forward_singleton_site()
     return 0 if site == nil
-    @forward_singleton_calls.push([@current_function_index, site[1], self.token_text(name_token),
+    @forward_singleton_calls.push([@current_function_index, site[1], class_name,
                                    @current_module_name, name_token, method_name, site[2],
                                    method_token, site[3]])
     site[0]
@@ -4011,9 +4115,17 @@ class Parser
   # The class a forward reference names, looked up the way parse_name
   # does: the bare name, then qualified by the module it appeared in.
   def find_forward_class(name, module_name)
-    entry = self.find_class(name)
-    entry = self.find_class(module_name + "::" + name) if entry == nil && module_name != nil
-    entry
+    # The innermost enclosing module first, as compiler.c's
+    # find_class_qualified_or_scoped.
+    scope = module_name
+    while scope != nil && scope != ""
+      entry = self.find_class(scope + "::" + name)
+      return entry if entry != nil
+      parts = scope.split("::")
+      parts.pop()
+      scope = parts.join("::")
+    end
+    self.find_class(name)
   end
 
   def store_namespace_constant(name, value)
@@ -6547,8 +6659,9 @@ class Parser
         self.fail("expected a type name")
         return 0
       end
-      type_id = self.resolve_type_name(self.token_text(@current))
-      self.advance_token()
+      type_token = @current
+      type_name = self.consume_qualified_module_name()
+      type_id = self.find_type_name(type_name)
       self.skip_newlines()
       if @current.kind() != :right_paren
         self.fail("expected ')' after is_a? type")
@@ -6556,6 +6669,10 @@ class Parser
       end
       self.advance_token()
       destination = self.allocate_register()
+      if type_id == nil
+        type_id = Type::UNDECLARED
+        @forward_is_types.push([@current_function_index, @code_count + 5, type_name, type_token, @current_module_name])
+      end
       self.emit_instruction3(Opcode::IS_TYPE, destination, receiver, type_id)
       self.set_type_fact(destination, Type::BOOL)
       return destination
@@ -6737,7 +6854,7 @@ class Parser
     element = nil
     if receiver_annotation != nil && receiver_annotation.length() == 1
       member = receiver_annotation[0]
-      element = member[1] if self.resolve_type_name(member[0]) == Type::ARRAY
+      element = member[1] if self.annotation_type_id(member[0]) == Type::ARRAY
     end
     if element != nil
       @declared_types.push([destination, element])
@@ -6747,7 +6864,7 @@ class Parser
       value = nil
       if receiver_annotation != nil && receiver_annotation.length() == 1
         member = receiver_annotation[0]
-        value = member[2] if self.resolve_type_name(member[0]) == Type::HASH
+        value = member[2] if self.annotation_type_id(member[0]) == Type::HASH
       end
       if value != nil
         @declared_types.push([destination, self.annotation_with_nil(value)])
@@ -6913,7 +7030,7 @@ class Parser
     while type_index < types.length() && !@failed
       seen_index = 0
       while seen_index < seen_types.length()
-        if seen_types[seen_index] == types[type_index]
+        if seen_types[seen_index] == types[type_index] && types[type_index] != Type::UNDECLARED
           self.fail("rescue type was already handled")
         elsif seen_types[seen_index] >= Type::CLASS_BASE &&
               seen_types[seen_index] < Type::VARIABLE_BASE &&
@@ -6946,6 +7063,10 @@ class Parser
     type_index = 0
     while type_index < types.length()
       matched = self.allocate_register()
+      if types[type_index] == Type::UNDECLARED
+        name = @rescue_type_names[type_index][0]
+        @forward_is_types.push([@current_function_index, @code_count + 5, name, @type_name_tokens[name], @current_module_name])
+      end
       self.emit_instruction3(Opcode::IS_TYPE, matched, exception, types[type_index])
       match_jumps.push(self.emit_jump(Opcode::JUMP_IF_TRUE, matched))
       type_index = type_index + 1
@@ -7267,7 +7388,7 @@ class Parser
       required = []
       index = 0
       while index < annotation.length()
-        id = self.resolve_type_name(annotation[index][0])
+        id = self.annotation_type_id(annotation[index][0])
         return nil if @failed
         return nil if id != Type::NIL && (id < Type::CLASS_BASE || id >= Type::VARIABLE_BASE)
         required.push(id)
@@ -7276,7 +7397,7 @@ class Parser
       return [required, required.map() do |_| false end, case_token]
     end
     fact = self.type_fact(subject)
-    fact = self.resolve_type_name(annotation[0][0]) if fact == nil && annotation != nil
+    fact = self.annotation_type_id(annotation[0][0]) if fact == nil && annotation != nil
     return nil if fact == nil || fact < Type::CLASS_BASE || fact >= Type::VARIABLE_BASE
     return nil unless @sealed_classes.include?(fact - Type::CLASS_BASE)
     required = []
@@ -8121,13 +8242,18 @@ class Parser
         if @current.kind() != :identifier
           self.fail("expected type after 'is'")
         else
-          type_name = self.token_text(@current)
-          type_id = self.resolve_type_name(type_name)
-          if type_id >= Type::VARIABLE_BASE && type_id < Type::INTERFACE_BASE
+          type_token = @current
+          type_name = self.consume_qualified_module_name()
+          type_id = self.find_type_name(type_name)
+          if type_id != nil && type_id >= Type::VARIABLE_BASE && type_id < Type::INTERFACE_BASE
             self.fail("generic type variables cannot be used with 'is' before binding")
           end
-          self.advance_token() unless @failed
           destination = self.allocate_register()
+          if type_id == nil
+            # A type declared later: its id is patched in once it is known.
+            type_id = Type::UNDECLARED
+            @forward_is_types.push([@current_function_index, @code_count + 5, type_name, type_token, @current_module_name])
+          end
           self.emit_instruction3(Opcode::IS_TYPE, destination, left, type_id)
           if self.declared_type(left) != nil
             @pending_type_narrowing = [destination, left, type_id]
@@ -8607,6 +8733,7 @@ class Parser
   end
 
   def parse_qualified_name(name, module_entry)
+    qualified_token = @previous
     qualified = name
     while @current.kind() == :double_colon
       self.advance_token()
@@ -8634,8 +8761,9 @@ class Parser
     class_entry = self.find_class(qualified)
     return self.compile_class_dot_call(class_entry) if class_entry != nil && @current.kind() == :dot
     return self.compile_specialized_new(class_entry) if self.specialized_new_ahead?(class_entry)
-    self.fail("undefined namespaced class")
-    0
+    # Declared later, as far as this single pass can tell.
+    return self.compile_forward_class_call(qualified_token, qualified) if @current.kind() == :dot
+    self.emit_forward_name(qualified, true)
   end
 
   # Shared by compile_module_singleton_call and compile_class_singleton_call.
