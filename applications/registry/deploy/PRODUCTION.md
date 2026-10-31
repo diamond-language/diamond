@@ -158,7 +158,7 @@ first (`tools/fetch_registry_backup.sh`, below). Then:
 
 2. Prepare the seed (`build/diamond tools/prepare_registry_seed.d6 DIR --expect
    docs/registry-launch-inventory.json`) and trim it to the cuts being published with
-   `tools/trim_seed_to.sh DIR NEW_SEED CUT...`, which checks each archive against its
+   `build/diamond tools/trim_seed_to.d6 DIR NEW_SEED CUT...`, which checks each archive against its
    inventory entry; `tools/publish_registry_seed.d6` publishes every cut in the seed it
    is given. Never publish the whole seed again: versions are immutable.
 3. Verify with `tools/verify_registry_launch.d6 https://cuts.dilang.tech`, delete
