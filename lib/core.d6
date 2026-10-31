@@ -1348,23 +1348,21 @@ def diamond_array_select(values: Array, callback: Callable[1]) -> Array
 end
 
 def diamond_array_any(values: Array, callback: Callable[1]) -> Bool
-  found = false
   index = 0
   while index < values.length()
-    found = true if callback(values[index])
+    return true if callback(values[index])
     index += 1
   end
-  found
+  false
 end
 
 def diamond_array_all(values: Array, callback: Callable[1]) -> Bool
-  result = true
   index = 0
   while index < values.length()
-    result = false if !callback(values[index])
+    return false unless callback(values[index])
     index += 1
   end
-  result
+  true
 end
 
 def diamond_array_reduce(values: Array, initial, callback: Callable[2])
