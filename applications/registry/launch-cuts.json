@@ -7,7 +7,7 @@
   "graphql": "0.3.2",
   "graphsql": "0.2.2",
   "gremlin": "0.5.2",
-  "http": "0.2.2",
+  "http": "0.2.3",
   "jobs": "0.2.1",
   "log_viewer": "0.2.1",
   "logger": "0.5.1",
