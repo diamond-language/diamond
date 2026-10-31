@@ -65,9 +65,9 @@
       "archive": "http.tar",
       "dependencies": {},
       "name": "http",
-      "sha256": "7d2599766a727404e5b9f4327f21271e8d4b148d5afabc5100c75daea4d7121f",
+      "sha256": "0837a33c1b5ab2cd16067e5b95db0911ebf6b52825db9d19df6bae2a4bc8583f",
       "size": 45056,
-      "version": "0.2.2"
+      "version": "0.2.3"
     },
     {
       "archive": "logger.tar",
