@@ -4,28 +4,17 @@ Diamond is currently pre-release. This file records user-visible capability
 milestones rather than every implementation step; the Git history remains the
 authoritative fine-grained record.
 
-## Unreleased
+## 0.21.0 — 2026-10-31
 
-### Changed
-
-- The self-hosted compiler handles generic classes and structs, tail calls, `closure`,
-  `delegate`, `protected`, `def []`, `**`, postfix `while`/`until`, `\u` escapes, reopened
-  classes and modules, types declared later in the file, singletons, constructors and function
-  references declared later (with keywords, spreads and type arguments), constants through
-  includes and superclasses, `define_method`/`compile_method`, module class variables, recursive
-  nested `def`s, `Array.new`, `exit` and bignum literals. 1,303 of 1,535 test programs now compile
-  and run through it, and all but four of the rest stop at unported runtime builtins;
-  `tools/self_host_survey.sh` measures this.
-- `Array#map`, `select`, `any?`, `all?` and `reduce` run direct loops instead of a
-  nested closure, about half the cost for a short array. Arel quotes identifiers without
-  splitting them into characters. Together these cut Mjolnir query building and rendering
-  by about 24% and `Repo#get` by about 16% in instructions.
+Generics reach most of the language: generic classes, structs and inheritance, methods with
+their own type parameters, and specialized function and method references. Mjolnir queries are
+about a quarter cheaper to build and render, the limits on modules, interfaces, methods and
+constants are lifted, and the self-hosted compiler now runs 1,303 of the 1,535 test programs.
 
 ### Added
 
 - Mjolnir `Repo#all` maps rows through the new `Schema#build_all`, about 12% fewer
   instructions on a 1,000-row read.
-
 - Runnable application examples now include a web interface sharing the task
   board's CLI/TUI store, a concurrent site-checking CLI with JSON output,
   a persistent bookmark shelf with tags and import/export, and a durable CSV
@@ -121,6 +110,21 @@ authoritative fine-grained record.
 
 ### Changed
 
+- The self-hosted compiler handles generic classes and structs, tail calls, `closure`,
+  `delegate`, `protected`, `def []`, `**`, postfix `while`/`until`, `\u` escapes, reopened
+  classes and modules, types declared later in the file, singletons, constructors and function
+  references declared later (with keywords, spreads and type arguments), constants through
+  includes and superclasses, `define_method`/`compile_method`, module class variables, recursive
+  nested `def`s, `Array.new`, `exit` and bignum literals. 1,303 of 1,535 test programs now compile
+  and run through it, and all but four of the rest stop at unported runtime builtins;
+  `tools/self_host_survey.sh` measures this.
+- `Array#map`, `select`, `any?`, `all?` and `reduce` run direct loops instead of a
+  nested closure, about half the cost for a short array. Arel quotes identifiers without
+  splitting them into characters. Together these cut Mjolnir query building and rendering
+  by about 24% and `Repo#get` by about 16% in instructions.
+- An explicit generic method call such as `box.wrap[Int](value)` costs about 10% more
+  instructions than in 0.20.2, the price of keeping type bindings on references. Non-generic
+  typed calls are within 1%.
 - Generic setup no longer slows ordinary calls: a call to a non-generic function runs
   3-5% fewer instructions than it did since generic classes landed.
 - A block or function with no declared return can be passed to a typed Callable such as
@@ -131,10 +135,6 @@ authoritative fine-grained record.
   forms, selects newly created projects, and keeps escape-prefixed shortcuts
   from cancelling or flashing the active form. Timed terminal reads resume
   accepting input after an empty timeout result.
-- The self-hosted compiler runs 1,166 of the 1,488 test programs (up from 1,035): it now
-  handles destructuring and splats, case patterns and exhaustiveness, structs and sealed
-  classes, `&block` parameters and block forwarding, `break`/`next`/`return` in blocks, `self`
-  in class singleton methods, method references, and keyword calls with spreads and blocks.
 - A program may define up to 65,535 namespace constants (`Module::NAME`, class constants),
   up from 128 across the prelude, cuts and user code. The tables grow on demand.
 - A program may declare up to 1,024 modules (was 255) and 1,024 interfaces (was 32). Both
