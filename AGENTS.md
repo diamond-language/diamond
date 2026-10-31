@@ -41,13 +41,12 @@ CI is slow (about 15 minutes) because it runs two distros times two compilers ti
 
 ## State at the last hand-off (2026-10-31)
 
-The latest release is v0.20.2, and the live registry runs that version. CI runs the live database dialect tests (`make test-database-dialects`, through `tools/ci_database_dialects.sh`, in an `ubuntu:26.04` container beside the runner's docker) and the registry nginx drill with the full seed rehearsal (`test-registry-nginx` job). Open items:
+The latest release is v0.21.0, and the live registry runs that version. CI runs the live database dialect tests (`make test-database-dialects`, through `tools/ci_database_dialects.sh`, in an `ubuntu:26.04` container beside the runner's docker) and the registry nginx drill with the full seed rehearsal (`test-registry-nginx` job). Open items:
 
-1. **Release 0.21:** tag only when the owner says so. First re-run the SkindicateV3 and Pheint suites on final `main` and re-measure against v0.20.2. Cuts changed since the last publish include `http`, `mjolnir` and `arel`; compare `packages/` with `PRODUCTION.md` for the full list.
-2. **Language server receiver precision across imported files** (docs/roadmap.md, "Improve receiver-aware tooling").
-3. Needs an owner decision or a driving use case first: generic Mjolnir `Schema`/`Query`/`Repo` (held; docs/roadmap.md has the blockers), sandbox path and host allow-lists (`docs/sandbox.md` says why they were left out; a JSON policy of exact resolved-path prefixes and exact hostnames was proposed), supervisors that cross threads, the ORM return-annotation audit, and endless-def conversion of `packages/` (143 methods; do it with the next release of each package, not on its own).
-4. Literate programming: investigated and piloted on the `lp` branch (PR #250, unmerged) and then put on hold by the owner; do not merge or delete it unasked. Memo: `docs/internal/literate-programming-investigation.md` on that branch.
-5. Reminder: check that the TLS certificates renew (dilang.tech about 2026-11-17, cuts.dilang.tech about 2026-11-22; `docs/registry-release-plan.md`).
-6. Cleanup: the example web UIs have only been tested over HTTP.
+1. **Language server receiver precision across imported files** (docs/roadmap.md, "Improve receiver-aware tooling").
+2. Needs an owner decision or a driving use case first: generic Mjolnir `Schema`/`Query`/`Repo` (held; docs/roadmap.md has the blockers), sandbox path and host allow-lists (`docs/sandbox.md` says why they were left out; a JSON policy of exact resolved-path prefixes and exact hostnames was proposed), supervisors that cross threads, the ORM return-annotation audit, and endless-def conversion of `packages/` (143 methods; do it with the next release of each package, not on its own).
+3. Literate programming: investigated and piloted on the `lp` branch (PR #250, unmerged) and then put on hold by the owner; do not merge or delete it unasked. Memo: `docs/internal/literate-programming-investigation.md` on that branch.
+4. Reminder: check that the TLS certificates renew (dilang.tech about 2026-11-17, cuts.dilang.tech about 2026-11-22; `docs/registry-release-plan.md`).
+5. Cleanup: the example web UIs have only been tested over HTTP.
 
 CI lessons from adding jobs: the source needs gcc 15 (`#embed`, C23), so jobs run in `ubuntu:26.04`; the plain `make` target carries none of the `-std=c23` flags (use `make debug` first, as `test-integration` does); tests that need cuts must install them into a temporary project (`tools/install_local_cuts.sh`); a database container is not ready when `pg_isready` first answers, so wait for a real query.

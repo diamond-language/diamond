@@ -5,8 +5,15 @@ The corrected A record is **142.93.192.149**. External health and catalog
 requests succeeded. Since 2026-09-25 nginx terminates TLS with certbot
 certificates (see "Proxy and certificates" below); Caddy was retired.
 
-Runtime revision: `695525d51174e93d46d9a041c23d91a0fb7650f0` (v0.20.2, deployed
-2026-10-26 with `tools/deploy_registry.sh` after a verified snapshot). Before the upgrade,
+Runtime revision: `43b640d06afefc5def1a3c5b2129e778a0296791` (v0.21.0, deployed
+2026-10-31 with `tools/deploy_registry.sh` after a verified snapshot). Before the upgrade,
+after its own verified snapshot, one 30-minute credential (33, `publish:` for each cut,
+revoked) published arel 0.35.2 (sha256
+`a4619e3d550e6b8f26196444c43949768ad024854b1381b55e0c964307f9502a`), http 0.2.3
+(`0837a33c1b5ab2cd16067e5b95db0911ebf6b52825db9d19df6bae2a4bc8583f`) and mjolnir 0.3.3
+(`0fb62ca3f7ca12f492fb3abbffd6ec55f8792d3a0c616d4924b891de6c51f65d`).
+`tools/verify_registry_launch.d6` passed for all 19 public cuts before and after the upgrade.
+v0.20.2 (`695525d51174e93d46d9a041c23d91a0fb7650f0`) was deployed 2026-10-26 the same way. Before that upgrade,
 after a second verified snapshot, one 30-minute credential (32, `publish:` for each of the
 19 seed cuts, revoked) published cookies 0.2.2, graphql 0.3.2, graphsql 0.2.2, http 0.2.2,
 redis 0.2.2 and minitest 0.1.2 (digests in `docs/registry-launch-inventory.json`); the other
