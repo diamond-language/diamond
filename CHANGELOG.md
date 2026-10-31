@@ -10,8 +10,12 @@ authoritative fine-grained record.
 
 - The self-hosted compiler handles generic classes and structs, tail calls, `closure`,
   `delegate`, `protected`, `def []`, `**`, postfix `while`/`until`, `\u` escapes, reopened
-  classes and modules, and types declared later in the file. 1,275 of 1,535 test programs now
-  compile and run through it; `tools/self_host_survey.sh` measures this.
+  classes and modules, types declared later in the file, singletons, constructors and function
+  references declared later (with keywords, spreads and type arguments), constants through
+  includes and superclasses, `define_method`/`compile_method`, module class variables, recursive
+  nested `def`s, `Array.new`, `exit` and bignum literals. 1,303 of 1,535 test programs now compile
+  and run through it, and all but four of the rest stop at unported runtime builtins;
+  `tools/self_host_survey.sh` measures this.
 - `Array#map`, `select`, `any?`, `all?` and `reduce` run direct loops instead of a
   nested closure, about half the cost for a short array. Arel quotes identifiers without
   splitting them into characters. Together these cut Mjolnir query building and rendering

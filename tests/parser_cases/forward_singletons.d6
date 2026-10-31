@@ -1,0 +1,62 @@
+# Singletons, references and constructors named before their declarations:
+# the self-hosted parser resolves these once the whole file is compiled.
+puts(Later.value())
+reference = Later.value
+puts(reference())
+puts(Later.setting=(5))
+puts(Exported.twice(right: 2, left: 3))
+puts(Exported.twice(*[4, 5]))
+puts(Declared.identity[Int](6))
+typed = Declared.identity[String]
+puts(typed("typed"))
+collect = Later.collect
+puts(collect("items", "a", "b"))
+box = Box[Int].new(7)
+puts(box.value())
+puts(keyworded(right: 8, left: 9))
+puts(keyworded(*[10], right: 11))
+function = doubled
+puts(function(6))
+generic = echo[Int]
+puts(generic(value: 12))
+puts(echo[String]("explicit"))
+
+class Later
+  def self.value() = 1
+  def self.setting=(value) = value + 1
+  def self.collect(prefix, *rest) = prefix + ":" + rest.join(",")
+end
+
+module Exported
+  module_function
+  def twice(left, right) = left * 2 + right
+end
+
+module Declared
+  def self.identity[T](value: T) -> T = value
+  def self.first() = later()
+  def self.later() = 13
+end
+
+class Box[T]
+  def initialize(value: T)
+    @value = value
+  end
+  def value() = @value
+end
+
+class Parent
+  def self.later() = 14
+end
+
+class Child < Parent
+  def self.first() = Child.later()
+  def self.later() = 15
+end
+
+def keyworded(left, right) = left - right
+def doubled(value) = value * 2
+def echo[T](value: T) -> T = value
+
+puts(Declared.first())
+puts(Child.first())

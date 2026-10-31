@@ -1,0 +1,76 @@
+# Forms the self-hosted parser picked up after the forward-reference work.
+module Limits
+  MAX = 10
+end
+module Defaults
+  include Limits
+  NAME = "defaults"
+  def self.max() = MAX
+end
+class Widget
+  def early() = MAX
+  include Defaults
+end
+class Base
+  SIDES = 3
+end
+class Derived < Base
+end
+puts(Widget.new().early())
+puts(Widget::MAX)
+puts(Defaults.max())
+puts(Derived::SIDES)
+
+def update()
+  VALUES[1], OPTIONS["other"] = [8, 9]
+end
+VALUES = [1, 2]
+OPTIONS = {}
+update()
+puts(VALUES[1])
+puts(OPTIONS["other"])
+
+module Registry
+  def self.register(name)
+    @@names ||= []
+    @@names.push(name)
+  end
+  def self.all() = @@names
+end
+Registry.register("one")
+puts(Registry.all().length())
+
+def factorial(n)
+  def fact(k) = if k <= 1 then 1 else k * fact(k - 1) end
+  fact(n)
+end
+puts(factorial(5))
+
+puts(Array.new(2, "x").join(","))
+puts(Array.new(2).length())
+puts(36893488147419103232)
+puts(0x10000000000000000)
+
+class Hidden
+  def secret() = 1
+  def other() = 2
+  def visible() = self.secret() + 1
+  private(
+    secret,
+    other
+  )
+end
+puts(Hidden.new().visible())
+
+def name_of(event)
+  case event
+  when Outer{inner: Inner{name: name}} then name
+  else "other"
+  end
+end
+struct Inner(name: String)
+end
+struct Outer(inner: Inner)
+end
+puts(name_of(Outer.new(Inner.new("deep"))))
+puts(name_of(1))

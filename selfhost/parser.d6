@@ -32,6 +32,9 @@ require "lexer"
 # real `sizeof`/enum-dump each time this file is touched, not hand-counted.
 # Opcode constants are grouped in a namespace and read as `Opcode::NAME`.
 module Opcode
+  DEFINE_METHOD = 109
+  COMPILE_METHOD = 127
+  EXIT = 128
   CONSTANT = 0
   STRING = 1
   SYMBOL = 2
@@ -481,6 +484,34 @@ end
 # recognizes the comma-root form (`a, b =`) and bracketed/braced
 # recursive patterns (`[a, [b, c]] =`, `{"k": v, **rest} =`) without
 # stealing an ordinary Array or Hash literal from expression parsing.
+def method_synthesis_name?(name) = name == "define_method" || name == "compile_method"
+
+# Why `Class[...]` with this many type arguments is wrong, or nil.
+def specialization_error(class_entry, count)
+  parameters = class_type_parameters(class_entry)
+  return "inherited type arguments are fixed by the superclass" if class_entry.length() > 5 && class_entry[5]
+  return nil if count == parameters.length()
+  if parameters.length() == 2
+    "class specialization requires exactly two declared type arguments"
+  else
+    "class specialization requires exactly one declared type argument"
+  end
+end
+
+# A top-level function as a singleton descriptor. Only the signature's type
+# variable count matters here: a generic function's reference has bindings.
+def function_reference_descriptor(entry)
+  [entry[0], entry[1], entry[2], entry[6], [entry[7], entry[5], Array.new(entry[4], "T"), entry[3]]]
+end
+
+# A singleton descriptor is [name, function_index, arity, required_arity,
+# signature?]; an instance method entry is [class, name, private,
+# required_arity, function_index, arity, signature].
+def singleton_reference_callee(descriptor)
+  [nil, descriptor[0], false, descriptor[3], descriptor[1], descriptor[2],
+   if descriptor.length() > 4 then descriptor[4] else nil end]
+end
+
 def destructuring_target_kind?(kind)
   kind == :identifier || kind == :instance_variable || kind == :class_variable
 end
@@ -677,6 +708,11 @@ class Parser
     @tail_call_candidates = []
     @nonlocal_landing_functions = []
     @forward_singleton_calls = []
+    @forward_references = []
+    @forward_pattern_classes = []
+    @forward_function_values = []
+    @included_modules = []
+    @module_class_variable_owners = []
     # Function indices declared with a `*name` parameter: calls to them may
     # pass more arguments than the declared arity.
     @variadic_functions = []
@@ -1543,6 +1579,9 @@ class Parser
     @enclosing_locals = enclosing_locals
     # A `next value` is checked against the contextual result type.
     @current_return_type = if context == nil then nil else context[4] end
+    if context != nil && context[4] != nil
+      @builder.set_return_type(function_index, self.declare_annotation(context[4]))
+    end
     @type_facts = []
     @declared_types = []
     @function_nesting_depth = @function_nesting_depth + 1
@@ -1667,6 +1706,7 @@ class Parser
       return 0
     end
     self.advance_token()
+    def_token = @previous
     at_top_level = @function_nesting_depth == 0
     # A plain `def` (as opposed to a class body's own `def`, routed to
     # compile_method instead) never legitimately names an operator --
@@ -1766,6 +1806,16 @@ class Parser
     # just names the nested body actually goes on to reference). Empty
     # for a top-level def (nothing to capture from the top-level script
     # itself, and top-level functions don't capture anything anyway).
+    # A recursive local helper: its name is declared first, holding nil, so
+    # the body captures it like any other enclosing local, and the closure is
+    # stored into that cell once it exists.
+    self_register = nil
+    if !at_top_level && !captures_self && self.find_local(name) == nil &&
+       self.nested_def_calls_itself?(name, def_token)
+      self_register = self.allocate_register()
+      self.emit_instruction1(Opcode::NIL, self_register)
+      @locals.push([name, self_register, false])
+    end
     enclosing_locals = if at_top_level
       []
     else
@@ -1783,7 +1833,20 @@ class Parser
       # own at_top_level branch exactly (no opcode needed).
       return self.allocate_register()
     end
-    self.emit_closure(function_index, enclosing_locals, name, captures_self)
+    self.emit_closure(function_index, enclosing_locals, name, captures_self, self_register)
+  end
+
+  # compiler.c learns this in its discovery pass. Here a look ahead through the
+  # def's indented body has to do; naming itself anywhere in there is enough.
+  def nested_def_calls_itself?(name, def_token)
+    lookahead = @lexer.clone()
+    token = lookahead.next_token()
+    while token.kind() != :eof && token.kind() != :error
+      return false if token.line() > def_token.line() && token.column() <= def_token.column()
+      return true if token.kind() == :identifier && self.token_text(token) == name
+      token = lookahead.next_token()
+    end
+    false
   end
 
   def parse_type_variables()
@@ -2693,7 +2756,7 @@ class Parser
   # read/write of that name in the outer function also goes through
   # GET_CELL/SET_CELL from here on, matching compiler.c's own
   # once-boxed-always-boxed semantics exactly.
-  def emit_closure(function_index, enclosing_locals, name, captures_self = false)
+  def emit_closure(function_index, enclosing_locals, name, captures_self = false, self_register = nil)
     capture_registers = []
     index = 0
     while index < enclosing_locals.length()
@@ -2719,7 +2782,11 @@ class Parser
       self.emit_register(capture_registers[index])
       index = index + 1
     end
-    @locals.push([name, result, false])
+    if self_register == nil
+      @locals.push([name, result, false])
+    else
+      self.emit_instruction2(Opcode::SET_CELL, self_register, result)
+    end
     result
   end
 
@@ -3293,6 +3360,7 @@ class Parser
       self.fail("undefined module")
     else
       @builder.include_module(@current_class_index, module_index)
+      @included_modules.push([@classes[@current_class_entry][0], self.module_name_at(module_index)])
       @classes_with_includes.push(@current_class_index)
       index = 0
       while index < @modules.length()
@@ -3399,6 +3467,7 @@ class Parser
     if @current.kind() == :identifier || @current.kind() == :left_paren
       parenthesized = @current.kind() == :left_paren
       self.advance_token() if parenthesized
+      self.skip_newlines() if parenthesized
       if @current.kind() == :identifier
         more = true
         while more && !@failed
@@ -3423,8 +3492,10 @@ class Parser
           end
           self.advance_token()
           self.advance_token() if writer_name && @current.kind() == :equal
+          self.skip_newlines() if parenthesized
           if @current.kind() == :comma
             self.advance_token()
+            self.skip_newlines() if parenthesized
           else
             more = false
           end
@@ -3622,16 +3693,42 @@ class Parser
       parts.pop()
       scope = parts.join("::")
     end
-    # Then the ancestors of the class this reference is in.
-    entry = if innermost == "" then nil else self.find_class(innermost) end
-    while entry != nil && entry[2] != nil
-      parent = self.find_class_by_index(entry[2])
-      break if parent == nil
-      found = self.find_namespace_constant(parent[0] + "::" + name)
+    # Then what the class or module this reference is in inherits.
+    if innermost != ""
+      found = self.find_member_constant(innermost, name)
       return found if found != nil
-      entry = parent
     end
     self.find_namespace_constant(name)
+  end
+
+  # A constant of `owner`: its own, then its included modules', latest first,
+  # then its superclass's.
+  def find_member_constant(owner, name)
+    found = self.find_namespace_constant(owner + "::" + name)
+    return found if found != nil
+    index = @included_modules.length() - 1
+    while index >= 0
+      if @included_modules[index][0] == owner
+        found = self.find_member_constant(@included_modules[index][1], name)
+        return found if found != nil
+      end
+      index = index - 1
+    end
+    entry = self.find_class(owner)
+    return nil if entry == nil || entry[2] == nil
+    parent = self.find_class_by_index(entry[2])
+    if parent == nil then nil else self.find_member_constant(parent[0], name) end
+  end
+
+  # `Owner::NAME` where NAME is inherited or mixed into Owner.
+  def find_qualified_member_constant(qualified, module_name)
+    return nil unless qualified.include?("::")
+    parts = qualified.split("::")
+    name = parts.pop()
+    owner = parts.join("::")
+    entry = self.find_forward_class(owner, module_name)
+    entry = self.find_forward_module(owner, module_name) if entry == nil
+    if entry == nil then nil else self.find_member_constant(entry[0], name) end
   end
 
   # A single-pass compiler sees a constant read or a call before a later
@@ -3639,6 +3736,8 @@ class Parser
   # discovery pass instead. Each such reference was emitted with a
   # placeholder index and is patched here, once every declaration is known.
   def resolve_forward_references()
+    # First: a reference's wrapper function declares type sets of its own.
+    self.resolve_forward_function_references()
     self.resolve_forward_type_names()
     index = 0
     while index < @forward_is_types.length() && !@failed
@@ -3662,6 +3761,7 @@ class Parser
       # loads it with LOAD_CLASS -- the same size as the constant read.
       class_entry = if entry[5] then self.find_forward_class(entry[2], entry[6]) else nil end
       constant_index = self.find_constant_from(entry[3], entry[2])
+      constant_index = self.find_qualified_member_constant(entry[2], entry[6]) if constant_index == nil
       if class_entry != nil
         @builder.patch_byte(entry[0], entry[1] - 3, Opcode::LOAD_CLASS)
         self.patch_index(entry[0], entry[1], class_entry[1])
@@ -3680,6 +3780,11 @@ class Parser
       token = entry[4]
       function_entry = self.find_function(entry[2])
       paths = entry[5]
+      if function_entry == nil && entry.length() > 7 && entry[7] != nil
+        # [name, function, arity, required] takes function_entry's slots here.
+        sibling = find_descriptor(@modules[entry[7]][9], entry[2])
+        function_entry = [sibling[0], sibling[1], sibling[2], nil, 0, nil, sibling[3]] if sibling != nil
+      end
       if paths != nil
         # An implicit self call: the function if one exists, else self's method.
         target = if function_entry == nil
@@ -3697,12 +3802,15 @@ class Parser
       elsif entry[3] >= 0 && (entry[3] < function_entry[6] ||
                               self.too_many_arguments?(entry[3], function_entry[2], function_entry[1]))
         self.fail_at(token.start(), token.line(), token.column(), "wrong number of arguments")
+      elsif entry.length() > 6 && entry[6] > 0 && entry[6] != function_entry[4]
+        self.fail_at(token.start(), token.line(), token.column(), "wrong number of generic arguments")
       else
         self.patch_index(entry[0], entry[1], function_entry[1])
       end
       index = index + 1
     end
     self.resolve_forward_class_references()
+    self.resolve_forward_pattern_classes()
     self.rewrite_cyclic_tail_calls()
   end
 
@@ -3711,10 +3819,18 @@ class Parser
     while index < @forward_news.length() && !@failed
       entry = @forward_news[index]
       class_entry = self.find_forward_class(entry[2], entry[3])
+      message = if class_entry == nil || entry.length() <= 6
+        nil
+      else
+        specialization_error(class_entry, entry[6])
+      end
       if class_entry == nil
         token = entry[4]
         self.fail_at(token.start(), token.line(), token.column(),
           undefined_name_message(entry[2]))
+      elsif message != nil
+        token = entry[4]
+        self.fail_at(token.start(), token.line(), token.column(), message)
       elsif !self.fail_if_sealed(class_entry[1], entry[5])
         self.patch_index(entry[0], entry[1], class_entry[1])
       end
@@ -3724,25 +3840,153 @@ class Parser
     while index < @forward_singleton_calls.length() && !@failed
       entry = @forward_singleton_calls[index]
       token = entry[4]
-      class_entry = self.find_forward_class(entry[2], entry[3])
-      descriptor = if class_entry == nil
-        nil
-      else
-        self.find_class_singleton_descriptor(class_entry, entry[5])
+      target = self.find_forward_singleton(entry[2], entry[3], entry[5], token, entry[7])
+      if target != nil
+        descriptor = target[0]
+        if entry[6] >= 0 && (entry[6] < descriptor[3] ||
+                             self.too_many_arguments?(entry[6], descriptor[2], descriptor[1]))
+          self.fail_at(token.start(), token.line(), token.column(), "wrong number of arguments")
+        else
+          self.patch_forward_singleton(entry, descriptor[1], target[1])
+        end
       end
+      index = index + 1
+    end
+  end
+
+  # What `Owner.name` means once every declaration is known: [descriptor,
+  # receiver], the receiver as compile_reference_wrapper's target takes it.
+  # An export's [name, function, arity, uses state, required] descriptor is
+  # given a singleton's [name, function, arity, required] shape.
+  def find_forward_singleton(owner, module_name, name, token, method_token)
+    class_entry = self.find_forward_class(owner, module_name)
+    if class_entry != nil
+      descriptor = self.find_class_singleton_descriptor(class_entry, name)
+      return [descriptor, class_entry[1]] if descriptor != nil
+      self.fail_at(method_token.start(), method_token.line(), method_token.column(),
+        "undefined class singleton method")
+      return nil
+    end
+    module_entry = self.find_forward_module(owner, module_name)
+    if module_entry == nil
+      self.fail_at(token.start(), token.line(), token.column(), undefined_name_message(owner))
+      return nil
+    end
+    exported = find_descriptor(module_entry[7], name)
+    return [[exported[0], exported[1], exported[2], exported[4]], true] if exported != nil
+    declared = find_descriptor(module_entry[9], name)
+    return [declared, false] if declared != nil
+    self.fail_at(method_token.start(), method_token.line(), method_token.column(),
+      "undefined module singleton function")
+    nil
+  end
+
+  # entry[8], the receiver's LOAD_CLASS operand, is nil at a call carrying its
+  # arguments in an array: CALL_SINGLETON_KEYWORDS' operands say what to do.
+  def patch_forward_singleton(entry, function_index, receiver)
+    self.patch_index(entry[0], entry[1], function_index)
+    if entry[8] == nil
+      self.patch_index(entry[0], entry[1] + 4, if receiver == true || receiver == false then 65535 else receiver end)
+      @builder.patch_byte(entry[0], entry[1] + 6, if receiver == false then 0 else 1 end)
+    elsif receiver == true || receiver == false
+      # A module has no class to load, so that instruction becomes a no-op move.
+      @builder.patch_byte(entry[0], entry[8] - 3, Opcode::MOVE)
+      self.patch_index(entry[0], entry[8], entry[9])
+      if receiver == false
+        # A directly-declared singleton takes no receiver slot at all.
+        self.patch_index(entry[0], entry[1] + 2, entry[9] + 1)
+        @builder.patch_byte(entry[0], entry[1] + 4, entry[6])
+      end
+    else
+      self.patch_index(entry[0], entry[8], receiver)
+    end
+  end
+
+  # References to functions declared later: the wrapper a typed or singleton
+  # reference needs takes the callee's shape, so it is built only now, and the
+  # CLOSURE left at the reference site pointed at it.
+  def resolve_forward_function_references()
+    index = 0
+    while index < @forward_function_values.length() && !@failed
+      entry = @forward_function_values[index]
+      function_entry = self.find_function(entry[2])
+      if function_entry == nil
+        token = entry[3]
+        self.fail_at(token.start(), token.line(), token.column(), "undefined local variable")
+      else
+        self.patch_index(entry[0], entry[1], function_entry[1])
+      end
+      index = index + 1
+    end
+    outer_type_variables = @current_type_variables
+    outer_module_name = @current_module_name
+    index = 0
+    # A wrapper can't add references of its own, so this list stays as it is.
+    while index < @forward_references.length() && !@failed
+      entry = @forward_references[index]
+      target = self.find_forward_reference_target(entry)
+      if target != nil
+        @current_type_variables = entry[8]
+        @current_module_name = entry[3]
+        callee = singleton_reference_callee(target[0])
+        self.patch_index(entry[0], entry[1], self.build_reference_function(false, callee, target, entry[7]))
+      end
+      index = index + 1
+    end
+    @current_type_variables = outer_type_variables
+    @current_module_name = outer_module_name
+  end
+
+  def find_forward_reference_target(entry)
+    token = entry[4]
+    return self.find_forward_singleton(entry[2], entry[3], entry[5], token, entry[6]) if entry[2] != nil
+    function_entry = self.find_function(entry[5])
+    if function_entry == nil
+      self.fail_at(token.start(), token.line(), token.column(), "undefined function")
+      return nil
+    end
+    if entry[7].length() != function_entry[4]
+      self.fail_at(token.start(), token.line(), token.column(), "wrong number of generic arguments")
+      return nil
+    end
+    [function_reference_descriptor(function_entry), false]
+  end
+
+  # A reference to something not declared yet: a CLOSURE over nothing whose
+  # function resolve_forward_function_references fills in. owner is nil for a
+  # top-level function.
+  def emit_forward_reference(owner, name_token, name, method_token, annotations)
+    destination = self.allocate_register()
+    self.emit_byte(Opcode::CLOSURE)
+    self.emit_register(destination)
+    @forward_references.push([@current_function_index, @code_count, owner, @current_module_name,
+                              name_token, name, method_token, annotations, @current_type_variables])
+    self.emit_function_index(0)
+    self.emit_byte(0)
+    destination
+  end
+
+  def resolve_forward_pattern_classes()
+    index = 0
+    while index < @forward_pattern_classes.length() && !@failed
+      entry = @forward_pattern_classes[index]
+      class_entry = self.find_forward_class(entry[2], entry[3])
+      token = entry[4]
       if class_entry == nil
         self.fail_at(token.start(), token.line(), token.column(),
-          undefined_name_message(entry[2]))
-      elsif descriptor == nil
-        method_token = entry[7]
-        self.fail_at(method_token.start(), method_token.line(), method_token.column(),
-          "undefined class singleton method")
-      elsif entry[6] >= 0 && (entry[6] < descriptor[3] ||
-                              self.too_many_arguments?(entry[6], descriptor[2], descriptor[1]))
-        self.fail_at(token.start(), token.line(), token.column(), "wrong number of arguments")
+          "unknown class '" + entry[2] + "' in object pattern")
       else
-        self.patch_index(entry[0], entry[1], descriptor[1])
-        self.patch_index(entry[0], entry[8], class_entry[1])
+        self.patch_index(entry[0], entry[1], class_entry[1])
+        readers = entry[5]
+        reader = 0
+        while reader < readers.length() && !@failed
+          token = readers[reader]
+          unless self.valid_case_pattern_reader?(class_entry[1], self.token_text(token))
+            self.fail_at(token.start(), token.line(), token.column(),
+              "case object pattern requires a public zero-argument reader")
+          end
+          reader = reader + 1
+        end
       end
       index = index + 1
     end
@@ -3892,28 +4136,41 @@ class Parser
   end
 
   def compile_forward_call(name_token)
+    annotations = self.parse_explicit_type_annotations()
+    return 0 if annotations == nil
+    if annotations.length() > 0 && @current.kind() != :left_paren
+      return self.emit_forward_reference(nil, name_token, self.token_text(name_token), name_token, annotations)
+    end
     if @current.kind() != :left_paren
       self.fail("undefined function")
       return 0
     end
-    return self.compile_implicit_self_call(name_token) if @in_method && @current_class_index != nil
-    if @in_singleton_method && !self.call_arguments_have_spread_after_paren?()
-      return self.compile_implicit_self_call(name_token)
+    if annotations.length() == 0
+      return self.compile_implicit_self_call(name_token) if @in_method && @current_class_index != nil
+      if @in_singleton_method && !self.call_arguments_have_spread_after_paren?()
+        return self.compile_implicit_self_call(name_token)
+      end
     end
-    site = self.emit_forward_call_site()
+    site = self.emit_forward_call_site(self.declare_annotations(annotations))
     return 0 if site == nil
+    sibling_module = if @current_class_index == nil then @current_module_entry else nil end
     @forward_calls.push([@current_function_index, site[1], self.token_text(name_token),
-                         site[2], name_token, nil])
-    self.note_plain_call(site[1] - 3, site[0], self.token_text(name_token)) if site[2] >= 0
+                         site[2], name_token, nil, annotations.length(), sibling_module])
+    if site[2] >= 0 && annotations.length() == 0
+      self.note_plain_call(site[1] - 3, site[0], self.token_text(name_token))
+    end
     site[0]
   end
 
   # Parses `(args)` plus an optional trailing do block (the current token is
   # the '(') and emits a CALL whose function index is a placeholder.
   # Returns [destination, function index operand offset, argument count].
-  def emit_forward_call_site()
+  def emit_forward_call_site(type_arguments = [])
     self.advance_token()
     self.skip_newlines()
+    if self.call_arguments_have_keyword?() || (type_arguments.length() > 0 && self.call_arguments_have_spread?())
+      return self.emit_forward_keyword_site(false, type_arguments)
+    end
     if self.call_arguments_have_spread?()
       # The argument count is only known at run time: -1 skips the arity
       # check when the call is resolved.
@@ -3930,13 +4187,38 @@ class Parser
     parsed = self.parse_forward_call_arguments()
     return nil if parsed == nil
     destination = self.allocate_register()
-    self.emit_call_opcode(Opcode::CALL)
+    self.emit_call_opcode(if type_arguments.length() == 0 then Opcode::CALL else Opcode::CALL_TYPED end)
     self.emit_register(destination)
     offset = @code_count
     self.emit_function_index(0)
     self.emit_register(parsed[0])
     self.emit_byte(parsed[1])
+    self.emit_type_argument_trailer(type_arguments)
     [destination, offset, parsed[1]]
+  end
+
+  # A call whose arguments are matched to parameters at run time: nothing
+  # about the callee has to be known yet. Returns [destination, function index
+  # operand offset, -1].
+  def emit_forward_keyword_site(needs_receiver, type_arguments)
+    arguments = self.parse_dynamic_keyword_arguments()
+    return nil if arguments == nil
+    opcode_offset = @code_count
+    if arguments[1].length() == 0 && arguments[2] == nil
+      # No keywords: CALL_[TYPED_]SINGLETON_SPREAD, with the same operands up
+      # to the type arguments.
+      destination = self.allocate_register()
+      self.emit_call_opcode(if type_arguments.length() == 0 then 143 else 147 end)
+      self.emit_register(destination)
+      self.emit_function_index(0)
+      self.emit_register(arguments[0])
+      self.emit_register(if needs_receiver == false then 65535 else needs_receiver end)
+      self.emit_byte(if needs_receiver == false then 0 else 1 end)
+      self.emit_type_argument_trailer(type_arguments)
+      return [destination, opcode_offset + 3, -1]
+    end
+    destination = self.compile_singleton_keyword_call(0, needs_receiver, type_arguments, arguments)
+    [destination, opcode_offset + 3, -1]
   end
 
   # Positional arguments through ')' plus an optional trailing do block,
@@ -4051,9 +4333,24 @@ class Parser
     method_name = self.token_text(@current)
     method_token = @current
     self.advance_token()
+    self.compile_forward_singleton_member(name_token, class_name, method_name, method_token)
+  end
+
+  # The rest of `Owner.name`, with the name consumed: Owner, or at least its
+  # singleton `name`, is declared later and may turn out a class or a module.
+  def compile_forward_singleton_member(name_token, class_name, method_name, method_token)
+    if method_name != "new" && @current.kind() == :equal
+      method_name = method_name + "="
+      self.advance_token()
+    end
+    annotations = if method_name == "new" then [] else self.parse_explicit_type_annotations() end
+    return 0 if annotations == nil
     if @current.kind() != :left_paren
-      self.fail("expected '(' after singleton function")
-      return 0
+      if method_name == "new"
+        self.fail("expected '(' after singleton function")
+        return 0
+      end
+      return self.emit_forward_reference(class_name, name_token, method_name, method_token, annotations)
     end
     if method_name == "new"
       self.advance_token()
@@ -4069,47 +4366,43 @@ class Parser
       self.emit_byte(parsed[1])
       return destination
     end
-    site = self.emit_forward_singleton_site()
+    site = self.emit_forward_singleton_site(self.declare_annotations(annotations))
     return 0 if site == nil
     @forward_singleton_calls.push([@current_function_index, site[1], class_name,
                                    @current_module_name, name_token, method_name, site[2],
-                                   method_token, site[3]])
+                                   method_token, site[3], site[4]])
     site[0]
   end
 
-  # emit_forward_call_site for a class singleton declared later: the
-  # receiver slot gets a LOAD_CLASS whose class index is patched in at
-  # resolution, too. Returns [destination, function index operand offset,
-  # argument count (-1 for a spread), class index operand offset].
-  def emit_forward_singleton_site()
+  # emit_forward_call_site for a singleton declared later: the receiver slot
+  # gets a LOAD_CLASS whose class index is patched in at resolution, too, or
+  # gets taken away again if the owner is a module. Returns [destination,
+  # function index operand offset, argument count (-1 for a spread), class
+  # index operand offset, receiver register].
+  def emit_forward_singleton_site(type_arguments)
     self.advance_token()
     self.skip_newlines()
+    if self.call_arguments_have_keyword?() || self.call_arguments_have_spread?()
+      site = self.emit_forward_keyword_site(0, type_arguments)
+      return nil if site == nil
+      return [site[0], site[1], -1, nil, nil]
+    end
     receiver = self.allocate_register()
     class_operand = @code_count + 3
     self.emit_instruction2(Opcode::LOAD_CLASS, receiver, 0)
-    if self.call_arguments_have_spread?()
-      spread_arguments = self.parse_spread_call_arguments()
-      return nil if spread_arguments == nil
-      arguments = self.emit_build_spread_arguments([receiver], spread_arguments, [], false)
-      destination = self.allocate_register()
-      self.emit_call_opcode(Opcode::CALL_SPREAD)
-      self.emit_register(destination)
-      offset = @code_count
-      self.emit_function_index(0)
-      self.emit_register(arguments)
-      return [destination, offset, -1, class_operand]
-    end
     parsed = self.parse_forward_call_arguments()
     return nil if parsed == nil
     base = self.move_contiguous([receiver] + contiguous_registers(parsed[0], parsed[1]))
     destination = self.allocate_register()
-    self.emit_call_opcode(Opcode::CALL)
+    self.emit_call_opcode(if type_arguments.length() == 0 then Opcode::CALL else Opcode::CALL_TYPED end)
     self.emit_register(destination)
     offset = @code_count
     self.emit_function_index(0)
     self.emit_register(base)
     self.emit_byte(parsed[1] + 1)
-    [destination, offset, parsed[1], class_operand]
+    self.emit_type_argument_trailer(type_arguments)
+    # entry[9] must name the slot the arguments follow.
+    [destination, offset, parsed[1], class_operand, base]
   end
 
   # The class a forward reference names, looked up the way parse_name
@@ -4126,6 +4419,28 @@ class Parser
       scope = parts.join("::")
     end
     self.find_class(name)
+  end
+
+  # The module a forward reference names, looked up like find_forward_class.
+  def find_forward_module(name, module_name)
+    scope = module_name
+    while scope != nil && scope != ""
+      entry = self.find_module_by_name(scope + "::" + name)
+      return entry if entry != nil
+      parts = scope.split("::")
+      parts.pop()
+      scope = parts.join("::")
+    end
+    self.find_module_by_name(name)
+  end
+
+  def find_module_by_name(name)
+    index = 0
+    while index < @modules.length()
+      return @modules[index] if @modules[index][0] == name
+      index = index + 1
+    end
+    nil
   end
 
   def store_namespace_constant(name, value)
@@ -4242,7 +4557,17 @@ class Parser
       self.fail("module cannot include itself")
     else
       @builder.include_module_in_module(@current_module_index, included)
+      @included_modules.push([@modules[@current_module_entry][0], self.module_name_at(included)])
     end
+  end
+
+  def module_name_at(module_index)
+    index = 0
+    while index < @modules.length()
+      return @modules[index][0] if @modules[index][1] == module_index
+      index = index + 1
+    end
+    nil
   end
 
   def consume_qualified_module_name()
@@ -5155,8 +5480,7 @@ class Parser
       end
       # `identity[Int]` with no call: a callable with those arguments applied.
       if @current.kind() != :left_paren
-        descriptor = [function_entry[0], function_entry[1], function_entry[2], function_entry[6]]
-        return self.compile_reference_wrapper(nil, [descriptor, false], type_annotations)
+        return self.compile_reference_wrapper(nil, [function_reference_descriptor(function_entry), false], type_annotations)
       end
       type_arguments = self.declare_annotations(type_annotations)
     elsif function_entry[4] > 0
@@ -5174,7 +5498,7 @@ class Parser
       return 0 if arguments == nil
       return self.publish_call_return(function_entry, self.emit_call_spread(function_entry[1], arguments, type_arguments)) if keywords.length() == 0
       destination = self.allocate_register()
-      self.emit_call_opcode(148) # CALL_KEYWORD_SPREAD; Opcode is at its constant limit
+      self.emit_call_opcode(148) # CALL_KEYWORD_SPREAD
       self.emit_register(destination)
       self.emit_function_index(function_entry[1])
       self.emit_register(arguments)
@@ -5423,7 +5747,8 @@ class Parser
         self.fail("too many call arguments")
         return nil
       end
-      @block_context = contextual_block_member(function_entry, block_slot)
+      # A generic callee's type variables mean nothing at this call site.
+      @block_context = if function_entry[4] > 0 then nil else contextual_block_member(function_entry, block_slot) end
       slot_values[block_slot] = self.compile_block()
       slot_filled[block_slot] = true
       argument_count = block_slot + 1
@@ -5886,6 +6211,7 @@ class Parser
       self.emit_instruction2(48, destination, constant_index)
       return destination
     end
+    return self.compile_forward_constant(name) unless lowercase_name?(name)
     self.fail_at(token.start(), token.line(), token.column(), "undefined local variable")
     0
   end
@@ -6350,36 +6676,45 @@ class Parser
     destination
   end
 
-  # Class variables are class-only, never module-level (confirmed
-  # directly against the native compiler: `class_variable_index` fails
-  # "class variable used outside a class" whenever current_class < 0,
-  # with no module_field-style alternative the way instance variables
-  # have) -- so unlike compile_ivar_read/compile_ivar_write above, no
-  # module branch here. GET_CVAR/SET_CVAR take (dest_or_value,
-  # current_class_index, slot), the slot coming from the new
-  # ProgramBuilder#declare_class_variable bridge (mirrors #declare_field).
-  def compile_cvar_write(token, value)
-    if @current_class_index == nil
-      self.fail("class variable used outside a class")
-      return 0
+  # The class holding the current @@variables: the class being compiled, or
+  # for a module a hidden class of its own (compiler.c's class_variable_owner).
+  # GET_CVAR/SET_CVAR take (dest_or_value, owner class index, slot), the slot
+  # coming from ProgramBuilder#declare_class_variable (mirrors #declare_field).
+  def class_variable_owner()
+    return @current_class_index if @current_class_index != nil
+    if @current_module_index == nil
+      self.fail("class variable used outside a class or module")
+      return nil
     end
+    hidden = @modules[@current_module_entry][0] + ".@@"
+    index = 0
+    while index < @module_class_variable_owners.length()
+      return @module_class_variable_owners[index][1] if @module_class_variable_owners[index][0] == hidden
+      index = index + 1
+    end
+    owner = @builder.declare_class(hidden, -1)
+    @module_class_variable_owners.push([hidden, owner])
+    owner
+  end
+
+  def compile_cvar_write(token, value)
+    owner = self.class_variable_owner()
+    return 0 if owner == nil
     variable_text = self.token_text(token)
     variable_name = variable_text.slice(2, variable_text.length() - 2)
-    slot = @builder.declare_class_variable(@current_class_index, variable_name)
-    self.emit_instruction3(Opcode::SET_CVAR, @current_class_index, slot, value)
+    slot = @builder.declare_class_variable(owner, variable_name)
+    self.emit_instruction3(Opcode::SET_CVAR, owner, slot, value)
     value
   end
 
   def compile_cvar_read(token)
-    if @current_class_index == nil
-      self.fail("class variable used outside a class")
-      return 0
-    end
+    owner = self.class_variable_owner()
+    return 0 if owner == nil
     variable_text = self.token_text(token)
     variable_name = variable_text.slice(2, variable_text.length() - 2)
-    slot = @builder.declare_class_variable(@current_class_index, variable_name)
+    slot = @builder.declare_class_variable(owner, variable_name)
     destination = self.allocate_register()
-    self.emit_instruction3(Opcode::GET_CVAR, destination, @current_class_index, slot)
+    self.emit_instruction3(Opcode::GET_CVAR, destination, owner, slot)
     destination
   end
 
@@ -6480,21 +6815,30 @@ class Parser
       self.emit_instruction2(Opcode::MOVE, captured, receiver)
       self.emit_instruction1(Opcode::BOX_LOCAL, captured)
     else
-      if @variadic_functions.include?(target[0][1])
-        self.fail("expected '(' after singleton function")
-        return 0
-      end
-      # A singleton descriptor is [name, function_index, arity,
-      # required_arity, signature?]; an instance method entry is [class,
-      # name, private, required_arity, function_index, arity, signature].
-      descriptor = target[0]
-      callee = [nil, descriptor[0], false, descriptor[3], descriptor[1], descriptor[2],
-                if descriptor.length() > 4 then descriptor[4] else nil end]
+      callee = singleton_reference_callee(target[0])
     end
+    function_index = self.build_reference_function(bound, callee, target, type_annotations)
+    destination = self.allocate_register()
+    self.emit_byte(Opcode::CLOSURE)
+    self.emit_register(destination)
+    self.emit_function_index(function_index)
+    if bound
+      self.emit_byte(1)
+      self.emit_register(captured)
+    else
+      self.emit_byte(0)
+    end
+    destination
+  end
+
+  # The function a method reference closes over, compiled aside from the
+  # function being compiled at the moment. Returns its index.
+  def build_reference_function(bound, callee, target, type_annotations)
+    variadic_singleton = !bound && @variadic_functions.include?(callee[4])
     arity = if callee == nil then 1 else callee[5] end
     required_arity = if callee == nil then 0 else callee[3] end
     function_index = @builder.declare_function("<method reference>", arity, required_arity)
-    @builder.set_parameter_flags(function_index, true, false) if callee == nil && !@failed
+    @builder.set_parameter_flags(function_index, true, false) if (callee == nil || variadic_singleton) && !@failed
 
     outer_locals = @locals
     outer_loops = @loops
@@ -6530,12 +6874,18 @@ class Parser
     # signature is [parameter types, return type, type variables,
     # parameter names]; with explicit bindings a generic one stays untyped.
     signature = if callee == nil then nil else callee[6] end
+    if signature != nil
+      index = 0
+      while index < arity
+        @builder.set_parameter_name(function_index, index, signature[3][index])
+        index = index + 1
+      end
+    end
     if signature != nil && (signature[2].length() == 0 || type_arguments.length() == 0)
       @current_type_variables = signature[2]
       @builder.set_type_variables(function_index, signature[2]) if signature[2].length() > 0
       index = 0
       while index < arity && !@failed
-        @builder.set_parameter_name(function_index, index, signature[3][index])
         if signature[0][index] != nil
           @builder.set_parameter_type(function_index, index, self.declare_annotation(signature[0][index]))
         end
@@ -6553,7 +6903,10 @@ class Parser
       self.emit_instruction2(Opcode::GET_CAPTURE, bound_receiver, 0)
       method_name_index = self.add_string(target)
     end
-    count = required_arity
+    if variadic_singleton
+      result = self.emit_variadic_singleton_call(base, arity, callee[4], target[1], type_arguments)
+    end
+    count = if variadic_singleton then arity + 1 else required_arity end
     while count <= arity
       skip = nil
       if count < arity
@@ -6601,18 +6954,27 @@ class Parser
     @current_function_index = outer_function_index
     @pending_block_call = outer_pending_block_call
     @type_facts = outer_type_facts
+    function_index
+  end
 
-    destination = self.allocate_register()
-    self.emit_byte(Opcode::CLOSURE)
-    self.emit_register(destination)
-    self.emit_function_index(function_index)
-    if bound
-      self.emit_byte(1)
-      self.emit_register(captured)
-    else
-      self.emit_byte(0)
+  # A reference's frame holds a variadic target's fixed arguments and rest in
+  # its first registers; passes them on as one array.
+  def emit_variadic_singleton_call(base, arity, function_index, receiver, type_arguments)
+    fixed = arity - 1
+    self.emit_instruction3(Opcode::COLLECT_VARIADIC, base + fixed, fixed, 0)
+    spread = base + fixed
+    if fixed > 0
+      spread = self.emit_build_spread_arguments(contiguous_registers(base, fixed), spread, [], false)
     end
-    destination
+    result = self.allocate_register()
+    self.emit_call_opcode(if type_arguments.length() == 0 then 143 else 147 end) # CALL_[TYPED_]SINGLETON_SPREAD
+    self.emit_register(result)
+    self.emit_function_index(function_index)
+    self.emit_register(spread)
+    self.emit_register(if receiver == true || receiver == false then 65535 else receiver end)
+    self.emit_byte(if receiver == false then 0 else 1 end)
+    self.emit_type_argument_trailer(type_arguments)
+    result
   end
 
   # `receiver.method(args)` -- reached from parse_precedence's own
@@ -7517,6 +7879,12 @@ class Parser
 
   def object_pattern_ahead?() = self.object_pattern_name() != nil
 
+  def valid_case_pattern_reader?(class_index, name)
+    reader = self.case_pattern_reader(class_index, name)
+    return self.includes_a_module?(class_index) if reader == nil
+    !reader[2] && reader[3] == 0
+  end
+
   def case_pattern_reader(class_index, reader)
     walk = class_index
     while walk != nil
@@ -7737,14 +8105,17 @@ class Parser
   # readers: the current token is the class name.
   def parse_case_object_group(node, object_name, depth, counter)
     class_entry = self.find_forward_class(object_name[0], @current_module_name)
-    if class_entry == nil
-      self.fail("unknown class '" + object_name[0] + "' in object pattern")
-      return node
-    end
     node[0] = :object
-    node[7] = class_entry[1]
+    node[7] = if class_entry == nil then nil else class_entry[1] end
     node[3] = self.allocate_register()
-    self.emit_instruction2(Opcode::LOAD_CLASS, node[3], class_entry[1])
+    # A class declared later: its index and readers are checked at resolution.
+    readers = nil
+    if class_entry == nil
+      readers = []
+      @forward_pattern_classes.push([@current_function_index, @code_count + 3, object_name[0],
+                                     @current_module_name, @current, readers])
+    end
+    self.emit_instruction2(Opcode::LOAD_CLASS, node[3], if class_entry == nil then 0 else class_entry[1] end)
     index = 0
     while index < object_name[1]
       self.advance_token()
@@ -7763,9 +8134,9 @@ class Parser
       end
       reader_token = @current
       reader_name = self.token_text(@current)
-      reader = self.case_pattern_reader(class_entry[1], reader_name)
-      unknown = reader == nil && !self.includes_a_module?(class_entry[1])
-      if unknown || (reader != nil && (reader[2] || reader[3] > 0))
+      if class_entry == nil
+        readers.push(reader_token)
+      elsif !self.valid_case_pattern_reader?(class_entry[1], reader_name)
         self.fail("case object pattern requires a public zero-argument reader")
         return node
       end
@@ -7916,7 +8287,8 @@ class Parser
           unconstrained = false if kind != :bind && kind != :wildcard
           index = index + 1
         end
-        covered.push(Type::CLASS_BASE + root[7]) if unconstrained
+        # A class declared later (root[7] nil) can't cover the subject's type yet.
+        covered.push(Type::CLASS_BASE + root[7]) if unconstrained && root[7] != nil
       end
       found = collect_case_bindings(root, [])
       left = 0
@@ -8358,6 +8730,10 @@ class Parser
           return 0
         end
         name = self.token_text(@current)
+        # DIAMOND_CLASS_FROM_SELF: the class self is at run time, so a base
+        # class's singleton method adds methods to the subclass it's called on.
+        return self.compile_method_synthesis_call(65535) if method_synthesis_name?(name)
+        return self.compile_redefine_method_call(65535) if name == "redefine_method"
         self.advance_token()
         return self.compile_self_class_call(name)
       end
@@ -8669,6 +9045,7 @@ class Parser
     return self.compile_class_dot_call(class_entry) if class_entry != nil && @current.kind() == :dot
     return self.compile_specialized_new(class_entry) if self.specialized_new_ahead?(class_entry)
     local = self.find_local(name)
+    return self.parse_array_new_call() if name == "Array" && class_entry == nil && local == nil && @current.kind() == :dot
     return self.parse_file_open_call() if self.is_file_open_target(name, class_entry, local)
     dot_construct = self.dot_construct_id(name, class_entry, local)
     return self.parse_dot_construct_call(dot_construct) if dot_construct >= 0
@@ -8688,6 +9065,9 @@ class Parser
       first = name.slice(0, 1)
       if first >= "A" && first <= "Z" && class_entry == nil && module_entry == nil
         return self.compile_forward_class_call(@previous) if @current.kind() == :dot
+        if @current.kind() == :left_bracket && self.forward_specialized_new_ahead?()
+          return self.compile_specialized_new(nil, @previous, name)
+        end
         if @current.kind() != :left_paren && (@current.kind() != :left_bracket || !self.callable_name?(name))
           return self.compile_forward_constant(name)
         end
@@ -8698,8 +9078,14 @@ class Parser
     if local == nil
       function_entry = self.find_function(name)
       return self.compile_function_value(function_entry) if function_entry != nil
-      self.fail_at(@previous.start(), @previous.line(), @previous.column(), "undefined local variable")
-      return 0
+      # A function declared later, as far as this single pass can tell.
+      destination = self.allocate_register()
+      self.emit_byte(Opcode::CLOSURE)
+      self.emit_register(destination)
+      @forward_function_values.push([@current_function_index, @code_count, name, @previous])
+      self.emit_function_index(0)
+      self.emit_byte(0)
+      return destination
     end
     self.read_local(local)
   end
@@ -8848,6 +9234,7 @@ class Parser
       return 0
     end
     name = self.token_text(@current)
+    method_token = @current
     self.advance_token()
     if @current.kind() == :equal
       name = name + "="
@@ -8856,8 +9243,7 @@ class Parser
     exported = find_descriptor(module_entry[7], name)
     declared = find_descriptor(module_entry[9], name)
     if exported == nil && declared == nil
-      self.fail("undefined module singleton function")
-      return 0
+      return self.compile_forward_singleton_member(method_token, module_entry[0], name, method_token)
     end
     type_annotations = self.parse_explicit_type_annotations()
     return 0 if type_annotations == nil
@@ -8927,8 +9313,7 @@ class Parser
     arguments = self.parse_dynamic_keyword_arguments(block_context) if arguments == nil
     return 0 if arguments == nil
     destination = self.allocate_register()
-    # CALL_SINGLETON_KEYWORDS (154) / CALL_TYPED_SINGLETON_KEYWORDS (155):
-    # the Opcode module is at its constant limit.
+    # CALL_SINGLETON_KEYWORDS (154) / CALL_TYPED_SINGLETON_KEYWORDS (155).
     self.emit_call_opcode(if type_arguments.length() == 0 then 154 else 155 end)
     self.emit_register(destination)
     self.emit_function_index(function_index)
@@ -9024,6 +9409,10 @@ class Parser
       self.advance_token()
       return self.compile_redefine_method_call(class_entry[1])
     end
+    if peeked.kind() == :identifier && method_synthesis_name?(self.token_text(peeked))
+      self.advance_token()
+      return self.compile_method_synthesis_call(class_entry[1])
+    end
     if peeked.kind() == :identifier
       # A writer singleton (`def self.name=(value)`) is registered under
       # "name=" -- peek one token further to see whether this call site
@@ -9037,15 +9426,61 @@ class Parser
       else
         self.find_class_singleton_descriptor(class_entry, candidate_name)
       end
-      if found != nil
+      lookup_name = if after.kind() == :equal then writer_name else candidate_name end
+      overridable = class_entry[1] == @current_class_index && find_descriptor(class_entry[3], lookup_name) == nil
+      if found != nil && !overridable
         self.advance_token()
         return self.compile_class_singleton_call(class_entry)
       end
-      if candidate_name != "new" && after.kind() == :left_paren
-        return self.compile_forward_class_call(@previous)
-      end
+      return self.compile_forward_class_call(@previous, class_entry[0]) if candidate_name != "new"
     end
     self.compile_new_call(class_entry[1])
+  end
+
+  # `Klass.define_method(name, callable)` and `Klass.compile_method(name,
+  # params, body_source, bound_values)`: the current token is the name.
+  def compile_method_synthesis_call(class_index)
+    label = self.token_text(@current)
+    compiling = label == "compile_method"
+    separators = if compiling then ["name", "params", "body_source", nil] else ["name", nil] end
+    self.advance_token()
+    if @current.kind() != :left_paren
+      self.fail("expected '(' after '" + label + "'")
+      return 0
+    end
+    self.advance_token()
+    self.skip_newlines()
+    registers = []
+    index = 0
+    while index < separators.length()
+      registers.push(self.parse_expression())
+      self.skip_newlines()
+      if separators[index] != nil
+        if @current.kind() != :comma
+          self.fail("expected ',' after " + label + " " + separators[index])
+          return 0
+        end
+        self.advance_token()
+        self.skip_newlines()
+      end
+      index = index + 1
+    end
+    if @current.kind() != :right_paren
+      self.fail("expected ')' after " + label + " arguments")
+      return 0
+    end
+    self.advance_token()
+    destination = self.allocate_register()
+    self.emit_byte(if compiling then Opcode::COMPILE_METHOD else Opcode::DEFINE_METHOD end)
+    self.emit_register(destination)
+    self.emit_register(class_index)
+    index = 0
+    while index < registers.length()
+      self.emit_register(registers[index])
+      index = index + 1
+    end
+    self.set_type_fact(destination, if compiling then Type::CALLABLE else Type::NIL end)
+    destination
   end
 
   def compile_redefine_method_call(class_index)
@@ -9099,19 +9534,12 @@ class Parser
 
   # `Box[Int].new(...)`: NEW_TYPED carries the type arguments. Two of them
   # travel as one Hash-shaped member, as in compiler.c.
-  def compile_specialized_new(class_entry)
+  def compile_specialized_new(class_entry, name_token = nil, class_name = nil)
     annotations = self.parse_explicit_type_annotations()
     return 0 if annotations == nil
-    if class_entry[5]
-      self.fail("inherited type arguments are fixed by the superclass")
-      return 0
-    end
-    if annotations.length() != class_entry[4].length()
-      self.fail(if class_entry[4].length() == 2
-        "class specialization requires exactly two declared type arguments"
-      else
-        "class specialization requires exactly one declared type argument"
-      end)
+    message = if class_entry == nil then nil else specialization_error(class_entry, annotations.length()) end
+    if message != nil
+      self.fail(message)
       return 0
     end
     if @current.kind() != :dot
@@ -9123,7 +9551,8 @@ class Parser
       self.fail("expected constructor of an instantiable generic class")
       return 0
     end
-    return 0 if self.fail_if_sealed(class_entry[1], @current)
+    new_token = @current
+    return 0 if class_entry != nil && self.fail_if_sealed(class_entry[1], @current)
     self.advance_token()
     if @current.kind() != :left_paren
       self.fail("expected '(' after 'new'")
@@ -9143,11 +9572,32 @@ class Parser
     destination = self.allocate_register()
     self.emit_call_opcode(Opcode::NEW_TYPED)
     self.emit_register(destination)
-    self.emit_register(class_entry[1])
+    if class_entry == nil
+      @forward_news.push([@current_function_index, @code_count, class_name, @current_module_name,
+                          name_token, new_token, annotations.length()])
+      self.emit_register(0)
+    else
+      self.emit_register(class_entry[1])
+    end
     self.emit_register(explicit_type)
     self.emit_keyword_trailer(arguments)
-    self.set_type_fact(destination, Type::CLASS_BASE + class_entry[1])
+    self.set_type_fact(destination, Type::CLASS_BASE + class_entry[1]) if class_entry != nil
     destination
+  end
+
+  # `Later[Int].new(...)`, with `[` current, before class Later is declared.
+  def forward_specialized_new_ahead?()
+    lookahead = @lexer.clone()
+    brackets = 1
+    while brackets > 0
+      token = lookahead.next_token()
+      return false if token.kind() == :eof
+      brackets = brackets + 1 if token.kind() == :left_bracket
+      brackets = brackets - 1 if token.kind() == :right_bracket
+    end
+    return false if lookahead.next_token().kind() != :dot
+    token = lookahead.next_token()
+    token.kind() == :identifier && self.token_text(token) == "new"
   end
 
   def compile_new_call(class_index)
@@ -9245,6 +9695,7 @@ class Parser
     return true if name == "to_f"
     return true if name == "to_i"
     return true if name == "to_sym"
+    return true if name == "exit"
     name == "diamond_json_stringify"
   end
 
@@ -9254,7 +9705,78 @@ class Parser
     return self.parse_to_float_call() if name == "to_f"
     return self.parse_to_int_call() if name == "to_i"
     return self.parse_json_stringify_call() if name == "diamond_json_stringify"
+    return self.parse_exit_call() if name == "exit"
     self.parse_to_sym_call()
+  end
+
+  def parse_exit_call()
+    self.advance_token()
+    self.skip_newlines()
+    code = if @current.kind() == :right_paren
+      zero = self.allocate_register()
+      self.emit_instruction2(Opcode::CONSTANT, zero, self.add_constant(0))
+      zero
+    else
+      self.parse_expression()
+    end
+    self.skip_newlines()
+    if @current.kind() != :right_paren
+      self.fail("expected ')' after exit arguments")
+      return 0
+    end
+    self.advance_token()
+    destination = self.allocate_register()
+    self.emit_byte(Opcode::EXIT)
+    self.emit_register(code)
+    self.set_type_fact(destination, Type::NIL)
+    destination
+  end
+
+  # `Array.new(length, fill = nil)` is `[fill] * length`, with the length
+  # checked first: `Array * String` joins. The current token is the '.'.
+  def parse_array_new_call()
+    self.advance_token()
+    if @current.kind() != :identifier || self.token_text(@current) != "new"
+      self.fail("expected 'new' after 'Array'")
+      return 0
+    end
+    self.advance_token()
+    if @current.kind() != :left_paren
+      self.fail("expected '(' after 'Array.new'")
+      return 0
+    end
+    self.advance_token()
+    self.skip_newlines()
+    length = self.parse_expression()
+    self.emit_instruction2(Opcode::CHECK_TYPE, length, self.declare_annotation([["Int", nil, nil, -1, nil, nil]]))
+    self.skip_newlines()
+    fill = nil
+    if @current.kind() == :comma
+      self.advance_token()
+      self.skip_newlines()
+      fill = self.parse_expression()
+      self.skip_newlines()
+    else
+      fill = self.allocate_register()
+      self.emit_instruction1(Opcode::NIL, fill)
+    end
+    if @current.kind() != :right_paren
+      self.fail("expected ')' after Array.new arguments (Array.new(n) { |i| ... } is not supported)")
+      return 0
+    end
+    self.advance_token()
+    if @current.kind() == :left_brace || @current.kind() == :do
+      self.fail("Array.new does not take a block; build the array with n.times or map instead")
+      return 0
+    end
+    base = self.allocate_register()
+    self.emit_instruction2(Opcode::MOVE, base, fill)
+    single = self.allocate_register()
+    self.emit_instruction3(Opcode::ARRAY, single, base, 1)
+    destination = self.allocate_register()
+    self.emit_instruction3(Opcode::MULTIPLY, destination, single, length)
+    self.set_type_fact(destination, Type::ARRAY)
+    destination
   end
 
   def parse_gets_call()
@@ -9644,8 +10166,20 @@ class Parser
       digits = digits + character unless character == "_"
       index = index + 1
     end
+    value = digits.to_i(base)
+    if value > 9223372036854775807
+      # Past 64 bits there is no inline constant to hold it, so the literal is
+      # built at run time from its digits, as in compiler.c's parse_integer.
+      text_register = self.allocate_register()
+      self.emit_instruction2(Opcode::STRING, text_register, self.add_string(digits))
+      base_register = self.allocate_register()
+      self.emit_instruction2(Opcode::CONSTANT, base_register, self.add_constant(base))
+      result = self.emit_destructure_invoke(text_register, "to_i", base_register)
+      self.set_type_fact(result, Type::INT)
+      return result
+    end
     destination = self.allocate_register()
-    constant = self.add_constant(digits.to_i(base))
+    constant = self.add_constant(value)
     self.emit_instruction2(Opcode::CONSTANT, destination, constant)
     self.set_type_fact(destination, Type::INT)
     destination
