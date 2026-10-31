@@ -109,7 +109,7 @@ void diamond_run_source_set_print_result(bool print) {
 }
 
 bool diamond_run_source_prints_result(void) {
-    return print_result_requested || getenv("DIAMOND_PRINT_RESULT") != nullptr;
+    return print_result_requested || diamond_env_flag("DIAMOND_PRINT_RESULT");
 }
 
 static int run_compiled_chunk(const char *name, DiamondChunk chunk, DiamondBytecodeDump dump_bytecode,
@@ -128,11 +128,11 @@ static int run_compiled_chunk(const char *name, DiamondChunk chunk, DiamondBytec
     DiamondVm vm;
     diamond_vm_init(&vm);
     diamond_vm_set_argv(&vm,script_argc,script_argv);
-    vm.stress_gc = getenv("DIAMOND_STRESS_GC") != nullptr;
-    vm.stress_minor_gc = getenv("DIAMOND_STRESS_MINOR_GC") != nullptr;
-    vm.quickening = getenv("DIAMOND_QUICKEN") != nullptr;
-    vm.count_opcodes = getenv("DIAMOND_TRACE_OPCODES") != nullptr ||
-                       getenv("DIAMOND_TRACE_TAIL_CALLS") != nullptr;
+    vm.stress_gc = diamond_env_flag("DIAMOND_STRESS_GC");
+    vm.stress_minor_gc = diamond_env_flag("DIAMOND_STRESS_MINOR_GC");
+    vm.quickening = diamond_env_flag("DIAMOND_QUICKEN");
+    vm.count_opcodes = diamond_env_flag("DIAMOND_TRACE_OPCODES") ||
+                       diamond_env_flag("DIAMOND_TRACE_TAIL_CALLS");
     const char *quickening_threshold = getenv("DIAMOND_QUICKEN_THRESHOLD");
     if (quickening_threshold != nullptr && quickening_threshold[0] != '\0') {
         char *end = nullptr;
@@ -163,10 +163,10 @@ static int run_compiled_chunk(const char *name, DiamondChunk chunk, DiamondBytec
     }
     DiamondVmStatus status=DIAMOND_VM_OK;
     for(size_t iteration=0;iteration<repeat_count;iteration++) {
-        if (iteration>0 && getenv("DIAMOND_INVALIDATE_IC_EACH_RUN") != nullptr)
+        if (iteration>0 && diamond_env_flag("DIAMOND_INVALIDATE_IC_EACH_RUN"))
             diamond_vm_invalidate_method_caches(&vm);
         status=diamond_vm_run(&vm,&chunk,&result);
-        if (getenv("DIAMOND_TRACE_IC_EACH_RUN") != nullptr)
+        if (diamond_env_flag("DIAMOND_TRACE_IC_EACH_RUN"))
             fprintf(stderr,"run %zu: inline caches: %zu hits, %zu misses, rewrites: %zu\n",
                     iteration+1,vm.inline_cache_hits,vm.inline_cache_misses,
                     vm.direct_dispatch_rewrites);
@@ -187,15 +187,15 @@ static int run_compiled_chunk(const char *name, DiamondChunk chunk, DiamondBytec
         diamond_value_print(result);
         putchar('\n');
     }
-    if (getenv("DIAMOND_TRACE_IC") != nullptr) {
+    if (diamond_env_flag("DIAMOND_TRACE_IC")) {
         fprintf(stderr,"inline caches: %zu hits, %zu misses\n",
                 vm.inline_cache_hits,vm.inline_cache_misses);
     }
-    if (getenv("DIAMOND_TRACE_JIT") != nullptr) {
+    if (diamond_env_flag("DIAMOND_TRACE_JIT")) {
         fprintf(stderr,"jit: %zu compiled function(s), %zu bailout(s), %zu hard propagation(s)\n",
                 vm.jit_compiled_functions,vm.jit_bailouts,vm.jit_hard_propagations);
     }
-    if (getenv("DIAMOND_TRACE_IC_SITES") != nullptr) {
+    if (diamond_env_flag("DIAMOND_TRACE_IC_SITES")) {
         for (size_t index=0;index<DIAMOND_INLINE_CACHE_COUNT;index++) {
             const DiamondMethodCache *cache=&vm.method_caches[index];
             if (cache->site != nullptr)
@@ -203,35 +203,35 @@ static int run_compiled_chunk(const char *name, DiamondChunk chunk, DiamondBytec
                         index,cache->hits,cache->misses,cache->entry_count);
         }
     }
-    if (getenv("DIAMOND_TRACE_IC_FAST") != nullptr)
+    if (diamond_env_flag("DIAMOND_TRACE_IC_FAST"))
         fprintf(stderr,"monomorphic dispatches: %zu\n",vm.monomorphic_dispatches);
-    if (getenv("DIAMOND_TRACE_IC_PROBES") != nullptr)
+    if (diamond_env_flag("DIAMOND_TRACE_IC_PROBES"))
         fprintf(stderr,"method cache probes: %zu\n",vm.method_cache_probes);
-    if (getenv("DIAMOND_TRACE_IC_REWRITES") != nullptr)
+    if (diamond_env_flag("DIAMOND_TRACE_IC_REWRITES"))
         fprintf(stderr,"direct dispatch rewrites: %zu\n",vm.direct_dispatch_rewrites);
-    if (getenv("DIAMOND_TRACE_IC_POLICY") != nullptr)
+    if (diamond_env_flag("DIAMOND_TRACE_IC_POLICY"))
         fprintf(stderr,"dispatch policy: quicken threshold %zu, monomorphic threshold %zu\n",
                 vm.quickening_threshold,vm.monomorphic_threshold);
-    if (getenv("DIAMOND_TRACE_SHAPES") != nullptr) {
+    if (diamond_env_flag("DIAMOND_TRACE_SHAPES")) {
         fprintf(stderr,"shape transitions: %zu\n",vm.shape_transitions);
     }
-    if (getenv("DIAMOND_TRACE_FIELDS") != nullptr) {
+    if (diamond_env_flag("DIAMOND_TRACE_FIELDS")) {
         fprintf(stderr,"field caches: %zu hits, %zu misses\n",
                 vm.field_cache_hits,vm.field_cache_misses);
     }
-    if (getenv("DIAMOND_TRACE_OPCODES") != nullptr) {
+    if (diamond_env_flag("DIAMOND_TRACE_OPCODES")) {
         for (size_t opcode=0;opcode<DIAMOND_OP_COUNT;opcode++)
             if (vm.opcode_counts[opcode]!=0)
                 fprintf(stderr,"opcode[%zu]: %zu\n",opcode,
                         vm.opcode_counts[opcode]);
     }
-    if (getenv("DIAMOND_TRACE_TAIL_CALLS") != nullptr)
+    if (diamond_env_flag("DIAMOND_TRACE_TAIL_CALLS"))
         fprintf(stderr,"tail calls: %zu optimized in place\n",
                 vm.opcode_counts[DIAMOND_OP_TAIL_CALL]);
-    if (getenv("DIAMOND_TRACE_QUICKEN") != nullptr)
+    if (diamond_env_flag("DIAMOND_TRACE_QUICKEN"))
         fprintf(stderr,"quickened sites: %zu, deoptimized sites: %zu\n",
                 vm.quickened_sites,vm.deoptimized_sites);
-    if (getenv("DIAMOND_TRACE_GC") != nullptr)
+    if (diamond_env_flag("DIAMOND_TRACE_GC"))
         fprintf(stderr,"GC: %zu major (%.6fs), %zu minor (%.6fs)\n",
                 vm.gc_major_collection_count,vm.gc_major_total_seconds,
                 vm.gc_minor_collection_count,vm.gc_minor_total_seconds);
@@ -295,7 +295,7 @@ static int run_source_from_bundle_program(const char *name, DiamondSourceBundle 
          * own text, so the cache can leave those functions out too (it
          * falls back to the whole program when they differ). */
         diamond_program_write_cache_file(cache_path, source_hash, program, cache_template);
-        if (getenv("DIAMOND_TRACE_CACHE") != nullptr)
+        if (diamond_env_flag("DIAMOND_TRACE_CACHE"))
             fprintf(stderr, "cache: wrote %s\n", cache_path);
     }
 
@@ -308,7 +308,7 @@ static int run_source_from_bundle_program(const char *name, DiamondSourceBundle 
 int diamond_run_source_with_program(const char *name, const char *source,
         DiamondBytecodeDump dump_bytecode, DiamondProgram *program,
         int script_argc, char *const *script_argv) {
-    const bool trace_startup=getenv("DIAMOND_TRACE_STARTUP") != nullptr;
+    const bool trace_startup=diamond_env_flag("DIAMOND_TRACE_STARTUP");
     const double start_time=trace_startup ? diamond_monotonic_seconds() : 0;
     DiamondSourceBundle bundle;char load_error[768];
     if(!diamond_load_program(name,source,&bundle,load_error,sizeof load_error)) {
@@ -345,7 +345,7 @@ static int run_source_from_bundle_template(const char *name, DiamondSourceBundle
     const double compiled_time=trace_startup ? diamond_monotonic_seconds() : 0;
     if (cache_path != nullptr) {
         diamond_program_write_cache_file(cache_path, source_hash, program, template);
-        if (getenv("DIAMOND_TRACE_CACHE") != nullptr)
+        if (diamond_env_flag("DIAMOND_TRACE_CACHE"))
             fprintf(stderr, "cache: wrote %s\n", cache_path);
     }
 
@@ -358,7 +358,7 @@ static int run_source_from_bundle_template(const char *name, DiamondSourceBundle
 int diamond_run_source_with_template(const char *name, const char *source,
         DiamondBytecodeDump dump_bytecode, DiamondProgram *program, const DiamondProgram *template,
         int script_argc, char *const *script_argv) {
-    const bool trace_startup=getenv("DIAMOND_TRACE_STARTUP") != nullptr;
+    const bool trace_startup=diamond_env_flag("DIAMOND_TRACE_STARTUP");
     const double start_time=trace_startup ? diamond_monotonic_seconds() : 0;
     DiamondSourceBundle bundle;char load_error[768];
     if(!diamond_load_program(name,source,&bundle,load_error,sizeof load_error)) {
@@ -431,7 +431,7 @@ int diamond_run_source(const char *name, const char *source, DiamondBytecodeDump
         fprintf(stderr,"diamond: out of memory allocating program\n");
         return 74;
     }
-    const bool trace_startup=getenv("DIAMOND_TRACE_STARTUP") != nullptr;
+    const bool trace_startup=diamond_env_flag("DIAMOND_TRACE_STARTUP");
     const double start_time=trace_startup ? diamond_monotonic_seconds() : 0;
     DiamondSourceBundle bundle;char load_error[768];
     if(!diamond_load_program(name,source,&bundle,load_error,sizeof load_error)) {
@@ -479,11 +479,11 @@ int diamond_run_source(const char *name, const char *source, DiamondBytecodeDump
      * `-e` (diamond_cache_path_for's own nullptr return), a debug
      * session (must not interfere with dap/main.c's own combined-buffer
      * assumptions, same reason the embedded-template fast path above is
-     * already skipped for one), and whenever DIAMOND_NO_CACHE is set. */
+     * already skipped for one), and whenever DIAMOND_NO_CACHE is on. */
     /* A targeted dump needs the compile path's prelude boundary. Recompile
      * instead of guessing whether a cached program came from a template. */
     char *cache_path = (dump_bytecode != DIAMOND_DUMP_USER &&
-        !debug_mode && getenv("DIAMOND_NO_CACHE")==nullptr) ?
+        !debug_mode && !diamond_env_flag("DIAMOND_NO_CACHE")) ?
         diamond_cache_path_for(name) : nullptr;
     uint8_t source_hash[32];
     bool used_cache = false;
@@ -501,7 +501,7 @@ int diamond_run_source(const char *name, const char *source, DiamondBytecodeDump
     if (cache_path != nullptr) {
         diamond_hash_source(bundle.source, source_hash);
         used_cache = diamond_program_read_cache_file(cache_path, source_hash, program, template);
-        if (getenv("DIAMOND_TRACE_CACHE") != nullptr)
+        if (diamond_env_flag("DIAMOND_TRACE_CACHE"))
             fprintf(stderr, "cache: %s %s\n", used_cache ? "hit" : "miss", cache_path);
     }
 

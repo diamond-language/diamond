@@ -90,7 +90,7 @@ static void *mysql_connect_thread(void *argument) {
     } while (false)
 #define VM_SANDBOX_GUARD(capability_name_, category_)                     \
     do {                                                                  \
-        if (getenv("DIAMOND_SANDBOX") != nullptr &&                      \
+        if (diamond_sandbox_enabled() &&                      \
             !sandbox_category_allowed(category_)) {                       \
             snprintf(vm->error,sizeof vm->error,                          \
                 "sandbox denies %s",(capability_name_));                  \

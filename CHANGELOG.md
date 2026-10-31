@@ -143,7 +143,9 @@ authoritative fine-grained record.
   did on a Hash. A block with side effects no longer runs for the remaining elements.
 - A type check failing after a JIT-compiled call reports `expected Int, got String` instead
   of a bare `type error`.
-- `DIAMOND_JIT=0` and an empty `DIAMOND_JIT` leave the JIT off; any set value used to enable it.
+- On/off `DIAMOND_` flags such as `DIAMOND_JIT` and `DIAMOND_NO_CACHE` are off when set to `0` or an
+  empty value; any set value used to enable them. `DIAMOND_SANDBOX=0` turns the sandbox off, while an
+  empty value keeps it on and `--sandbox` always enables it.
 - `http_head` no longer raises "gzip decompression failed" when a server declares
   `Content-Encoding: gzip`, as most do. An empty response body is returned as received
   (http 0.2.3). This also made the site-checker example fail on its own sample URLs.

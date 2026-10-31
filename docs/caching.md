@@ -108,7 +108,7 @@ for the `diamond` binary that wrote it, so warm with the binary the deployment r
 
 ## Disabling it
 
-`DIAMOND_NO_CACHE=1` (any value, matching `DIAMOND_STRESS_GC`'s own convention) turns
+`DIAMOND_NO_CACHE=1` (any value except an empty one or `0`) turns
 caching off entirely for that invocation -- no `.d6c` file is read or written.
 `DIAMOND_TRACE_CACHE=1` prints a `cache: hit`/`cache: miss`/`cache: wrote` line to
 stderr, useful for confirming the feature is actually doing something.

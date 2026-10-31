@@ -59,11 +59,11 @@ int main(int argc, char **argv) {
         free(program);
         return 70;
     }
-    if (getenv("DIAMOND_PRINT_RESULT") != nullptr) {
+    if (diamond_env_flag("DIAMOND_PRINT_RESULT")) {
         diamond_value_print(result);
         putchar('\n');
     }
-    if (getenv("DIAMOND_TRACE_JIT") != nullptr) {
+    if (diamond_env_flag("DIAMOND_TRACE_JIT")) {
         fprintf(stderr, "jit: %zu compiled function(s), %zu bailout(s), %zu hard propagation(s)\n",
             vm.jit_compiled_functions, vm.jit_bailouts, vm.jit_hard_propagations);
     }

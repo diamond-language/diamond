@@ -1191,7 +1191,7 @@ bool diamond_compile_impl(const char *source, DiamondProgram *program,
      * goes, the same env-var-gated convention as DIAMOND_TRACE_GC and
      * friends (src/run_source.c). CLOCK_MONOTONIC, matching every other
      * wall-time measurement in this codebase. */
-    const bool trace_compile=getenv("DIAMOND_TRACE_COMPILE")!=nullptr;
+    const bool trace_compile=diamond_env_flag("DIAMOND_TRACE_COMPILE");
     struct timespec trace_start={0},trace_discovery_done={0},trace_end={0};
     if(trace_compile)clock_gettime(CLOCK_MONOTONIC,&trace_start);
     const bool allow_top_level_redefinition = program->allow_top_level_redefinition;

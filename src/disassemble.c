@@ -1919,7 +1919,7 @@ bool diamond_disassemble(FILE *stream, const char *name,
 }
 
 bool diamond_verify_bytecode(const DiamondChunk *chunk) {
-    FILE *sink = getenv("DIAMOND_DEBUG_VERIFY") ? stderr : fopen("/dev/null", "w");
+    FILE *sink = diamond_env_flag("DIAMOND_DEBUG_VERIFY") ? stderr : fopen("/dev/null", "w");
     if (sink == nullptr) return false;
     const bool valid = diamond_disassemble(sink, chunk->name, chunk);
     if (sink != stderr) fclose(sink);

@@ -23,6 +23,8 @@
 #include "value.h"
 #include "object.h"
 
+#include <stdlib.h>
+#include <string.h>
 #include <pthread.h>
 #include <stdatomic.h>
 #include <stddef.h>
@@ -818,6 +820,20 @@ static inline int diamond_plain_type_match(DiamondValue value, uint16_t id) {
  * (see docs/internal/orm-return-annotations.md); 64 and 128 still thrash on
  * capacity alone. */
 enum { DIAMOND_INLINE_CACHE_COUNT = 256 };
+
+/* An on/off DIAMOND_ environment flag: off when unset, empty or "0". */
+static inline bool diamond_env_flag(const char *name) {
+    const char *value = getenv(name);
+    return value != nullptr && value[0] != '\0' && strcmp(value, "0") != 0;
+}
+
+/* Only an explicit "0" turns the sandbox off: an empty value, such as a wrapper
+ * script expanding an unset variable, must not silently remove it. */
+static inline bool diamond_sandbox_enabled(void) {
+    const char *value = getenv("DIAMOND_SANDBOX");
+    return value != nullptr && strcmp(value, "0") != 0;
+}
+
 enum { DIAMOND_INLINE_CACHE_WAYS = 4 };
 enum { DIAMOND_INLINE_CACHE_WIDTH = 4 };
 /* INT, TERM, HUP -- see docs/io.md's signals section for why this

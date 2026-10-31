@@ -896,7 +896,7 @@ static int diamond_main(int argc, char **argv) {
     /* DIAMOND_FORCE_REPL exists purely for tests/repl_test.sh: a bash
      * coproc drives the REPL over pipes, not a real pty, so isatty()
      * alone would never launch it there. */
-    if (argc == 1 && (isatty(STDIN_FILENO) || getenv("DIAMOND_FORCE_REPL") != nullptr)) {
+    if (argc == 1 && (isatty(STDIN_FILENO) || diamond_env_flag("DIAMOND_FORCE_REPL"))) {
         return diamond_repl_run();
     }
 
