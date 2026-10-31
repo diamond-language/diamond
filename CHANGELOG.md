@@ -103,6 +103,8 @@ authoritative fine-grained record.
 
 ### Changed
 
+- Generic setup no longer slows ordinary calls: a call to a non-generic function runs
+  3-5% fewer instructions than it did since generic classes landed.
 - The terminal task board redraws on idle resize, shows focused project/task
   forms, selects newly created projects, and keeps escape-prefixed shortcuts
   from cancelling or flashing the active form. Timed terminal reads resume
