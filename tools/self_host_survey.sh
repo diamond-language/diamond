@@ -32,7 +32,8 @@ if [[ "${1:-}" == --case ]]; then
     printf '%s\n' "tests/cases/$name.d6" |
         env ${env_args[@]+"${env_args[@]}"} timeout "${SURVEY_TIMEOUT:-30}" \
         build/diamond selfhost/parser_run_with_core.d6 > "$work/out" 2> "$work/err" || status=$?
-    if [[ "$status" == 0 ]] && cmp -s "$work/out" "tests/cases/$name.expected"; then
+    # Compared without trailing newlines, as the test harness does.
+    if [[ "$status" == 0 ]] && [[ "$(cat "$work/out")" == "$(cat "tests/cases/$name.expected")" ]]; then
         printf 'pass\t%s\t\n' "$name"
     else
         reason="$(head -1 "$work/err" | tr '\t' ' ' | cut -c1-240)"

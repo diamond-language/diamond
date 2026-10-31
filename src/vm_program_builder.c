@@ -1032,7 +1032,8 @@ static DiamondVmStatus program_builder_set_module_method_visibility(DiamondVm *v
 static DiamondVmStatus program_builder_set_class_method_visibility(DiamondVm *vm,
         DiamondProgram *built, DiamondValue *registers, uint16_t base, uint8_t argc,
         DiamondValue *result) {
-    if(argc!=3)return DIAMOND_VM_ARITY_ERROR;
+    if(argc!=3&&argc!=4)return DIAMOND_VM_ARITY_ERROR;
+    if(argc==4&&registers[(size_t)base+3].kind!=DIAMOND_VALUE_BOOL)return DIAMOND_VM_TYPE_ERROR;
     if(registers[base].kind!=DIAMOND_VALUE_INT||
        registers[(size_t)base+1].kind!=DIAMOND_VALUE_OBJECT||
        registers[(size_t)base+1].as.object->kind!=DIAMOND_OBJECT_STRING||
@@ -1053,7 +1054,7 @@ static DiamondVmStatus program_builder_set_class_method_visibility(DiamondVm *vm
         return DIAMOND_VM_TYPE_ERROR;
     }
     found->is_private=registers[(size_t)base+2].as.boolean;
-    found->is_protected=false;
+    found->is_protected=argc==4&&registers[(size_t)base+3].as.boolean;
     *result=DIAMOND_NIL;return DIAMOND_VM_OK;
 }
 
