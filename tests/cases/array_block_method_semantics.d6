@@ -1,0 +1,53 @@
+# Array#map, select, any?, all? and reduce run direct prelude loops; these are the behaviours to keep.
+
+# Elements appended by the block are visited, and the array is read live.
+growing = [1, 2]
+visited = growing.map() do |item|
+  growing.push(9) if growing.length() < 4
+  item
+end
+puts(visited)
+
+shrinking = [1, 2, 3, 4]
+kept = shrinking.select() do |item|
+  shrinking.pop()
+  true
+end
+puts(kept)
+
+# any? and all? visit every element rather than stopping at the answer.
+calls = 0
+puts([1, 2, 3].any?() do |item|
+  calls += 1
+  item == 1
+end)
+puts(calls)
+calls = 0
+puts([1, 2, 3].all?() do |item|
+  calls += 1
+  item == 2
+end)
+puts(calls)
+
+# Truthiness and empty receivers.
+puts([0, "", nil, false, []].select() do |item| item end)
+puts([nil, false].any?() do |item| item end)
+puts([].any?() do |item| true end)
+puts([].all?() do |item| false end)
+puts([].map() do |item| item end)
+puts([].reduce(7) do |sum, item| sum + item end)
+puts([1, 2, 3].reduce(10) do |sum, item| sum + item end)
+
+# A method reference, and an error raised from the block.
+def double(item) = item * 2
+puts([1, 2].map(double))
+begin
+  [1, 2].map() do |item| raise ArgumentError.new("from block #{item}") end
+rescue error: ArgumentError
+  puts(error.message())
+end
+
+# A Hash keeps its two-parameter block forms.
+puts({"a": 1, "b": 2}.map() do |key, value| key + value.to_s() end)
+puts({"a": 1, "b": 2}.reduce(0) do |sum, value| sum + value end)
+nil
