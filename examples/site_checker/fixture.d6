@@ -1,0 +1,16 @@
+# Offline sites for smoke_test.d6: redirects and failures. Like most
+# real servers, it declares gzip on a HEAD response, which has no body to decompress.
+require_cut "gremlin"
+
+def fixture_site(request, context)
+  path = request["path"]
+  return [200, {}, "ok"] if path == "/health"
+  if path == "/redirect" || path == "/loop"
+    target = if path == "/redirect" then "/ok" else "/loop" end
+    return [302, {"Location": target}, ""]
+  end
+  return [404, {}, ""] if path == "/missing"
+  [200, {"Content-Encoding": "gzip"}, ""]
+end
+
+gremlin_serve(ARGV[0].to_i(), fixture_site)

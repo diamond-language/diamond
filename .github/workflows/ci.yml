@@ -63,12 +63,12 @@ jobs:
     steps:
       - name: Install dependencies (Fedora)
         if: matrix.os.name == 'fedora'
-        run: dnf install -y gcc clang make git diffutils findutils ripgrep compiler-rt libasan libubsan libtsan openssl-devel sqlite-devel libpq-devel mariadb-connector-c-devel libxcrypt-devel bc nmap-ncat openssl nodejs redis python3
+        run: dnf install -y gcc clang make git diffutils findutils ripgrep compiler-rt libasan libubsan libtsan openssl-devel sqlite-devel libpq-devel mariadb-connector-c-devel libxcrypt-devel bc nmap-ncat openssl nodejs redis
       - name: Install dependencies (Ubuntu)
         if: matrix.os.name == 'ubuntu'
         run: |
           apt-get update
-          DEBIAN_FRONTEND=noninteractive apt-get install -y gcc clang make git diffutils findutils ripgrep libssl-dev libsqlite3-dev libpq-dev zlib1g-dev libmariadb-dev libcrypt-dev bc netcat-openbsd openssl curl nodejs redis-server python3
+          DEBIAN_FRONTEND=noninteractive apt-get install -y gcc clang make git diffutils findutils ripgrep libssl-dev libsqlite3-dev libpq-dev zlib1g-dev libmariadb-dev libcrypt-dev bc netcat-openbsd openssl curl nodejs redis-server
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 1

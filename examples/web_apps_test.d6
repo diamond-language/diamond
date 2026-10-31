@@ -1,0 +1,172 @@
+# Real HTTP contracts for the three local web apps, using isolated SQLite files.
+#   web_apps_test.d6 DIAMOND ROOT WORK [BINARIES]
+# WORK's parent holds cuts/; WORK/launch holds links to cuts/ and examples/.
+require "./test_support"
+
+class Suite
+  def self.setup(diamond, root, work, binaries)
+    @@diamond = diamond
+    @@root = root
+    @@work = work
+    @@binaries = binaries
+    @@servers = 0
+  end
+
+  # Serves one app around `action`. A nil database uses the app's own default
+  # paths, the documented way to launch one from the repository root.
+  def self.serve(app, database, cwd, action)
+    port = reserve_port()
+    entry = if app == "job_service" then "service.d6" else "web.d6" end
+    arguments = [port.to_s()]
+    if database != nil
+      arguments = arguments + [database, "#{@@root}/examples/#{app}/web"]
+    end
+    command = if @@binaries == nil
+      [@@diamond, "#{@@root}/examples/#{app}/#{entry}"] + arguments
+    else
+      ["#{@@binaries}/#{app}"] + arguments
+    end
+    @@servers += 1
+    log = "#{@@work}/server-#{@@servers}.log"
+    child = start_server(app, command, port, cwd, log)
+    failure = nil
+    begin
+      ["/", "/app.js", "/common.js", "/base.css", "/style.css"].each() do |path|
+        [status, text] = raw_request(port, path)
+        check(status == 200 && !text.empty?(), "#{app} #{path}: #{status}")
+      end
+      check(status_of(port, "/../../AGENTS.md") == 404, "#{app}: path traversal")
+      check(status_of(port, "/health", nil, {"Host": "attacker.example"}) == 403, "#{app}: forged Host")
+      check(status_of(port, "/missing", {}, {"Origin": "https://attacker.example"}) == 403, "#{app}: forged Origin")
+      action(port)
+    rescue error
+      failure = error
+    end
+    begin
+      stop_server(app, child, log)
+    rescue error
+      failure = error if failure == nil
+    end
+    raise failure if failure != nil
+  end
+end
+
+def await_job(port, job, status)
+  deadline = Time.monotonic() + 10
+  loop do
+    [code, value] = request(port, "/jobs/#{job}")
+    check(code == 200, value.to_s())
+    return value if value["status"] == status
+    check(Time.monotonic() < deadline, "job #{job} never reached #{status}: #{value}")
+    Process.run(["sleep", "0.02"])
+  end
+end
+
+def enqueue(port, csv, extra = {})
+  body = {"csv": csv}
+  extra.each() do |name, value| body[name] = value end
+  [code, value] = request(port, "/jobs", body)
+  check(code == 202, value.to_s())
+  value["id"]
+end
+
+def check_health(port)
+  check(status_of(port, "/health") == 200, "health")
+end
+
+def check_board(port)
+  check(value_of(port, "/api/board") == {"projects": [], "tasks": []}, "board starts empty")
+  check(status_of(port, "/api/projects", {"name": ""}) == 422, "blank project")
+  check(status_of(port, "/api/projects", {"name": "Diamond"}) == 200, "create project")
+  check(status_of(port, "/api/projects", {"name": "Diamond"}) == 422, "duplicate project")
+  check(status_of(port, "/api/tasks", {"project_id": 999, "title": "Orphan"}) == 422, "orphan task")
+  check(status_of(port, "/api/tasks", {"project_id": 1, "title": "<script>plain text</script>"}) == 200, "create task")
+  check(status_of(port, "/api/tasks/1", {"status": "doing", "notes": "Shared with the TUI"}) == 200, "update task")
+  check(status_of(port, "/api/tasks/1", {"status": "invalid"}) == 422, "invalid status")
+  check(status_of(port, "/api/tasks/999", {"title": "missing"}) == 404, "missing task")
+end
+
+def check_board_reopened(port)
+  check(value_of(port, "/api/board")["tasks"][0]["notes"] == "Shared with the TUI", "notes survive")
+end
+
+def check_bookmarks(port)
+  check(value_of(port, "/api/bookmarks")[0]["tags"] == "", "legacy row gains tags")
+  check(status_of(port, "/api/bookmarks", {"url": "http://127.0.0.1/admin", "title": "Private"}) == 422, "private address")
+  added = {"url": "https://example.com/new", "title": "New", "tags": "Diamond, reading, Diamond"}
+  check(status_of(port, "/api/bookmarks", added) == 201, "add bookmark")
+  exported = value_of(port, "/api/export")
+  check(exported[exported.length() - 1]["tags"] == "diamond, reading", "tags normalized")
+  check(value_of(port, "/api/import", {"bookmarks": exported}) == {"added": 0, "refused": 2}, "reimport refused")
+  text = "https://example.com/import Imported\nhttp://localhost/ No"
+  check(value_of(port, "/api/import", {"text": text}) == {"added": 1, "refused": 1}, "text import")
+end
+
+def check_bookmarks_reopened(port)
+  check(value_of(port, "/api/bookmarks").length() == 3, "bookmarks survive")
+end
+
+def check_jobs(port)
+  job = enqueue(port, "name,email\r\n\"Ada, A.\",ada@example.com\r\n\"Grace \"\"Amazing\"\" Hopper\",grace@example.com\r\n")
+  value = await_job(port, job, "succeeded")
+  check(value["progress"] == 2 && value["total"] == 2 && value["result"] == 2, value.to_s())
+  check(JSON.parse(value["summary"]) == {"imported": 2}, value.to_s())
+  check(value_of(port, "/contacts").length() == 2, "contacts imported")
+  value = await_job(port, enqueue(port, "name,email\nValid,valid@example.com\nInvalid,nope\n"), "failed")
+  check(JSON.parse(value["summary"])["errors"][0]["row"] == 3, value.to_s())
+  check(value_of(port, "/contacts").length() == 2, "partial import leaked")
+  value = await_job(port, enqueue(port, "name,email\n\"never closed"), "failed")
+  check(value["last_error"].include?("quote"), value.to_s())
+  await_job(port, enqueue(port, "name,email\nNew,new@example.com\n", {"timeout_ms": 0}), "timed_out")
+  # Cancel a queued CSV job behind a deterministic long-running count job.
+  blocker = value_of(port, "/jobs", {"work_ms": 60000, "timeout_ms": 60000})["id"]
+  await_job(port, blocker, "running")
+  cancelled = enqueue(port, "name,email\nCancelled,cancel@example.com\n")
+  check(value_of(port, "/jobs/#{cancelled}/cancel", {})["status"] == "cancelled", "cancel queued job")
+  raw_request(port, "/jobs/#{blocker}/cancel", {})
+  await_job(port, blocker, "cancelled")
+  check(value_of(port, "/contacts").length() == 2, "cancelled import leaked")
+  raw_request(port, "/jobs/#{cancelled}/retry", {})
+  await_job(port, cancelled, "succeeded")
+  # Replay updates an existing email instead of inserting a duplicate.
+  await_job(port, enqueue(port, "name,email\nAda Updated,ada@example.com\n"), "succeeded")
+  check(value_of(port, "/contacts").length() == 3, "replay duplicated a contact")
+  check(value_of(port, "/jobs").length() >= 6, "job history")
+end
+
+def check_jobs_reopened(port)
+  check(value_of(port, "/contacts").length() == 3, "contacts survive")
+end
+
+def run(diamond, root, work, binaries)
+  Suite.setup(diamond, root, work, binaries)
+  cwd = File.dirname(work)
+  # The default database paths, relative to a repository-shaped directory.
+  ["task_board", "bookmarks"].each() do |app|
+    Suite.serve(app, nil, "#{work}/launch", check_health)
+  end
+
+  board = "#{work}/board.db"
+  Suite.serve("task_board", board, cwd, check_board)
+  # A separate CLI process observes the web edit through the shared store.
+  shown = Process.run([diamond, "#{root}/examples/task_board/app.d6", "--db", board, "show", "1"], {"cwd": cwd})
+  check(shown.success?(), shown.stderr())
+  check(shown.stdout().include?("[doing]") && shown.stdout().include?("Shared with the TUI"), shown.stdout())
+  Suite.serve("task_board", board, cwd, check_board_reopened)
+
+  # Opening the app migrates the original example's schema in place.
+  bookmarks = "#{work}/bookmarks.db"
+  db = SQLite3.open(bookmarks)
+  db.execute("CREATE TABLE bookmarks (id INTEGER PRIMARY KEY, url TEXT NOT NULL UNIQUE, title TEXT NOT NULL)")
+  db.execute("INSERT INTO bookmarks(url, title) VALUES ('https://example.com/legacy', 'Legacy')")
+  db.close()
+  Suite.serve("bookmarks", bookmarks, cwd, check_bookmarks)
+  Suite.serve("bookmarks", bookmarks, cwd, check_bookmarks_reopened)
+
+  jobs = "#{work}/jobs.db"
+  Suite.serve("job_service", jobs, cwd, check_jobs)
+  Suite.serve("job_service", jobs, cwd, check_jobs_reopened)
+  puts("task board, bookmarks, and CSV jobs web checks passed")
+end
+
+run(ARGV[0], ARGV[1], ARGV[2], if ARGV.length() > 3 then ARGV[3] else nil end)

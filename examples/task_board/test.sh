@@ -65,9 +65,5 @@ status=0
 bash "$root/examples/task_board/board" --db "$work/no-terminal.db" </dev/null >"$work/out" 2>"$work/err" || status=$?
 [[ "$status" == 64 && ! -e "$work/no-terminal.db" ]]
 grep -q 'needs a terminal' "$work/err"
-if command -v python3 >/dev/null 2>&1; then
-  python3 "$root/examples/task_board/terminal_test.py" "$work/terminal.db"
-else
-  echo 'PTY checks skipped (python3 unavailable); controller checks passed above'
-fi
+DIAMOND_BIN="$diamond" bash "$root/examples/task_board/terminal_test.sh" "$work/terminal.db"
 echo 'task board CLI and persistence checks passed'
