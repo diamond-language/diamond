@@ -1358,6 +1358,9 @@ DIAMOND_INTERNAL void infer_from_value(const DiamondChunk *chunk,DiamondValue va
     const DiamondTypeSet *sets,uint16_t set_index,
     DiamondTypeBinding bindings[8]);
 
+DIAMOND_INTERNAL bool explicit_type_has_unbound_variable(const DiamondChunk *chunk,
+    uint16_t index,size_t depth);
+
 DIAMOND_INTERNAL DiamondVmStatus bind_instance_constructor_type(
     DiamondVm *vm,const DiamondChunk *chunk,const DiamondFunction *function,
     const DiamondValue *arguments,size_t count,DiamondInstance *instance);

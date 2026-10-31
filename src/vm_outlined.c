@@ -2243,6 +2243,10 @@ DiamondVmStatus new_instance_from_array(DiamondVm *vm,const DiamondChunk *chunk,
         const DiamondArray *spread,uint16_t explicit_type,size_t depth) {
     if(class_index>=chunk->class_count)return DIAMOND_VM_INVALID_BYTECODE;
     const DiamondClass *class=chunk->classes[class_index];
+    /* The constructor arguments decide instead, as for `Box.new(...)`. */
+    if(explicit_type!=DIAMOND_NO_TYPE_SET&&
+       explicit_type_has_unbound_variable(chunk,explicit_type,0))
+        explicit_type=DIAMOND_NO_TYPE_SET;
     DiamondInstance *instance=allocate_instance(vm,class,nullptr);
     if(instance==nullptr)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
     registers[dest]=DIAMOND_OBJECT(instance);

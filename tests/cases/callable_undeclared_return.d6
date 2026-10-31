@@ -1,0 +1,104 @@
+# A callable with no declared return satisfies a typed Callable contract, and
+# each result is checked wherever the compiler relies on the contract.
+def wrong(value) = "text"
+def right(value) = value + 1
+def wrong_pair(left, right_value) = "text"
+
+def report(name, action)
+  begin
+    puts("#{name}: #{action()}")
+  rescue error: TypeError
+    puts("#{name}: #{error.message()}")
+  end
+end
+
+# Accepted when the result honors the contract.
+def call_it(callback: Callable[[Int], Int]) -> Int = callback(1)
+def yield_it(&block: Callable[[Int], Int]) -> Int = yield(1)
+def map_it(callback: Callable[[Int], Int]) -> Array[Int] = [1, 2].map(callback)
+def call_right() = call_it(right)
+def yield_right() = yield_it(&right)
+def map_right() = map_it(right)
+report("call", call_right)
+report("yield", yield_right)
+report("map", map_right)
+
+# Rejected when it doesn't, at each place the contract is trusted.
+def call_wrong() = call_it(wrong)
+def yield_wrong() = yield_it(&wrong)
+def map_wrong() = map_it(wrong)
+def flat_map_it(callback: Callable[[Int], Array[Int]]) -> Array[Int] = [1].flat_map(callback)
+def flat_map_wrong() = flat_map_it(wrong)
+def group_it(callback: Callable[[Int], Int]) = [1].group_by(callback)
+def group_wrong() = group_it(wrong)
+def map_values_it(callback: Callable[[Int], Int]) = {"a": 1}.map_values(callback)
+def map_values_wrong() = map_values_it(wrong)
+def spread_it(callback: Callable[[Int], Int]) -> Int = callback(*[1])
+def spread_wrong() = spread_it(wrong)
+def returned() -> Callable[[Int], Int] = wrong
+def returned_wrong()
+  callback = returned()
+  callback(1)
+end
+def element_it(callbacks: Array[Callable[[Int], Int]]) -> Int = callbacks[0](1)
+def element_wrong() = element_it([wrong])
+report("call", call_wrong)
+report("yield", yield_wrong)
+report("map", map_wrong)
+report("flat_map", flat_map_wrong)
+report("group_by", group_wrong)
+report("map_values", map_values_wrong)
+report("spread", spread_wrong)
+report("returned", returned_wrong)
+report("element", element_wrong)
+
+# A generic call's binding can rest on the contract alone: its caller checks.
+def apply[T, U](value: T, callback: Callable[[T], U]) -> U = callback(value)
+def relay(callback: Callable[[Int], Int]) -> Int = apply(1, callback)
+begin
+  relay(wrong)
+  puts("generic relay: accepted")
+rescue error: TypeError
+  puts("generic relay: rejected")
+end
+
+# A variable bound by another argument still constrains the result.
+def seeded[U](seed: U, callback: Callable[[Int], U]) -> U = callback(1)
+def seeded_conflict() = seeded(5, wrong)
+def seeded_agrees() = seeded("seed", wrong)
+report("seeded conflict", seeded_conflict)
+report("seeded agrees", seeded_agrees)
+
+class Box[T]
+  def initialize(value: T)
+    @value = value
+  end
+  def value() -> T = @value
+  def map[U](transform: Callable[[T], U]) -> Box[U] = Box[U].new(transform(self.value()))
+  def fold[U](start: U, step: Callable[[U, T], U]) -> U = step(start, @value)
+end
+
+# Unannotated callers: no receiver type to give a block its contract, and `U`
+# has no witness, so the constructor's arguments decide the new instance.
+def untyped_map(box) = box.map() do |value| value.to_s() end
+def untyped_fold(box) = box.fold(1) do |total, value| total + value end
+def untyped_map_result() = untyped_map(Box.new(41)).value()
+def untyped_map_keeps_binding()
+  mapped = untyped_map(Box.new(41))
+  mapped.map() do |value| value.length() end.value()
+end
+def untyped_fold_result() = untyped_fold(Box.new(41))
+def method_relay(step: Callable[[Int, Int], Int]) -> Int = Box.new(1).fold(0, step)
+def method_relay_wrong() = method_relay(wrong_pair)
+report("untyped map", untyped_map_result)
+report("untyped map chain", untyped_map_keeps_binding)
+report("untyped fold", untyped_fold_result)
+report("method relay", method_relay_wrong)
+
+# Declared shapes are still judged up front.
+def two_arguments(callback: Callable[[Int, Int], Int]) = 1
+def wrong_arity() = two_arguments(wrong)
+def declared_string(value) -> String = "text"
+def declared_wrong() = call_it(declared_string)
+report("arity", wrong_arity)
+report("declared return", declared_wrong)

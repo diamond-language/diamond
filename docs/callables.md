@@ -205,6 +205,24 @@ declared Callable shape.
 If the Callable annotation includes a return type, that type becomes the
 compile-time type of `yield`. Anonymous blocks with a statically known final
 expression also advertise that return type to Callable validation.
+A callable with no declared or advertised return satisfies a return contract,
+so code without annotations can pass blocks and functions to code with them. Its
+results are checked instead, wherever the contract is relied on: calling the
+value, `yield`, and the results of `map`, `flat_map`, `group_by` and `map_values`.
+Parameter count and declared returns are still checked when the callable is passed.
+
+```ruby
+def twice(callback: Callable[[Int], Int]) -> Int = callback(callback(1))
+def add_one(value) = value + 1
+def describe(value) = "got #{value}"
+
+twice(add_one)   # => 3
+twice(describe)  # TypeError: expected Int, got String
+```
+
+A generic parameter that only such a callable could bind stays unbound and accepts
+any result: in `Box#map[U]`, called from an unannotated method, `Box[U].new(...)` then
+takes its binding from the constructor's arguments, as `Box.new(...)` does.
 At statically resolved function, singleton, instance-method, and constructor
 calls, concrete parameter types inside `Callable[[...], Return]` are applied to
 corresponding `do |...|` locals. Callable values with typed nested Callable

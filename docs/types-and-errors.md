@@ -168,7 +168,8 @@ inference still requires an explicit argument. Repetitions can occur inside
 containers or Callable signatures, and contextual constructor blocks use the
 same coherent ancestor view. Conflicting invariant instance or Callable graphs
 and bindings beyond the graph budget are rejected rather than weakened.
-Type variables still cannot be union alternatives. Parent and child may have different parameter
+A parameter or return annotation may combine a type variable with other members,
+as in `-> T | Nil`, but a class type argument may not: `Box[T | Nil]`. Parent and child may have different parameter
 counts: `class StringResult[T] < Result[T, String]` fixes the parent's second
 slot while inferring the child's `T` from the first. `StringResult.new(42, "error")`
 and `StringResult[Int].new(42, "error")` both retain the parent view
@@ -194,8 +195,8 @@ Reopening these classes and referring to class parameters from nested
 definitions remain future work. Native types such as
 `Time` and typed Callable signatures work as explicit or inferred class
 arguments. Bindings retain native kinds, Callable arity, parameter types, and
-return types, including through duplication and thread copies. Unions
-combining a type variable with other members, repeated outer types with different
+return types, including through duplication and thread copies. Class type
+arguments combining a type variable with other members, repeated outer types with different
 arguments, and contracts beyond the runtime binding graph's capacity are also
 rejected rather than weakened. Calls retain runtime checks. On a receiver with a
 known class argument, declared method returns substitute that argument and the

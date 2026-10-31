@@ -166,6 +166,10 @@ uint16_t compile_yield(Compiler *compiler) {
                 }
             }
             if(consistent&&return_set<compiler->function->type_set_count) {
+                /* As in publish_callable_return_type: check before trusting. */
+                if(compiler->known_type_sets[destination]!=(int32_t)return_set)
+                    emit_instruction(compiler,DIAMOND_OP_CHECK_TYPE,destination,
+                        return_set,0,2);
                 compiler->known_type_sets[destination]=(int32_t)return_set;
                 const DiamondTypeSet *returns=
                     &compiler->function->type_sets[return_set];

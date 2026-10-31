@@ -1514,6 +1514,14 @@ static void publish_array_map_tooling_type(Compiler *compiler,uint16_t result,
         compiler,DIAMOND_TYPE_ARRAY,elements,-1);
 }
 
+/* A result fact derived from a callback's contract holds only once checked:
+ * the contract accepts callables with no declared return. */
+static void check_callback_result_fact(Compiler *compiler,uint16_t reg) {
+    if(compiler->known_type_sets[reg]>=0)
+        emit_instruction(compiler,DIAMOND_OP_CHECK_TYPE,reg,
+            (uint16_t)compiler->known_type_sets[reg],0,2);
+}
+
 static void publish_collection_argument_return_type(Compiler *compiler,
         uint16_t reg,int32_t receiver_set_index,DiamondSpan name,
         const uint16_t *arguments,size_t argument_count) {
@@ -1536,14 +1544,18 @@ static void publish_collection_argument_return_type(Compiler *compiler,
                 DIAMOND_TYPE_ARRAY,joined,-1);
         } else if(argument_count==1&&relay==COLLECTION_RELAY_MAP) {
             const int32_t mapped=joined_callable_return(compiler,arguments[0]);
-            if(mapped>=0)record_collection_type_set(compiler,reg,
-                DIAMOND_TYPE_ARRAY,mapped,-1);
+            if(mapped>=0) {
+                record_collection_type_set(compiler,reg,DIAMOND_TYPE_ARRAY,mapped,-1);
+                check_callback_result_fact(compiler,reg);
+            }
         } else if(argument_count==1&&relay==COLLECTION_RELAY_FLAT_MAP) {
             const int32_t mapped=joined_callable_return(compiler,arguments[0]);
             const int32_t element=joined_collection_argument(compiler,mapped,
                 DIAMOND_TYPE_ARRAY,false);
-            if(element>=0)record_collection_type_set(compiler,reg,
-                DIAMOND_TYPE_ARRAY,element,-1);
+            if(element>=0) {
+                record_collection_type_set(compiler,reg,DIAMOND_TYPE_ARRAY,element,-1);
+                check_callback_result_fact(compiler,reg);
+            }
         } else if(argument_count==1&&relay==COLLECTION_RELAY_NESTED_ARRAY) {
             publish_nested_array_result(compiler,reg,array_elements);
         } else if(argument_count==1&&relay==COLLECTION_RELAY_GROUP_BY) {
@@ -1552,8 +1564,10 @@ static void publish_collection_argument_return_type(Compiler *compiler,
                 record_collection_type_set(compiler,reg,DIAMOND_TYPE_ARRAY,
                     array_elements,-1);
                 const int32_t grouped=compiler->known_type_sets[reg];
-                if(grouped>=0)record_collection_type_set(compiler,reg,
-                    DIAMOND_TYPE_HASH,key,grouped);
+                if(grouped>=0) {
+                    record_collection_type_set(compiler,reg,DIAMOND_TYPE_HASH,key,grouped);
+                    check_callback_result_fact(compiler,reg);
+                }
             }
         } else if(argument_count==1&&relay==COLLECTION_RELAY_ZIP) {
             const int32_t other=joined_collection_argument(compiler,
@@ -1594,8 +1608,10 @@ static void publish_collection_argument_return_type(Compiler *compiler,
             DIAMOND_TYPE_HASH,keys,values);
     } else if(argument_count==1&&relay==COLLECTION_RELAY_MAP_VALUES) {
         const int32_t mapped=joined_callable_return(compiler,arguments[0]);
-        if(mapped>=0)record_collection_type_set(compiler,reg,
-            DIAMOND_TYPE_HASH,hash_keys,mapped);
+        if(mapped>=0) {
+            record_collection_type_set(compiler,reg,DIAMOND_TYPE_HASH,hash_keys,mapped);
+            check_callback_result_fact(compiler,reg);
+        }
     }
 }
 

@@ -1276,7 +1276,37 @@ void publish_callable_return_type(Compiler *compiler,uint16_t reg,
                     compiler->function->type_set_count,
                     member->callable_return_set,0))return;
     }
+    /* The contract accepts callables with no declared return, so the fact
+     * below holds only once the result itself has been checked. */
+    emit_instruction(compiler,DIAMOND_OP_CHECK_TYPE,reg,return_set,0,2);
     publish_known_type_set(compiler,reg,return_set);
+}
+
+static bool type_set_has_callable_return(const DiamondFunction *target,
+        uint16_t set_index,size_t depth) {
+    if(set_index==DIAMOND_NO_TYPE_SET||set_index>=target->type_set_count||depth>=8)
+        return false;
+    const DiamondTypeSet *set=&target->type_sets[set_index];
+    for(size_t index=0;index<set->count;index++) {
+        const DiamondTypeMember *member=&set->members[index];
+        if(member->id==DIAMOND_TYPE_CALLABLE&&
+           member->callable_return_set!=DIAMOND_NO_TYPE_SET)return true;
+        if(type_set_has_callable_return(target,member->argument_set,depth+1)||
+           type_set_has_callable_return(target,member->second_argument_set,depth+1))
+            return true;
+    }
+    return false;
+}
+
+/* A binding inferred from a callback's contract has no runtime witness when
+ * the callback declares no return, so the callee's own check can't enforce it. */
+static bool bindings_may_rest_on_callable_contract(const DiamondFunction *target) {
+    const size_t self_offset=diamond_function_self_offset(target);
+    for(size_t parameter=0;parameter+self_offset<target->arity&&
+        parameter<DIAMOND_MAX_DECLARED_PARAMETERS;parameter++)
+        if(type_set_has_callable_return(target,target->parameter_type_sets[parameter],0))
+            return true;
+    return false;
 }
 
 static void publish_resolved_call_return_type(Compiler *compiler,uint16_t reg,
@@ -1337,7 +1367,12 @@ static void publish_resolved_call_return_type(Compiler *compiler,uint16_t reg,
     if(tooling_only) {
         if(return_set!=DIAMOND_NO_TYPE_SET)
             compiler->tooling_type_sets[reg]=(int32_t)return_set;
-    } else publish_known_type_set(compiler,reg,return_set);
+    } else {
+        if(target->type_variable_count>0&&return_set!=DIAMOND_NO_TYPE_SET&&
+           bindings_may_rest_on_callable_contract(target))
+            emit_instruction(compiler,DIAMOND_OP_CHECK_TYPE,reg,return_set,0,2);
+        publish_known_type_set(compiler,reg,return_set);
+    }
 }
 
 void publish_call_return_type(Compiler *compiler,uint16_t reg,

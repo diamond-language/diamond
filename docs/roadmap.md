@@ -119,8 +119,8 @@ New package work should be driven by a concrete application or interoperability 
   applications expose a missing query, association, migration, or dialect feature.
 - Finish the ORM return-annotation audit. Extensible Arel query/node returns need a
   protocol before they can be narrowed, and `Relation#first`, `Repository#find` and the
-  `Model` finders return a mapper-produced value or `nil`, which no `-> Type` can express
-  without generics. The JIT never trusts an unannotated return; measure each batch rather
+  `Model` finders return a mapper-produced value or `nil`, which needs them to become
+  generic over the mapped type (`-> T | Nil`). The JIT never trusts an unannotated return; measure each batch rather
   than assuming a gain (see
   [JIT design](internal/jit-design.md#where-the-next-win-is)).
 - Add another SQL dialect only with a live server for verification.
