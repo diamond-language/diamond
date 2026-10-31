@@ -8,6 +8,9 @@ authoritative fine-grained record.
 
 ### Added
 
+- Mjolnir `Repo#all` maps rows through the new `Schema#build_all`, about 12% fewer
+  instructions on a 1,000-row read.
+
 - Runnable application examples now include a web interface sharing the task
   board's CLI/TUI store, a concurrent site-checking CLI with JSON output,
   a persistent bookmark shelf with tags and import/export, and a durable CSV

@@ -110,6 +110,20 @@ module Mjolnir
       entity
     end
 
+    # `build` for a whole result set. Row mapping is the hot path of a read,
+    # so this calls the builder directly instead of going through `build`.
+    def build_all(rows: Array) -> Array
+      entities = []
+      index = 0
+      while index < rows.length()
+        entity = @builder(rows[index])
+        entity.freeze()
+        entities.push(entity)
+        index += 1
+      end
+      entities
+    end
+
     # An entity's declared fields as a Hash. An entity built as a plain
     # Hash row (a builder that returns the row itself) is read by key.
     def dump(entity) -> Hash
