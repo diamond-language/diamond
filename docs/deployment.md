@@ -115,7 +115,7 @@ JIT runs only on glibc x86-64; on other platforms the executable stays on
 the interpreter path. `DIAMOND_TRACE_JIT=1` prints compiled-function and
 bailout counts when the program returns normally; a server terminated by a
 signal may not emit that summary. The JIT remains off when `DIAMOND_JIT` is
-unset, including for standalone binaries.
+unset, empty or `0`, including for standalone binaries.
 
 At the language level, the produced binary behaves exactly like
 `diamond program.d6`: it sets `ARGV` from its own command-line arguments, prints only what

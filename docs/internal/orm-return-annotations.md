@@ -69,7 +69,7 @@ of the package; the baseline package came from `55c363ed`.
 | JIT enabled, batch B | 1.436 s | 1.561 s | 8.7% slower |
 
 Correction: the initial harness set `DIAMOND_JIT=0` for its intended interpreter
-mode, but Diamond enables JIT whenever the variable is present. Both batches
+mode, but Diamond then enabled JIT whenever the variable was present. Both batches
 above enabled JIT. The corrected comparison below unsets the variable for
 interpreter runs.
 

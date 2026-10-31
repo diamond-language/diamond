@@ -15,7 +15,7 @@ kept = shrinking.select() do |item|
 end
 puts(kept)
 
-# any? and all? visit every element rather than stopping at the answer.
+# any? and all? stop as soon as the answer is known, as they do on a Hash.
 calls = 0
 puts([1, 2, 3].any?() do |item|
   calls += 1

@@ -189,7 +189,7 @@ DiamondVmStatus diamond_jit_set_ivar(DiamondVm *vm, const uint8_t *site,
  * its caller in jit.c needs neither a DiamondFrame nor jc->has_called. */
 DiamondVmStatus diamond_jit_get_ivar(DiamondVm *vm, const uint8_t *site,
         const DiamondValue *receiver, uint8_t field, DiamondValue *out);
-DiamondVmStatus diamond_jit_check_type(const DiamondChunk *chunk,
+DiamondVmStatus diamond_jit_check_type(DiamondVm *vm, const DiamondChunk *chunk,
         const DiamondValue *value, uint16_t set_index);
 /* IS_TYPE -- value_matches_type's own single-type-tag matching (unlike
  * CHECK_TYPE's value_matches_set, no union/interface/generic-binding

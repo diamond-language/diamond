@@ -1296,6 +1296,8 @@ DIAMOND_INTERNAL bool catch_runtime_error(DiamondVm *vm,const DiamondChunk *chun
                                 size_t *handler_count,PendingUnwind *pending,
                                 DiamondValue *registers,size_t *ip);
 
+DIAMOND_INTERNAL void report_check_type_failure(DiamondVm *vm,const DiamondChunk *chunk,
+                                  DiamondValue value,uint16_t set_index);
 DIAMOND_INTERNAL void format_type_set_index(char *buffer,size_t capacity,
                                   const DiamondChunk *chunk,uint16_t set_index);
 
