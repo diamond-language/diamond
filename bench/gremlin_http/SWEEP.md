@@ -29,3 +29,15 @@ while each `ab` used ~9%, and 6 `ab` clients instead of 3 gave 5,162 (6 threads)
 and 5,572 (12 threads) req/s. The cause of the sub-linear scaling is not yet
 identified (candidates: per-request kernel TCP setup without keep-alive,
 allocator/GC contention across workers, SMT sharing).
+
+## 2, 4 and 6 threads on 0.20.2
+
+Recorded 2026-10-31 on the same machine: Diamond 0.20.2 `make release`, gremlin 0.5.2, same endpoint
+and load, 5 interleaved rounds. The host was not idle (Firefox open, load average 5-7 with the run
+itself) and `ab` shares the cores. Reproduce with `diamond bench/gremlin_http/sweep.d6 --threads 2,4,6`.
+
+| threads | mean req/s | stdev | mean p99 | failed |
+|---:|---:|---:|---:|---:|
+| 2 | 6,728  | 259 | 28 ms | 0 |
+| 4 | 9,752  | 336 | 30 ms | 1 |
+| 6 | 10,980 | 435 | 33 ms | 0 |
