@@ -46,9 +46,28 @@ cc="$sdk/bin/clang"
 # Object files do not track flags: start over when they change.
 stamp="$(printf '%s\n' "${flags[@]}" | sha256sum | cut -d' ' -f1)"
 if [ "$(cat "$out/obj/.flags" 2>/dev/null)" != "$stamp" ]; then
-    rm -f "$out"/obj/*.o
+    rm -f "$out"/obj/*.o "$out"/obj/*.d
     printf '%s\n' "$stamp" > "$out/obj/.flags"
 fi
+
+# The module embeds the prelude the host build compiled, so that must be newer than what it was
+# generated from. Compiling it here would need the host's build flags, so ask for it instead.
+prelude="$root/build/compiled_prelude.bin"
+if [ ! -f "$prelude" ] || [ -n "$(find "$root/lib" "$root/src" -type f -newer "$prelude" -print -quit)" ]; then
+    echo "wasm/build.sh: build/compiled_prelude.bin is missing or stale; run: make build/compiled_prelude.bin" >&2
+    exit 1
+fi
+
+# An object is current only if it is newer than everything its depfile lists: its source, the
+# headers it includes and the files it #embeds. A dependency that no longer exists, or a path the
+# word splitting below breaks apart, reads as missing and just causes a rebuild.
+object_is_current() {
+    local object="$1" dependency
+    [ -f "$object" ] && [ -f "${object%.o}.d" ] || return 1
+    for dependency in $(sed -e 's/^[^:]*://' -e 's/\\$//' "${object%.o}.d"); do
+        [ -e "$dependency" ] && [ ! "$dependency" -nt "$object" ] || return 1
+    done
+}
 
 # main.c is the CLI and repl.c the terminal REPL; the page drives wasm/repl_driver.c instead.
 # The completion engine the terminal REPL's Tab key uses comes from lsp/ (the same list as
@@ -58,8 +77,8 @@ sources="$sources lsp/completion.c lsp/compile_buffer.c lsp/analysis_cache.c lsp
 running=0
 for source in $sources wasm/repl_driver.c wasm/posix_stubs.c wasm/sqlite_vfs.c; do
     object="$out/obj/$(basename "${source%.c}").o"
-    if [ -f "$object" ] && [ ! "$root/$source" -nt "$object" ]; then continue; fi
-    nice -n 19 "$cc" "${flags[@]}" -c "$root/$source" -o "$object" &
+    if object_is_current "$object"; then continue; fi
+    nice -n 19 "$cc" "${flags[@]}" -MMD -MF "${object%.o}.d" -c "$root/$source" -o "$object" &
     running=$((running + 1))
     if [ "$running" -ge "$jobs" ]; then wait -n; running=$((running - 1)); fi
 done
