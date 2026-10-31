@@ -12,13 +12,7 @@ module Mjolnir
     def db() = @db
 
     def all(query: Query) -> Array
-      schema = query.schema()
-      rows = query.arel().to_a(@db, @visitor)
-      entities = []
-      rows.each() do |row|
-        entities.push(schema.build(row))
-      end
-      entities
+      query.schema().build_all(query.arel().to_a(@db, @visitor))
     end
 
     def one(query: Query)
