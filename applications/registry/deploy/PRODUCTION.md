@@ -13,6 +13,10 @@ revoked) published arel 0.35.2 (sha256
 (`0837a33c1b5ab2cd16067e5b95db0911ebf6b52825db9d19df6bae2a4bc8583f`) and mjolnir 0.3.3
 (`0fb62ca3f7ca12f492fb3abbffd6ec55f8792d3a0c616d4924b891de6c51f65d`).
 `tools/verify_registry_launch.d6` passed for all 19 public cuts before and after the upgrade.
+After that upgrade, the same day and after its own verified snapshot, a 30-minute credential (34, `publish:graphql`, revoked)
+published graphql 0.3.3, which reports lexer errors as request-level errors (sha256
+`c01fa0ab83f6682623617156c5b06fec8ff98f34d9626a81f5a926be431cf762`). Verification passed for all 19 public cuts.
+The running registry's bundled seed still pins graphql 0.3.2 until its next deploy.
 v0.20.2 (`695525d51174e93d46d9a041c23d91a0fb7650f0`) was deployed 2026-10-26 the same way. Before that upgrade,
 after a second verified snapshot, one 30-minute credential (32, `publish:` for each of the
 19 seed cuts, revoked) published cookies 0.2.2, graphql 0.3.2, graphsql 0.2.2, http 0.2.2,
