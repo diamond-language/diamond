@@ -269,7 +269,7 @@ This is a preamble filter, not a single-file or single-function selector.
 ## Diagnostic environment variables
 
 These switches report what the interpreter did; none change what a program
-means. A flag takes effect when it is set to any value, including an empty one.
+means. A flag is on when it is set to anything other than an empty value or `0`.
 A numeric one takes a positive integer and is ignored otherwise. Every report
 goes to standard error, and the counter reports print once, after the program
 has finished without a runtime error; a server stopped by a signal never

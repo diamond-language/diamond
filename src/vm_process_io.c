@@ -609,7 +609,7 @@ static DiamondVmStatus process_parse_options(DiamondVm *vm,const char *owner,
             }
             /* The child opens the file, so this is a filesystem write the
              * "subprocess" guard on Process.spawn does not cover. */
-            if(getenv("DIAMOND_SANDBOX")!=nullptr&&!sandbox_category_allowed("filesystem")) {
+            if(diamond_sandbox_enabled()&&!sandbox_category_allowed("filesystem")) {
                 snprintf(vm->error,sizeof vm->error,
                     "sandbox denies %s option '%.*s'",owner,(int)key->length,key->chars);
                 return DIAMOND_VM_SANDBOX_ERROR;

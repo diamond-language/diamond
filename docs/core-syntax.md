@@ -16,7 +16,7 @@ HTTP is the `packages/http` package, installed with `facet`
 `diamond program.d6` runs the file and prints only what it writes with `puts`
 and the other output calls. The REPL and `diamond -e CODE` also print the value of
 the last top-level expression, so `diamond -e '20 + 22'` prints `42`. Set
-`DIAMOND_PRINT_RESULT` to any value to make a file run, or an executable from
+`DIAMOND_PRINT_RESULT` to `1` to make a file run, or an executable from
 `diamond build`, print that value too; the test suite runs its cases that way.
 
 ## Source files and imports

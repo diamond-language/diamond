@@ -12,9 +12,9 @@ diamond --sandbox untrusted.d6
 DIAMOND_SANDBOX=1 diamond untrusted.d6
 ```
 
-Any value enables it -- `DIAMOND_SANDBOX=1`, matching `DIAMOND_STRESS_GC`'s own
-convention. `diamond --sandbox` is a thin convenience that sets the same environment
-variable before running normally; both forms, and `DIAMOND_SANDBOX=1 ./program` against
+Any value except `0` enables it, including an empty one, so a wrapper script that expands
+an unset variable keeps the sandbox on. `diamond --sandbox` is a thin convenience that sets
+the same environment variable to `1` before running normally, overriding any `0`; both forms, and `DIAMOND_SANDBOX=1 ./program` against
 a `diamond build`-produced [standalone binary](deployment.md), behave identically.
 
 ## What's denied

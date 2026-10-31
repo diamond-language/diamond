@@ -356,8 +356,7 @@ void diamond_vm_init(DiamondVm *vm) {
 void diamond_vm_configure_jit_from_env(DiamondVm *vm) {
     /* The native backend has only been validated on glibc x86-64. */
 #if (defined(__x86_64__) || defined(_M_X64)) && defined(__GLIBC__)
-    const char *jit = getenv("DIAMOND_JIT");
-    vm->jit = jit != nullptr && jit[0] != '\0' && strcmp(jit, "0") != 0;
+    vm->jit = diamond_env_flag("DIAMOND_JIT");
 #else
     vm->jit = false;
 #endif

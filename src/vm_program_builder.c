@@ -1228,7 +1228,7 @@ static DiamondVmStatus program_builder_expand_source(DiamondVm *vm, DiamondProgr
      * from the error text, while File.open and File.read are denied.
      * The check is the same as VM_SANDBOX_GUARD's, which only works
      * inside run_chunk. */
-    if(getenv("DIAMOND_SANDBOX")!=nullptr&&!sandbox_category_allowed("filesystem")) {
+    if(diamond_sandbox_enabled()&&!sandbox_category_allowed("filesystem")) {
         snprintf(vm->error,sizeof vm->error,
             "sandbox denies ProgramBuilder#expand_source");
         return DIAMOND_VM_SANDBOX_ERROR;

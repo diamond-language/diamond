@@ -94,6 +94,15 @@ loop_reference="$(jit_first_call_count "$loop_program" DIAMOND_JIT_THRESHOLD=1)"
 jit_off_count() { env "$1" DIAMOND_TRACE_JIT=1 "$diamond" -e "$loop_program" 2>&1 | sed -n 's/^jit: \([0-9]*\) compiled function(s).*$/\1/p'; }
 [[ "$(jit_off_count DIAMOND_JIT=0)" == 0 ]]
 [[ "$(jit_off_count DIAMOND_JIT=)" == 0 ]]
+[[ "$(DIAMOND_PRINT_RESULT=0 "$diamond" tests/cases/flag_probe_value.d6)" == "" ]]
+[[ "$(DIAMOND_PRINT_RESULT=1 "$diamond" tests/cases/flag_probe_value.d6)" == 7 ]]
+[[ "$(DIAMOND_PRINT_RESULT=0 DIAMOND_TRACE_GC=0 "$diamond" tests/cases/flag_probe_value.d6 2>&1)" == "" ]]
+# DIAMOND_SANDBOX: only an explicit 0 is off, and --sandbox overrides it.
+sandbox_probe='puts(File.read("Makefile").length() > 0)'
+[[ "$(DIAMOND_SANDBOX=0 "$diamond" -e "$sandbox_probe" 2>&1 | head -1)" == true ]]
+! DIAMOND_SANDBOX=1 "$diamond" -e "$sandbox_probe" >/dev/null 2>&1
+! DIAMOND_SANDBOX= "$diamond" -e "$sandbox_probe" >/dev/null 2>&1
+! DIAMOND_SANDBOX=0 "$diamond" --sandbox -e "$sandbox_probe" >/dev/null 2>&1
 [[ "$(jit_first_call_count "$loop_program" DIAMOND_MAX_INSTRUCTIONS=100000000)" == 0 ]]
 
 # Once program input has started, option-looking values belong to the script.
