@@ -236,7 +236,7 @@ language-design goal.
 
 Running every `tests/cases` program through the self-hosted compiler
 (`tools/self_host_survey.sh`, 2026-10-31): 1,275 of 1,535 compile and run, with 46 skipped because
-they set a limit the compiler itself would hit. About 215 of the 260 failures use runtime
+they set a limit the compiler itself would hit. About 220 of the 260 failures use runtime
 builtins (below). Open language gaps, roughly by size:
 
 - `define_method`/`compile_method`, and class variables inside modules;
