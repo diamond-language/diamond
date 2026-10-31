@@ -35,9 +35,13 @@ wait_for() { # command...
     return 1
 }
 
+container_gone() { ! podman container inspect "$container"; }
+
 for dialect in "${wanted[@]}"; do
     cleanup
     podman rm -f "$container" >/dev/null 2>&1 || true
+    # A --rm container is removed asynchronously after it stops, so the name can still be taken here.
+    wait_for container_gone || { echo "container $container was not removed" >&2; exit 1; }
     case "$dialect" in
         mariadb|mysql)
             port=33071
