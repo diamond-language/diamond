@@ -1,0 +1,52 @@
+# Copy the named cuts from a prepared registry seed into a new seed directory with a matching, trimmed inventory.
+#
+#   diamond tools/trim_seed_to.d6 SOURCE_SEED NEW_SEED CUT...
+#
+# tools/publish_registry_seed.d6 publishes every cut in a seed's inventory, and a published version can never be replaced, so a release
+# of a few cuts publishes from a seed trimmed to exactly those. Every archive's size and SHA-256 is checked against its inventory
+# entry while copying, and the cuts keep the source inventory's order (dependencies first). NEW_SEED must not exist.
+def fail(message)
+  warn(message)
+  exit(1)
+end
+
+if ARGV.length() < 3
+  warn("usage: diamond tools/trim_seed_to.d6 SOURCE_SEED NEW_SEED CUT...")
+  exit(64)
+end
+source_seed = ARGV[0]
+new_seed = ARGV[1]
+wanted = ARGV.drop(2)
+fail("no inventory.json in #{source_seed}") unless File.file?(source_seed + "/inventory.json")
+fail("#{new_seed} already exists") if File.exist?(new_seed)
+
+inventory = JSON.parse(File.read(source_seed + "/inventory.json"))
+names = inventory["cuts"].map() do |cut|
+  cut["name"]
+end
+missing = wanted.select() do |name|
+  !names.include?(name)
+end
+fail("not in the source inventory: " + missing.join(", ")) unless missing.empty?()
+chosen = inventory["cuts"].select() do |cut|
+  wanted.include?(cut["name"])
+end
+
+# Check every archive before creating anything, so a bad source leaves no partial seed behind.
+chosen.each() do |cut|
+  archive = source_seed + "/" + cut["archive"]
+  unless File.size(archive) == cut["size"] && File.sha256(archive) == cut["sha256"]
+    fail("archive differs from its inventory entry: " + cut["name"])
+  end
+end
+
+Dir.mkdir(new_seed, 0o700)
+chosen.each() do |cut|
+  File.copy(source_seed + "/" + cut["archive"], new_seed + "/" + cut["archive"])
+end
+trimmed = inventory.dup()
+trimmed["cuts"] = chosen
+File.write(new_seed + "/inventory.json", JSON.stringify(trimmed, {"indent": 2, "sort_keys": true}) + "\n")
+chosen.each() do |cut|
+  puts(cut["name"].ljust(16, " ") + " " + cut["version"].ljust(8, " ") + " " + cut["sha256"].slice(0, 16))
+end
