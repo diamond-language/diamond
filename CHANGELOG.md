@@ -6,6 +6,13 @@ authoritative fine-grained record.
 
 ## Unreleased
 
+### Changed
+
+- `Array#map`, `select`, `any?`, `all?` and `reduce` run direct loops instead of a
+  nested closure, about half the cost for a short array. Arel quotes identifiers without
+  splitting them into characters. Together these cut Mjolnir query building and rendering
+  by about 24% and `Repo#get` by about 16% in instructions.
+
 ### Added
 
 - Mjolnir `Repo#all` maps rows through the new `Schema#build_all`, about 12% fewer

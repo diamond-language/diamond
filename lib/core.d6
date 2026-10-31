@@ -1333,6 +1333,50 @@ def diamond_array_filter_map(values: Array, callback: Callable[1]) -> Array
   result
 end
 
+# What Array#select, any?, all? and reduce call (Array#map calls array_map).
+# enumerable_* wraps the block in a closure for values.each to call; a direct
+# loop costs a fraction of that per element.
+def diamond_array_select(values: Array, callback: Callable[1]) -> Array
+  result = []
+  index = 0
+  while index < values.length()
+    item = values[index]
+    result.push(item) if callback(item)
+    index += 1
+  end
+  result
+end
+
+def diamond_array_any(values: Array, callback: Callable[1]) -> Bool
+  found = false
+  index = 0
+  while index < values.length()
+    found = true if callback(values[index])
+    index += 1
+  end
+  found
+end
+
+def diamond_array_all(values: Array, callback: Callable[1]) -> Bool
+  result = true
+  index = 0
+  while index < values.length()
+    result = false if !callback(values[index])
+    index += 1
+  end
+  result
+end
+
+def diamond_array_reduce(values: Array, initial, callback: Callable[2])
+  accumulator = initial
+  index = 0
+  while index < values.length()
+    accumulator = callback(accumulator, values[index])
+    index += 1
+  end
+  accumulator
+end
+
 def diamond_array_each_with_object(values: Array, memo, callback: Callable[2])
   index = 0
   while index < values.length()
