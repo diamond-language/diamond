@@ -1,0 +1,25 @@
+# A failed type check reports its message under the JIT, including after a compiled call,
+# where the function can no longer fall back to the interpreter.
+class Widget
+end
+
+def text(x) = "s"
+def widget(x) = Widget.new()
+def after_call(x: Int) -> Int = text(x)
+def union_after_call(x: Int) -> Int | Nil = text(x)
+def class_after_call(x: Int) -> String = widget(x)
+def array_after_call(x: Int) -> Array[Int] = [text(x)]
+
+def report(&block)
+  begin
+    block()
+  rescue error: TypeError
+    puts(error.message())
+  end
+end
+
+report() do after_call(1) end
+report() do union_after_call(1) end
+report() do class_after_call(1) end
+report() do array_after_call(1) end
+nil

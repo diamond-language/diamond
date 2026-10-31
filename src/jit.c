@@ -1137,9 +1137,10 @@ static void compile_check_type(JitCompiler *jc, uint16_t source, uint16_t set_in
         }
     }
     /* Failure retains the existing status and propagation path. */
-    emit_mov_rr(buf, REG_RDI, JIT_CHUNK);
-    emit_lea(buf, REG_RSI, JIT_REGISTERS_BASE, reg_disp(source, 0));
-    emit_mov_imm64(buf, REG_RDX, set_index);
+    emit_mov_rr(buf, REG_RDI, JIT_VM);
+    emit_mov_rr(buf, REG_RSI, JIT_CHUNK);
+    emit_lea(buf, REG_RDX, JIT_REGISTERS_BASE, reg_disp(source, 0));
+    emit_mov_imm64(buf, REG_RCX, set_index);
     emit_body_call(jc, (void *)(uintptr_t)diamond_jit_check_type);
     emit_bail_if_al_nonzero(jc);
     for (size_t i = 0; i < accepted_count; i++) patch_rel32_to_here(buf, accepted[i]);

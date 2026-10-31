@@ -90,6 +90,10 @@ loop_reference="$(jit_first_call_count "$loop_program" DIAMOND_JIT_THRESHOLD=1)"
 [[ -n "$loop_reference" ]]
 [[ "$(jit_first_call_count "$loop_program")" == "$loop_reference" ]]
 [[ "$(jit_first_call_count "$straight_program")" == 0 ]]
+# Only an unset, empty or "0" DIAMOND_JIT leaves the JIT off.
+jit_off_count() { env "$1" DIAMOND_TRACE_JIT=1 "$diamond" -e "$loop_program" 2>&1 | sed -n 's/^jit: \([0-9]*\) compiled function(s).*$/\1/p'; }
+[[ "$(jit_off_count DIAMOND_JIT=0)" == 0 ]]
+[[ "$(jit_off_count DIAMOND_JIT=)" == 0 ]]
 [[ "$(jit_first_call_count "$loop_program" DIAMOND_MAX_INSTRUCTIONS=100000000)" == 0 ]]
 
 # Once program input has started, option-looking values belong to the script.

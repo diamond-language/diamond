@@ -1269,15 +1269,27 @@ bool value_matches_set(const DiamondChunk *chunk,DiamondValue value,
     return false;
 }
 
+/* The message for a failed DIAMOND_OP_CHECK_TYPE, in either execution mode. */
+__attribute__((noinline,cold))
+void report_check_type_failure(DiamondVm *vm,const DiamondChunk *chunk,
+        DiamondValue value,uint16_t set_index) {
+    char expected[256]; char actual[256];
+    format_type_set_index(expected,sizeof expected,chunk,set_index);
+    format_value_type_detailed(actual,sizeof actual,chunk,value);
+    snprintf(vm->error,sizeof vm->error,"expected %s, got %s",expected,actual);
+}
+
 /* JIT trampoline for DIAMOND_OP_CHECK_TYPE -- see jit.h's own comment.
  * value_matches_set's own structural/generic matching logic (interfaces,
  * type variables, unions) is too deep to safely hand-roll in machine
  * code; this is a thin wrapper translating its bool result into the
  * DiamondVmStatus every other JIT trampoline already returns. */
-DiamondVmStatus diamond_jit_check_type(const DiamondChunk *chunk,
+DiamondVmStatus diamond_jit_check_type(DiamondVm *vm, const DiamondChunk *chunk,
         const DiamondValue *value, uint16_t set_index) {
     if (set_index >= chunk->type_set_count) return DIAMOND_VM_INVALID_BYTECODE;
-    return value_matches_set(chunk, *value, set_index, true) ? DIAMOND_VM_OK : DIAMOND_VM_TYPE_ERROR;
+    if (value_matches_set(chunk, *value, set_index, true)) return DIAMOND_VM_OK;
+    report_check_type_failure(vm, chunk, *value, set_index);
+    return DIAMOND_VM_TYPE_ERROR;
 }
 
 /* JIT trampoline for DIAMOND_OP_IS_TYPE -- see jit.h's own comment. Same
