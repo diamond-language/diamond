@@ -8862,7 +8862,11 @@ class Parser
     type_annotations = self.parse_explicit_type_annotations()
     return 0 if type_annotations == nil
     if @current.kind() != :left_paren
-      return self.compile_reference_wrapper(nil, [exported, true], type_annotations) if exported != nil
+      if exported != nil
+        # An export's descriptor is [name, function, arity, uses state, required].
+        descriptor = [exported[0], exported[1], exported[2], exported[4]]
+        return self.compile_reference_wrapper(nil, [descriptor, true], type_annotations)
+      end
       return self.compile_reference_wrapper(nil, [declared, false], type_annotations)
     end
     type_arguments = self.declare_annotations(type_annotations)

@@ -234,24 +234,25 @@ Keep the self-hosted implementation at practical parity where it protects the la
 but do not duplicate every native optimization unless it advances a specific bootstrap or
 language-design goal.
 
-Running every `tests/cases` program through the self-hosted compiler (2026-10-27): 1,166 of
-1,488 compile and run. Most of the rest use runtime builtins (below). Open language gaps,
-roughly by size:
+Running every `tests/cases` program through the self-hosted compiler
+(`tools/self_host_survey.sh`, 2026-10-31): 1,275 of 1,535 compile and run, with 46 skipped because
+they set a limit the compiler itself would hit. About 215 of the 260 failures use runtime
+builtins (below). Open language gaps, roughly by size:
 
-- `delegate` and `protected` in class bodies, `define_method`/`compile_method`, and class
-  variables inside modules;
-- self-recursive tail calls (deep recursion overflows the call stack without them);
-- reopening a module or class, and forward references to a later class's singleton methods;
-- unions that repeat a type, generic type variables as `rescue` filters, and object patterns
-  naming a later class;
-- static return-type errors for blocks (native rejects them at compile time; self-hosted
-  checks at run time), and Callable signatures inferred for generic spreads;
-- postfix `while`/`until` and conditions, string escapes the native lexer accepts, bignum
-  constants;
-- `require_cut` / package requires.
+- `define_method`/`compile_method`, and class variables inside modules;
+- forward references to a later module's singleton methods, to a later function as a value or
+  with type arguments, and keyword arguments to a function not yet defined;
+- constants read through an included module or a later namespace, and object patterns naming a
+  later class;
+- static return-type errors for blocks and collection callbacks (native rejects or wraps them at
+  compile time; self-hosted checks later or not at all), and Callable signatures inferred for
+  constructor blocks;
+- a nested `def` calling itself, keywords combined with a spread, and bignum constants.
 
-The runtime builtin surfaces (Channel, Process, Time, Thread, SQLite3, Supervisor, sockets,
-Tensor, crypto, `ENV`/`ARGV`) are not ported; port one only when a bootstrap goal needs it.
+The runtime builtin surfaces (Time, Thread, Channel, Process, `File.*`, SQLite3, Supervisor,
+sockets, Tensor, crypto) are not ported. Time comes first if one is: 55 cases stop there, many
+because Active Record and Rack read the clock while loading. Port one only when a bootstrap
+goal needs it.
 
 ### Fewer languages to build and test
 
