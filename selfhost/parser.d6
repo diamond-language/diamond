@@ -59,6 +59,9 @@ module Opcode
   CALL_CLOSURE_KEYWORDS = 152
   INVOKE_KEYWORDS = 150
   NEW_KEYWORDS = 153
+  NEW_TYPED = 187
+  CALL_TYPED_SPREAD = 145
+  INVOKE_TYPED_KEYWORDS = 151
   GET_CAPTURE = 33
   GET_CAPTURE_CELL = 34
   BOX_LOCAL = 36
@@ -268,6 +271,11 @@ def contextual_block_member(function_entry, slot)
   member = annotation[0]
   return nil if member[0] != "Callable" || member[5] == nil
   member
+end
+
+# A class entry's type parameters. Builtin entries (below) have none.
+def class_type_parameters(entry)
+  if entry.length() > 4 then entry[4] else [] end
 end
 
 # The native VM's built-in exception hierarchy (DiamondBuiltinClass,
@@ -1903,11 +1911,6 @@ class Parser
             self.advance_token()
           end
         end
-        index = 0
-        while index < members.length()
-          self.fail("duplicate type in union") if members[index][0] == name
-          index = index + 1
-        end
         if members.length() == 8
           self.fail("too many types in union")
         else
@@ -1923,7 +1926,23 @@ class Parser
               callable_return = callable[1]
               callable_parameters = callable[2]
             elsif name != "Array" && name != "Hash"
-              self.fail("this type does not accept arguments")
+              # A generic class: its declaration may still be ahead (a struct
+              # field naming its own struct), so declare_annotation checks it.
+              self.advance_token()
+              self.skip_newlines()
+              argument = self.parse_type_annotation()
+              self.skip_newlines()
+              if @current.kind() == :comma
+                self.advance_token()
+                self.skip_newlines()
+                second_argument = self.parse_type_annotation()
+                self.skip_newlines()
+              end
+              if !@failed && @current.kind() != :right_bracket
+                self.fail("expected ']' after class type arguments")
+              else
+                self.advance_token() unless @failed
+              end
             else
               self.advance_token()
               self.skip_newlines()
@@ -1951,6 +1970,7 @@ class Parser
           if !@failed
             member = [name, argument, second_argument, callable_arity,
                       callable_return, callable_parameters]
+            self.fail("duplicate type in union") if members.include?(member)
             members.push(member)
           end
         end
@@ -2042,6 +2062,9 @@ class Parser
     if class_entry != nil
       return Type::CLASS_BASE + class_entry[1]
     end
+    # Native types come after classes, so a program's own Channel still wins.
+    native = @builder.native_type_id(name)
+    return native if native != nil
     self.fail("unknown type annotation")
     0
   end
@@ -2165,12 +2188,23 @@ class Parser
     end
   end
 
+  # `Box[Int]`: Box must take exactly that many type arguments.
+  def check_class_type_arguments(member)
+    return if member[0] == "Array" || member[0] == "Hash"
+    entry = self.find_class(member[0])
+    count = if member[2] == nil then 1 else 2 end
+    if entry == nil || class_type_parameters(entry).length() != count || entry[5]
+      self.fail("this type does not accept arguments")
+    end
+  end
+
   def declare_annotation(type_annotation)
     descriptors = []
     index = 0
     while index < type_annotation.length() && !@failed
       member = type_annotation[index]
       type_id = self.resolve_type_name(member[0])
+      self.check_class_type_arguments(member) if member[1] != nil && !@failed
       argument_set = if member[1] == nil
         -1
       else
@@ -2606,14 +2640,20 @@ class Parser
     end
     return 0 if @failed
     self.advance_token()
+    type_parameters = self.parse_class_type_parameters()
+    return 0 if @failed
     superclass_index = self.parse_optional_superclass()
+    return 0 if @failed
+    parent_arguments = self.parse_parent_type_arguments(type_parameters)
     return 0 if @failed
     class_index = @builder.declare_class(name, if superclass_index == nil
       -1
     else
       superclass_index
     end)
-    @classes.push([name, class_index, superclass_index, []])
+    @classes.push([name, class_index, superclass_index, [], type_parameters, false])
+    self.apply_class_type_parameters(@classes[@classes.length() - 1], parent_arguments[0])
+    return 0 if @failed
     if sealed
       @builder.seal_class(class_index)
       @sealed_classes.push(class_index)
@@ -2646,6 +2686,79 @@ class Parser
     # Sole-writer fresh register; run_chunk's zero-init already covers
     # nil, matching compile_class.c's own return value exactly.
     self.allocate_register()
+  end
+
+  # `[T]` or `[K, V]` after a class or struct name.
+  def parse_class_type_parameters()
+    names = self.parse_type_variables()
+    self.fail("generic classes require one or two type parameters") if names.length() > 2
+    names
+  end
+
+  # The `[Int]` of `class IntBox < Box[Int]`, resolved against the subclass's
+  # own parameters: [annotations, each one's source text], empty if unwritten.
+  def parse_parent_type_arguments(type_parameters)
+    annotations = []
+    texts = []
+    return [annotations, texts] unless @current.kind() == :left_bracket
+    self.advance_token()
+    self.skip_newlines()
+    while !@failed && @current.kind() != :right_bracket
+      start = @current.start()
+      annotations.push(self.parse_type_annotation())
+      texts.push(@source.slice(start, @previous.start() + @previous.length() - start)) unless @failed
+      self.skip_newlines()
+      break if @current.kind() != :comma
+      self.advance_token()
+      self.skip_newlines()
+    end
+    if !@failed && @current.kind() != :right_bracket
+      self.fail("expected ']' after superclass type arguments")
+    else
+      self.advance_token() unless @failed
+    end
+    [annotations, texts]
+  end
+
+  # Records a declared class's parameters and how they map onto its parent's.
+  # A subclass that fixes a generic parent's arguments still has that parent's
+  # parameter slots, under names no program can write.
+  def apply_class_type_parameters(entry, parent_annotations)
+    if entry[4].length() > 0
+      @builder.set_class_type_parameters(entry[1], entry[4])
+    end
+    return if entry[2] == nil
+    # Only the subclass's parameters are in scope here, and the top-level
+    # function holding these sets declares them just while they are built.
+    outer_type_variables = @current_type_variables
+    @current_type_variables = entry[4]
+    @builder.set_type_variables(@current_function_index, entry[4])
+    sets = self.declare_annotations(parent_annotations)
+    @builder.set_type_variables(@current_function_index, outer_type_variables)
+    @current_type_variables = outer_type_variables
+    return if @failed
+    @builder.set_parent_type_arguments(entry[1], @current_function_index, sets)
+    parent = self.find_class_by_index(entry[2])
+    if entry[4].length() == 0 && parent != nil && parent[4].length() > 0
+      entry[5] = true
+      entry[4] = if parent[4].length() == 1 then ["$parent0"] else ["$parent0", "$parent1"] end
+    end
+  end
+
+  # A declared class, or nil for a builtin one.
+  def find_class_by_index(class_index)
+    index = 0
+    while index < @classes.length()
+      return @classes[index] if @classes[index][1] == class_index
+      index = index + 1
+    end
+    nil
+  end
+
+  # The class type parameters an instance member of the current class sees.
+  def current_class_type_parameters()
+    return [] if @current_class_index == nil
+    @classes[@current_class_entry][4]
   end
 
   # The members of a class (or struct) body, up to its `end`.
@@ -2703,10 +2816,13 @@ class Parser
     end
     return 0 if @failed
     self.advance_token()
+    type_parameters = self.parse_class_type_parameters()
+    return 0 if @failed
     fields = self.parse_struct_fields()
     return 0 if fields == nil
     parent_entry = nil
     inherited = []
+    parent_arguments = [[], []]
     if @current.kind() == :less
       self.advance_token()
       if @current.kind() != :identifier
@@ -2735,11 +2851,16 @@ class Parser
         index = index + 1
       end
       self.advance_token()
+      parent_arguments = self.parse_parent_type_arguments(type_parameters)
+      return 0 if @failed
+      inherited = self.specialized_struct_fields(inherited, parent_entry, parent_arguments[1])
     end
     superclass_index = if parent_entry == nil then nil else parent_entry[1] end
     class_index = @builder.declare_class(name, if superclass_index == nil then -1 else superclass_index end)
     all_fields = inherited + fields
-    @classes.push([name, class_index, superclass_index, []])
+    @classes.push([name, class_index, superclass_index, [], type_parameters, false])
+    self.apply_class_type_parameters(@classes[@classes.length() - 1], parent_arguments[0])
+    return 0 if @failed
     @struct_fields.push([class_index, all_fields])
     index = 0
     while index < fields.length()
@@ -2818,6 +2939,39 @@ class Parser
     end
     self.advance_token()
     fields
+  end
+
+  # A generic parent's fields, with its parameters replaced in each type's
+  # source text by what the child wrote for them. A parent that already fixed
+  # its own parent's arguments, or takes none, has nothing to replace.
+  def specialized_struct_fields(fields, parent_entry, argument_texts)
+    return fields if argument_texts.length() == 0 || class_type_parameters(parent_entry).length() == 0 || parent_entry[5]
+    result = []
+    index = 0
+    while index < fields.length()
+      field = fields[index]
+      result.push([field[0], self.substitute_type_names(field[1], parent_entry[4], argument_texts), field[2]])
+      index = index + 1
+    end
+    result
+  end
+
+  def substitute_type_names(text, names, replacements)
+    lexer = Lexer.new(text)
+    result = ""
+    position = 0
+    token = lexer.next_token()
+    while token.kind() != :eof
+      if token.kind() == :identifier
+        at = names.index(text.slice(token.start(), token.length()))
+        if at != nil
+          result = result + text.slice(position, token.start() - position) + replacements[at]
+          position = token.start() + token.length()
+        end
+      end
+      token = lexer.next_token()
+    end
+    result + text.slice(position, text.length() - position)
   end
 
   def struct_fields_of(class_index)
@@ -3810,6 +3964,8 @@ class Parser
     outer_type_variables = @current_type_variables
     @current_type_variables = self.parse_type_variables()
     return if @failed
+    class_type_parameters = if module_singleton then [] else self.current_class_type_parameters() end
+    @current_type_variables = class_type_parameters + @current_type_variables
     if @current.kind() != :left_paren
       self.fail("expected '(' after function name")
       return
@@ -3844,7 +4000,7 @@ class Parser
       1
     end
     function_index = @builder.declare_function(name, arity + self_offset, required_arity + self_offset)
-    @builder.set_type_variables(function_index, @current_type_variables)
+    @builder.set_type_variables(function_index, @current_type_variables, class_type_parameters.length())
     outer_method_name = @current_method_name
     @current_method_name = name
     @current_method_uses_state = false
@@ -4145,6 +4301,9 @@ class Parser
       0
     end
     function_index = @builder.declare_function(method_name, arity + 1, arity + 1)
+    outer_type_variables = @current_type_variables
+    @current_type_variables = self.current_class_type_parameters()
+    @builder.set_type_variables(function_index, @current_type_variables, @current_type_variables.length())
 
     outer_locals = @locals
     outer_loop_captures_pending = @loop_captures_pending
@@ -4224,6 +4383,7 @@ class Parser
     @current_return_type = outer_return_type
     @type_facts = outer_type_facts
     @declared_types = outer_declared_types
+    @current_type_variables = outer_type_variables
 
     if module_only
       self.register_module_method(method_name, function_index, arity, arity)
@@ -4534,18 +4694,23 @@ class Parser
     arguments
   end
 
-  def fail_spread_type_arguments(type_arguments)
-    return false if type_arguments.length() == 0
-    self.fail("explicit generic arguments cannot be combined with a spread argument")
-    true
+  def emit_type_argument_trailer(type_arguments)
+    return if type_arguments.length() == 0
+    self.emit_byte(type_arguments.length())
+    index = 0
+    while index < type_arguments.length()
+      self.emit_register(type_arguments[index])
+      index = index + 1
+    end
   end
 
-  def emit_call_spread(function_index, arguments)
+  def emit_call_spread(function_index, arguments, type_arguments = [])
     destination = self.allocate_register()
-    self.emit_call_opcode(Opcode::CALL_SPREAD)
+    self.emit_call_opcode(if type_arguments.length() == 0 then Opcode::CALL_SPREAD else Opcode::CALL_TYPED_SPREAD end)
     self.emit_register(destination)
     self.emit_function_index(function_index)
     self.emit_register(arguments)
+    self.emit_type_argument_trailer(type_arguments)
     destination
   end
 
@@ -4555,7 +4720,6 @@ class Parser
   # spread Array as the positional arguments, as in compiler_calls.c;
   # `block_context` types it.
   def emit_singleton_spread_call(function_index, needs_receiver, type_arguments, block_context = nil)
-    return 0 if self.fail_spread_type_arguments(type_arguments)
     collected = [nil, [], block_context]
     arguments = self.parse_spread_call_arguments(collected)
     return 0 if arguments == nil
@@ -4572,7 +4736,7 @@ class Parser
       end
       arguments = self.emit_build_spread_arguments([receiver], arguments, [], false)
     end
-    self.emit_call_spread(function_index, arguments)
+    self.emit_call_spread(function_index, arguments, type_arguments)
   end
 
   def parse_call_arguments()
@@ -4622,37 +4786,25 @@ class Parser
   def compile_call(name)
     name_token = @previous
     function_entry = self.find_function(name)
+    if function_entry == nil && @current.kind() == :left_bracket && @in_method && @current_class_index != nil
+      # `echo[U](value)`: only self's method can take type arguments here.
+      return self.compile_invoke_arguments(0, name)
+    end
     return self.compile_forward_call(name_token) if function_entry == nil
     type_arguments = []
     if @current.kind() == :left_bracket
-      self.advance_token()
-      self.skip_newlines()
-      while !@failed && @current.kind() != :right_bracket
-        if type_arguments.length() == 8
-          self.fail("too many generic arguments")
-        else
-          annotation = self.parse_type_annotation()
-          type_arguments.push(self.declare_annotation(annotation))
-          self.skip_newlines()
-          if @current.kind() == :comma
-            self.advance_token()
-            self.skip_newlines()
-          else
-            break
-          end
-        end
-      end
-      if !@failed && @current.kind() != :right_bracket
-        self.fail("expected ']' after generic arguments")
-      else
-        self.advance_token() unless @failed
-      end
-      if !@failed && type_arguments.length() != function_entry[4]
+      type_annotations = self.parse_explicit_type_annotations()
+      return 0 if type_annotations == nil
+      if type_annotations.length() != function_entry[4]
         self.fail("wrong number of generic arguments")
+        return 0
       end
-      if !@failed && @current.kind() != :left_paren
-        self.fail("expected '(' after generic arguments")
+      # `identity[Int]` with no call: a callable with those arguments applied.
+      if @current.kind() != :left_paren
+        descriptor = [function_entry[0], function_entry[1], function_entry[2], function_entry[6]]
+        return self.compile_reference_wrapper(nil, [descriptor, false], type_annotations)
       end
+      type_arguments = self.declare_annotations(type_annotations)
     elsif function_entry[4] > 0
       # Omitted arguments use the VM's ordinary runtime inference.
     end
@@ -4660,14 +4812,13 @@ class Parser
     self.advance_token()
     self.skip_newlines()
     if self.call_arguments_have_spread?()
-      return 0 if self.fail_spread_type_arguments(type_arguments)
       # Keywords alongside a spread fill their slots by index
       # (CALL_KEYWORD_SPREAD), as in compiler.c's parse_spread_function_call.
       collected = [function_entry[3], []]
       arguments = self.parse_spread_call_arguments(collected)
       keywords = collected[1]
       return 0 if arguments == nil
-      return self.publish_call_return(function_entry, self.emit_call_spread(function_entry[1], arguments)) if keywords.length() == 0
+      return self.publish_call_return(function_entry, self.emit_call_spread(function_entry[1], arguments, type_arguments)) if keywords.length() == 0
       destination = self.allocate_register()
       self.emit_call_opcode(148) # CALL_KEYWORD_SPREAD; Opcode is at its constant limit
       self.emit_register(destination)
@@ -5930,6 +6081,30 @@ class Parser
   # leaves out unprovided trailing arguments so their defaults run, and
   # declares a generic target's type variables itself; explicit generic
   # arguments are declared again in the wrapper, whose type sets they index.
+  def annotations_use_type_variable?(annotations)
+    index = 0
+    while index < annotations.length()
+      return true if self.annotation_uses_type_variable?(annotations[index])
+      index = index + 1
+    end
+    false
+  end
+
+  def annotation_uses_type_variable?(annotation)
+    return false if annotation == nil
+    index = 0
+    while index < annotation.length()
+      member = annotation[index]
+      return true if @current_type_variables.include?(member[0])
+      return true if self.annotation_uses_type_variable?(member[1])
+      return true if self.annotation_uses_type_variable?(member[2])
+      return true if self.annotation_uses_type_variable?(member[4])
+      return true if member[5] != nil && self.annotations_use_type_variable?(member[5])
+      index = index + 1
+    end
+    false
+  end
+
   def compile_reference_wrapper(receiver, target, type_annotations)
     bound = target.is_a?(String)
     callee = nil
@@ -5983,6 +6158,12 @@ class Parser
     while index < arity
       self.allocate_register()
       index = index + 1
+    end
+    # Type arguments naming the enclosing function's variables stay bound to
+    # what they were when the reference was taken.
+    if outer_type_variables.length() > 0 && self.annotations_use_type_variable?(type_annotations)
+      @builder.set_type_variables(function_index, outer_type_variables)
+      @builder.set_captures_type_variables(function_index)
     end
     type_arguments = self.declare_annotations(type_annotations)
     # signature is [parameter types, return type, type variables,
@@ -6130,6 +6311,11 @@ class Parser
       self.set_type_fact(destination, Type::BOOL)
       return destination
     end
+    self.compile_invoke_arguments(receiver, name)
+  end
+
+  # The rest of a method call, from just after its name.
+  def compile_invoke_arguments(receiver, name)
     # Explicit generic arguments (`obj.method[Type](...)`) -- unlike
     # compile_call's own handling, there's no arity check against a
     # known type_variable_count here either: the target method is only
@@ -6158,22 +6344,18 @@ class Parser
     end
     self.skip_newlines()
     if self.call_arguments_have_keyword?()
-      if type_arguments.length() > 0
-        self.fail("explicit type arguments cannot be combined with keyword arguments")
-        return 0
-      end
       arguments = self.parse_dynamic_keyword_arguments()
       return 0 if arguments == nil
       destination = self.allocate_register()
-      self.emit_call_opcode(Opcode::INVOKE_KEYWORDS)
+      self.emit_call_opcode(if type_arguments.length() == 0 then Opcode::INVOKE_KEYWORDS else Opcode::INVOKE_TYPED_KEYWORDS end)
       self.emit_register(destination)
       self.emit_register(receiver)
       self.emit_register(method_name_index)
       self.emit_keyword_trailer(arguments)
+      self.emit_type_argument_trailer(type_arguments)
       return destination
     end
     if self.call_arguments_have_spread?()
-      return 0 if self.fail_spread_type_arguments(type_arguments)
       collected = [nil, [], block_context]
       arguments = self.parse_spread_call_arguments(collected)
       return 0 if arguments == nil
@@ -6189,11 +6371,12 @@ class Parser
         return destination
       end
       destination = self.allocate_register()
-      self.emit_call_opcode(Opcode::INVOKE_SPREAD)
+      self.emit_call_opcode(if type_arguments.length() == 0 then Opcode::INVOKE_SPREAD else Opcode::INVOKE_TYPED_SPREAD end)
       self.emit_register(destination)
       self.emit_register(receiver)
       self.emit_register(method_name_index)
       self.emit_register(arguments)
+      self.emit_type_argument_trailer(type_arguments)
       return destination
     end
     parsed = self.parse_call_arguments()
@@ -8056,6 +8239,7 @@ class Parser
       class_entry = self.find_class(@current_module_name + "::" + name)
     end
     return self.compile_class_dot_call(class_entry) if class_entry != nil && @current.kind() == :dot
+    return self.compile_specialized_new(class_entry) if self.specialized_new_ahead?(class_entry)
     local = self.find_local(name)
     return self.parse_file_open_call() if self.is_file_open_target(name, class_entry, local)
     dot_construct = self.dot_construct_id(name, class_entry, local)
@@ -8141,6 +8325,7 @@ class Parser
     end
     class_entry = self.find_class(qualified)
     return self.compile_class_dot_call(class_entry) if class_entry != nil && @current.kind() == :dot
+    return self.compile_specialized_new(class_entry) if self.specialized_new_ahead?(class_entry)
     self.fail("undefined namespaced class")
     0
   end
@@ -8241,10 +8426,7 @@ class Parser
     type_annotations = self.parse_explicit_type_annotations()
     return 0 if type_annotations == nil
     if @current.kind() != :left_paren
-      if exported != nil
-        self.fail("expected '(' after singleton function")
-        return 0
-      end
+      return self.compile_reference_wrapper(nil, [exported, true], type_annotations) if exported != nil
       return self.compile_reference_wrapper(nil, [declared, false], type_annotations)
     end
     type_arguments = self.declare_annotations(type_annotations)
@@ -8466,6 +8648,76 @@ class Parser
     true
   end
 
+  # `Box[...]` where Box is a generic class constructed right after.
+  def specialized_new_ahead?(class_entry)
+    return false if class_entry == nil || @current.kind() != :left_bracket
+    return false if class_type_parameters(class_entry).length() == 0
+    return true if self.find_function(class_entry[0]) == nil
+    # A function of the same name: `Factory[Int](42)` calls that instead.
+    lookahead = @lexer.clone()
+    brackets = 1
+    while brackets > 0
+      token = lookahead.next_token()
+      return false if token.kind() == :eof
+      brackets = brackets + 1 if token.kind() == :left_bracket
+      brackets = brackets - 1 if token.kind() == :right_bracket
+    end
+    lookahead.next_token().kind() == :dot
+  end
+
+  # `Box[Int].new(...)`: NEW_TYPED carries the type arguments. Two of them
+  # travel as one Hash-shaped member, as in compiler.c.
+  def compile_specialized_new(class_entry)
+    annotations = self.parse_explicit_type_annotations()
+    return 0 if annotations == nil
+    if class_entry[5]
+      self.fail("inherited type arguments are fixed by the superclass")
+      return 0
+    end
+    if annotations.length() != class_entry[4].length()
+      self.fail(if class_entry[4].length() == 2
+        "class specialization requires exactly two declared type arguments"
+      else
+        "class specialization requires exactly one declared type argument"
+      end)
+      return 0
+    end
+    if @current.kind() != :dot
+      self.fail("expected '.new(...)' after class type argument")
+      return 0
+    end
+    self.advance_token()
+    if @current.kind() != :identifier || self.token_text(@current) != "new"
+      self.fail("expected constructor of an instantiable generic class")
+      return 0
+    end
+    return 0 if self.fail_if_sealed(class_entry[1], @current)
+    self.advance_token()
+    if @current.kind() != :left_paren
+      self.fail("expected '(' after 'new'")
+      return 0
+    end
+    self.advance_token()
+    self.skip_newlines()
+    sets = self.declare_annotations(annotations)
+    return 0 if @failed
+    explicit_type = if sets.length() == 1
+      sets[0]
+    else
+      @builder.declare_type_set(@current_function_index, [[Type::HASH, sets[0], sets[1], -1, -1, []]])
+    end
+    arguments = self.parse_dynamic_keyword_arguments()
+    return 0 if arguments == nil
+    destination = self.allocate_register()
+    self.emit_call_opcode(Opcode::NEW_TYPED)
+    self.emit_register(destination)
+    self.emit_register(class_entry[1])
+    self.emit_register(explicit_type)
+    self.emit_keyword_trailer(arguments)
+    self.set_type_fact(destination, Type::CLASS_BASE + class_entry[1])
+    destination
+  end
+
   def compile_new_call(class_index)
     self.advance_token()
     if @current.kind() != :identifier || self.token_text(@current) != "new"
@@ -8492,18 +8744,39 @@ class Parser
       return destination
     end
     if self.call_arguments_have_spread?()
-      arguments = self.parse_spread_call_arguments()
+      arguments = self.parse_dynamic_keyword_arguments()
       return 0 if arguments == nil
       destination = self.allocate_register()
-      self.emit_call_opcode(Opcode::NEW_SPREAD)
-      self.emit_register(destination)
-      self.emit_register(class_index)
-      self.emit_register(arguments)
+      if arguments[2] == nil
+        self.emit_call_opcode(Opcode::NEW_SPREAD)
+        self.emit_register(destination)
+        self.emit_register(class_index)
+        self.emit_register(arguments[0])
+      else
+        self.emit_call_opcode(Opcode::NEW_KEYWORDS)
+        self.emit_register(destination)
+        self.emit_register(class_index)
+        self.emit_keyword_trailer(arguments)
+      end
       self.set_type_fact(destination, Type::CLASS_BASE + class_index)
       return destination
     end
     parsed = self.parse_call_arguments()
     return 0 if parsed == nil
+    # A block for initialize goes by NEW_KEYWORDS' block flag.
+    if @current.kind() == :do
+      array = self.allocate_register()
+      self.emit_instruction3(Opcode::ARRAY, array, parsed[0], parsed[1])
+      self.set_type_fact(array, Type::ARRAY)
+      block = self.compile_block()
+      destination = self.allocate_register()
+      self.emit_call_opcode(Opcode::NEW_KEYWORDS)
+      self.emit_register(destination)
+      self.emit_register(class_index)
+      self.emit_keyword_trailer([array, [], block])
+      self.set_type_fact(destination, Type::CLASS_BASE + class_index)
+      return destination
+    end
     destination = self.allocate_register()
     self.emit_call_opcode(Opcode::NEW)
     self.emit_register(destination)
