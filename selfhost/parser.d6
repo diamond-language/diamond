@@ -4180,10 +4180,6 @@ class Parser
     name_token = @current
     name = self.token_text(@current)
     self.advance_token()
-    if name == "*" && @current.kind() == :star && @current.start() == name_token.start() + 1
-      name = "**"
-      self.advance_token()
-    end
     if name == "["
       if @current.kind() != :right_bracket
         self.fail("expected ']' after '[' in method name")
@@ -4550,9 +4546,6 @@ class Parser
       0
     end
     function_index = @builder.declare_function(method_name, arity + 1, arity + 1)
-    outer_type_variables = @current_type_variables
-    @current_type_variables = self.current_class_type_parameters()
-    @builder.set_type_variables(function_index, @current_type_variables, @current_type_variables.length())
 
     outer_locals = @locals
     outer_loop_captures_pending = @loop_captures_pending
@@ -4632,7 +4625,6 @@ class Parser
     @current_return_type = outer_return_type
     @type_facts = outer_type_facts
     @declared_types = outer_declared_types
-    @current_type_variables = outer_type_variables
 
     if module_only
       self.register_module_method(method_name, function_index, arity, arity)
