@@ -269,6 +269,27 @@ static bool class_binding_fits(const DiamondChunk *chunk,const DiamondTypeSet *s
     return true;
 }
 
+/* Whether an explicit class argument names a variable with no binding: nothing
+ * has shown what it is, as when `Box[U].new(...)` runs in a method whose `U` could
+ * only have come from a callback with no declared return. */
+bool explicit_type_has_unbound_variable(const DiamondChunk *chunk,uint16_t index,size_t depth) {
+    if(index==DIAMOND_NO_TYPE_SET||index>=chunk->type_set_count||
+       depth>=DIAMOND_BOUND_TYPE_NODES)return false;
+    const DiamondTypeSet *set=&chunk->type_sets[index];
+    for(size_t member=0;member<set->count;member++) {
+        const DiamondTypeMember m=set->members[member];
+        if(m.id>=DIAMOND_TYPE_VARIABLE_BASE&&m.id<DIAMOND_TYPE_INTERFACE_BASE) {
+            const size_t variable=m.id-DIAMOND_TYPE_VARIABLE_BASE;
+            if(variable<chunk->type_variable_count&&chunk->type_variable_bindings!=nullptr&&
+               (chunk->type_variable_bindings[variable].node_count==0||
+                chunk->type_variable_bindings[variable].nodes[0].count==0))return true;
+        }
+        if(explicit_type_has_unbound_variable(chunk,m.argument_set,depth+1)||
+           explicit_type_has_unbound_variable(chunk,m.second_argument_set,depth+1))return true;
+    }
+    return false;
+}
+
 bool bind_explicit_class_type(const DiamondChunk *chunk,uint16_t index,
         DiamondTypeBinding *binding) {
     if(index>=chunk->type_set_count)return false;
@@ -1056,9 +1077,11 @@ static bool value_matches_member(const DiamondChunk *chunk,DiamondValue value,
         return instance->type_binding!=nullptr&&
             diamond_map_class_bindings(chunk->classes,chunk->class_count,instance->class->index,
                 member->id-DIAMOND_TYPE_CLASS_BASE,instance->type_binding,projected,false)&&
-            bind_explicit_class_type(chunk,member->argument_set,&wanted)&&
-            bound_nodes_equal(&projected[0],0,&wanted,0,0)&&
+            (explicit_type_has_unbound_variable(chunk,member->argument_set,0)||
+             (bind_explicit_class_type(chunk,member->argument_set,&wanted)&&
+              bound_nodes_equal(&projected[0],0,&wanted,0,0)))&&
             (member->second_argument_set==DIAMOND_NO_TYPE_SET||
+             explicit_type_has_unbound_variable(chunk,member->second_argument_set,0)||
              (projected[1].node_count!=0&&
               bind_explicit_class_type(chunk,member->second_argument_set,&wanted)&&
               bound_nodes_equal(&projected[1],0,&wanted,0,0)));
@@ -1098,9 +1121,11 @@ static bool value_matches_member(const DiamondChunk *chunk,DiamondValue value,
                        member->callable_parameter_sets[parameter],
                        function->type_sets,actual)))return false;
             }
+        /* A callable with no declared return can't be judged here. The
+         * compiler checks each result wherever it relies on this contract. */
         return member->callable_return_set==DIAMOND_NO_TYPE_SET||
+            function->return_type_set==DIAMOND_NO_TYPE_SET||
             ((size_t)member->callable_return_set<chunk->type_set_count&&
-             function->return_type_set!=DIAMOND_NO_TYPE_SET&&
              (size_t)function->return_type_set<function->type_set_count&&
              (closure->type_binding_count>0?
               closure_signature_satisfies(chunk,closure,function,function->return_type_set,

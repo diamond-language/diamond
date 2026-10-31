@@ -1,9 +1,9 @@
 def run()
  def unknown(value)
-  "ok"
+  1
  end
  begin
-  array_map_string([], unknown)
+  array_map_string(["a"], unknown)
  rescue error: TypeError
   42
  end

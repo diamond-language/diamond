@@ -105,6 +105,10 @@ authoritative fine-grained record.
 
 - Generic setup no longer slows ordinary calls: a call to a non-generic function runs
   3-5% fewer instructions than it did since generic classes landed.
+- A block or function with no declared return can be passed to a typed Callable such as
+  `Callable[[Int], String]`, including through unannotated code, which previously failed
+  with `expected Callable[[Int], String], got Callable[1]`. Each result is checked where
+  the contract is relied on, so a wrong result raises `TypeError` at that point.
 - The terminal task board redraws on idle resize, shows focused project/task
   forms, selects newly created projects, and keeps escape-prefixed shortcuts
   from cancelling or flashing the active form. Timed terminal reads resume

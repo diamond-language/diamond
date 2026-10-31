@@ -1,0 +1,22 @@
+call: 2
+yield: 2
+map: [2, 3]
+call: expected Int, got String
+yield: expected Int, got String
+map: expected Array[Int], got Array[String]
+flat_map: expected Array[Int], got Array[String]
+group_by: expected Hash[Int, Array[Int]], got Hash[String, Array]
+map_values: expected Hash[String, Int], got Hash[String, String]
+spread: expected Int, got String
+returned: expected Int, got String
+element: expected Int, got String
+generic relay: rejected
+seeded conflict: expected Int, got String
+seeded agrees: text
+untyped map: 41
+untyped map chain: 2
+untyped fold: 42
+method relay: expected Int, got String
+arity: expected Callable[[Int, Int], Int], got Callable[1]
+declared return: expected Callable[[Int], Int], got Callable[1]
+nil
