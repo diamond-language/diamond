@@ -1,0 +1,27 @@
+def count(n, total = 0)
+  return total if n == 0
+  count(n - 1, total + 1)
+end
+def even?(n: Int) -> Bool
+  return true if n == 0
+  return odd?(n - 1)
+end
+def odd?(n: Int) -> Bool
+  if n == 0
+    false
+  else
+    even?(n - 1)
+  end
+end
+def morph[T](value: T, n: Int) -> String
+  return value.to_s() if n == 0
+  return morph(value.to_s(), n - 1)
+end
+def wrong(n: Int) -> Int = other_type(n)
+def other_type(n) = "text"
+caught = begin
+  wrong(1)
+rescue error: TypeError
+  error.message()
+end
+[count(300000), even?(300001), morph(42, 300000), caught]

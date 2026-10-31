@@ -1032,7 +1032,8 @@ static DiamondVmStatus program_builder_set_module_method_visibility(DiamondVm *v
 static DiamondVmStatus program_builder_set_class_method_visibility(DiamondVm *vm,
         DiamondProgram *built, DiamondValue *registers, uint16_t base, uint8_t argc,
         DiamondValue *result) {
-    if(argc!=3)return DIAMOND_VM_ARITY_ERROR;
+    if(argc!=3&&argc!=4)return DIAMOND_VM_ARITY_ERROR;
+    if(argc==4&&registers[(size_t)base+3].kind!=DIAMOND_VALUE_BOOL)return DIAMOND_VM_TYPE_ERROR;
     if(registers[base].kind!=DIAMOND_VALUE_INT||
        registers[(size_t)base+1].kind!=DIAMOND_VALUE_OBJECT||
        registers[(size_t)base+1].as.object->kind!=DIAMOND_OBJECT_STRING||
@@ -1053,7 +1054,7 @@ static DiamondVmStatus program_builder_set_class_method_visibility(DiamondVm *vm
         return DIAMOND_VM_TYPE_ERROR;
     }
     found->is_private=registers[(size_t)base+2].as.boolean;
-    found->is_protected=false;
+    found->is_protected=argc==4&&registers[(size_t)base+3].as.boolean;
     *result=DIAMOND_NIL;return DIAMOND_VM_OK;
 }
 
@@ -1317,6 +1318,38 @@ static DiamondVmStatus program_builder_set_source_location(DiamondProgramBuilder
 
 /* Type-set descriptors carry primitive, class, interface, type-variable,
  * collection and callable metadata used by the compiler. */
+/* The type id of a native type name (Time, Channel, ...), or nil. */
+static DiamondVmStatus program_builder_native_type_id(DiamondValue *registers, uint16_t base,
+        uint8_t argc, DiamondValue *result) {
+    if(argc!=1)return DIAMOND_VM_ARITY_ERROR;
+    if(registers[base].kind!=DIAMOND_VALUE_OBJECT||registers[base].as.object->kind!=DIAMOND_OBJECT_STRING)
+        return DIAMOND_VM_TYPE_ERROR;
+    uint8_t kind=0;
+    *result=diamond_native_type_kind(((const DiamondString *)registers[base].as.object)->chars,&kind)?
+        DIAMOND_INT((int64_t)DIAMOND_NATIVE_TYPE_OPERAND_BASE+kind):DIAMOND_NIL;
+    return DIAMOND_VM_OK;
+}
+
+/* Replaces the placeholder of a type set member once its class or interface
+ * has been declared: (function index, set index, member index, type id). */
+static DiamondVmStatus program_builder_patch_type_set_member(DiamondVm *vm, DiamondProgram *built,
+        DiamondValue *registers, uint16_t base, uint8_t argc, DiamondValue *result) {
+    if(argc!=4)return DIAMOND_VM_ARITY_ERROR;
+    for(size_t index=0;index<4;index++)
+        if(registers[(size_t)base+index].kind!=DIAMOND_VALUE_INT)return DIAMOND_VM_TYPE_ERROR;
+    const DiamondFunction *target=program_builder_target(built,registers[base].as.integer);
+    const int64_t set=registers[(size_t)base+1].as.integer;
+    const int64_t member=registers[(size_t)base+2].as.integer;
+    const int64_t type_id=registers[(size_t)base+3].as.integer;
+    if(target==nullptr||set<0||(uint64_t)set>=target->type_set_count||member<0||
+       member>=target->type_sets[set].count||type_id<DIAMOND_TYPE_CLASS_BASE||type_id>=DIAMOND_TYPE_NONE) {
+        snprintf(vm->error,sizeof vm->error,"ProgramBuilder#patch_type_set_member has an invalid index");
+        return DIAMOND_VM_TYPE_ERROR;
+    }
+    target->type_sets[set].members[member].id=(uint16_t)type_id;
+    *result=DIAMOND_NIL;return DIAMOND_VM_OK;
+}
+
 static DiamondVmStatus program_builder_declare_type_set(DiamondVm *vm, DiamondProgram *built,
         DiamondValue *registers, uint16_t base, uint8_t argc, DiamondValue *result) {
     if(argc!=2)return DIAMOND_VM_ARITY_ERROR;
@@ -1395,6 +1428,7 @@ static DiamondVmStatus program_builder_declare_type_set(DiamondVm *vm, DiamondPr
         const bool collection_arguments=
             (type_id==DIAMOND_TYPE_ARRAY&&valid_argument&&second_argument_set==-1)||
             (type_id==DIAMOND_TYPE_HASH&&valid_argument&&valid_second)||
+            (class_type&&valid_argument&&valid_second)||
             (argument_set==-1&&second_argument_set==-1);
         const bool callable_arguments=type_id!=DIAMOND_TYPE_CALLABLE?
             callable_arity==-1&&callable_return==-1&&
@@ -1405,7 +1439,8 @@ static DiamondVmStatus program_builder_declare_type_set(DiamondVm *vm, DiamondPr
                 valid_parameters&&
                 (callable_parameters->count==0||
                  callable_parameters->count==(size_t)callable_arity);
-        if(!(primitive||class_type||interface_type||variable_type)||
+        const bool native_type=diamond_type_operand_is_native((int)type_id);
+        if(!(primitive||class_type||interface_type||variable_type||native_type)||
            !collection_arguments||
            !callable_arguments) {
             snprintf(vm->error,sizeof vm->error,"ProgramBuilder#%s",
@@ -1437,12 +1472,18 @@ static DiamondVmStatus program_builder_declare_type_set(DiamondVm *vm, DiamondPr
         const int64_t callable_return=descriptor->values[4].as.integer;
         const DiamondArray *callable_parameters=
             (const DiamondArray *)descriptor->values[5].as.object;
+        /* For a native type the arity byte holds the object kind, as in
+         * compiler.c's parse_type_annotation. */
+        const int64_t member_type=descriptor->values[0].as.integer;
+        const bool native_member=diamond_type_operand_is_native((int)member_type);
         set->members[member]=(DiamondTypeMember){
-            .id=(uint16_t)descriptor->values[0].as.integer,
+            .id=native_member?DIAMOND_TYPE_NATIVE:(uint16_t)member_type,
             .argument_set=argument_set<0?DIAMOND_NO_TYPE_SET:(uint16_t)argument_set,
             .second_argument_set=second_argument_set<0?DIAMOND_NO_TYPE_SET:
                 (uint16_t)second_argument_set,
-            .callable_arity=callable_arity<0?UINT8_MAX:(uint8_t)callable_arity,
+            .callable_arity=native_member?
+                (uint8_t)(member_type-DIAMOND_NATIVE_TYPE_OPERAND_BASE):
+                callable_arity<0?UINT8_MAX:(uint8_t)callable_arity,
             .callable_return_set=callable_return<0?DIAMOND_NO_TYPE_SET:
                 (uint16_t)callable_return,
             .callable_parameters_typed=callable_parameters->count>0};
@@ -1594,9 +1635,132 @@ static DiamondVmStatus program_builder_set_return_type(DiamondVm *vm, DiamondPro
     *result=DIAMOND_NIL;return DIAMOND_VM_OK;
 }
 
-static DiamondVmStatus program_builder_set_type_variables(DiamondProgram *built,
+/* The `class Box[T]` / `class Pair[K, V]` parameters of a class just declared. */
+static DiamondVmStatus program_builder_set_class_type_parameters(DiamondVm *vm, DiamondProgram *built,
         DiamondValue *registers, uint16_t base, uint8_t argc, DiamondValue *result) {
     if(argc!=2)return DIAMOND_VM_ARITY_ERROR;
+    DiamondClass *class=registers[base].kind==DIAMOND_VALUE_INT?
+        program_builder_class(built,registers[base].as.integer):nullptr;
+    const DiamondValue names=registers[(size_t)base+1];
+    if(class==nullptr||names.kind!=DIAMOND_VALUE_OBJECT||names.as.object->kind!=DIAMOND_OBJECT_ARRAY) {
+        snprintf(vm->error,sizeof vm->error,
+            "ProgramBuilder#set_class_type_parameters arguments must be (class index, Array)");
+        return DIAMOND_VM_TYPE_ERROR;
+    }
+    const DiamondArray *list=(const DiamondArray *)names.as.object;
+    if(list->count==0||list->count>2) {
+        snprintf(vm->error,sizeof vm->error,"generic classes require one or two type parameters");
+        return DIAMOND_VM_TYPE_ERROR;
+    }
+    for(size_t index=0;index<list->count;index++) {
+        if(list->values[index].kind!=DIAMOND_VALUE_OBJECT||
+           list->values[index].as.object->kind!=DIAMOND_OBJECT_STRING)
+            return DIAMOND_VM_TYPE_ERROR;
+        const DiamondString *name=(const DiamondString *)list->values[index].as.object;
+        if(name->length==0||name->length>=DIAMOND_MAX_FUNCTION_NAME)return DIAMOND_VM_TYPE_ERROR;
+        char *target=index==0?class->type_parameter:class->second_type_parameter;
+        memcpy(target,name->chars,name->length);
+        target[name->length]='\0';
+    }
+    *result=DIAMOND_NIL;return DIAMOND_VM_OK;
+}
+
+/* Maps a class's parameters onto its superclass's, as compile_class does for
+ * `class Child[T] < Box[T]` and `class IntBox < Box[Int]`. `sets` holds the
+ * written arguments as type sets of the given function, and is empty when
+ * there were none. */
+static DiamondVmStatus program_builder_set_parent_type_arguments(DiamondVm *vm, DiamondProgram *built,
+        DiamondValue *registers, uint16_t base, uint8_t argc, DiamondValue *result) {
+    if(argc!=3)return DIAMOND_VM_ARITY_ERROR;
+    DiamondClass *class=registers[base].kind==DIAMOND_VALUE_INT?
+        program_builder_class(built,registers[base].as.integer):nullptr;
+    const DiamondFunction *function=registers[(size_t)base+1].kind==DIAMOND_VALUE_INT?
+        program_builder_target(built,registers[(size_t)base+1].as.integer):nullptr;
+    const DiamondValue list=registers[(size_t)base+2];
+    if(class==nullptr||function==nullptr||class->superclass==DIAMOND_NO_CLASS||
+       list.kind!=DIAMOND_VALUE_OBJECT||list.as.object->kind!=DIAMOND_OBJECT_ARRAY) {
+        snprintf(vm->error,sizeof vm->error,
+            "ProgramBuilder#set_parent_type_arguments arguments must be (subclass index, function index, Array)");
+        return DIAMOND_VM_TYPE_ERROR;
+    }
+    const DiamondArray *sets=(const DiamondArray *)list.as.object;
+    const DiamondClass *parent=program_builder_class(built,class->superclass);
+    const size_t subclass_parameters=DIAMOND_CLASS_TYPE_PARAMETER_COUNT(class);
+    const size_t parent_parameters=DIAMOND_CLASS_TYPE_PARAMETER_COUNT(parent);
+    const char *problem=nullptr;
+    for(size_t index=0;index<sets->count;index++)
+        if(sets->values[index].kind!=DIAMOND_VALUE_INT||sets->values[index].as.integer<0||
+           (uint64_t)sets->values[index].as.integer>=function->type_set_count)
+            problem="ProgramBuilder#set_parent_type_arguments has an invalid type set";
+    if(problem==nullptr&&parent_parameters==0) {
+        if(sets->count>0)problem="non-generic superclass does not accept type arguments";
+    } else if(problem==nullptr&&parent->fixed_type_arguments) {
+        if(subclass_parameters>0) {
+            memcpy(class->parent_type_bindings,parent->fixed_type_bindings,sizeof class->parent_type_bindings);
+            class->transforms_parent_arguments=true;
+        } else memcpy(class->fixed_type_bindings,parent->fixed_type_bindings,sizeof class->fixed_type_bindings);
+    } else if(problem==nullptr&&sets->count!=parent_parameters) {
+        problem=sets->count==0?(subclass_parameters>0?"generic superclass requires forwarded type arguments":
+            "generic superclass requires fixed type arguments"):"wrong number of superclass type arguments";
+    } else if(problem==nullptr&&subclass_parameters>0) {
+        unsigned occurrences[2]={};
+        bool simple=parent_parameters==subclass_parameters;uint8_t first=0;
+        for(size_t variable=0;variable<parent_parameters&&problem==nullptr;variable++) {
+            DiamondTypeBinding *binding=&class->parent_type_bindings[variable];
+            if(!diamond_bind_type_template(function->type_sets,function->type_set_count,
+                (uint16_t)sets->values[variable].as.integer,binding)) {
+                problem="superclass type template exceeds the binding graph";break;
+            }
+            for(size_t n=0;n<binding->node_count;n++)
+                for(size_t m=0;m<binding->nodes[n].count;m++) {
+                    const uint16_t id=binding->nodes[n].members[m].id;
+                    if(id>=DIAMOND_TYPE_VARIABLE_BASE&&id<DIAMOND_TYPE_VARIABLE_BASE+subclass_parameters) {
+                        occurrences[id-DIAMOND_TYPE_VARIABLE_BASE]++;
+                        if(binding->nodes[n].count!=1)problem="parent type variables cannot be union alternatives";
+                    }
+                }
+            if(binding->node_count!=1||binding->nodes[0].count!=1||
+               binding->nodes[0].members[0].id<DIAMOND_TYPE_VARIABLE_BASE||
+               binding->nodes[0].members[0].id>=DIAMOND_TYPE_VARIABLE_BASE+subclass_parameters)simple=false;
+            else if(variable==0)first=(uint8_t)(binding->nodes[0].members[0].id-DIAMOND_TYPE_VARIABLE_BASE);
+        }
+        for(size_t variable=0;variable<subclass_parameters;variable++)
+            if(occurrences[variable]!=1)simple=false;
+        class->transforms_parent_arguments=!simple;
+        class->swaps_parent_arguments=simple&&first==1;
+    } else if(problem==nullptr) {
+        for(size_t variable=0;variable<parent_parameters;variable++)
+            if(!diamond_bind_fixed_type(function->type_sets,function->type_set_count,
+                (uint16_t)sets->values[variable].as.integer,&class->fixed_type_bindings[variable]))
+                problem="superclass type arguments must be concrete and fit the binding graph";
+    }
+    if(problem!=nullptr) {
+        snprintf(vm->error,sizeof vm->error,"%s",problem);
+        return DIAMOND_VM_TYPE_ERROR;
+    }
+    if(subclass_parameters==0&&parent_parameters>0) {
+        class->fixed_type_arguments=true;
+        snprintf(class->type_parameter,sizeof class->type_parameter,"$parent0");
+        if(parent_parameters==2)snprintf(class->second_type_parameter,sizeof class->second_type_parameter,"$parent1");
+    }
+    *result=DIAMOND_NIL;return DIAMOND_VM_OK;
+}
+
+/* A closure of this function keeps the type bindings of the function that
+ * created it, whose variables it declares as its own. */
+static DiamondVmStatus program_builder_set_captures_type_variables(DiamondProgram *built,
+        DiamondValue *registers, uint16_t base, uint8_t argc, DiamondValue *result) {
+    if(argc!=1)return DIAMOND_VM_ARITY_ERROR;
+    DiamondFunction *target=registers[base].kind==DIAMOND_VALUE_INT?
+        program_builder_target(built,registers[base].as.integer):nullptr;
+    if(target==nullptr||target->type_variable_count==0)return DIAMOND_VM_TYPE_ERROR;
+    target->captures_type_variables=true;
+    *result=DIAMOND_NIL;return DIAMOND_VM_OK;
+}
+
+static DiamondVmStatus program_builder_set_type_variables(DiamondProgram *built,
+        DiamondValue *registers, uint16_t base, uint8_t argc, DiamondValue *result) {
+    if(argc!=2&&argc!=3)return DIAMOND_VM_ARITY_ERROR;
     if(registers[base].kind!=DIAMOND_VALUE_INT||
        registers[(size_t)base+1].kind!=DIAMOND_VALUE_OBJECT||
        registers[(size_t)base+1].as.object->kind!=DIAMOND_OBJECT_ARRAY)
@@ -1606,6 +1770,13 @@ static DiamondVmStatus program_builder_set_type_variables(DiamondProgram *built,
     const DiamondArray *variables=
         (const DiamondArray *)registers[(size_t)base+1].as.object;
     if(target==nullptr||variables->count>8)return DIAMOND_VM_TYPE_ERROR;
+    /* The optional count says how many leading names are the class's own. */
+    if(argc==3) {
+        const DiamondValue class_count=registers[(size_t)base+2];
+        if(class_count.kind!=DIAMOND_VALUE_INT||class_count.as.integer<0||class_count.as.integer>2||
+           (uint64_t)class_count.as.integer>variables->count)return DIAMOND_VM_TYPE_ERROR;
+        target->class_type_variable=(uint8_t)class_count.as.integer;
+    }
     target->type_variable_count=(uint8_t)variables->count;
     for(size_t index=0;index<variables->count;index++) {
         if(variables->values[index].kind!=DIAMOND_VALUE_OBJECT||
@@ -1880,6 +2051,24 @@ DiamondVmStatus program_builder_invoke_helper(DiamondVm *vm,
        memcmp(method_name->chars,"set_return_type",
            sizeof("set_return_type")-1)==0)
         return program_builder_set_return_type(vm,built,registers,base,argc,result);
+    if(method_name->length==sizeof("set_class_type_parameters")-1&&
+       memcmp(method_name->chars,"set_class_type_parameters",
+           sizeof("set_class_type_parameters")-1)==0)
+        return program_builder_set_class_type_parameters(vm,built,registers,base,argc,result);
+    if(method_name->length==sizeof("set_parent_type_arguments")-1&&
+       memcmp(method_name->chars,"set_parent_type_arguments",
+           sizeof("set_parent_type_arguments")-1)==0)
+        return program_builder_set_parent_type_arguments(vm,built,registers,base,argc,result);
+    if(method_name->length==sizeof("set_captures_type_variables")-1&&
+       memcmp(method_name->chars,"set_captures_type_variables",
+           sizeof("set_captures_type_variables")-1)==0)
+        return program_builder_set_captures_type_variables(built,registers,base,argc,result);
+    if(method_name->length==sizeof("patch_type_set_member")-1&&
+       memcmp(method_name->chars,"patch_type_set_member",sizeof("patch_type_set_member")-1)==0)
+        return program_builder_patch_type_set_member(vm,built,registers,base,argc,result);
+    if(method_name->length==sizeof("native_type_id")-1&&
+       memcmp(method_name->chars,"native_type_id",sizeof("native_type_id")-1)==0)
+        return program_builder_native_type_id(registers,base,argc,result);
     if(method_name->length==sizeof("set_type_variables")-1&&
        memcmp(method_name->chars,"set_type_variables",
            sizeof("set_type_variables")-1)==0)

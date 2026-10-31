@@ -1,0 +1,58 @@
+def describe(value: Later | Nil) -> String = value == nil ? "none" : value.name()
+def is_later?(value) = value is Later
+def nested?(value) = value is Spaces::Inner || value.is_a?(Spaces::Inner)
+def wrapped(value: Holder[Int]) -> Int = value.get()
+def guarded()
+  begin
+    raise Failure.new("boom")
+  rescue error: Failure
+    error.message()
+  end
+end
+def outside(value) = Spaces::Inner.make(value).value()
+module Spaces
+  class Base
+    def tag() = "base"
+  end
+  class Inner < Base
+    def self.make(value) = Inner.new(value)
+    def initialize(value)
+      @value = value
+    end
+    def value() = @value
+  end
+  class Sub < Spaces::Base
+  end
+end
+class Failure < StandardError
+end
+class Later
+  def name() = "later"
+end
+class Holder[T]
+  def initialize(value: T)
+    @value = value
+  end
+  def get() -> T = @value
+end
+class Work
+  def initialize(x: Int)
+    @x = x
+  end
+  def helper(n) = n * 2
+  def run(value)
+    closure inner()
+      self.helper(value) + @x
+    end
+    inner()
+  end
+  def self.class_helper() = 99
+  def self.run_class()
+    closure inner()
+      self.class_helper() + 1
+    end
+    inner()
+  end
+end
+[describe(nil), describe(Later.new()), is_later?(Later.new()), nested?(Spaces::Inner.new(1)),
+ wrapped(Holder.new(4)), guarded(), outside(5), Spaces::Sub.new().tag(), Work.new(3).run(4), Work.run_class()]

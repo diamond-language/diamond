@@ -1,0 +1,24 @@
+VALUES = [1, 2]
+VALUES[0] = 3
+module Reopened
+  def self.first() = 1
+end
+module Reopened
+  def self.second() = 2
+end
+class Base
+  LIMIT = "base"
+end
+LIMIT = "top"
+class Child < Base
+  def limit() = LIMIT
+end
+i = 0
+i += 1 while i < 5
+j = i
+j -= 1 until j < 2
+[1].each() do |v| i += v end while i < 8
+text = "hello world"
+[VALUES, Reopened.first() + Reopened.second(), Child.new().limit(), i, j, text[0, 5], [1, 2, 3][1, 2],
+ "é\u{1F600}", 2 ** 10, -2 ** 2, 2 ** 3 ** 2, 2 ** 100,
+ [1, 2, 3].map() do |x| x * 2 if x > 1 end, ENV["DIAMOND_PARSER_CASE_UNSET"], ARGV.length()]

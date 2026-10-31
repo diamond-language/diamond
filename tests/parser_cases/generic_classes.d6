@@ -1,0 +1,43 @@
+class Box[T]
+  def value() -> T = @value
+  def initialize(value: T)
+    @value = value
+  end
+  def replace(other: T) -> Box[T]
+    Box[T].new(other)
+  end
+  def map[U](transform: Callable[[T], U]) -> Box[U]
+    Box[U].new(transform(@value))
+  end
+  def forward[U](value: U) -> U = echo[U](value)
+  def echo[U](value: U) -> U = value
+end
+class IntBox < Box[Int]
+  def twice() -> Int = self.value() * 2
+end
+class Named[T] < Box[T]
+  def name() = "named"
+end
+struct Pair[K, V](key: K, val: V)
+  def describe() = "#{@key}=#{@val}"
+end
+struct Tri[A](third: A) < Pair[A, String]
+end
+def to_text(value: Int) -> String = value.to_s() + "!"
+def check(action)
+  begin
+    action()
+  rescue error: TypeError
+    error.message()
+  end
+end
+box = Box[Int].new(3)
+def reject_string(box) = box.replace("no")
+def reject_field() = Pair[String, Int].new("a", "b")
+def reject_fixed() = IntBox.new("x")
+def annotated(value: Box[Int] | Box[String] | Nil) -> Int = 1
+[box.value(), box.replace(4).value(), box.map[String](to_text).value(),
+ box.map[String](transform: to_text).value(), box.map[String](*[to_text]).value(),
+ box.forward[String]("sent"), IntBox.new(5).twice(), Named.new("x").name(),
+ Pair[String, Int].new("a", 1).val(), Pair.new(1, 2).describe(),
+ Tri.new(1, "s", 2.5).third(), annotated(box), check(reject_field), check(reject_fixed)]

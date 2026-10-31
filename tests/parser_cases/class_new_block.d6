@@ -1,0 +1,10 @@
+class Mapped[T]
+  def initialize(value: T, tag: String = "default", &transform: Callable[[T], T])
+    @value = transform(value)
+  end
+  def value() -> T = @value
+end
+[Mapped.new(40) do |value| value + 2 end.value(),
+ Mapped.new(value: 40) do |value| value + 3 end.value(),
+ Mapped.new(*[40]) do |value| value + 4 end.value(),
+ Mapped[Int].new(40) do |value| value + 5 end.value()]
