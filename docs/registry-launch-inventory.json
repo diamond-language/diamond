@@ -46,9 +46,9 @@
       "archive": "graphql.tar",
       "dependencies": {},
       "name": "graphql",
-      "sha256": "b25a79b51b310f2b51f0a871ed9b6a4616c2969d3e30c18b0e48a26e6bb679a2",
+      "sha256": "c01fa0ab83f6682623617156c5b06fec8ff98f34d9626a81f5a926be431cf762",
       "size": 178688,
-      "version": "0.3.2"
+      "version": "0.3.3"
     },
     {
       "archive": "graphsql.tar",

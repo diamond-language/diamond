@@ -4,6 +4,14 @@ Diamond is currently pre-release. This file records user-visible capability
 milestones rather than every implementation step; the Git history remains the
 authoritative fine-grained record.
 
+## Unreleased
+
+### Fixed
+
+- graphql 0.3.3: a document the lexer refuses, such as an unterminated string or a character outside
+  the language, now returns a request-level `{"errors": [...]}` as the README promises. It used to raise out of
+  `Schema#execute`, which a web server answers with a 500.
+
 ## 0.21.0 — 2026-10-31
 
 Generics reach most of the language: generic classes, structs and inheritance, methods with

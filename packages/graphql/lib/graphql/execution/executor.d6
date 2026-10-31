@@ -69,6 +69,8 @@ module GraphQL
           document = GraphQL::Language::Parser.parse(query_string)
         rescue e: GraphQL::Language::ParseError
           return {"errors": [{"message": e.message()}]}
+        rescue e: GraphQL::Language::LexError
+          return {"errors": [{"message": e.message()}]}
         end
 
         validation_errors = GraphQL::Validation::Validator.validate(document, @schema)

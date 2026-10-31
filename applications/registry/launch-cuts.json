@@ -4,7 +4,7 @@
   "cookies": "0.2.2",
   "database_config": "0.2.1",
   "div": "0.3.1",
-  "graphql": "0.3.2",
+  "graphql": "0.3.3",
   "graphsql": "0.2.2",
   "gremlin": "0.5.2",
   "http": "0.2.3",

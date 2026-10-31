@@ -1186,4 +1186,22 @@ expected=$'query is too large: fields are nested more than 20 levels deep, fragm
 [[ "$actual" == "$expected" ]] || { echo "limits: got" >&2; echo "$actual" >&2; exit 1; }
 count=$((count + 1))
 
+# --- a document the lexer refuses is a request-level error, not an exception ---
+actual="$(run_file '
+module LexResolvers
+  module_function
+  def hello(object, args, context) = "hi"
+end
+query_type = GraphQL::ObjectType.new("Query")
+query_type.field("hello", GraphQL::ScalarType.string(), LexResolvers.hello)
+schema = GraphQL::Schema.new().query(query_type)
+puts(schema.execute("{ hello(a: \"x) }"))
+puts(schema.execute("{ ? }"))
+puts(schema.execute("{ hello }"))
+')"
+assert_contains "$actual" "unterminated string (line 1)"
+assert_contains "$actual" "unexpected character ? (line 1)"
+assert_contains "$actual" "hi"
+count=$((count + 1))
+
 echo "$count graphql tests passed"
