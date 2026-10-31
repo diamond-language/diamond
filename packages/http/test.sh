@@ -408,7 +408,8 @@ def run()
       plain = plain + "hello gzip world "
       i = i + 1
     end
-    [200, {"Content-Type": "text/plain", "Content-Encoding": "gzip"}, Gzip.compress(plain)]
+    body = if request["path"] == "/empty" then "" else Gzip.compress(plain) end
+    [200, {"Content-Type": "text/plain", "Content-Encoding": "gzip"}, body]
   end
   http_serve(GZIP_PORT, handler)
 end
@@ -425,11 +426,23 @@ require "./lib/http"
 r = http_get("http://127.0.0.1:$gzip_port/")
 puts(r["headers"]["content-encoding"])
 puts(r["body"].start_with?("hello gzip world hello gzip world "))
+# A declared encoding with no body has nothing to decompress: every HEAD
+# response, and any other empty response.
+head = http_head("http://127.0.0.1:$gzip_port/")
+puts(head["status"])
+puts(head["headers"]["content-encoding"])
+puts(head["body"] == "")
+empty = http_get("http://127.0.0.1:$gzip_port/empty")
+puts(empty["status"])
+puts(empty["body"] == "")
+session_empty = HttpSession.new().get("http://127.0.0.1:$gzip_port/empty")
+puts(session_empty["status"])
+puts(session_empty["body"] == "")
 CLIENTEOF
 )")"
 kill "$gzip_pid" 2>/dev/null || true
 wait "$gzip_pid" 2>/dev/null || true
-[[ "$gzip_response" == $'gzip\ntrue\nnil' ]]
+[[ "$gzip_response" == $'gzip\ntrue\n200\ngzip\ntrue\n200\ntrue\n200\ntrue\nnil' ]]
 rm -f "$gzip_out"
 
 # Client: Transfer-Encoding: chunked decoding -- http_serve has no

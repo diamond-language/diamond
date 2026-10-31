@@ -296,10 +296,11 @@ end
 # Anything else in Content-Encoding (identity, or a scheme this package
 # doesn't implement, e.g. br/zstd) is left exactly as received -- a
 # caller asking for one of those explicitly via a custom header is
-# responsible for decoding it themselves.
+# responsible for decoding it themselves. An empty body has nothing to
+# decode: HEAD responses declare the encoding a GET would have used.
 def http_maybe_decompress(body, response_headers, options)
   gzip_option = options["gzip"]
-  if gzip_option == false
+  if gzip_option == false || body == ""
     return body
   end
   encoding = response_headers["content-encoding"]

@@ -123,6 +123,9 @@ authoritative fine-grained record.
 
 ### Fixed
 
+- `http_head` no longer raises "gzip decompression failed" when a server declares
+  `Content-Encoding: gzip`, as most do. An empty response body is returned as received
+  (http 0.2.3). This also made the site-checker example fail on its own sample URLs.
 - A discarded advisory type proof no longer contaminates a later annotation when
   the compiler reuses its type-table slot. Constructor union inference also keeps
   contextual block contracts consistent with the instance's shared binding.
