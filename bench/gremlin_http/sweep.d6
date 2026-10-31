@@ -112,7 +112,7 @@ def stdev(values: Array)
   values.each() do |v|
     squares += (v - m) * (v - m)
   end
-  (squares / (values.length() - 1)).sqrt()
+  sqrt(squares / (values.length() - 1))
 end
 
 def pad(value, width: Int) = value.to_s().rjust(width, " ")
@@ -319,7 +319,7 @@ def run(args: Array)
     "workload": option(args, "--workload", "mixed"),
     "instrument": instrument,
     "cpu_count": Process.run(["nproc"]).stdout().strip().to_i(),
-    "clock_ticks": Process.run(["getconf", "CLK_TCK"]).stdout().strip().to_i(),
+    "clock_ticks": Process.run(["getconf", "CLK_TCK"]).stdout().strip().to_f(),
   }
   unless ["mixed", "hello", "cpu"].include?(options["workload"])
     warn("--workload must be mixed, hello or cpu")
