@@ -8,4 +8,5 @@ trap 'rm -rf "$work"' EXIT
 bash "$root/tools/install_local_cuts.sh" "$work" >/dev/null
 cd "$work"
 "$diamond" build "$root/examples/site_checker/check.d6" -o "$work/check" >"$work/build.log" 2>&1 || { cat "$work/build.log"; exit 1; }
-python3 "$root/examples/site_checker/smoke_test.py" "$diamond" "$work/check"
+mkdir "$work/run"
+"$diamond" "$root/examples/site_checker/smoke_test.d6" "$diamond" "$root" "$work/run" "$work/check"

@@ -1,0 +1,75 @@
+# Shared by the examples' HTTP checks: a child server, a raw HTTP client and assertions.
+# Raw because these checks send what a browser never would: a forged Host, `/../`.
+def check(condition, message)
+  raise RuntimeError.new(message) unless condition
+end
+
+def reserve_port()
+  server = TCPServer.listen(0, host: "127.0.0.1", backlog: 1)
+  port = server.port()
+  server.close()
+  port
+end
+
+# [status, body text] for one request. `data` is sent as JSON; nil means GET.
+def raw_request(port, path, data = nil, headers = {})
+  socket = TCPSocket.connect("127.0.0.1", port, {"read_timeout_ms": 5000, "write_timeout_ms": 5000})
+  body = if data == nil then "" else JSON.stringify(data) end
+  method = if data == nil then "GET" else "POST" end
+  sent = {"Host": "127.0.0.1:#{port}", "Content-Type": "application/json", "Connection": "close"}
+  headers.each() do |name, value| sent[name] = value end
+  text = "#{method} #{path} HTTP/1.1\r\nContent-Length: #{body.length()}\r\n"
+  sent.each() do |name, value| text += "#{name}: #{value}\r\n" end
+  socket.write(text + "\r\n" + body)
+  socket.flush()
+  response = ""
+  loop do
+    chunk = socket.read(65536)
+    break if chunk == nil || chunk == ""
+    response += chunk
+  end
+  socket.close()
+  split = response.index_of("\r\n\r\n")
+  raise IOError.new("no HTTP response") if split == nil
+  [response.split(" ")[1].to_i(), response.slice(split + 4, response.length() - split - 4)]
+end
+
+def request(port, path, data = nil, headers = {})
+  [status, body] = raw_request(port, path, data, headers)
+  [status, JSON.parse(body)]
+end
+
+def status_of(port, path, data = nil, headers = {}) = raw_request(port, path, data, headers)[0]
+def value_of(port, path, data = nil, headers = {}) = request(port, path, data, headers)[1]
+
+# Starts `command`, waits for GET /health to answer 200, returns the handle.
+def start_server(name, command, port, cwd, log)
+  child = Process.spawn(command, {"cwd": cwd, "stdout": log, "stderr_to_stdout": true,
+    "env": {"DIAMOND_NO_CACHE": "1"}})
+  deadline = Time.monotonic() + 15
+  loop do
+    raise RuntimeError.new("#{name} exited early:\n#{File.read(log)}") unless child.running?()
+    begin
+      return child if status_of(port, "/health") == 200
+    rescue error: IOError
+      nil
+    end
+    check(Time.monotonic() < deadline, "#{name} startup timed out")
+    Process.run(["sleep", "0.05"])
+  end
+end
+
+# SIGTERM must stop it cleanly; a hung server is killed so the check can report it.
+def stop_server(name, child, log)
+  child.terminate() if child.running?()
+  deadline = Time.monotonic() + 8
+  while child.running?()
+    if Time.monotonic() > deadline
+      child.kill()
+      child.wait()
+      raise RuntimeError.new("#{name} failed to stop")
+    end
+    Process.run(["sleep", "0.05"])
+  end
+  check(child.wait() == 0, "#{name} exited #{child.wait()}:\n#{File.read(log)}")
+end

@@ -1,0 +1,64 @@
+# Redirects, failures, timeouts, ordering and cancellation against an offline fixture.
+#   smoke_test.d6 DIAMOND ROOT WORK BINARY
+require "../test_support"
+
+FIXTURE_PATHS = ["/ok", "/redirect", "/missing", "/loop"]
+
+def write_urls(path, urls)
+  File.write(path, "\n# fixture\n" + urls.join("\n") + "\n")
+end
+
+# `silent` is a listening socket nobody accepts from: it never answers.
+def check_command(command, urls_path, base, silent, work)
+  urls = FIXTURE_PATHS.map() do |path| base + path end + [silent]
+  write_urls(urls_path, urls)
+  result = Process.run(command + ["--json", "--workers", "2", "--timeout-ms", "1000", urls_path])
+  check(result.exit_code() == 1, "#{result.stdout()}#{result.stderr()}")
+  rows = JSON.parse(result.stdout())
+  check(rows.map() do |row| row["url"] end == urls, "results keep input order: #{rows}")
+  check(rows[0]["status"] == 200 && rows[1]["status"] == 200 && rows[2]["status"] == 404, "statuses: #{rows}")
+  check(rows[3]["error"] != nil && rows[4]["error"] != nil, "redirect loop and timeout: #{rows}")
+
+  write_urls(urls_path, [base + "/ok"])
+  result = Process.run(command + [urls_path])
+  check(result.success?() && result.stdout().include?("OK "), result.stdout() + result.stderr())
+  check(Process.run(command + ["--workers", "0", urls_path]).exit_code() == 64, "--workers 0 refused")
+  result = Process.run(command + ["--workers"])
+  check(result.exit_code() == 64 && result.stderr().include?("missing value"), result.stderr())
+
+  # SIGINT stops a long run promptly, with its own exit status.
+  # Its first connection shows the checker is running, with its handler installed.
+  listener = TCPServer.listen(0, host: "127.0.0.1", backlog: 64)
+  write_urls(urls_path, Array.new(50, "http://127.0.0.1:#{listener.port()}/"))
+  log = "#{work}/cancel.log"
+  File.write(log, "")
+  child = Process.spawn(command + ["--workers", "1", "--timeout-ms", "30000", urls_path],
+    {"stdout": log, "stderr_to_stdout": true})
+  check(IO.poll([listener], [], 30000)["readable"][0], "checker never connected: #{File.read(log)}")
+  Process.run(["kill", "-INT", child.pid().to_s()])
+  check(child.wait() == 130, "SIGINT exit: #{File.read(log)}")
+  check(File.read(log).include?("cancelled"), "no cancellation message: #{File.read(log)}")
+  listener.close()
+end
+
+def run(diamond, root, work, binary)
+  port = reserve_port()
+  log = "#{work}/fixture.log"
+  server = start_server("fixture", [diamond, "#{root}/examples/site_checker/fixture.d6", port.to_s()], port, File.dirname(work), log)
+  base = "http://127.0.0.1:#{port}"
+  listener = TCPServer.listen(0, host: "127.0.0.1", backlog: 64)
+  silent = "http://127.0.0.1:#{listener.port()}/"
+  failure = nil
+  begin
+    check_command([diamond, "#{root}/examples/site_checker/check.d6"], "#{work}/urls.txt", base, silent, work)
+    check_command([binary], "#{work}/urls.txt", base, silent, work)
+  rescue error
+    failure = error
+  end
+  listener.close()
+  stop_server("fixture", server, log)
+  raise failure if failure != nil
+  puts("site checker HTTP, timeout, ordering and cancellation checks passed")
+end
+
+run(ARGV[0], ARGV[1], ARGV[2], ARGV[3])
