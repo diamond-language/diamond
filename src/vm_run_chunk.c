@@ -81,40 +81,35 @@ static inline bool collection_invoke_fast(DiamondVm *vm,DiamondValue *registers,
 }
 
 
-DiamondVmStatus run_chunk(const DiamondChunk *chunk,
-                                 DiamondVm *vm,
-                                 const DiamondValue *arguments,
-                                 size_t argument_count, size_t depth,
-                                 const DiamondClosure *closure,
-                                 DiamondValue *result) {
-    if (depth >= diamond_call_depth_limit(vm)) {
-        return DIAMOND_VM_STACK_OVERFLOW;
-    }
-    DiamondChunk execution;
+/* Generic setup for run_chunk's entry, out of line so that ordinary calls pay
+ * for one test: inlined, it raises register pressure across the whole dispatch
+ * loop and costs every call about 40 instructions. Returns the chunk to run
+ * (`execution` when bindings were installed), or nullptr with *status set. */
+__attribute__((noinline,cold))
+static const DiamondChunk *bind_generic_entry(const DiamondChunk *chunk,
+        DiamondVm *vm,const DiamondValue *arguments,size_t argument_count,
+        const DiamondClosure *closure,DiamondChunk *execution,
+        DiamondTypeBinding *bindings,DiamondVmStatus *status) {
     if(closure!=nullptr&&closure->type_binding_count>0) {
-        if(closure->type_binding_count!=chunk->type_variable_count||closure->type_bindings==nullptr)
-            return DIAMOND_VM_INVALID_BYTECODE;
-        execution=*chunk;
-        execution.type_variable_bindings=closure->type_bindings;
-        chunk=&execution;
+        if(closure->type_binding_count!=chunk->type_variable_count||closure->type_bindings==nullptr) {
+            *status=DIAMOND_VM_INVALID_BYTECODE;
+            return nullptr;
+        }
+        *execution=*chunk;
+        execution->type_variable_bindings=closure->type_bindings;
+        chunk=execution;
     }
-    /* Only the first chunk->type_variable_count entries are ever read:
-     * copied from the chunk's own bindings just below, or zeroed for
-     * inference in the unbound-generic branch after it. Zero-initializing
-     * all eight here cost about 3 KB of memset at the top of every call,
-     * generic or not. */
-    DiamondTypeBinding bindings[8];
     if(chunk->class_type_variable) {
         /* A class parameter belongs to the receiver, never to this call's
          * arguments or explicit method type arguments. */
         if(chunk->type_variable_count==0||chunk->type_variable_count>8||
            argument_count==0||!value_is_native_kind(arguments[0],DIAMOND_OBJECT_INSTANCE))
-            return DIAMOND_VM_TYPE_ERROR;
+            {*status=DIAMOND_VM_TYPE_ERROR;return nullptr;}
         const DiamondInstance *self=(const DiamondInstance *)arguments[0].as.object;
         if(chunk->class_type_variable>chunk->type_variable_count||
            chunk->class_type_variable>2||
            self->type_binding==nullptr||self->type_binding->node_count==0)
-            return DIAMOND_VM_TYPE_ERROR;
+            {*status=DIAMOND_VM_TYPE_ERROR;return nullptr;}
         if(chunk->type_variable_bindings!=nullptr)
             memcpy(bindings,chunk->type_variable_bindings,
                 chunk->type_variable_count*sizeof(DiamondTypeBinding));
@@ -130,10 +125,10 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                         chunk->type_sets,set,bindings);
             }
         }
-        if(!bind_receiver_prefix(chunk,self,bindings))return DIAMOND_VM_TYPE_ERROR;
-        execution=*chunk;
-        execution.type_variable_bindings=bindings;
-        chunk=&execution;
+        if(!bind_receiver_prefix(chunk,self,bindings)){*status=DIAMOND_VM_TYPE_ERROR;return nullptr;}
+        *execution=*chunk;
+        execution->type_variable_bindings=bindings;
+        chunk=execution;
     }
     if(!chunk->class_type_variable&&chunk->type_variable_count>0&&
        chunk->type_variable_bindings!=nullptr)
@@ -142,11 +137,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
     if(chunk->type_variable_count>0&&chunk->parameter_type_sets!=nullptr&&
        chunk->type_variable_bindings==nullptr) {
         memset(bindings,0,chunk->type_variable_count*sizeof(DiamondTypeBinding));
-        /* Only copy `*chunk` when this generic-function-with-unbound-
-         * type-variable path is actually taken -- the common case
-         * (type_variable_count==0, essentially every non-generic call)
-         * never reads `execution`, so skip the 168-byte struct copy. */
-        execution=*chunk;
+        *execution=*chunk;
         /* parameter_type_sets holds one entry per declared parameter, at most
          * DIAMOND_MAX_DECLARED_PARAMETERS. The argument count is not bounded by
          * that (a spread call can supply any number, and the arity check comes
@@ -161,15 +152,41 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 infer_from_value(chunk,arguments[parameter+chunk->parameter_offset],
                                  chunk->type_sets,set,bindings);
         }
-        execution.type_variable_bindings=bindings;
-        chunk=&execution;
+        execution->type_variable_bindings=bindings;
+        chunk=execution;
     }
     if(chunk->type_variable_bindings!=nullptr)
         for(size_t variable=0;variable<chunk->type_variable_count;variable++)
             if(chunk->type_variable_bindings[variable].invalid) {
                 snprintf(vm->error,sizeof vm->error,"cannot represent inferred type binding");
-                return DIAMOND_VM_TYPE_ERROR;
+                {*status=DIAMOND_VM_TYPE_ERROR;return nullptr;}
             }
+    return chunk;
+}
+
+
+DiamondVmStatus run_chunk(const DiamondChunk *chunk,
+                                 DiamondVm *vm,
+                                 const DiamondValue *arguments,
+                                 size_t argument_count, size_t depth,
+                                 const DiamondClosure *closure,
+                                 DiamondValue *result) {
+    if (depth >= diamond_call_depth_limit(vm)) {
+        return DIAMOND_VM_STACK_OVERFLOW;
+    }
+    DiamondChunk execution;
+    /* Only the first chunk->type_variable_count entries are ever read:
+     * filled by bind_generic_entry, or zeroed for inference in the
+     * tail-call path. Zero-initializing all eight here cost about 3 KB of
+     * memset at the top of every call, generic or not. */
+    DiamondTypeBinding bindings[8];
+    if(chunk->type_variable_count>0||chunk->class_type_variable||
+       (closure!=nullptr&&closure->type_binding_count>0)) {
+        DiamondVmStatus entry_status=DIAMOND_VM_OK;
+        chunk=bind_generic_entry(chunk,vm,arguments,argument_count,closure,
+            &execution,bindings,&entry_status);
+        if(chunk==nullptr)return entry_status;
+    }
     if (argument_count > DIAMOND_REGISTER_COUNT) {
         return DIAMOND_VM_ARITY_ERROR;
     }
