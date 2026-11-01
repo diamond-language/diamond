@@ -4,7 +4,7 @@ module ActiveRecord
 
   # Explicit persistence primitives over Arel. This package deliberately does
   # not inspect schemas, infer columns, or dispatch through missing methods.
-  class Repository
+  class Repository[T]
     # `visitor` selects the Arel dialect this repository renders through --
     # nil (the default) means Arel's own default, Arel::SQLiteVisitor. Every
     # method below threads it through explicitly rather than leaving it
@@ -55,7 +55,7 @@ module ActiveRecord
     # results through its mapper, since Repository's own #all/#find/#where
     # only ever filter on @table itself, not a second joined table.
     attr_reader table: Arel::Table
-    attr_reader mapper: Callable[1]
+    attr_reader mapper: Callable[1, T]
     attr_reader visitor
     attr_reader id_column: String
     attr_reader lock_column
@@ -63,7 +63,7 @@ module ActiveRecord
     attr_reader inheritance_column
     attr_reader association_reflections: Array
 
-    def initialize(table: Arel::Table, mapper: Callable[1], id_column: String = "id", visitor = nil,
+    def initialize(table: Arel::Table, mapper: Callable[1, T], id_column: String = "id", visitor = nil,
                    validator = nil, before_save = nil, after_save = nil, lock_column = nil,
                    column_names: Array = [], inheritance_column = nil,
                    association_reflections: Array = [])
@@ -109,7 +109,7 @@ module ActiveRecord
       end
     end
 
-    def all(db) -> Array
+    def all(db) -> Array[T]
       rows = Arel.from(@table).to_a(db, @visitor)
       mapped = []
       index = 0
@@ -120,7 +120,7 @@ module ActiveRecord
       mapped
     end
 
-    def find(db, id)
+    def find(db, id) -> T | Nil
       rows = Arel.from(@table).where(@table.column(@id_column).eq(id)).take(1).to_a(db, @visitor)
       if rows.length() == 0 then nil else @mapper(rows[0]) end
     end
@@ -130,7 +130,7 @@ module ActiveRecord
     # a repository caller actually needs (see HasMany#all,
     # which now builds one of these instead of taking a bare column/value
     # pair).
-    def where(db, conditions: Hash) -> Array
+    def where(db, conditions: Hash) -> Array[T]
       keys = conditions.keys()
       predicate = nil
       index = 0
@@ -155,7 +155,7 @@ module ActiveRecord
     # see Relation below. Unlike #all/#where above (which hit the database
     # immediately), nothing here runs until a terminal call
     # (#to_a/#first/#count) on the Relation it returns.
-    def relation() -> Relation = Relation.new(Arel.from(@table), @mapper, @visitor, self)
+    def relation() -> Relation[T] = Relation.new(Arel.from(@table), @mapper, @visitor, self)
 
     def create(db, attributes: Hash) -> Int
       self.validate!(attributes)

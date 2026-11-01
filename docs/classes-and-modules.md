@@ -155,6 +155,16 @@ class Greeter
   end
 end
 
+class Holder[T]
+  # A generic class's annotations can name its parameters; each instance's
+  # own binding decides what the writer accepts.
+  attr_accessor value: T
+
+  def initialize(value: T)
+    @value = value
+  end
+end
+
 callable = Greeter.compile_method("greeting", ["prefix"], "prefix + self.name()", {})
 Greeter.define_method("greeting", callable)
 

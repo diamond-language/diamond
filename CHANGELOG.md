@@ -15,6 +15,11 @@ authoritative fine-grained record.
 - mjolnir 0.4.0: `Schema`, `Query` and the `Repo` reads are generic over the entity. Unannotated
   builders keep working; a builder with a declared return gives `Repo#get` a `T | Nil` result.
   This version needs this runtime, since older ones reject an unannotated builder.
+- active_record 0.21.0: `Repository` and `Relation` are generic over what the mapper returns, so a
+  mapper with a declared return gives `find` and `first` a `T | Nil` result and `all`, `where` and
+  `to_a` an `Array[T]`. It needs this runtime for the same reason, and its dependents take the new range.
+- Attribute annotations in a generic class can name its type parameters: `attr_accessor value: T`
+  was rejected as an unknown type. Each instance's own binding decides what the writer accepts.
 
 ### Changed
 

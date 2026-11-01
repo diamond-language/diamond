@@ -278,7 +278,24 @@ static void compile_attribute(Compiler *compiler,bool reader,bool writer,
         const DiamondSpan name=compiler->current.span;advance_token(compiler);
         int type_set=-1;
         if(compiler->current.kind==DIAMOND_TOKEN_COLON) {
-            advance_token(compiler);type_set=parse_type_annotation(compiler);
+            advance_token(compiler);
+            /* The class's parameters name variables here, as in a struct's
+             * fields. The set is copied into the accessor, which binds them
+             * from its receiver; the enclosing function never reads it. */
+            const DiamondClass *class=compiler->current_class>=0?
+                compiler->program->classes[compiler->current_class]:nullptr;
+            DiamondFunction *function=compiler->function;
+            const uint8_t outer_count=function->type_variable_count;
+            char outer_names[2][sizeof function->type_variables[0]];
+            memcpy(outer_names,function->type_variables,sizeof outer_names);
+            if(class!=nullptr&&class->type_parameter[0]!='\0') {
+                function->type_variable_count=(uint8_t)DIAMOND_CLASS_TYPE_PARAMETER_COUNT(class);
+                snprintf(function->type_variables[0],sizeof function->type_variables[0],"%s",class->type_parameter);
+                snprintf(function->type_variables[1],sizeof function->type_variables[1],"%s",class->second_type_parameter);
+            }
+            type_set=parse_type_annotation(compiler);
+            function->type_variable_count=outer_count;
+            memcpy(function->type_variables,outer_names,sizeof outer_names);
         }
         if(reader)compile_attribute_named(compiler,false,predicate,name,type_set);
         if(writer&&!compiler->failed)

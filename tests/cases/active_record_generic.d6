@@ -1,0 +1,82 @@
+require "../../packages/active_record/lib/active_record"
+require "../../lib/minitest"
+
+struct Author(id: Int, name: String)
+end
+
+def build_open(row) = Author.new(row["id"], row["name"])
+def build_typed(row: Hash) -> Author = Author.new(row["id"], row["name"])
+def build_wrong(row) = row["name"]
+
+def fresh_db()
+  db = SQLite3.open(":memory:")
+  db.execute("CREATE TABLE authors (id INTEGER PRIMARY KEY, name TEXT NOT NULL)")
+  db.execute("INSERT INTO authors (name) VALUES ('Ada'), ('Grace')")
+  db
+end
+
+def table() = Arel.table("authors")
+
+# Reads typed through the generic signatures alone.
+def first_name(repository: ActiveRecord::Repository[Author], db, id: Int) -> String | Nil
+  found = repository.find(db, id)
+  if found == nil then nil else found.name() end
+end
+
+def names(relation: ActiveRecord::Relation[Author], db) -> Array[String]
+  relation.to_a(db).map() do |author| author.name() end
+end
+
+def run_tests()
+  suite = Minitest.new()
+
+  suite.test("a mapper with no declared return reads as before") do
+    db = fresh_db()
+    repository = ActiveRecord::Repository.new(table(), build_open)
+    Minitest.assert_equal("Ada", repository.find(db, 1).name())
+    Minitest.assert_equal(nil, repository.find(db, 99))
+    Minitest.assert_equal(2, repository.all(db).length())
+    Minitest.assert_equal(1, repository.where(db, {"name": "Grace"}).length())
+    Minitest.assert_equal("Grace", repository.relation().where({"id": 2}).first(db).name())
+    Minitest.assert_equal(2, repository.relation().count(db))
+  end
+
+  suite.test("a declared mapper return closes the repository and its relations") do
+    db = fresh_db()
+    repository = ActiveRecord::Repository.new(table(), build_typed)
+    Minitest.assert_equal("Ada", first_name(repository, db, 1))
+    Minitest.assert_equal(nil, first_name(repository, db, 99))
+    Minitest.assert_equal(["Grace"], names(repository.relation().where({"id": 2}).take(1), db))
+  end
+
+  suite.test("an explicit argument closes it and rejects the wrong result") do
+    db = fresh_db()
+    repository = ActiveRecord::Repository[Author].new(table(), build_open)
+    Minitest.assert_equal("Ada", first_name(repository, db, 1))
+    wrong = ActiveRecord::Repository[Author].new(table(), build_wrong)
+    rejected = false
+    begin
+      wrong.find(db, 1)
+    rescue error: TypeError
+      rejected = true
+    end
+    Minitest.assert(rejected)
+  end
+
+  suite.test("a repository left open does not satisfy a closed annotation") do
+    db = fresh_db()
+    repository = ActiveRecord::Repository.new(table(), build_open)
+    rejected = false
+    begin
+      first_name(repository, db, 1)
+    rescue error: TypeError
+      rejected = true
+    end
+    Minitest.assert(rejected)
+  end
+
+  suite.run!()
+end
+
+run_tests()
+puts("active_record generic ok")
