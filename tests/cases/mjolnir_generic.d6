@@ -1,0 +1,76 @@
+require "../../packages/mjolnir/lib/mjolnir"
+require "../../lib/minitest"
+
+struct Author(id: Int, name: String)
+end
+
+def build_open(row) = Author.new(row["id"], row["name"])
+def build_typed(row: Hash) -> Author = Author.new(row["id"], row["name"])
+def build_wrong(row) = row["name"]
+
+def fields() = {"id": :int, "name": :string}
+
+def fresh_repo()
+  db = SQLite3.open(":memory:")
+  db.execute("CREATE TABLE authors (id INTEGER PRIMARY KEY, name TEXT NOT NULL)")
+  db.execute("INSERT INTO authors (name) VALUES ('Ada'), ('Grace')")
+  Mjolnir::Repo.new(db)
+end
+
+# A read typed through the generic signatures, not through a `Schema[Author]` annotation.
+def first_name(repo: Mjolnir::Repo, schema: Mjolnir::Schema[Author], id: Int) -> String | Nil
+  found = repo.get(schema, id)
+  if found == nil then nil else found.name() end
+end
+
+def run_tests()
+  suite = Minitest.new()
+
+  suite.test("a builder with no declared return reads as before") do
+    repo = fresh_repo()
+    authors = Mjolnir::Schema.new("authors", fields(), build_open)
+    Minitest.assert_equal("Ada", repo.get(authors, 1).name())
+    Minitest.assert_equal(2, repo.all(authors.query()).length())
+    Minitest.assert_equal("Grace", repo.one(authors.query().where({"id": 2})).name())
+    Minitest.assert_equal("Ada", repo.get_by(authors, {"name": "Ada"}).name())
+    Minitest.assert_equal(nil, repo.get(authors, 99))
+  end
+
+  suite.test("a declared builder return closes the schema and flows through reads") do
+    repo = fresh_repo()
+    authors = Mjolnir::Schema.new("authors", fields(), build_typed)
+    Minitest.assert_equal("Ada", first_name(repo, authors, 1))
+    Minitest.assert_equal(nil, first_name(repo, authors, 99))
+    Minitest.assert_equal(2, repo.all(authors.query().order_by("name")).length())
+  end
+
+  suite.test("an explicit argument closes the schema and rejects the wrong entity") do
+    repo = fresh_repo()
+    authors = Mjolnir::Schema[Author].new("authors", fields(), build_open)
+    Minitest.assert_equal("Ada", first_name(repo, authors, 1))
+    wrong = Mjolnir::Schema[Author].new("authors", fields(), build_wrong)
+    rejected = false
+    begin
+      repo.get(wrong, 1)
+    rescue error: TypeError
+      rejected = true
+    end
+    Minitest.assert(rejected)
+  end
+
+  suite.test("a schema left open does not satisfy a closed annotation") do
+    repo = fresh_repo()
+    authors = Mjolnir::Schema.new("authors", fields(), build_open)
+    rejected = false
+    begin
+      first_name(repo, authors, 1)
+    rescue error: TypeError
+      rejected = true
+    end
+    Minitest.assert(rejected)
+  end
+
+  suite.run!()
+end
+
+run_tests()

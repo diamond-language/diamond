@@ -4,18 +4,18 @@ module Mjolnir
   # method returns a new Query; nothing touches the database until it is
   # handed to a Repo. `arel()` exposes the underlying Arel::Query for
   # anything this wrapper does not cover.
-  class Query
-    def initialize(schema: Schema, arel)
+  class Query[T]
+    def initialize(schema: Schema[T], arel)
       @schema = schema
       @arel = arel
     end
 
-    def schema() -> Schema = @schema
+    def schema() -> Schema[T] = @schema
     def arel() = @arel
 
     # A Hash of field => value (ANDed; nil means IS NULL, an Array means IN)
     # or an Arel predicate built from `schema.column(...)`.
-    def where(condition) -> Query
+    def where(condition) -> Query[T]
       unless condition is Hash
         return Query.new(@schema, @arel.where(condition))
       end
@@ -30,7 +30,7 @@ module Mjolnir
 
     # A field name (with :asc or :desc), or an Arel ordering / raw
     # expression such as `Arel.sql("RANDOM()")`, passed through as is.
-    def order_by(field, direction = :asc) -> Query
+    def order_by(field, direction = :asc) -> Query[T]
       unless field is String || field is Symbol
         return Query.new(@schema, @arel.order(field))
       end
@@ -39,8 +39,8 @@ module Mjolnir
       Query.new(@schema, @arel.order(ordering))
     end
 
-    def limit(n: Int) -> Query = Query.new(@schema, @arel.take(n))
-    def offset(n: Int) -> Query = Query.new(@schema, @arel.skip(n))
+    def limit(n: Int) -> Query[T] = Query.new(@schema, @arel.take(n))
+    def offset(n: Int) -> Query[T] = Query.new(@schema, @arel.skip(n))
     def to_sql(visitor = nil) -> Array = @arel.to_sql(visitor)
   end
 

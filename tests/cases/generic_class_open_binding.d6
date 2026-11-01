@@ -1,0 +1,155 @@
+# A class variable that only a callable with no declared return could bind stays
+# open: the instance accepts any result and promises nothing about it.
+struct Item(id: Int)
+end
+def build_item(row) = Item.new(row["id"])
+def build_typed(row: Hash) -> Item = Item.new(row["id"])
+def build_text(row) = "row #{row["id"]}"
+
+class Schema[T]
+  def initialize(name: String, builder: Callable[[Hash], T])
+    @builder = builder
+  end
+  def build(row: Hash) -> T = @builder(row)
+  def build_all(rows: Array) -> Array[T]
+    built = []
+    rows.each() do |row|
+      built.push(@builder(row))
+    end
+    built
+  end
+  def query() -> Query[T] = Query.new(self, 0)
+end
+
+# Inherits the open variable from the Schema it is built from.
+class Query[T]
+  def initialize(schema: Schema[T], offset: Int)
+    @schema = schema
+    @offset = offset
+  end
+  def schema() -> Schema[T] = @schema
+  def skip(count: Int) -> Query[T] = Query.new(@schema, @offset + count)
+end
+
+class Repo
+  def all[T](query: Query[T]) -> Array[T] = query.schema().build_all([{"id": 1}, {"id": 2}])
+  def one[T](query: Query[T]) -> T | Nil
+    found = self.all(query)
+    if found.empty?() then nil else found[0] end
+  end
+end
+
+def wants_int(value: Int) = value
+def show_type(value)
+  begin
+    wants_int(value)
+  rescue error: TypeError
+    puts(error.message())
+  end
+end
+
+def show_error(label, &block)
+  begin
+    block()
+    puts("#{label}: no error")
+  rescue error: TypeError
+    puts("#{label}: #{error.message()}")
+  end
+end
+
+open = Schema.new("open", build_item)
+puts(open.build({"id": 1}))
+puts(open.build_all([{"id": 2}]))
+show_type(open)
+
+# Nothing is promised, so another result type is accepted too.
+mixed = Schema.new("mixed", build_text)
+puts(mixed.build({"id": 3}))
+
+# A block with no provable result leaves the variable open as well.
+block_schema = Schema.new("block") do |row| row["id"] end
+puts(block_schema.build({"id": 4}))
+
+# The open variable carries through other generic classes and methods.
+repo = Repo.new()
+query = open.query().skip(1)
+show_type(query)
+puts(repo.all(query))
+puts(repo.one(query))
+
+# A declared return, or an explicit argument, still binds and is enforced.
+typed = Schema.new("typed", build_typed)
+show_type(typed)
+puts(typed.build({"id": 5}))
+explicit = Schema[Item].new("explicit", build_item)
+show_type(explicit)
+puts(explicit.build({"id": 6}))
+wrong = Schema[Item].new("wrong", build_text)
+show_error("explicit mismatch") do wrong.build({"id": 7}) end
+
+# An open instance does not satisfy a closed annotation: its results are unchecked.
+def closed(schema: Schema[Item]) -> Item = schema.build({"id": 8})
+puts(closed(typed))
+show_error("open to closed") do closed(open) end
+puts(open is Schema)
+
+# An open instance can be held by other generics without closing the variable.
+class Box[T]
+  def initialize(value: T)
+    @value = value
+  end
+  def value() -> T = @value
+end
+def identity[T](value: T) -> T = value
+show_type(Box.new(open))
+puts(Box.new(open).value().build({"id": 9}))
+show_type(identity(open))
+show_type(open.dup())
+
+# A subclass keeps its parent's variable open; a transformed parent can't, since
+# there is nothing to read the subclass's own variable back from.
+class NamedSchema[T] < Schema[T]
+  def initialize(builder: Callable[[Hash], T])
+    super("named", builder)
+  end
+end
+named = NamedSchema.new(build_item)
+show_type(named)
+puts(named.build({"id": 10}))
+class ListSchema[T] < Schema[Array[T]]
+  def initialize(builder: Callable[[Hash], Array[T]])
+    super("list", builder)
+  end
+end
+show_error("transformed parent") do ListSchema.new(build_item) end
+
+# Each variable is judged alone: the key binds, the value stays open.
+class Pair[K, V]
+  def initialize(key: K, maker: Callable[0, V])
+    @key = key
+    @maker = maker
+  end
+  def key() -> K = @key
+  def value() -> V = @maker()
+end
+def make_text() = "made"
+pair = Pair.new(1, make_text)
+show_type(pair)
+puts(pair.key())
+puts(pair.value())
+def key_text(pair: Pair[String, String]) -> String = pair.key()
+show_error("second variable open") do key_text(pair) end
+
+# An argument that could not bind the variable anyway is still an error.
+class Listed[T]
+  def initialize(items: Array[T])
+    @items = items
+  end
+end
+show_error("empty array") do Listed.new([]) end
+
+# Copies across a thread keep the open variable.
+def build_in_thread(schema) = schema.build({"id": 11}).id()
+copied = Thread.new(build_in_thread, open).join()
+puts(copied)
+nil

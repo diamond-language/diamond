@@ -11,16 +11,14 @@ module Mjolnir
 
     def db() = @db
 
-    def all(query: Query) -> Array
-      query.schema().build_all(query.arel().to_a(@db, @visitor))
-    end
+    def all[T](query: Query[T]) -> Array[T] = query.schema().build_all(query.arel().to_a(@db, @visitor))
 
-    def one(query: Query)
+    def one[T](query: Query[T]) -> T | Nil
       found = self.all(query.limit(1))
       if found.empty?() then nil else found[0] end
     end
 
-    def get(schema: Schema, id)
+    def get[T](schema: Schema[T], id) -> T | Nil
       query = schema.query()
       schema.key_predicates(id).each() do |predicate|
         query = query.where(predicate)
@@ -34,7 +32,7 @@ module Mjolnir
 
     # The first row whose fields equal `conditions` (a Hash, as for
     # Query#where), or nil.
-    def get_by(schema: Schema, conditions: Hash) = self.one(schema.query().where(conditions))
+    def get_by[T](schema: Schema[T], conditions: Hash) -> T | Nil = self.one(schema.query().where(conditions))
 
     # Loads one association for many entities in a single query and returns
     # a Hash keyed by each entity's primary key: an Array of rows for

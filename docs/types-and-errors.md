@@ -87,6 +87,31 @@ Without an explicit argument, the supplied constructor arguments must provide
 enough information: for example, an empty `Array[T]` parameter cannot infer its
 element type.
 
+The exception is a variable that only a callable with no declared return could
+bind, which leaves it *open*. Such an instance accepts any result, and shows as
+`Schema[?]`. Generic classes built from it stay open too, but it does not satisfy a closed
+annotation like `Schema[Item]`, whose callers rely on results nothing checked. Declare the
+callable's return or write `Schema[Item].new(...)` to close it. A subclass that transforms its
+parent's arguments (`Sub[T] < Base[Array[T]]`) cannot be left open and raises instead.
+
+```ruby
+class Schema[T]
+  def initialize(builder: Callable[[Hash], T])
+    @builder = builder
+  end
+  def build(row: Hash) -> T = @builder(row)
+end
+
+def build_open(row) = Item.new(row)
+def build_item(row: Hash) -> Item = Item.new(row)
+def first(schema: Schema[Item]) -> Item = schema.build({})
+
+first(Schema.new(build_item))        # closed: T is Item, and each result is checked
+first(Schema[Item].new(build_open))  # closed explicitly
+first(Schema.new(build_open))        # TypeError: expected Schema[Item], got Schema[?]
+Schema.new(build_open).build({})     # open: works, and promises nothing
+```
+
 ```ruby
 def read(box: Box[Int]) -> Int = box.value()
 def identity[T](box: Box[T]) -> Box[T] = box
