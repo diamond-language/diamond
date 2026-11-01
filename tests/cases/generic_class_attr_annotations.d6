@@ -1,0 +1,79 @@
+# Attribute annotations can name the class's type parameters.
+class Holder[T]
+  attr_accessor value: T
+  attr_reader items: Array[T]
+  attr_reader maker: Callable[[Hash], T]
+  def initialize(value: T, items: Array[T], maker: Callable[[Hash], T])
+    @value = value
+    @items = items
+    @maker = maker
+  end
+end
+
+def make_int(row: Hash) -> Int = row["n"]
+def make_any(row) = "text"
+
+def show_error(label, &block)
+  begin
+    block()
+    puts("#{label}: no error")
+  rescue error: TypeError
+    puts("#{label}: #{error.message()}")
+  end
+end
+
+held = Holder.new(1, [2], make_int)
+puts(held.value())
+puts(held.items())
+puts(held.maker()({"n": 3}))
+
+# The writer checks against the instance's binding.
+held.value = 4
+puts(held.value())
+show_error("writer") do held.value = "four" end
+puts(held.value())
+
+# The binding is the instance's own, not the first one seen.
+text = Holder.new("a", ["b"], make_any)
+text.value = "c"
+puts(text.value())
+show_error("writer on text") do text.value = 5 end
+
+# A reader's return is usable as the bound type.
+def doubled(holder: Holder[Int]) -> Int = holder.value() * 2
+puts(doubled(held))
+
+# Inherited accessors bind through the subclass, and two parameters stay distinct.
+class SubHolder[T] < Holder[T]
+end
+sub = SubHolder.new(5, [6], make_int)
+puts(sub.value())
+show_error("inherited writer") do sub.value = "six" end
+
+class Pair[K, V]
+  attr_accessor key: K
+  attr_accessor value: V
+  def initialize(key: K, value: V)
+    @key = key
+    @value = value
+  end
+end
+pair = Pair.new(1, "one")
+pair.value = "uno"
+puts(pair.value())
+show_error("second parameter") do pair.value = 1 end
+show_error("first parameter") do pair.key = "one" end
+
+# An open variable accepts anything, as a method's `-> T` does.
+class Open[T]
+  attr_accessor last: T
+  attr_reader maker: Callable[[Hash], T]
+  def initialize(maker: Callable[[Hash], T])
+    @maker = maker
+  end
+end
+open = Open.new(make_any)
+open.last = 1
+open.last = "two"
+puts(open.last())
+nil

@@ -1,0 +1,16 @@
+1
+[2]
+3
+4
+writer: expected Int, got String
+4
+c
+writer on text: expected String, got Int
+8
+5
+inherited writer: expected Int, got String
+uno
+second parameter: expected String, got Int
+first parameter: expected Int, got String
+two
+nil

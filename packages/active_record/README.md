@@ -139,6 +139,8 @@ Methods: `all(db)`, `find(db, id)` (returns `nil` when absent), `where(db, condi
 
 `find_in_batches`/`find_each` page by primary key (`WHERE id > last_id ORDER BY id LIMIT n`), not by `OFFSET`, so they stay fast and don't skip or repeat rows if the table changes while you iterate.
 
+`Repository` and `Relation` are generic over what the mapper returns. A mapper with a declared return, `def build_game(row: Hash) -> Game`, makes a `Repository[Game]`: `find` is then a `Game | Nil`, `all` and `where` an `Array[Game]`, and each mapped row is checked. A mapper that declares nothing leaves the repository open: it reads the same but promises nothing, and does not satisfy a `Repository[Game]` annotation. `Model`'s class-level finders stay unannotated, since a method on `Model` has no way to name the subclass it is called on.
+
 ## Relation
 
 `Model.all()`, `Model.where(...)` and `repository.relation()` return a lazy `Relation`. Nothing touches the database until a terminal call.

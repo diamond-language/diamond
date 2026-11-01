@@ -45,9 +45,9 @@ these annotations enforce that boundary.
 ## ActiveRecord follow-up
 
 Audit `Relation#count`, repository write counts, and Model forwarding first.
-`Relation#first`, `Repository#find`, and model lookup results depend on the row
-mapper; do not assume a Hash or one Model class. Preserve nullable and callback
-contracts before proposing types.
+`Relation#first` and `Repository#find` are generic over the row mapper (`-> T | Nil`).
+Model lookup results still depend on which subclass they are called on; do not assume a
+Hash or one Model class. Preserve nullable and callback contracts before proposing types.
 
 ## Validation and measurements
 
