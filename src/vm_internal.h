@@ -1333,6 +1333,18 @@ static inline uint8_t binding_node(DiamondTypeBinding *binding) {
     return binding->node_count++;
 }
 
+/* An instance's bindings as seen from `owner`, its own class or an ancestor.
+ * A binding is over a kilobyte, so its own class reads them in place; `scratch`
+ * is touched only when an ancestor's view has to be computed. */
+static inline const DiamondTypeBinding *instance_bindings_as(const DiamondChunk *chunk,
+        const DiamondInstance *instance,size_t owner,DiamondTypeBinding scratch[2]) {
+    if(instance->type_binding==nullptr)return nullptr;
+    if(instance->class->index==owner)return instance->type_binding;
+    memset(scratch,0,2*sizeof(DiamondTypeBinding));
+    return diamond_map_class_bindings(chunk->classes,chunk->class_count,instance->class->index,
+        owner,instance->type_binding,scratch,false)?scratch:nullptr;
+}
+
 static inline bool bind_receiver_prefix(const DiamondChunk *chunk,const DiamondInstance *self,
         DiamondTypeBinding *bindings) {
     if(chunk->class_type_variable==0)return true;
@@ -1343,6 +1355,13 @@ static inline bool bind_receiver_prefix(const DiamondChunk *chunk,const DiamondI
             if(chunk->functions[i]->code==chunk->code) {owner=chunk->functions[i]->owner_class;break;}
     if(owner>=chunk->class_count||
        chunk->class_type_variable!=DIAMOND_CLASS_TYPE_PARAMETER_COUNT(chunk->classes[owner]))return false;
+    if(self->class->index==owner) {
+        for(size_t variable=0;variable<chunk->class_type_variable;variable++)
+            bindings[variable]=self->type_binding[variable];
+        return true;
+    }
+    /* Callers leave the receiver's slots unset; method slots may already be inferred. */
+    memset(bindings,0,chunk->class_type_variable*sizeof(DiamondTypeBinding));
     return diamond_map_class_bindings(chunk->classes,chunk->class_count,
         self->class->index,owner,self->type_binding,bindings,false);
 }

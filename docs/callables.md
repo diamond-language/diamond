@@ -222,7 +222,9 @@ twice(describe)  # TypeError: expected Int, got String
 
 A generic parameter that only such a callable could bind stays unbound and accepts
 any result: in `Box#map[U]`, called from an unannotated method, `Box[U].new(...)` then
-takes its binding from the constructor's arguments, as `Box.new(...)` does.
+takes its binding from the constructor's arguments, as `Box.new(...)` does. A generic
+class's own variable can be left open the same way
+(see [types and errors](types-and-errors.md)).
 At statically resolved function, singleton, instance-method, and constructor
 calls, concrete parameter types inside `Callable[[...], Return]` are applied to
 corresponding `do |...|` locals. Callable values with typed nested Callable

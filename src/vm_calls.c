@@ -835,6 +835,68 @@ DiamondVmStatus diamond_jit_native_call(DiamondVm *vm,
     return DIAMOND_VM_OK;
 }
 
+static bool type_set_mentions_variable(const DiamondTypeSet *sets,uint16_t set,
+        size_t variable,size_t depth) {
+    if(set==DIAMOND_NO_TYPE_SET||depth>=DIAMOND_BOUND_TYPE_NODES)return false;
+    for(size_t index=0;index<sets[set].count;index++) {
+        const DiamondTypeMember member=sets[set].members[index];
+        if(member.id==DIAMOND_TYPE_VARIABLE_BASE+variable||
+           type_set_mentions_variable(sets,member.argument_set,variable,depth+1)||
+           type_set_mentions_variable(sets,member.second_argument_set,variable,depth+1)||
+           (member.id==DIAMOND_TYPE_CALLABLE&&
+            type_set_mentions_variable(sets,member.callable_return_set,variable,depth+1)))
+            return true;
+    }
+    return false;
+}
+
+/* Whether an argument leaves a class variable open rather than failing to say
+ * anything about it: a callable with no declared return can't show what it
+ * will produce, and a generic instance may itself have been left open. */
+static bool argument_leaves_variable_open(const DiamondChunk *chunk,DiamondValue value,
+        const DiamondTypeSet *sets,uint16_t set,size_t variable) {
+    for(size_t index=0;index<sets[set].count;index++) {
+        const DiamondTypeMember member=sets[set].members[index];
+        if(member.id>=DIAMOND_TYPE_VARIABLE_BASE||!value_matches_type(chunk,value,member.id))continue;
+        if(member.id==DIAMOND_TYPE_CALLABLE) {
+            const DiamondClosure *closure=(const DiamondClosure *)value.as.object;
+            if(type_set_mentions_variable(sets,member.callable_return_set,variable,0)&&
+               (closure->foreign_chunk!=nullptr||closure->function_index>=chunk->function_count||
+                chunk->functions[closure->function_index]->return_type_set==DIAMOND_NO_TYPE_SET))
+                return true;
+        } else if(member.id>=DIAMOND_TYPE_CLASS_BASE&&member.id<DIAMOND_TYPE_CLASS_LIMIT) {
+            const DiamondInstance *instance=(const DiamondInstance *)value.as.object;
+            DiamondTypeBinding scratch[2];
+            const DiamondTypeBinding *projected=instance_bindings_as(chunk,instance,
+                member.id-DIAMOND_TYPE_CLASS_BASE,scratch);
+            if(projected==nullptr)continue;
+            if((projected[0].node_count==0&&
+                type_set_mentions_variable(sets,member.argument_set,variable,0))||
+               (member.second_argument_set!=DIAMOND_NO_TYPE_SET&&projected[1].node_count==0&&
+                type_set_mentions_variable(sets,member.second_argument_set,variable,0)))
+                return true;
+        }
+    }
+    return false;
+}
+
+static bool constructor_leaves_variable_open(const DiamondChunk *chunk,const DiamondFunction *fn,
+        const DiamondClass *class,const DiamondValue *arguments,size_t count,size_t variable) {
+    /* A transformed parent (`Sub[T] < Base[Array[T]]`) has no view of an open
+     * variable, so its inherited methods could not be entered. */
+    for(const DiamondClass *ancestor=class;ancestor!=nullptr;
+        ancestor=ancestor->superclass<chunk->class_count?chunk->classes[ancestor->superclass]:nullptr)
+        if(ancestor->transforms_parent_arguments)return false;
+    for(size_t parameter=0;parameter<count&&parameter<DIAMOND_MAX_DECLARED_PARAMETERS;parameter++) {
+        const uint16_t set=fn->parameter_type_sets[parameter];
+        if(arguments[parameter].kind!=DIAMOND_VALUE_UNDEFINED&&
+           set!=DIAMOND_NO_TYPE_SET&&set<fn->type_set_count&&
+           argument_leaves_variable_open(chunk,arguments[parameter],fn->type_sets,set,variable))
+            return true;
+    }
+    return false;
+}
+
 /* Keep the inference scratch graph out of ordinary constructor frames. */
 __attribute__((noinline))
 DiamondVmStatus bind_instance_constructor_type(DiamondVm *vm,
@@ -845,7 +907,9 @@ DiamondVmStatus bind_instance_constructor_type(DiamondVm *vm,
        fn->type_variable_count>8||
        fn->class_type_variable>2)
         return DIAMOND_VM_TYPE_ERROR;
-    DiamondTypeBinding bindings[8]={};
+    /* Only the function's own variables are read, as at a generic call's entry. */
+    DiamondTypeBinding bindings[8];
+    memset(bindings,0,fn->type_variable_count*sizeof bindings[0]);
     for(size_t parameter=0;parameter<count&&
         parameter<DIAMOND_MAX_DECLARED_PARAMETERS;parameter++) {
         if(arguments[parameter].kind==DIAMOND_VALUE_UNDEFINED)continue;
@@ -853,13 +917,24 @@ DiamondVmStatus bind_instance_constructor_type(DiamondVm *vm,
         if(set!=DIAMOND_NO_TYPE_SET&&set<fn->type_set_count)
             infer_from_value(chunk,arguments[parameter],fn->type_sets,set,bindings);
     }
-    if(!diamond_seed_fixed_parent_bindings(chunk->classes,chunk->class_count,
+    const bool own_constructor=instance->class->index==fn->owner_class;
+    if(!own_constructor&&!diamond_seed_fixed_parent_bindings(chunk->classes,chunk->class_count,
         instance->class->index,fn->owner_class,bindings))return DIAMOND_VM_TYPE_ERROR;
     for(size_t variable=0;variable<fn->class_type_variable;variable++)
     if(bindings[variable].invalid||bindings[variable].node_count==0||bindings[variable].nodes[0].count==0) {
+        if(!bindings[variable].invalid&&
+           constructor_leaves_variable_open(chunk,fn,instance->class,arguments,count,variable)) {
+            bindings[variable]=(DiamondTypeBinding){};
+            continue;
+        }
         snprintf(vm->error,sizeof vm->error,
             "cannot infer generic class type parameter from constructor arguments");
         return DIAMOND_VM_TYPE_ERROR;
+    }
+    if(own_constructor) {
+        for(size_t variable=0;variable<fn->class_type_variable;variable++)
+            instance->type_binding[variable]=bindings[variable];
+        return DIAMOND_VM_OK;
     }
     DiamondTypeBinding actual[2]={};
     if(!diamond_map_class_bindings(chunk->classes,chunk->class_count,instance->class->index,

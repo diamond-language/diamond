@@ -1,0 +1,30 @@
+Item(id: 1)
+[Item(id: 2)]
+expected Int, got Schema[?]
+row 3
+4
+expected Int, got Query[?]
+[Item(id: 1), Item(id: 2)]
+Item(id: 1)
+expected Int, got Schema[Item]
+Item(id: 5)
+expected Int, got Schema[Item]
+Item(id: 6)
+explicit mismatch: expected Item, got String
+Item(id: 8)
+open to closed: expected Schema[Item], got Schema[?]
+true
+expected Int, got Box[Schema[?]]
+Item(id: 9)
+expected Int, got Schema[?]
+expected Int, got Schema[?]
+expected Int, got NamedSchema[?]
+Item(id: 10)
+transformed parent: cannot infer generic class type parameter from constructor arguments
+expected Int, got Pair[Int, ?]
+1
+made
+second variable open: expected Pair[String, String], got Pair[Int, ?]
+empty array: cannot infer generic class type parameter from constructor arguments
+11
+nil

@@ -36,6 +36,8 @@ repo = Mjolnir::Repo.new(db)
 
 Field types are `:int`, `:float`, `:string`, `:bool`, and `:any`.
 
+`Schema`, `Query` and the `Repo` reads are generic over the entity. A builder with a declared return, `def build_user(row: Hash) -> User`, makes `users` a `Schema[User]`: `repo.get(users, 1)` is then a `User | Nil`, and each built row is checked. `build_user` above declares nothing, so the schema is left open: it reads the same but promises nothing, and does not satisfy a `Schema[User]` annotation.
+
 ### Changesets
 
 A changeset whitelists and casts untrusted attributes, then validates them. It is a value: each step returns a new one, and nothing touches the database.

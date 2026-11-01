@@ -207,6 +207,12 @@ static bool bound_nodes_equal(const DiamondTypeBinding *left,uint8_t a,
         const DiamondTypeBinding *right,uint8_t b,size_t depth) {
     if(left->invalid||right->invalid)return false;
     if(a==UINT8_MAX||b==UINT8_MAX)return a==b;
+    /* A generic instance's open variable has no nodes at all; held in another
+     * graph, it is an empty node. Only another open variable equals it. */
+    const bool left_open=left->node_count==0&&a==0,right_open=right->node_count==0&&b==0;
+    if(left_open||right_open)
+        return (left_open||(a<left->node_count&&left->nodes[a].count==0))&&
+            (right_open||(b<right->node_count&&right->nodes[b].count==0));
     if(depth>=DIAMOND_BOUND_TYPE_NODES||a>=left->node_count||b>=right->node_count)
         return false;
     const DiamondBoundTypeNode *x=&left->nodes[a],*y=&right->nodes[b];
@@ -391,10 +397,10 @@ static bool value_matches_bound_node(const DiamondChunk *chunk,DiamondValue valu
         } else if(member.id>=DIAMOND_TYPE_CLASS_BASE&&member.id<DIAMOND_TYPE_VARIABLE_BASE&&
                   member.argument_node!=UINT8_MAX) {
             const DiamondInstance *instance=(const DiamondInstance *)value.as.object;
-            DiamondTypeBinding projected[2]={};
-            if(instance->type_binding!=nullptr&&
-               diamond_map_class_bindings(chunk->classes,chunk->class_count,instance->class->index,
-                   member.id-DIAMOND_TYPE_CLASS_BASE,instance->type_binding,projected,false)&&
+            DiamondTypeBinding scratch[2];
+            const DiamondTypeBinding *projected=instance_bindings_as(chunk,instance,
+                member.id-DIAMOND_TYPE_CLASS_BASE,scratch);
+            if(projected!=nullptr&&
                bound_nodes_equal(binding,member.argument_node,&projected[0],0,0)&&
                (member.second_argument_node==UINT8_MAX||
                 (projected[1].node_count!=0&&
@@ -1073,10 +1079,10 @@ static bool value_matches_member(const DiamondChunk *chunk,DiamondValue value,
     if(member->id>=DIAMOND_TYPE_CLASS_BASE&&member->id<DIAMOND_TYPE_VARIABLE_BASE&&
        member->argument_set!=DIAMOND_NO_TYPE_SET) {
         const DiamondInstance *instance=(const DiamondInstance *)value.as.object;
-        DiamondTypeBinding wanted,projected[2]={};
-        return instance->type_binding!=nullptr&&
-            diamond_map_class_bindings(chunk->classes,chunk->class_count,instance->class->index,
-                member->id-DIAMOND_TYPE_CLASS_BASE,instance->type_binding,projected,false)&&
+        DiamondTypeBinding wanted,scratch[2];
+        const DiamondTypeBinding *projected=instance_bindings_as(chunk,instance,
+            member->id-DIAMOND_TYPE_CLASS_BASE,scratch);
+        return projected!=nullptr&&
             (explicit_type_has_unbound_variable(chunk,member->argument_set,0)||
              (bind_explicit_class_type(chunk,member->argument_set,&wanted)&&
               bound_nodes_equal(&projected[0],0,&wanted,0,0)))&&
@@ -1428,8 +1434,13 @@ static void bind_value_graph(const DiamondChunk *chunk,DiamondTypeBinding *bindi
         for(size_t variable=0;variable<count;variable++) {
             uint8_t *child=variable==0?&member->argument_node:&member->second_argument_node;
             const DiamondTypeBinding *source=&instance->type_binding[variable];
-            if(source->invalid||source->node_count==0||source->nodes[0].count==0) {
-                binding->invalid=true;return;
+            if(source->invalid) {binding->invalid=true;return;}
+            /* A variable the instance left open stays open in the graph. */
+            if(source->node_count==0||source->nodes[0].count==0) {
+                if(*child==UINT8_MAX)*child=binding_node(binding);
+                else if(binding->nodes[*child].count!=0)binding->invalid=true;
+                if(binding->invalid)return;
+                continue;
             }
             if(*child!=UINT8_MAX) {
                 if(!bound_nodes_equal(binding,*child,source,0,0))binding->invalid=true;
@@ -1915,9 +1926,10 @@ void infer_from_value(const DiamondChunk *chunk,DiamondValue value,
         if(member.id>=DIAMOND_TYPE_CLASS_BASE&&member.id<DIAMOND_TYPE_CLASS_LIMIT&&
            member.argument_set!=DIAMOND_NO_TYPE_SET) {
             const DiamondInstance *instance=(const DiamondInstance *)value.as.object;
-            DiamondTypeBinding projected[2]={};
-            if(instance->type_binding!=nullptr&&diamond_map_class_bindings(chunk->classes,chunk->class_count,
-                instance->class->index,member.id-DIAMOND_TYPE_CLASS_BASE,instance->type_binding,projected,false)) {
+            DiamondTypeBinding scratch[2];
+            const DiamondTypeBinding *projected=instance_bindings_as(chunk,instance,
+                member.id-DIAMOND_TYPE_CLASS_BASE,scratch);
+            if(projected!=nullptr) {
                 infer_from_bound_node(chunk,&projected[0],0,sets,member.argument_set,bindings,0);
                 if(member.second_argument_set!=DIAMOND_NO_TYPE_SET&&projected[1].node_count!=0)
                     infer_from_bound_node(chunk,&projected[1],0,sets,member.second_argument_set,bindings,0);

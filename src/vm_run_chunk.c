@@ -108,14 +108,14 @@ static const DiamondChunk *bind_generic_entry(const DiamondChunk *chunk,
         const DiamondInstance *self=(const DiamondInstance *)arguments[0].as.object;
         if(chunk->class_type_variable>chunk->type_variable_count||
            chunk->class_type_variable>2||
-           self->type_binding==nullptr||self->type_binding->node_count==0)
+           self->type_binding==nullptr)
             {*status=DIAMOND_VM_TYPE_ERROR;return nullptr;}
         if(chunk->type_variable_bindings!=nullptr)
             memcpy(bindings,chunk->type_variable_bindings,
                 chunk->type_variable_count*sizeof(DiamondTypeBinding));
-        else {
+        else if(chunk->type_variable_count>chunk->class_type_variable) {
             memset(bindings,0,chunk->type_variable_count*sizeof(DiamondTypeBinding));
-            for(size_t parameter=0;chunk->type_variable_count>chunk->class_type_variable&&chunk->parameter_type_sets!=nullptr&&
+            for(size_t parameter=0;chunk->parameter_type_sets!=nullptr&&
                 parameter<DIAMOND_MAX_DECLARED_PARAMETERS&&
                 parameter+chunk->parameter_offset<argument_count;parameter++) {
                 if(arguments[parameter+chunk->parameter_offset].kind==DIAMOND_VALUE_UNDEFINED)continue;

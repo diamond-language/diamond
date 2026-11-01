@@ -123,10 +123,6 @@ New package work should be driven by a concrete application or interoperability 
   generic over the mapped type (`-> T | Nil`). The JIT never trusts an unannotated return; measure each batch rather
   than assuming a gain (see
   [JIT design](internal/jit-design.md#where-the-next-win-is)).
-- Make Mjolnir's `Schema`, `Query` and `Repo` reads generic once two things change.
-  `Schema.new` with an unannotated builder cannot infer `T`, so adoption would break every
-  such caller; and a prototype cost about 8% more instructions on row mapping and on query
-  building, 9% on `Repo#get`.
 - Add another SQL dialect only with a live server for verification.
 - Improve package documentation, examples, and compatibility tests.
 - Avoid framework magic that hides database access or weakens Diamond's type and error

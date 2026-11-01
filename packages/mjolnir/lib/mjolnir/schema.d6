@@ -4,14 +4,14 @@ module Mjolnir
   # (:int, :float, :string, :bool, :any); `builder` turns one result row
   # (a Hash) into an entity. Entities are plain objects -- typically a
   # `struct` -- with no persistence methods; builds come back frozen.
-  class Schema
+  class Schema[T]
     # `primary_key` is a field name, or an Array of field names for a
     # composite key (a join table keyed by its two foreign keys). A
     # composite key has no autoincrement: the caller supplies every part.
     # With `timestamps: true` the fields must include `created_at` and
     # `updated_at` (:int, epoch seconds); Repo stamps them on insert and
     # update unless the changeset sets them itself.
-    def initialize(table_name: String, fields: Hash, builder: Callable[1], primary_key: String | Array = "id", timestamps: Bool = false)
+    def initialize(table_name: String, fields: Hash, builder: Callable[[Hash], T], primary_key: String | Array = "id", timestamps: Bool = false)
       @table_name = table_name
       @fields = fields
       @builder = builder
@@ -39,14 +39,14 @@ module Mjolnir
     # Declare that `target` rows point back here through `foreign_key` (a
     # field of `target`). Loaded explicitly with Repo#preload; nothing is
     # ever fetched implicitly. Returns self so declarations chain.
-    def has_many(name: String, target: Schema, foreign_key: String) -> Schema
+    def has_many(name: String, target: Schema, foreign_key: String) -> Schema[T]
       target.column(foreign_key)
       @associations[name] = {"kind": "has_many", "target": target, "key": foreign_key}
       self
     end
 
     # Declare that this schema's `foreign_key` field points at a `target` row.
-    def belongs_to(name: String, target: Schema, foreign_key: String) -> Schema
+    def belongs_to(name: String, target: Schema, foreign_key: String) -> Schema[T]
       self.column(foreign_key)
       @associations[name] = {"kind": "belongs_to", "target": target, "key": foreign_key}
       self
@@ -104,7 +104,7 @@ module Mjolnir
       @table.column("#{name}")
     end
 
-    def build(row)
+    def build(row: Hash) -> T
       entity = @builder(row)
       entity.freeze()
       entity
@@ -134,7 +134,7 @@ module Mjolnir
       values
     end
 
-    def query() = Query.new(self, Arel.from(@table))
+    def query() -> Query[T] = Query.new(self, Arel.from(@table))
   end
 
 end

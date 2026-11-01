@@ -6,6 +6,22 @@ authoritative fine-grained record.
 
 ## Unreleased
 
+### Added
+
+- A generic class variable that only a callable with no declared return could bind now stays
+  open instead of raising "cannot infer generic class type parameter", so `Schema.new(build_row)`
+  works with an unannotated `build_row`. The instance shows as `Schema[?]`, accepts any
+  result, and does not satisfy a closed annotation such as `Schema[Item]`.
+- mjolnir 0.4.0: `Schema`, `Query` and the `Repo` reads are generic over the entity. Unannotated
+  builders keep working; a builder with a declared return gives `Repo#get` a `T | Nil` result.
+  This version needs this runtime, since older ones reject an unannotated builder.
+
+### Changed
+
+- Generic constructors and generic-class parameter checks no longer zero and copy type bindings
+  when the instance is of the annotated class itself. Generic Mjolnir costs about 2-3% more
+  instructions than the non-generic version on row mapping, 5-6% on query building and 5-7% on `Repo#get`.
+
 ### Fixed
 
 - graphql 0.3.3: a document the lexer refuses, such as an unterminated string or a character outside
