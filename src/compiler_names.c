@@ -2041,6 +2041,21 @@ void publish_instance_return_type(Compiler *compiler,uint16_t reg,
     const DiamondFunction *forward_target=
         tooling_forward_instance_target(compiler,receiver,name);
     if(forward_target!=nullptr)matching_target=forward_target;
+    if(matching_target!=nullptr&&matching_target->returns_self) {
+        const int32_t tooling_set=compiler->tooling_type_sets[receiver];
+        const bool known=compiler->known_types[receiver]>=DIAMOND_TYPE_CLASS_BASE&&
+            compiler->known_types[receiver]<DIAMOND_TYPE_CLASS_LIMIT;
+        if(known)publish_self_return_type(compiler,reg,matching_target,
+            (size_t)(compiler->known_types[receiver]-DIAMOND_TYPE_CLASS_BASE),false);
+        else if(tooling_set>=0&&(size_t)tooling_set<compiler->function->type_set_count&&
+                compiler->function->type_sets[tooling_set].count==1) {
+            const uint16_t id=compiler->function->type_sets[tooling_set].members[0].id;
+            if(id>=DIAMOND_TYPE_CLASS_BASE&&id<DIAMOND_TYPE_CLASS_LIMIT)
+                publish_self_return_type(compiler,reg,matching_target,
+                    (size_t)(id-DIAMOND_TYPE_CLASS_BASE),true);
+        }
+        return;
+    }
     if(publish_reader_return_type(compiler,reg,receiver,receiver_set_index,name)) {
         /* Only advisory scope metadata was published. */
     } else if(matching_target!=nullptr&&matching_target->class_type_variable) {

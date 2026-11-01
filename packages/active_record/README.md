@@ -204,7 +204,7 @@ Game.configure(ActiveRecord::Repository.new(
 
 Instance methods: `id()`, `persisted?()`, `save(db)`, `destroy(db)`, `save!`/`destroy!` (identical; the plain forms already raise on failure), `read_attribute(name)`, `as_json()` / `to_json()`.
 
-Class methods: `find(db, id)`, `all()`, `where(conditions)`, `find_by(db, conditions)`, `create(db, attributes)`, `create!`, `find_each`, `find_in_batches`. `all` and `where` return a `Relation` (no `db` argument).
+Class methods: `find(db, id)`, `all()`, `where(conditions)`, `find_by(db, conditions)`, `create(db, attributes)`, `create!`, `find_each`, `find_in_batches`. `all` and `where` return a `Relation` (no `db` argument). `find` and `find_by` return `Self | Nil`: an instance of the model they were called on, so its repository's mapper has to build that model.
 
 `save` inserts when the model has no id and updates when it has one. After an insert it sets the model's id from `last_insert_row_id()`.
 

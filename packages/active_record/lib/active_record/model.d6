@@ -19,19 +19,11 @@ module ActiveRecord
   #   Every method a model exposes is still either a `def` written directly
   #   in that model, or explicitly synthesized this way in its own
   #   `self.configure` -- nothing conjures one implicitly from a symbol.
-  # - Instance methods dispatch virtually (`self.foo()` called from a
-  #   shared method correctly reaches a subclass's override -- confirmed
-  #   directly), but `def self.x` class methods do not: `self` isn't even
-  #   accessible inside one, and a bare call from inside one resolves to
-  #   whichever same-named method is lexically visible at compile time, not
-  #   the receiver's actual runtime class. Every instance method below
-  #   (#save, #destroy, #persisted?, #id) is written so a subclass's own
-  #   overrides of #repository/#to_attributes are what actually run,
-  #   because that dispatch is real. The class-level surface
-  #   (`Author.find`/`.all`/`.where`/`.create`) can't be inherited the same
-  #   way -- each model writes its own short one-line forwarders (see the
-  #   worked example in README.md), the one real per-model boilerplate
-  #   this layer couldn't eliminate.
+  # - `self.foo()` dispatches virtually in both instance methods and
+  #   `def self.x` class methods, which is what lets the class-level finders
+  #   below live here once. A bare call from inside a class method still
+  #   resolves to whichever same-named method is lexically visible at compile
+  #   time, so this file always writes `self.` explicitly.
   class Model
     def initialize(attributes: Hash = {})
       # Copied (via the native #dup, not aliased) so #save's create path
@@ -178,12 +170,13 @@ module ActiveRecord
     def self.repository()
       raise RuntimeError.new("Model subclass must override self.repository")
     end
-    def self.find(db, id) = self.repository().find(db, id)
+    def self.find(db, id) -> Self | Nil = self.repository().find(db, id)
     def self.all() -> Relation = self.repository().relation()
     def self.where(conditions: Hash) -> Relation = self.repository().relation().where(conditions)
     # `where(...).first`, one line -- a single matching instance, or nil,
     # with the same "no implicit ORDER BY" caveat #first(db) already has.
-    def self.find_by(db, conditions: Hash) = self.repository().relation().where(conditions).first(db)
+    def self.find_by(db, conditions: Hash) -> Self | Nil =
+      self.repository().relation().where(conditions).first(db)
     def self.create(db, attributes: Hash) = self.repository().create(db, attributes)
     # See #save!/#destroy! above on why this behaves identically to
     # self.create -- self.create already raises on a validation failure.

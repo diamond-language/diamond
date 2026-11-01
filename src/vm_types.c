@@ -1285,6 +1285,31 @@ void report_check_type_failure(DiamondVm *vm,const DiamondChunk *chunk,
     snprintf(vm->error,sizeof vm->error,"expected %s, got %s",expected,actual);
 }
 
+/* DIAMOND_OP_CHECK_SELF_RETURN. The receiver is the class a singleton was called on, or the
+ * instance a method was called on. A singleton reached without a class (a method reference
+ * has no literal receiver) has nothing to compare with and no caller trusts its result. */
+__attribute__((noinline))
+DiamondVmStatus check_self_return(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue value,
+        uint16_t others,DiamondValue receiver) {
+    if(others!=DIAMOND_NO_TYPE_SET&&others>=chunk->type_set_count)
+        return DIAMOND_VM_INVALID_BYTECODE;
+    size_t class_index;
+    if(receiver.kind==DIAMOND_VALUE_CLASS)class_index=receiver.as.class_index;
+    else if(value_is_native_kind(receiver,DIAMOND_OBJECT_INSTANCE))
+        class_index=((const DiamondInstance *)receiver.as.object)->class->index;
+    else return DIAMOND_VM_OK;
+    if(class_index>=chunk->class_count)return DIAMOND_VM_INVALID_BYTECODE;
+    if(value_matches_type(chunk,value,(uint16_t)(DIAMOND_TYPE_CLASS_BASE+class_index))||
+       (others!=DIAMOND_NO_TYPE_SET&&value_matches_set(chunk,value,others,true)))
+        return DIAMOND_VM_OK;
+    char expected[256]="";char actual[256];
+    if(others!=DIAMOND_NO_TYPE_SET)format_type_set_index(expected,sizeof expected,chunk,others);
+    format_value_type_detailed(actual,sizeof actual,chunk,value);
+    snprintf(vm->error,sizeof vm->error,"expected %s%s%s, got %s",
+        chunk->classes[class_index]->name,expected[0]=='\0'?"":" | ",expected,actual);
+    return DIAMOND_VM_TYPE_ERROR;
+}
+
 /* JIT trampoline for DIAMOND_OP_CHECK_TYPE -- see jit.h's own comment.
  * value_matches_set's own structural/generic matching logic (interfaces,
  * type variables, unions) is too deep to safely hand-roll in machine

@@ -2205,7 +2205,27 @@ static uint16_t parse_singleton_spread_call(Compiler *compiler,const DiamondMeth
     return destination;
 }
 
+static uint16_t parse_singleton_call_body(Compiler *compiler,
+                                    const DiamondMethod *method,
+                                    DiamondSpan namespace_name,
+                                    int receiver_class_index);
+
 uint16_t parse_singleton_call(Compiler *compiler,
+                                    const DiamondMethod *method,
+                                    DiamondSpan namespace_name,
+                                    int receiver_class_index) {
+    const uint16_t result=parse_singleton_call_body(compiler,method,namespace_name,
+        receiver_class_index);
+    if(!compiler->failed&&receiver_class_index>=0&&
+       method->function_index!=DIAMOND_UNRESOLVED_SINGLETON_FUNCTION) {
+        const DiamondFunction *target=compiler->program->functions[method->function_index];
+        if(target->returns_self)
+            publish_self_return_type(compiler,result,target,(size_t)receiver_class_index,false);
+    }
+    return result;
+}
+
+static uint16_t parse_singleton_call_body(Compiler *compiler,
                                     const DiamondMethod *method,
                                     DiamondSpan namespace_name,
                                     int receiver_class_index) {

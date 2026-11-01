@@ -1,0 +1,46 @@
+require "../../packages/active_record/lib/active_record"
+
+class Author < ActiveRecord::Model
+  def self.repository() = @@repository
+  def self.configure(repository)
+    @@repository = repository
+  end
+  def repository() = @@repository
+  def name() -> String = self.read_attribute("name")
+end
+
+class Book < ActiveRecord::Model
+  def self.repository() = @@repository
+  def self.configure(repository)
+    @@repository = repository
+  end
+  def repository() = @@repository
+end
+
+def build_author(row) = Author.new(row)
+# A mapper for the wrong model.
+def build_book_as_author(row) = Author.new(row)
+
+db = SQLite3.open(":memory:")
+db.execute("CREATE TABLE authors (id INTEGER PRIMARY KEY, name TEXT NOT NULL)")
+db.execute("INSERT INTO authors (name) VALUES ('Ada')")
+
+Author.configure(ActiveRecord::Repository.new(Arel.table("authors"), build_author))
+Book.configure(ActiveRecord::Repository.new(Arel.table("authors"), build_book_as_author))
+
+# The finders' results are known to be the model they were called on.
+puts(Author.find(db, 1).name())
+puts(Author.find_by(db, {"name": "Ada"}).name())
+puts(Author.find(db, 99))
+puts(Author.find_by(db, {"name": "Nobody"}))
+
+begin
+  Book.find(db, 1)
+rescue error: TypeError
+  puts(error.message())
+end
+begin
+  Book.find_by(db, {"name": "Ada"})
+rescue error: TypeError
+  puts(error.message())
+end

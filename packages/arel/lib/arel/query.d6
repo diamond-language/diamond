@@ -48,7 +48,7 @@ module Arel
     def groups() -> Array = @groups
     def havings() -> Array = @havings
     def joins() -> Array = @joins
-    def source_query() = @source_query
+    def source_query() -> Nil | ArelRenderable = @source_query
     def correlations() -> Array = @correlations
     def ctes() -> Array = @ctes
     def projection_count() -> Int = @projections.length()

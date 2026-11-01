@@ -325,6 +325,10 @@ typedef struct Compiler {
     uint16_t positional_spread_fixed[DIAMOND_MAX_DECLARED_PARAMETERS];
     int current_return_type;
     DiamondSpan current_return_type_span;
+    /* The next parse_type_annotation may name Self at its top level (a class's method's
+     * return type); self_return_seen reports that it did. */
+    bool self_return_allowed;
+    bool self_return_seen;
     /* Accumulates the union of every explicit `return value`'s own known
      * type/type-set seen so far within the *current* function body being
      * compiled -- purely advisory input to compile_definition's own
@@ -654,6 +658,9 @@ DIAMOND_INTERNAL uint16_t clone_type_set_into_current(Compiler *compiler,
 DIAMOND_INTERNAL uint16_t clone_substituted_type_set(Compiler *compiler,
         const DiamondFunction *target,uint16_t source_index,
         const uint16_t *bindings,size_t binding_count,bool *resolved);
+DIAMOND_INTERNAL void emit_self_return_check(Compiler *compiler,uint16_t reg,uint16_t others);
+DIAMOND_INTERNAL void publish_self_return_type(Compiler *compiler,uint16_t reg,
+        const DiamondFunction *target,size_t class_index,bool tooling_only);
 DIAMOND_INTERNAL void publish_known_type_set(Compiler *compiler,uint16_t reg,
         uint16_t set_index);
 DIAMOND_INTERNAL void publish_call_return_type(Compiler *compiler,uint16_t reg,

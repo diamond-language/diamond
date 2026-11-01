@@ -1,0 +1,46 @@
+class Box[T]
+  def initialize(value: T)
+    @value = value
+  end
+  def me() -> Self = self
+  def fresh() -> Self = Box.new(@value)
+end
+class Sub < Box[Int]
+end
+puts(Box.new(1).me().fresh() is Box)
+struct P(x: Int)
+  def moved() -> Self = P.new(self.x() + 1)
+end
+puts(P.new(1).moved().x())
+class A
+  def self.one() -> Self = A.new()
+  def self.two() -> Self = one()
+  def self.three() -> Self
+    r = self.one()
+    r
+  end
+  def me() -> Self
+    [1].each() do |x|
+      return self
+    end
+    self
+  end
+  def bad() -> Self
+    [1].each() do |x|
+      return 5
+    end
+    self
+  end
+end
+class B < A
+end
+puts(A.two() is A)
+puts(A.three() is A)
+puts(B.new().me() is B)
+ref = A.one
+puts(ref() is A)
+begin
+  B.new().bad()
+rescue error: TypeError
+  puts(error.message())
+end

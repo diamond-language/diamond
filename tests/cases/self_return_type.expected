@@ -1,0 +1,14 @@
+a
+child b
+child c
+child d
+e
+nil
+child f
+nil
+g
+TypeError: expected Other, got Child
+TypeError: expected Other | Nil, got Child
+TypeError: expected Child, got String
+TypeError: expected Child, got Class
+nil

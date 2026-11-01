@@ -73,7 +73,12 @@ static uint16_t compile_block_return(Compiler *compiler) {
     const uint16_t value=at_statement_end(compiler)?nil_register(compiler):
         expected>=0?parse_with_expected_set(compiler,(uint16_t)expected):
         parse_expression(compiler);
-    if(expected>=0)
+    if(compiler->method_function->returns_self) {
+        const uint16_t others=compiler->method_function->self_return_others;
+        emit_self_return_check(compiler,value,others==DIAMOND_NO_TYPE_SET?others:
+            clone_type_set_into_current(compiler,compiler->method_function->type_sets,
+                compiler->method_function->type_set_count,others));
+    } else if(expected>=0)
         emit_type_check(compiler,value,(uint16_t)expected,
                         compiler->method_return_type_span);
     compiler->method_function->nonlocal_landing=true;
@@ -100,7 +105,9 @@ uint16_t compile_return(Compiler *compiler) {
                 (uint16_t)compiler->current_return_type):
             parse_expression(compiler);
     }
-    if(compiler->current_return_type>=0)
+    if(compiler->function->returns_self)
+        emit_self_return_check(compiler,value,compiler->function->self_return_others);
+    else if(compiler->current_return_type>=0)
         emit_type_check(compiler,value,(uint16_t)compiler->current_return_type,
                         compiler->current_return_type_span);
     /* See return_flow_seen's own comment (the Compiler struct) --

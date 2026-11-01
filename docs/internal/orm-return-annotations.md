@@ -30,24 +30,35 @@ these annotations enforce that boundary.
 
 ## Returns that remain dynamic
 
-- `Query#source_query`, compound left/right branches, CTE queries, scalar and
-  EXISTS subqueries: a Query/CompoundQuery-only union would close the currently
-  duck-typed rendering surface. A shared query protocol needs separate design.
 - Expression children, predicates, membership operands, bound/literal values,
   and assignment values: their types intentionally vary with caller input.
 - Inspector reconstruction and simplification (and their module forwarders):
   extension nodes may return their own classes, and reporting changes the result
   shape. Avoid a closed union of the built-in node classes.
-- `PreparedStatements.for`: native Statements, uncached forwarding, and custom
-  connection/statement decorators share a protocol, not one concrete class.
 - Constructors and raise-only/validation helpers are not part of this batch.
 
-## ActiveRecord follow-up
+The audit is closed: what is listed above varies by design and has no protocol to narrow to.
 
-Audit `Relation#count`, repository write counts, and Model forwarding first.
-`Relation#first` and `Repository#find` are generic over the row mapper (`-> T | Nil`).
-Model lookup results still depend on which subclass they are called on; do not assume a
-Hash or one Model class. Preserve nullable and callback contracts before proposing types.
+## Protocol returns
+
+`Query#source_query`, `Exists#query`, `ScalarSubquery#query` and `Cte#query` return
+`ArelRenderable` (`render_with`), and compound branches return `ArelQuerySource`, which adds
+the projection count those queries require. `PreparedStatements.for` returns
+`Statement | ArelStatement`, with the native type first so the usual case never reaches a
+structural check. `ArelStatement` declares no returns, so a decorator needs none; `Query#to_a`
+and the write statements already check what it hands back.
+
+Measured with `instructions:u` on `make release`, against the previous packages with matching
+outputs: 20,000 `Query#to_a` calls +0.16%, 40,000 renders of nested compound and `EXISTS` queries
++0.57%. The first measurement was +11.7%: naming `Statement` made the whole program recompile on
+every run, because the bytecode validator did not recognise native types (fixed in the same change).
+
+## ActiveRecord
+
+`Relation#first` and `Repository#find` are generic over the row mapper (`-> T | Nil`), and
+`Model.find` and `Model.find_by` return `Self | Nil`. Before the cache fix their cost was +0.17%
+over 20,000 lookups. `Model.all` and `Model.where` stay plain `Relation`: a mapper with no declared
+return leaves the relation open, and an open instance doesn't satisfy a closed `Relation[Self]`.
 
 ## Validation and measurements
 

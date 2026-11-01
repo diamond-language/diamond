@@ -22,6 +22,10 @@ The main render entry points are:
 
 Return bind values in the same order as placeholders appear in SQL. Quote each identifier component through `quote_identifier`; it receives a validated component rather than a dotted SQL fragment. A visitor instance can be reused after an error.
 
+## Custom queries
+
+Any class can stand in for a query with no declaration. As a subquery, CTE body or `Query` source it satisfies `ArelRenderable`: `render_with(visitor) -> Array`, returning `[sql, bind_params]`. As a compound branch it satisfies `ArelQuerySource`, which adds `projection_count_known?() -> Bool` and `projection_count() -> Int`. The return annotations are part of the contract, since interface conformance reads them.
+
 ## Dialects and capabilities
 
 The included visitors are `SQLiteVisitor`, `PostgreSQLVisitor`, `MariaDBVisitor`, and `MySQLVisitor`. SQLite is the default. Select the visitor for the actual database connection, especially for pagination and write statements.

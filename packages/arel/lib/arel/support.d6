@@ -17,6 +17,26 @@ interface ArelReplaceableNode
   def arel_with_children(replacements: Array)
 end
 
+# Anything a visitor can render as `[sql, bind_params]`: a query, a compound
+# query, a write statement or an extension's own statement.
+interface ArelRenderable
+  def render_with(visitor) -> Array
+end
+
+# A renderable whose result columns can be counted, as compound queries and
+# INSERT ... SELECT require.
+interface ArelQuerySource < ArelRenderable
+  def projection_count_known?() -> Bool
+  def projection_count() -> Int
+end
+
+# What a connection's #prepare hands back. Native statements and decorators
+# are both accepted; the callers' own `-> Array` and `-> Int` check the results.
+interface ArelStatement
+  def query(params)
+  def execute(params)
+end
+
 def arel_array(value) -> Array
   if value is Array
     value

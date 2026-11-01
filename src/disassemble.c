@@ -211,6 +211,9 @@ static bool print_type_set(FILE *stream,const DiamondChunk *chunk,
         else if(type==DIAMOND_TYPE_CALLABLE) fputs("Callable",stream);
         else if(type==DIAMOND_TYPE_SIZED) fputs("Sized",stream);
         else if(type==DIAMOND_TYPE_SYMBOL) fputs("Symbol",stream);
+        /* For a native type, callable_arity holds the object kind. */
+        else if(type==DIAMOND_TYPE_NATIVE)
+            fputs(diamond_native_type_name(member.callable_arity),stream);
         else if(type>=DIAMOND_TYPE_VARIABLE_BASE&&type<DIAMOND_TYPE_INTERFACE_BASE)
             fprintf(stream,"T%u",type-DIAMOND_TYPE_VARIABLE_BASE);
         else if(type>=DIAMOND_TYPE_INTERFACE_BASE&&
@@ -1652,6 +1655,17 @@ static bool disassemble_patterns_and_types(DisassemblyWalk *walk) {
             const uint16_t set_index=read_operand(chunk,offset+3);
             valid=print_type_set(stream,chunk,set_index)&&valid;
             fputc('\n',stream);offset+=5;break;
+        case DIAMOND_OP_CHECK_SELF_RETURN: {
+            if(!require_bytes(stream,chunk,offset,7)){valid=false;offset=chunk->code_count;break;}
+            fprintf(stream,"%-18s r%u, ","CHECK_SELF_RETURN",
+                checked_register(chunk,stream,read_operand(chunk,offset+1),&valid));
+            const uint16_t others=read_operand(chunk,offset+3);
+            if(others==DIAMOND_NO_TYPE_SET)fputs("Self",stream);
+            else valid=print_type_set(stream,chunk,others)&&valid;
+            fprintf(stream,", r%u\n",
+                checked_register(chunk,stream,read_operand(chunk,offset+5),&valid));
+            offset+=7;break;
+        }
         case DIAMOND_OP_IS_TYPE: {
             if(!require_bytes(stream,chunk,offset,7)){valid=false;offset=chunk->code_count;break;}
             fprintf(stream,"%-18s r%u, r%u, ","IS_TYPE",
