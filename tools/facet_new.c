@@ -204,7 +204,7 @@ static const struct {
 static const char *const RESERVED[] = {
     /* builtin_namespace_calls (src/compiler_names.c) */
     "Fiber", "File", "Dir", "Regexp", "Tensor", "Time", "Process", "BCrypt",
-    "Cipher", "Gzip", "Base64", "SecureRandom", "Digest", "ProgramBuilder",
+    "Cipher", "Gzip", "Base64", "SecureRandom", "Digest", "SemVer", "ProgramBuilder",
     "Thread", "Channel", "Supervisor", "Array", "Signal",
     /* built-in type names (src/compiler.c) */
     "Int", "Float", "String", "Bool", "Nil", "Hash", "Callable", "Sized", "Symbol",
