@@ -1,6 +1,6 @@
 # Changelog
 
-Diamond is currently pre-release. This file records user-visible capability
+d6 is currently pre-release. This file records user-visible capability
 milestones rather than every implementation step; the Git history remains the
 authoritative fine-grained record.
 

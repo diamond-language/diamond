@@ -286,11 +286,11 @@ tools/fetch_registry_backup.sh /your/chosen/new-backup-directory \
   --data /var/lib/diamond-registry
 ```
 
-Replace the application directory with the installed path containing `backup.di`.
+Replace the application directory with the installed path containing `backup.d6`.
 The helper uses existing SSH keys and strict host-key verification. It snapshots
 the running registry into a temporary directory on the server, streams the copy
 over SSH, checks that it holds only plain files below `snapshot/` (no links, no absolute or
-`..` names), extracts it, and performs a local restore verification with `backup.di`. It reports success only after database/blob checks pass.
+`..` names), extracts it, and performs a local restore verification with `backup.d6`. It reports success only after database/blob checks pass.
 The server temporary copy and local verification copy are removed; the retained
 snapshot includes credential digests and must stay private. The destination must
 not exist, and a failed transfer removes only the newly created destination.
@@ -305,7 +305,7 @@ diamond applications/registry/backup.d6 restore \
 
 Then run the recovered registry in QEMU, inspect release and credential state,
 and perform a facet installation. Follow the service restore procedure when
-switching real traffic. Manually run `monitor.di https://cuts.dilang.tech` until
+switching real traffic. Manually run `monitor.d6 https://cuts.dilang.tech` until
 external alert delivery is selected; a successful manual probe does not establish
 continuous monitoring.
 
@@ -326,13 +326,13 @@ backup: it stages the release, swaps `current`, restarts, restores the previous
 release if the health check fails, and otherwise deletes older releases.
 It does not publish packages or configure backup destinations and alert delivery.
 
-For an explicitly approved new seed, use `tools/publish_registry_seed.di` with the
+For an explicitly approved new seed, use `tools/publish_registry_seed.d6` with the
 HTTPS registry URL, `--seed <verified-seed-directory>`, and
 `--credentials <private-credential-json>`. Issue short-lived name-scoped credentials
-with `credentials.di`; revoke them after the operation and remove the private file.
+with `credentials.d6`; revoke them after the operation and remove the private file.
 The publisher verifies archive identities and respects the live write rate limit.
 Do not reuse the original deployed 24-cut seed: use the current 18-cut selection.
 
-Run `build/diamond tools/verify_registry_launch.di https://cuts.dilang.tech` to resolve
+Run `build/d6 tools/verify_registry_launch.d6 https://cuts.dilang.tech` to resolve
 all selected cuts into a temporary clean consumer, compare the lock against the
 reviewed inventory, load every cut, and reinstall from the unchanged lockfile.

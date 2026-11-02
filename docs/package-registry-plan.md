@@ -4,7 +4,7 @@ Status: implementation and launch plan, 2026-09-23. This document tracks deliver
 `docs/packages.md` describes the current `facet` and `require_cut` behavior.
 
 d6 calls a reusable package a **cut**. Keep `facet` as the package manager,
-`diamond.cut` as the manifest, `require_cut` as the import form, and `cuts/` as
+`Cutfile` as the manifest (`diamond.cut` in older releases), `require_cut` as the import form, and `cuts/` as
 the project-local installation directory. A registry may have its own brand
 later without renaming these interfaces. A rename now would affect source code,
 manifests, paths, documentation, and existing projects.
