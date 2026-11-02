@@ -22,9 +22,7 @@ a concrete application gap.
 The user-facing name becomes **d6**, which remains a reference to Diamond. The name
 leans into the dice: rewriting in d6 is a saving throw.
 
-- **At the next release:** the getting-started install commands and the site's download
-  buttons name `d6-lang` files, and the asdf plugin's README says `d6`.
-- **Site:** the marketing site's text and its live REPL page.
+- **Logo:** the site still uses the gem mark; a dice mark is the owner's call.
 - **GitHub:** the org becomes `roll1d6` or `rolld6` (not yet chosen). Rename it last.
 - **Domain:** to be chosen later. `cuts.dilang.tech` stays as the registry address.
 - **Unchanged:** the **cut** and **facet** names, and `DIAMOND_` constants, environment

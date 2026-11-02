@@ -5,8 +5,20 @@ The corrected A record is **142.93.192.149**. External health and catalog
 requests succeeded. Since 2026-09-25 nginx terminates TLS with certbot
 certificates (see "Proxy and certificates" below); Caddy was retired.
 
-Runtime revision: `1ef04ee578dba796f808d69998e22e1e308244dd` (v0.22.0, deployed
-2026-11-01 with `tools/deploy_registry.sh` after a verified snapshot). Before the upgrade, after
+Runtime revision: `8a43ef3b0aa13a329180ed154f08641afb51615b` (v0.23.0, the first d6 release,
+deployed 2026-11-02 with `tools/deploy_registry.sh` after a verified snapshot). The upgrade comes
+first this time because older registries predate `Cutfile`; its own public verification then failed
+as expected (the seed pins versions not yet published; `--no-verify` is the flag for this order).
+After a second verified snapshot, one 30-minute credential (36, `publish:` for each cut, revoked)
+published the `Cutfile` patch of all 20 public cuts: arel 0.35.4, active_record 0.21.2, cookies
+0.2.3, database_config 0.2.2, div 0.3.2, graphql 0.3.4, graphsql 0.2.4, http 0.2.4, logger 0.5.2,
+gremlin 0.5.3, jobs 0.2.2, log_viewer 0.2.2, minitest 0.1.3, mjolnir 0.4.1, multipart 0.3.2,
+network_safety 0.2.2, rack 0.2.2, redis 0.2.3, registry 0.3.1 and websocket 0.2.2 (digests in
+`docs/registry-launch-inventory.json`). `tools/verify_registry_launch.d6` then passed for all 20.
+facet 0.22.0 and older cannot install these releases.
+
+v0.22.0 (`1ef04ee578dba796f808d69998e22e1e308244dd`) was deployed
+2026-11-01 with `tools/deploy_registry.sh` after a verified snapshot. Before the upgrade, after
 its own verified snapshot, one 30-minute credential (35, `publish:` for each cut, revoked) published
 arel 0.35.3, active_record 0.21.1, graphsql 0.2.3, mjolnir 0.4.0 and registry 0.3.0 (digests in
 `docs/registry-launch-inventory.json`). `tools/verify_registry_launch.d6` passed for all 20 public
