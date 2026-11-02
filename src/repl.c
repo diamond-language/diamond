@@ -14,6 +14,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/ioctl.h>
 #include <termios.h>
 #include <unistd.h>
 
@@ -179,23 +180,61 @@ typedef enum ReplLineResult {
     REPL_LINE_INTERRUPTED,
 } ReplLineResult;
 
-/* Redraws the entire current line from scratch: return to column 0,
- * clear to end of line, print prompt+buffer, then reposition the cursor.
- * Simplest correct approach for a from-scratch line editor (as opposed
- * to diffing against the previously drawn state and emitting minimal
- * updates) -- some extra bytes written per keystroke, never a wrong
- * on-screen result. Doesn't account for the buffer wrapping past the
- * terminal's own width (the cursor-repositioning escape below moves
- * within the current terminal row only): a known, acceptable limitation
- * for a REPL where the common "long input" case is already handled by
- * separate physical lines via multi-line continuation, not one very long
- * single line. */
-static void redraw_line(FILE *out, const char *prompt, const char *buffer, size_t cursor) {
-    fputs("\r\x1b[K", out);
+/* Columns a byte string occupies: one per UTF-8 character. Wide characters
+ * count as one, which is wrong for them but right for everything else. */
+static size_t display_width(const char *text, size_t length) {
+    size_t width = 0;
+    for (size_t index = 0; index < length; index++)
+        if (((unsigned char)text[index] & 0xC0) != 0x80) width++;
+    return width;
+}
+
+static size_t terminal_columns(FILE *out) {
+    struct winsize size;
+    if (ioctl(fileno(out), TIOCGWINSZ, &size) == 0 && size.ws_col > 0) return size.ws_col;
+    return 80;
+}
+
+/* Redraws the prompt and buffer from scratch, across as many rows as they
+ * wrap onto. It goes back up to the row the prompt started on, clears to the
+ * end of the screen, writes everything, then moves to the cursor's row and
+ * column. `view` remembers which row the cursor was left on, since that is
+ * where the next redraw starts from. */
+bool repl_redraw_line(FILE *out, ReplLineView *view, size_t columns, const char *prompt,
+                      const char *buffer, size_t cursor) {
+    if (columns == 0) columns = 80;
+    if (view->cursor_row > 0) fprintf(out, "\x1b[%zuA", view->cursor_row);
+    fputs("\r\x1b[J", out);
     fputs(prompt, out);
     fputs(buffer, out);
-    const size_t length = strlen(buffer);
-    if (cursor < length) fprintf(out, "\x1b[%zuD", length - cursor);
+    const size_t prompt_width = display_width(prompt, strlen(prompt));
+    const size_t end = prompt_width + display_width(buffer, strlen(buffer));
+    /* A terminal that fills a row leaves the cursor in its last column until
+     * the next character arrives. Moving to the next row now means position p
+     * is always at row p / columns. */
+    if (end > 0 && end % columns == 0) fputs("\r\n", out);
+    const size_t target = prompt_width + display_width(buffer, cursor);
+    const size_t end_row = end / columns;
+    const size_t target_row = target / columns;
+    if (end_row > target_row) fprintf(out, "\x1b[%zuA", end_row - target_row);
+    fputc('\r', out);
+    if (target % columns > 0) fprintf(out, "\x1b[%zuC", target % columns);
+    view->cursor_row = target_row;
+    fflush(out);
+    return target > 0 && target % columns == 0;
+}
+
+static bool redraw_line(FILE *out, ReplLineView *view, const char *prompt, const char *buffer,
+                        size_t cursor) {
+    return repl_redraw_line(out, view, terminal_columns(out), prompt, buffer, cursor);
+}
+
+/* Leaves the edit with the cursor below the whole input, wherever it was
+ * within it, after writing `marker` (such as "^C") at the end. */
+static void finish_line(FILE *out, ReplLineView *view, const char *prompt, const char *buffer,
+                        const char *marker) {
+    const bool on_fresh_row = redraw_line(out, view, prompt, buffer, strlen(buffer));
+    if (marker[0] != '\0' || !on_fresh_row) fprintf(out, "%s\r\n", marker);
     fflush(out);
 }
 
@@ -236,6 +275,7 @@ static ReplLineResult read_line_interactive(FILE *out, ReplHistory *history,
 
     fputs(prompt, out);
     fflush(out);
+    ReplLineView view = {};
 
     ReplLineResult result = REPL_LINE_OK;
     for (;;) {
@@ -243,12 +283,11 @@ static ReplLineResult read_line_interactive(FILE *out, ReplHistory *history,
         if (!read_raw_byte(&byte)) { result = REPL_LINE_EOF; break; }
 
         if (byte == '\r' || byte == '\n') {
-            fputs("\r\n", out);
-            fflush(out);
+            finish_line(out, &view, prompt, buffer, "");
             break;
         }
         if (byte == 0x03) { /* Ctrl-C */
-            fputs("^C\r\n", out);
+            finish_line(out, &view, prompt, buffer, "^C");
             fflush(out);
             result = REPL_LINE_INTERRUPTED;
             break;
@@ -262,7 +301,7 @@ static ReplLineResult read_line_interactive(FILE *out, ReplHistory *history,
                 memmove(buffer + cursor - 1, buffer + cursor, length - cursor);
                 cursor--; length--;
                 buffer[length] = '\0';
-                redraw_line(out, prompt, buffer, cursor);
+                redraw_line(out, &view, prompt, buffer, cursor);
             }
             continue;
         }
@@ -304,27 +343,27 @@ static ReplLineResult read_line_interactive(FILE *out, ReplHistory *history,
                 memcpy(buffer, replacement, replacement_length + 1);
                 length = replacement_length;
                 cursor = length;
-                redraw_line(out, prompt, buffer, cursor);
+                redraw_line(out, &view, prompt, buffer, cursor);
                 continue;
             }
             if (final_byte == 'C' && cursor < length) { /* Right */
                 cursor++;
-                redraw_line(out, prompt, buffer, cursor);
+                redraw_line(out, &view, prompt, buffer, cursor);
                 continue;
             }
             if (final_byte == 'D' && cursor > 0) { /* Left */
                 cursor--;
-                redraw_line(out, prompt, buffer, cursor);
+                redraw_line(out, &view, prompt, buffer, cursor);
                 continue;
             }
             if (final_byte == 'H' || (final_byte == '~' && param_count == 1 && params[0] == '1')) {
                 cursor = 0; /* Home */
-                redraw_line(out, prompt, buffer, cursor);
+                redraw_line(out, &view, prompt, buffer, cursor);
                 continue;
             }
             if (final_byte == 'F' || (final_byte == '~' && param_count == 1 && params[0] == '4')) {
                 cursor = length; /* End */
-                redraw_line(out, prompt, buffer, cursor);
+                redraw_line(out, &view, prompt, buffer, cursor);
                 continue;
             }
             if (final_byte == '~' && param_count == 1 && params[0] == '3') { /* Delete */
@@ -332,7 +371,7 @@ static ReplLineResult read_line_interactive(FILE *out, ReplHistory *history,
                     memmove(buffer + cursor, buffer + cursor + 1, length - cursor - 1);
                     length--;
                     buffer[length] = '\0';
-                    redraw_line(out, prompt, buffer, cursor);
+                    redraw_line(out, &view, prompt, buffer, cursor);
                 }
                 continue;
             }
@@ -368,7 +407,7 @@ static ReplLineResult read_line_interactive(FILE *out, ReplHistory *history,
                             cursor += remainder_length;
                             length += remainder_length;
                             buffer[length] = '\0';
-                            redraw_line(out, prompt, buffer, cursor);
+                            redraw_line(out, &view, prompt, buffer, cursor);
                         }
                     }
                 } else if (label_count > 1) {
@@ -376,13 +415,14 @@ static ReplLineResult read_line_interactive(FILE *out, ReplHistory *history,
                      * every match on its own fresh line, then restore
                      * the edit line unchanged; the user keeps typing to
                      * narrow further and presses Tab again. */
-                    fputs("\r\n", out);
+                    finish_line(out, &view, prompt, buffer, "");
                     for (size_t index = 0; index < label_count; index++) {
                         if (index > 0) fputs("  ", out);
                         fputs(labels[index], out);
                     }
                     fputs("\r\n", out);
-                    redraw_line(out, prompt, buffer, cursor);
+                    view = (ReplLineView){};
+                    redraw_line(out, &view, prompt, buffer, cursor);
                 }
                 /* label_count == 0: no-op, nothing to show or insert. */
                 repl_free_completions(labels, label_count);
@@ -402,7 +442,7 @@ static ReplLineResult read_line_interactive(FILE *out, ReplHistory *history,
         buffer[cursor] = (char)byte;
         cursor++; length++;
         buffer[length] = '\0';
-        redraw_line(out, prompt, buffer, cursor);
+        redraw_line(out, &view, prompt, buffer, cursor);
     }
 
     if (result == REPL_LINE_OK) {

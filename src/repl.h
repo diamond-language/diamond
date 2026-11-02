@@ -3,6 +3,7 @@
 
 #include <stdbool.h>
 #include <stddef.h>
+#include <stdio.h>
 
 /* Runs an interactive read-eval-print loop on stdin/stdout until EOF
  * (Ctrl-D) or a fatal I/O error. Returns a process exit code. */
@@ -22,5 +23,14 @@ bool repl_compute_completions(const char *session, size_t session_length,
     const char *line, size_t cursor,
     char ***out_labels, size_t *out_count);
 void repl_free_completions(char **labels, size_t count);
+
+/* The interactive line editor's redraw, exposed for tests/repl_line_view_test.c.
+ * `cursor_row` is the row, counted from the prompt's first row, where the
+ * previous redraw left the cursor. */
+typedef struct ReplLineView {
+    size_t cursor_row;
+} ReplLineView;
+bool repl_redraw_line(FILE *out, ReplLineView *view, size_t columns, const char *prompt,
+                      const char *buffer, size_t cursor);
 
 #endif
