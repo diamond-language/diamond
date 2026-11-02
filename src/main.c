@@ -468,6 +468,25 @@ static int wait_for_child(pid_t child, const char *tool) {
 
 /* Links the generated embed-data file against a prebuilt kit with a single
  * compiler invocation: no make, runtime sources, or headers are needed. */
+/* A kit link only fails for want of the compiler or a library's development package. The packages
+ * merely recommend those, and apt and dnf silently skip a recommendation that would need an
+ * installed package upgraded, so a machine behind on updates arrives here with nothing else to
+ * tell it what to do. */
+static void print_link_failure_hint(void) {
+    fputs("diamond: building needs a C compiler and the development packages of the libraries it links.\n",
+        stderr);
+    if (access("/usr/bin/apt-get", X_OK) == 0) {
+        fputs("  sudo apt update && sudo apt upgrade\n"
+              "  sudo apt install gcc libsqlite3-dev libpq-dev libmariadb-dev libssl-dev libcrypt-dev zlib1g-dev\n",
+            stderr);
+    } else if (access("/usr/bin/dnf", X_OK) == 0) {
+        fputs("  sudo dnf upgrade\n"
+              "  sudo dnf install gcc sqlite-devel libpq-devel mariadb-connector-c-devel openssl-devel "
+              "libxcrypt-devel zlib-devel\n",
+            stderr);
+    }
+}
+
 static int run_kit_aot_build(const char *kit, const char *embed_path,
         const char *output_path, const char *cc_override, const char *target, bool lto) {
     char *version_path = kit_path(kit, "version");
@@ -549,6 +568,7 @@ static int run_kit_aot_build(const char *kit, const char *embed_path,
         _exit(127);
     }
     result = wait_for_child(child, "link");
+    if (result != 0 && target == nullptr) print_link_failure_hint();
 done:
     free(cc_text);
     free(compile_text);

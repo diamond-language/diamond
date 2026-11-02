@@ -26,6 +26,14 @@ PATH="$test_dir/shim:$PATH" "$prefix/bin/diamond" build app.d6 > build.log
 grep -q "diamond: built 'app'" build.log
 test "$(./app)" = "42"
 
+# A missing compiler says what to install rather than ending at "link failed".
+if "$prefix/bin/diamond" build app.d6 --cc=no-such-compiler -o nocc 2> nocc.err; then
+    echo "linked without a compiler" >&2
+    exit 1
+fi
+grep -q 'building needs a C compiler' nocc.err
+test ! -e nocc
+
 # A kit from another Diamond version is rejected instead of linked.
 cp -R "$prefix/lib/diamond/aot" "$test_dir/other-kit"
 printf '%s\n' '0.0.0-other' > "$test_dir/other-kit/version"
