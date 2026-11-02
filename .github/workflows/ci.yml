@@ -75,17 +75,14 @@ jobs:
       - name: Run ${{ matrix.suite }}
         run: make CC=${{ matrix.cc }} ${{ matrix.suite }}
 
-  # Native Linux arm64 coverage. The baseline has passed repeatedly, so this
-  # now includes the same focused API/compiler/fiber/tooling targets used by
-  # the other portability jobs and a representative package slice covering
-  # configuration, HTTP/TLS, threaded serving, middleware, and GraphQL.
-  # ASan/UBSan has its own job below because its instrumented build alone nearly
-  # exceeds this job's budget. The container stays Ubuntu 26.04 so
-  # its compiler and dependency versions match the existing Ubuntu leg; the
-  # runner is the genuinely different part (arm64 hardware).
+  # Native Linux arm64 coverage. test-arm64 runs the corpus in the debug and the optimised (-O2)
+  # build; test-arm64-integration runs the same test-integration target the x86-64 matrix does,
+  # with a live redis-server. ASan/UBSan and TSan have their own jobs below. The container stays
+  # Ubuntu 26.04 so its compiler and dependency versions match the x86-64 Ubuntu leg; the runner
+  # is the genuinely different part (arm64 hardware).
   test-arm64:
     runs-on: ubuntu-24.04-arm
-    timeout-minutes: 20
+    timeout-minutes: 30
     container:
       image: ubuntu:26.04
       options: --init
@@ -113,41 +110,27 @@ jobs:
           done
       - name: make test (Ubuntu arm64)
         run: make CC=gcc test
-      - name: Focused test targets (Ubuntu arm64)
+      - name: make test-release (Ubuntu arm64)
         run: |
-          make CC=gcc test-api
-          make CC=gcc test-incremental-compile
-          make CC=gcc test-compiled-prelude
-          make CC=gcc test-fibers
-          make CC=gcc test-fiber-run
-          make CC=gcc test-lsp
-          make CC=gcc test-repl
-      - name: Selected package targets (Ubuntu arm64)
+          make clean
+          make CC=gcc test-release
+
+  test-arm64-integration:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 30
+    container:
+      image: ubuntu:26.04
+      options: --init
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 1
+      - name: Install dependencies (Ubuntu arm64)
         run: |
-          make CC=gcc test-database-config-package
-          make CC=gcc test-http-package
-          make CC=gcc test-gremlin-package
-          make CC=gcc test-rack-package
-          make CC=gcc test-graphql-package
-          make CC=gcc test-websocket-package
-          make CC=gcc test-redis-package
-          make CC=gcc test-cookies-package
-          make CC=gcc test-multipart-package
-          make CC=gcc test-network-safety-package
-          make CC=gcc test-div-package
-          make CC=gcc test-dials-package
-          make CC=gcc test-graphsql-package
-          make CC=gcc test-mjolnir-package
-          make CC=gcc test-logger-package
-          make CC=gcc test-minitest-package
-          make CC=gcc test-log-viewer-package
-          make CC=gcc test-active-karma-package
-          make CC=gcc test-active-auth-package
-          make CC=gcc test-active-social-package
-          make CC=gcc test-active-tagging-package
-          make CC=gcc test-active-discussion-package
-          make CC=gcc test-cancellation-package
-          make CC=gcc test-jobs-package
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y gcc clang make git diffutils findutils ripgrep libssl-dev libsqlite3-dev libpq-dev zlib1g-dev libmariadb-dev libcrypt-dev bc netcat-openbsd openssl curl nodejs redis-server
+      - name: make test-integration (Ubuntu arm64)
+        run: make CC=gcc test-integration
 
   # Keep the expensive instrumented build independent from test-arm64: the
   # first native attempt passed that job's baseline/focused coverage and then
@@ -265,8 +248,13 @@ jobs:
 
   # The SQL the database packages generate, run against real MariaDB, MySQL and PostgreSQL servers. The build needs a newer gcc than this
   # runner has, and the servers are docker containers, so tools/ci_database_dialects.sh builds inside ubuntu:26.04 with the runner's docker.
+  # The arm64 leg runs the same servers' arm64 images on arm64 hardware.
   test-database-dialects:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-latest, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7

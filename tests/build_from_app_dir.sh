@@ -44,9 +44,19 @@ if ! grep -Eq ' -c src/|ar rcs ' "$test_dir/third-build.log"; then
 fi
 DIAMOND_TRACE_JIT=1 "$test_dir/app" > "$test_dir/interpreted.out" 2> "$test_dir/interpreted.trace"
 grep -q 'jit: 0 compiled function(s)' "$test_dir/interpreted.trace"
+# The standalone binary compiles exactly what d6 itself compiles for the same program: some
+# functions where the JIT exists (x86-64), none where it does not, so the reference is measured
+# here rather than assumed from the architecture.
+jit_count() { sed -n 's/^jit: \([0-9]*\) compiled function(s).*$/\1/p' "$1"; }
+DIAMOND_JIT=1 DIAMOND_JIT_THRESHOLD=1 DIAMOND_TRACE_JIT=1 "$diamond_bin" app.d6 > /dev/null 2> "$test_dir/reference.trace"
 DIAMOND_JIT=1 DIAMOND_JIT_THRESHOLD=1 DIAMOND_TRACE_JIT=1 "$test_dir/app" > "$test_dir/jit.out" 2> "$test_dir/jit.trace"
 test "$(cat "$test_dir/jit.out")" = "100"
-grep -Eq 'jit: [1-9][0-9]* compiled function\(s\)' "$test_dir/jit.trace"
+reference_count="$(jit_count "$test_dir/reference.trace")"
+test -n "$reference_count"
+if [ "$(jit_count "$test_dir/jit.trace")" != "$reference_count" ]; then
+    echo "standalone binary compiled $(jit_count "$test_dir/jit.trace") function(s), d6 compiled $reference_count" >&2
+    exit 1
+fi
 DIAMOND_JIT=1 DIAMOND_JIT_THRESHOLD=200 DIAMOND_TRACE_JIT=1 "$test_dir/app" > "$test_dir/threshold.out" 2> "$test_dir/threshold.trace"
 grep -q 'jit: 0 compiled function(s)' "$test_dir/threshold.trace"
 printf '%s\n' "build from application directory passed"

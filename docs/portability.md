@@ -18,18 +18,15 @@ enough POSIX-adjacent surface area to matter here.
   time budgets (`.github/workflows/ci.yml`, `test-all` matrix). The workflow
   runs on every pull-request update, with manual dispatch available for any
   branch (see [CI operation](ci.md)).
-- **Ubuntu 26.04, GCC, arm64 (glibc)** -- CI runs `make test` on native
-  GitHub-hosted arm64 hardware plus focused API, incremental-compile,
-  compiled-prelude, fiber, LSP, and REPL targets (`test-arm64` job, same
-  workflow), plus the full ASan/UBSan native suite in its own
-  `test-arm64-sanitize` job, in the same workflow. Five representative package suites
-  also run natively: database configuration, HTTP, Gremlin, Rack, and GraphQL.
-  The x86-64-only JIT fixtures are excluded, while the portable interpreter and
-  JIT-disabled fallback still compile and run. The pinned
-  Thread/Channel/Supervisor stress loop runs natively too
-  (`test-stress-threads-arm64`). Narrower than `test-all`: TSan,
-  Redis/external-database integration, and the remaining package suites have
-  not been validated on Linux arm64 yet.
+- **Ubuntu 26.04, GCC, arm64 (glibc)** -- CI runs the same suites the x86-64 GCC leg of
+  `test-all` does, on native GitHub-hosted arm64 hardware: `make test` and `make test-release`
+  (`test-arm64`), the whole `test-integration` target with a live `redis-server`
+  (`test-arm64-integration`), ASan/UBSan (`test-arm64-sanitize`) and TSan (`test-arm64-tsan`).
+  The MariaDB, MySQL and PostgreSQL dialect tests run against those servers' arm64 images
+  (`test-database-dialects`), and the pinned Thread/Channel/Supervisor stress loop runs too
+  (`test-stress-threads-arm64`). The x86-64-only JIT fixtures are excluded from the corpus;
+  checks elsewhere measure whether the JIT compiled anything rather than assume it. Narrower
+  than `test-all`: no Clang, no Fedora, and no fuzz targets on arm64.
 - **Alpine (musl), GCC, x86_64** -- CI runs `make test` plus a curated set
   of focused targets (`test-musl` job, same workflow) on every pull-request update. Every
   `tests/cases/*.d6` corpus case passes except two known failures
