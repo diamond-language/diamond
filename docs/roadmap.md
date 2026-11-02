@@ -19,11 +19,20 @@ a concrete application gap.
 
 ### Rebrand Diamond as d6
 
-- Plan the user-facing rename to **d6**, which remains a reference to Diamond.
-- Determine whether to keep the **cut** and **facet** names; the current preference
-  is to keep them.
-- Preserve `DIAMOND_` constants and existing internal identifiers. Avoid plumbing
-  changes whose only purpose would be to replace the codename.
+The user-facing name becomes **d6**, which remains a reference to Diamond. The name
+leans into the dice: rewriting in d6 is a saving throw.
+
+- **Project files:** `Cutfile`, `Cutfile.dev` and `Cutfile.lock` replace `diamond.cut`,
+  `diamond.dev.cut` and `facet.lock`. The old names stay readable, because published
+  cut archives can't change.
+- **Commands:** `d6`, `d6-lsp` and `d6-dap`, with the old names kept as aliases.
+- **Distribution and docs:** packages, asdf plugin, VS Code extension, guides, site and
+  registry pages.
+- **GitHub:** the org becomes `roll1d6` or `rolld6` (not yet chosen). Rename it last.
+- **Domain:** to be chosen later. `cuts.dilang.tech` stays as the registry address.
+- **Unchanged:** the **cut** and **facet** names, and `DIAMOND_` constants, environment
+  variables and internal identifiers. Avoid plumbing changes whose only purpose would be
+  to replace the codename.
 
 ### Packages
 
