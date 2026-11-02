@@ -1,0 +1,60 @@
+module Registry
+  # What a request can be refused for. The message is the protocol's error code,
+  # and API#failure_status has to cover every class here or it doesn't compile.
+  sealed class Failure < StandardError
+  end
+
+  class Unauthorized < Failure
+    def initialize()
+      super("unauthorized")
+    end
+  end
+
+  class Forbidden < Failure
+    def initialize()
+      super("forbidden")
+    end
+  end
+
+  class NotFound < Failure
+    def initialize()
+      super("not_found")
+    end
+  end
+
+  class InvalidRequest < Failure
+    def initialize()
+      super("invalid_request")
+    end
+  end
+
+  class InvalidArchive < Failure
+    def initialize()
+      super("invalid_archive")
+    end
+  end
+
+  class PayloadTooLarge < Failure
+    def initialize()
+      super("payload_too_large")
+    end
+  end
+
+  class ReleaseExists < Failure
+    def initialize()
+      super("release_exists")
+    end
+  end
+
+  class IdempotencyConflict < Failure
+    def initialize()
+      super("idempotency_conflict")
+    end
+  end
+
+  class LastOwner < Failure
+    def initialize()
+      super("last_owner")
+    end
+  end
+end

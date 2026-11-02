@@ -1,0 +1,6 @@
+begin
+  File.chmod("/tmp/diamond_sandbox_chmod_probe", 0o600)
+  "escaped"
+rescue error: SandboxError
+  error.message()
+end

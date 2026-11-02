@@ -1,0 +1,23 @@
+path = "/tmp/diamond_file_chmod_test"
+if File.exist?(path) then File.delete(path) end
+File.publish(path, "bytes")
+puts(File.mode(path) == 0o600)
+puts(File.chmod(path, 0o640) == path)
+puts(File.mode(path) == 0o640)
+File.delete(path)
+
+begin
+  File.chmod(path, 0o600)
+rescue error: IOError
+  puts("missing file raises IOError")
+end
+begin
+  File.chmod(path)
+rescue error: TypeError
+  puts(error.message())
+end
+begin
+  File.chmod(path, "640")
+rescue error: TypeError
+  puts(error.message())
+end

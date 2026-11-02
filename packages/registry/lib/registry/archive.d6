@@ -1,0 +1,27 @@
+module Registry
+  # What the trusted verifier reports about one archive. Never executes package code.
+  class Archive
+    attr_reader version, dependencies, maintainers, details
+
+    # Raises InvalidArchive unless the archive verifies as `name` at this digest and size.
+    def initialize(verifier: String, path: String, name: String, digest: String, size: Int)
+      verified = Process.run([verifier, "verify", path, "--sha256", digest, "--json"])
+      unless verified.success?() then raise InvalidArchive.new() end
+      metadata = JSON.parse(verified.stdout())
+      if metadata["protocol"] != 1 || metadata["name"] != name || metadata["sha256"] != digest || metadata["size"] != size
+        raise InvalidArchive.new()
+      end
+      @version = metadata["version"]
+      @dependencies = metadata["dependencies"]
+      @maintainers = metadata["maintainers"]
+      @details = {}
+      ["summary", "license", "homepage", "source", "documentation", "issues"].each() do |key|
+        if metadata[key] is String then @details[key] = metadata[key] end
+      end
+      readme = Process.run([verifier, "verify", path, "--sha256", digest, "--readme"])
+      if readme.success?() then @details["readme"] = readme.stdout() end
+    end
+
+    def maintainers_listed?() -> Bool = @maintainers is Array && @maintainers.length() > 0
+  end
+end

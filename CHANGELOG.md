@@ -8,6 +8,13 @@ authoritative fine-grained record.
 
 ### Added
 
+- `File.chmod(path, mode)` sets a file's permission bits. The sandbox denies it.
+- The registry can have nginx send blobs through `X-Accel-Redirect`
+  (`REGISTRY_BLOB_REDIRECT`, off by default), and `scrub.d6` checks every served blob
+  against the database. It verifies uploads outside the write transaction and rechecks the
+  credential inside it, stores display details at publish time so the catalog never
+  spawns a process, and reports refusals through a sealed `Registry::Failure` hierarchy
+  (registry 0.3.0, now on Mjolnir).
 - A generic class variable that only a callable with no declared return could bind now stays
   open instead of raising "cannot infer generic class type parameter", so `Schema.new(build_row)`
   works with an unannotated `build_row`. The instance shows as `Schema[?]`, accepts any

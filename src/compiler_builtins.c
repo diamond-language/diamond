@@ -788,6 +788,12 @@ uint16_t parse_file_call(Compiler *compiler) {
         compiler->known_types[digest]=DIAMOND_TYPE_STRING;
         return digest;
     }
+    if(name_equals(compiler,"chmod",method,false)) {
+        advance_token(compiler);
+        const uint16_t path=parse_file_path_binary_call(compiler,DIAMOND_FILE_PATH_CHMOD);
+        compiler->known_types[path]=DIAMOND_TYPE_STRING;
+        return path;
+    }
     if(name_equals(compiler,"mode",method,false)) {
         advance_token(compiler);
         const uint16_t mode=parse_file_path_unary_call(compiler,DIAMOND_FILE_PATH_MODE);

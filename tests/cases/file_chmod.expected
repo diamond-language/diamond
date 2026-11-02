@@ -1,0 +1,7 @@
+true
+true
+true
+missing file raises IOError
+File.chmod requires a mode
+File.chmod mode must be an Int
+nil

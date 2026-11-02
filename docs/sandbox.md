@@ -22,7 +22,7 @@ a `diamond build`-produced [standalone binary](deployment.md), behave identicall
 Every one of these raises `SandboxError` (a rescuable `StandardError`) instead of doing
 anything:
 
-- `File.open`, `File.publish`, `File.rename`, `File.sync`, `File.delete`, `File.exist?`, `File.directory?`, `File.expand_path`
+- `File.open`, `File.publish`, `File.rename`, `File.sync`, `File.chmod`, `File.delete`, `File.exist?`, `File.directory?`, `File.expand_path`
 - `Dir.entries`
 - `ProgramBuilder#expand_source` (it resolves `require` by reading files and returns the text)
 - `TCPSocket.connect`, `TCPServer.listen`/`listen_nonblocking`

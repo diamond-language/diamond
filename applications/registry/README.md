@@ -53,7 +53,10 @@ prerelease identifiers. Errors return protocol JSON without internal exception
 messages. Responses currently use `Cache-Control: no-store` so later takedowns
 are not hidden by HTTP caching.
 
-This service uses one worker and buffers request bodies and blobs. Bounded
+This service uses one worker and buffers request bodies. It also buffers blobs
+unless `REGISTRY_BLOB_REDIRECT` hands them to the proxy (see `deploy/OPERATIONS.md`).
+Display details are read from each archive when it is published and kept in the
+database, and any release missing them is filled in at startup. Bounded
 parsing rejects oversized bodies with HTTP 413 and oversized lines, headers, or
 header counts with HTTP 431, using protocol JSON errors and request IDs.
 Malformed or ambiguous framing (including duplicate headers, negative/noncanonical

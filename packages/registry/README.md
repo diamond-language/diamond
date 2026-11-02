@@ -17,12 +17,13 @@ facet add registry
 facet install
 ```
 
-This installs the cut into `cuts/registry/` along with `active_record` and `arel`; load it with `require_cut "registry"`. To run a registry service rather than embed these primitives, see `applications/registry` in the Diamond repository.
+This installs the cut into `cuts/registry/` along with `mjolnir` and `arel`; load it with `require_cut "registry"`. To run a registry service rather than embed these primitives, see `applications/registry` in the Diamond repository.
 
 `BlobStore.read` verifies the stored bytes against their digest and raises
-`IOError` for corrupt or incomplete files. `contains?` returns false when the
-file is missing, unreadable, or fails verification. A duplicate `put` raises
-`IOError` without replacing the existing file.
+`IOError` for corrupt or incomplete files. `contains?` only says whether the file
+exists; `intact?` also hashes it. A duplicate `put` raises `IOError` without
+replacing the existing file. `BlobStore.new(root, true)` makes the root group-readable
+and every blob mode 0640, for a proxy that serves them directly.
 
 Writes use `File.publish`: synchronize a private temporary file, atomically
 link it to the digest path without replacement, remove the temporary name,
@@ -73,15 +74,22 @@ A failed database operation leaves no partial metadata. A complete orphan blob
 may remain and is verified and synchronized on retry. Corrupt existing blobs
 fail closed and need operator repair. No automatic blob garbage collection is
 provided. SQLite `synchronous=FULL` is configured; this single-node implementation
-requires local durable storage and holds the writer lock during verification.
-Authentication errors use `RuntimeError` codes, invalid requests/archives use
-`ArgumentError` codes, and filesystem failures propagate as `IOError`; the
-HTTP adapter maps these to protocol responses.
+requires local durable storage. Verification runs before the write transaction,
+and the credential, ownership and idempotency key are checked again inside it.
+Refusals raise a subclass of the sealed `Registry::Failure` (`Unauthorized`,
+`Forbidden`, `NotFound`, `InvalidRequest`, `InvalidArchive`, `PayloadTooLarge`,
+`ReleaseExists`, `IdempotencyConflict`, `LastOwner`) whose message is the protocol's
+error code, and filesystem failures propagate as `IOError`; the HTTP adapter maps
+these to protocol responses. `Publisher#record_missing_details` reads display details
+for releases published before they were recorded, and returns how many it recorded
+and skipped.
 
 ## HTTP adapter
 
-`Registry::API.new(db, store, publisher, base_path)` accepts the same initialized
-connection and storage objects as the publisher. `base_path` defaults to empty.
+`Registry::API.new(db, store, publisher, base_path, blob_redirect)` accepts the same
+initialized connection and storage objects as the publisher. `base_path` defaults to
+empty. A non-empty `blob_redirect`, such as `/_blobs/`, answers blob requests with an
+`X-Accel-Redirect` to that location plus the digest instead of the bytes.
 `call(request)` returns a Rack-style `[status, headers, body]` response. Request
 headers must be normalized to lowercase, as the HTTP parser does. A service
 worker keeps its own API instance and SQLite connection.

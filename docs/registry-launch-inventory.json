@@ -113,6 +113,16 @@
       "version": "0.1.2"
     },
     {
+      "archive": "mjolnir.tar",
+      "dependencies": {
+        "arel": "^0.35.0"
+      },
+      "name": "mjolnir",
+      "sha256": "3dbd271334921120229df83c919f6baa1d2a1f5cacbbe7ea32955bb8f0ddd8bc",
+      "size": 48128,
+      "version": "0.4.0"
+    },
+    {
       "archive": "multipart.tar",
       "dependencies": {},
       "name": "multipart",
@@ -149,12 +159,12 @@
     {
       "archive": "registry.tar",
       "dependencies": {
-        "active_record": "^0.21.0"
+        "mjolnir": "^0.4.0"
       },
       "name": "registry",
-      "sha256": "70d360c52607035aea637c4ddcf4a852add82c1b2a24bbf41ba0716ecd869880",
-      "size": 50176,
-      "version": "0.2.2"
+      "sha256": "5d0dc0c35f88cc6377cfd3f5680d022be20dec5d8629d2bf0edb2a7af9afdb2c",
+      "size": 60928,
+      "version": "0.3.0"
     },
     {
       "archive": "websocket.tar",

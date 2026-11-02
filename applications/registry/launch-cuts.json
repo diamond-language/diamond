@@ -12,10 +12,11 @@
   "log_viewer": "0.2.1",
   "logger": "0.5.1",
   "minitest": "0.1.2",
+  "mjolnir": "0.4.0",
   "multipart": "0.3.1",
   "network_safety": "0.2.1",
   "rack": "0.2.1",
   "redis": "0.2.2",
-  "registry": "0.2.2",
+  "registry": "0.3.0",
   "websocket": "0.2.1"
 }

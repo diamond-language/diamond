@@ -1,0 +1,170 @@
+module Registry
+  struct Cut(id: Int, name: String, created_at: Int)
+  end
+
+  struct Release(id: Int, cut_id: Int, version: String, dependencies: String, maintainers: String | Nil,
+                 sha256: String, size: Int, yanked: Int, takedown_reason: String | Nil, created_at: Int)
+    def yanked?() -> Bool = self.yanked() == 1
+    def taken_down?() -> Bool = self.takedown_reason() != nil
+  end
+
+  struct Owner(cut_id: Int, owner: String, created_at: Int)
+    def as_json() -> Hash = {"owner": self.owner(), "created_at": self.created_at()}
+  end
+
+  struct Credential(id: Int, token_digest: String, subject: String, scopes: String, expires_at: Int | Nil,
+                    revoked_at: Int | Nil, created_at: Int)
+    def scope_list() -> Array = JSON.parse(self.scopes())
+    def allows?(scope: String) -> Bool = self.scope_list().include?(scope)
+    def active?(now: Int) -> Bool
+      self.revoked_at() == nil && (self.expires_at() == nil || self.expires_at() > now)
+    end
+  end
+
+  struct IdempotencyKey(credential_id: Int, key: String, body_sha256: String, created_at: Int)
+  end
+
+  struct AuditEvent(id: Int, subject: String, action: String, cut_name: String | Nil, version: String | Nil,
+                    sha256: String | Nil, reason: String | Nil, created_at: Int, credential_id: Int | Nil,
+                    credential_scopes: String | Nil, credential_expires_at: Int | Nil, target_owner: String | Nil)
+    def as_json() -> Hash
+      scopes = self.credential_scopes()
+      {"id": self.id(), "subject": self.subject(), "action": self.action(), "cut_name": self.cut_name(),
+       "version": self.version(), "sha256": self.sha256(), "reason": self.reason(), "created_at": self.created_at(),
+       "credential_id": self.credential_id(), "credential_scopes": scopes == nil ? nil : JSON.parse(scopes),
+       "credential_expires_at": self.credential_expires_at(), "target_owner": self.target_owner()}
+    end
+  end
+
+  def self.build_cut(row: Hash) -> Cut = Cut.new(row["id"], row["name"], row["created_at"])
+
+  def self.build_release(row: Hash) -> Release =
+    Release.new(row["id"], row["cut_id"], row["version"], row["dependencies"], row["maintainers"], row["sha256"],
+      row["size"], row["yanked"], row["takedown_reason"], row["created_at"])
+
+  def self.build_owner(row: Hash) -> Owner = Owner.new(row["cut_id"], row["owner"], row["created_at"])
+
+  def self.build_credential(row: Hash) -> Credential =
+    Credential.new(row["id"], row["token_digest"], row["subject"], row["scopes"], row["expires_at"],
+      row["revoked_at"], row["created_at"])
+
+  def self.build_idempotency_key(row: Hash) -> IdempotencyKey =
+    IdempotencyKey.new(row["credential_id"], row["key"], row["body_sha256"], row["created_at"])
+
+  def self.build_audit_event(row: Hash) -> AuditEvent =
+    AuditEvent.new(row["id"], row["subject"], row["action"], row["cut_name"], row["version"], row["sha256"],
+      row["reason"], row["created_at"], row["credential_id"], row["credential_scopes"],
+      row["credential_expires_at"], row["target_owner"])
+
+  # Typed reads over the registry's tables, and the writes they share. One per connection.
+  class Records
+    def initialize(db)
+      @db = db
+      @repo = Mjolnir::Repo.new(db)
+      @cuts = Mjolnir::Schema.new("cuts", {"id": :int, "name": :string, "created_at": :int}, Registry.build_cut)
+      @releases = Mjolnir::Schema.new("releases", {"id": :int, "cut_id": :int, "version": :string,
+        "dependencies": :string, "maintainers": :string, "sha256": :string, "size": :int, "yanked": :int,
+        "takedown_reason": :string, "created_at": :int}, Registry.build_release)
+      @owners = Mjolnir::Schema.new("owners", {"cut_id": :int, "owner": :string, "created_at": :int},
+        Registry.build_owner, ["cut_id", "owner"])
+      @credentials = Mjolnir::Schema.new("credentials", {"id": :int, "token_digest": :string, "subject": :string,
+        "scopes": :string, "expires_at": :int, "revoked_at": :int, "created_at": :int}, Registry.build_credential)
+      @idempotency_keys = Mjolnir::Schema.new("idempotency_keys", {"credential_id": :int, "key": :string,
+        "body_sha256": :string, "created_at": :int}, Registry.build_idempotency_key, ["credential_id", "key"])
+      @audit_events = Mjolnir::Schema.new("audit_events", {"id": :int, "subject": :string, "action": :string,
+        "cut_name": :string, "version": :string, "sha256": :string, "reason": :string, "created_at": :int,
+        "credential_id": :int, "credential_scopes": :string, "credential_expires_at": :int,
+        "target_owner": :string}, Registry.build_audit_event)
+    end
+
+    # Takes the write lock up front. An exception rolls back and propagates.
+    def transaction(callback: Callable[1]) = @repo.transaction(callback)
+
+    def cut(name: String) -> Cut | Nil = @repo.get_by(@cuts, {"name": name})
+
+    def cut!(name: String) -> Cut
+      found = self.cut(name)
+      if found == nil then raise NotFound.new() end
+      found
+    end
+
+    def release(cut_id: Int, version: String) -> Release | Nil =
+      @repo.get_by(@releases, {"cut_id": cut_id, "version": version})
+
+    # A taken-down release no longer exists as far as readers can tell.
+    def served_release(name: String, version: String) -> Release | Nil
+      cut = self.cut(name)
+      if cut == nil then return nil end
+      @repo.get_by(@releases, {"cut_id": cut.id(), "version": version, "takedown_reason": nil})
+    end
+
+    def served_releases(cut_id: Int) -> Array[Release] =
+      @repo.all(@releases.query().where({"cut_id": cut_id, "takedown_reason": nil}))
+
+    def served_blob(digest: String) -> Release | Nil =
+      @repo.get_by(@releases, {"sha256": digest, "takedown_reason": nil})
+
+    def set_yanked(release: Release, yanked: Bool)
+      @db.execute("UPDATE releases SET yanked = ? WHERE id = ?", [yanked ? 1 : 0, release.id()])
+    end
+
+    def take_down(release: Release, reason: String)
+      @db.execute("UPDATE releases SET takedown_reason = ? WHERE id = ?", [reason, release.id()])
+    end
+
+    def owners(cut_id: Int) -> Array[Owner] =
+      @repo.all(@owners.query().where({"cut_id": cut_id}).order_by("owner"))
+
+    def owner?(cut_id: Int, owner: String) -> Bool
+      @repo.get_by(@owners, {"cut_id": cut_id, "owner": owner}) != nil
+    end
+
+    def active_credential(token: String) -> Credential | Nil
+      if token.length() == 0 then return nil end
+      found = @repo.get_by(@credentials, {"token_digest": Digest.sha256(token)})
+      if found != nil && found.active?(Time.now().to_i()) then found else nil end
+    end
+
+    def credential(id: Int) -> Credential | Nil = @repo.get(@credentials, id)
+
+    def idempotency_key(credential_id: Int, key: String) -> IdempotencyKey | Nil =
+      @repo.get_by(@idempotency_keys, {"credential_id": credential_id, "key": key})
+
+    def audit_page(after: Int, limit: Int) -> Array[AuditEvent]
+      query = @audit_events.query().where(@audit_events.column("id").gt(after))
+      @repo.all(query.order_by("id").limit(limit))
+    end
+
+    # Display details read from a release's archive at publish time.
+    def details(release_id: Int) -> Hash
+      rows = @db.query("SELECT summary, license, homepage, source, documentation, issues, readme FROM release_details WHERE release_id = ?", [release_id])
+      found = {"readme": nil}
+      if rows.length() == 1
+        rows[0].keys().each() do |key|
+          if rows[0][key] != nil then found[key] = rows[0][key] end
+        end
+      end
+      found
+    end
+
+    def record_details(release_id: Int, archive: Archive)
+      details = archive.details()
+      @db.execute("INSERT OR IGNORE INTO release_details (release_id, summary, license, homepage, source, documentation, issues, readme) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        [release_id, details["summary"], details["license"], details["homepage"], details["source"],
+         details["documentation"], details["issues"], details["readme"]])
+    end
+
+    # `fields` names audit_events columns; only the registry's own code supplies them.
+    def audit(fields: Hash)
+      names = fields.keys()
+      marks = names.map() do |name| "?" end
+      values = names.map() do |name| fields[name] end
+      @db.execute("INSERT INTO audit_events (#{names.join(", ")}) VALUES (#{marks.join(", ")})", values)
+    end
+
+    def credential_fields(credential: Credential) -> Hash
+      {"credential_id": credential.id(), "credential_scopes": credential.scopes(),
+       "credential_expires_at": credential.expires_at()}
+    end
+  end
+end

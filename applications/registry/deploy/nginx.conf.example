@@ -49,4 +49,13 @@ server {
         proxy_next_upstream off;
         proxy_cache off;
     }
+
+    # Blob files, reachable only through the service's X-Accel-Redirect, so its
+    # takedown and digest checks still decide what is served. Used when the service
+    # has REGISTRY_BLOB_REDIRECT=/_blobs/: see "Serving blobs from nginx" in OPERATIONS.md.
+    location /_blobs/ {
+        internal;
+        alias /var/lib/diamond-registry/blobs/;
+        default_type application/octet-stream;
+    }
 }

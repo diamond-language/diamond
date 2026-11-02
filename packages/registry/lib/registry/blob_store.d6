@@ -15,11 +15,19 @@ module Registry
       end
     end
 
-    def initialize(root: String)
+    # `shared` lets the root's group read the blobs, for a proxy that serves them directly.
+    def initialize(root: String, shared: Bool = false)
       if root.length() == 0 || !File.directory?(root)
         raise ArgumentError.new("blob store root must be an existing directory")
       end
       @root = root
+      @shared = shared
+      if shared
+        File.chmod(root, 0o750)
+        Dir.entries(root).each() do |entry|
+          File.chmod(File.join(root, entry), 0o640)
+        end
+      end
     end
 
     def path(digest: String) -> String
@@ -27,14 +35,10 @@ module Registry
       File.join(@root, digest)
     end
 
-    def contains?(digest: String) -> Bool
-      begin
-        self.read(digest)
-        true
-      rescue error: IOError
-        false
-      end
-    end
+    def contains?(digest: String) -> Bool = File.exist?(self.path(digest))
+
+    # Whether a stored blob still has the digest it is named for. Hashes in chunks.
+    def intact?(digest: String) -> Bool = self.contains?(digest) && File.sha256(self.path(digest)) == digest
 
     # Publish synchronized bytes atomically without replacing an existing blob.
     def put(digest: String, bytes: String) -> Int
@@ -42,6 +46,7 @@ module Registry
         raise ArgumentError.new("blob bytes do not match digest")
       end
       File.publish(self.path(digest), bytes)
+      if @shared then File.chmod(self.path(digest), 0o640) end
       bytes.length()
     end
 
@@ -54,6 +59,5 @@ module Registry
       end
       bytes
     end
-
   end
 end

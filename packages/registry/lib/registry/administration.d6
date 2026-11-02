@@ -2,221 +2,170 @@ module Registry
   class Administration
     def initialize(db)
       @db = db
+      @records = Records.new(db)
       @db.execute("PRAGMA foreign_keys = ON")
       @db.execute("PRAGMA synchronous = FULL")
       @db.execute("PRAGMA busy_timeout = 5000")
     end
 
     def reason!(reason: String)
-      if reason.strip().length() == 0 || reason.length() > 1024
-        raise ArgumentError.new("invalid_request")
-      end
+      if reason.strip().length() == 0 || reason.length() > 1024 then raise InvalidRequest.new() end
     end
 
-    def authenticate(token: String, scope: String)
-      if token.length() == 0 then raise RuntimeError.new("unauthorized") end
-      rows = @db.query("SELECT * FROM credentials WHERE token_digest = ? AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at > ?)", [Digest.sha256(token), Time.now().to_i()])
-      if rows.length() != 1 then raise RuntimeError.new("unauthorized") end
-      credential = rows[0]
-      if scope != "" && !JSON.parse(credential["scopes"]).include?(scope) then raise RuntimeError.new("forbidden") end
+    def authenticate(token: String, scope: String) -> Credential
+      credential = @records.active_credential(token)
+      if credential == nil then raise Unauthorized.new() end
+      if scope != "" && !credential.allows?(scope) then raise Forbidden.new() end
       credential
     end
 
-    def authorize_owners(name: String, token: String)
+    def authorize_owners(name: String, token: String) -> Credential
       credential = self.authenticate(token, "")
-      scopes = JSON.parse(credential["scopes"])
-      unless scopes.include?("admin")
-        unless scopes.include?("manage:#{name}") then raise RuntimeError.new("forbidden") end
-        owners = @db.query("SELECT owners.owner FROM owners JOIN cuts ON cuts.id = owners.cut_id WHERE cuts.name = ? AND owners.owner = ?", [name, credential["subject"]])
-        if owners.length() == 0 then raise RuntimeError.new("forbidden") end
+      unless credential.allows?("admin")
+        unless credential.allows?("manage:#{name}") then raise Forbidden.new() end
+        cut = @records.cut(name)
+        if cut == nil || !@records.owner?(cut.id(), credential.subject()) then raise Forbidden.new() end
       end
       credential
     end
 
-    def owner_rows(name: String)
-      cuts = @db.query("SELECT id FROM cuts WHERE name = ?", [name])
-      if cuts.length() != 1 then raise RuntimeError.new("not_found") end
-      @db.query("SELECT owner, created_at FROM owners WHERE cut_id = ? ORDER BY owner", [cuts[0]["id"]])
-    end
+    def owner_rows(cut: Cut) -> Array = @records.owners(cut.id()).map() do |owner| owner.as_json() end
 
     def owners(name: String, token: String)
-      @db.execute("BEGIN")
-      begin
-        self.authorize_owners(name, token)
-        rows = self.owner_rows(name)
-        @db.execute("COMMIT")
-        {"protocol": 1, "name": name, "owners": rows}
-      rescue error: StandardError
-        @db.execute("ROLLBACK")
-        raise error
-      end
+      self.authorize_owners(name, token)
+      {"protocol": 1, "name": name, "owners": self.owner_rows(@records.cut!(name))}
     end
 
     def change_owner(name: String, owner: String, action: String, reason: String, token: String)
       self.reason!(reason)
       if owner.strip().length() == 0 || owner.length() > 256 || !["add", "remove"].include?(action)
-        raise ArgumentError.new("invalid_request")
+        raise InvalidRequest.new()
       end
-      @db.execute("BEGIN IMMEDIATE")
-      begin
+      @records.transaction() do |repo|
         credential = self.authorize_owners(name, token)
-        rows = self.owner_rows(name)
-        cut = @db.query("SELECT id FROM cuts WHERE name = ?", [name])[0]
-        present = @db.query("SELECT owner FROM owners WHERE cut_id = ? AND owner = ?", [cut["id"], owner]).length() != 0
+        cut = @records.cut!(name)
+        present = @records.owner?(cut.id(), owner)
         changed = false
         if action == "add" && !present
-          @db.execute("INSERT INTO owners (cut_id, owner, created_at) VALUES (?, ?, ?)", [cut["id"], owner, Time.now().to_i()])
+          @db.execute("INSERT INTO owners (cut_id, owner, created_at) VALUES (?, ?, ?)", [cut.id(), owner, Time.now().to_i()])
           changed = true
         elsif action == "remove" && present
-          if rows.length() == 1 then raise RuntimeError.new("last_owner") end
-          @db.execute("DELETE FROM owners WHERE cut_id = ? AND owner = ?", [cut["id"], owner])
+          if @records.owners(cut.id()).length() == 1 then raise LastOwner.new() end
+          @db.execute("DELETE FROM owners WHERE cut_id = ? AND owner = ?", [cut.id(), owner])
           changed = true
         end
         if changed
-          @db.execute("INSERT INTO audit_events (subject, action, cut_name, target_owner, reason, created_at, credential_id, credential_scopes, credential_expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", [credential["subject"], "owner_#{action}", name, owner, reason, Time.now().to_i(), credential["id"], credential["scopes"], credential["expires_at"]])
+          @records.audit({"subject": credential.subject(), "action": "owner_#{action}", "cut_name": name, "target_owner": owner,
+            "reason": reason, "created_at": Time.now().to_i()}.merge(@records.credential_fields(credential)))
         end
-        result = self.owner_rows(name)
-        @db.execute("COMMIT")
-        {"protocol": 1, "name": name, "owners": result}
-      rescue error: StandardError
-        @db.execute("ROLLBACK")
-        raise error
+        {"protocol": 1, "name": name, "owners": self.owner_rows(cut)}
       end
     end
 
     def audit(token: String, after: Int = 0, limit: Int = 50)
-      if after < 0 || limit < 1 || limit > 100 then raise ArgumentError.new("invalid_request") end
-      @db.execute("BEGIN")
-      begin
-        self.authenticate(token, "admin")
-        rows = @db.query("SELECT id, subject, action, cut_name, version, sha256, reason, created_at, credential_id, credential_scopes, credential_expires_at, target_owner FROM audit_events WHERE id > ? ORDER BY id LIMIT ?", [after, limit + 1])
-        next_after = nil
-        if rows.length() > limit
-          rows.pop()
-          next_after = rows[rows.length() - 1]["id"]
-        end
-        rows.each() do |row|
-          if row["credential_scopes"] != nil then row["credential_scopes"] = JSON.parse(row["credential_scopes"]) end
-        end
-        @db.execute("COMMIT")
-        {"protocol": 1, "events": rows, "next_after": next_after}
-      rescue error: StandardError
-        @db.execute("ROLLBACK")
-        raise error
+      if after < 0 || limit < 1 || limit > 100 then raise InvalidRequest.new() end
+      self.authenticate(token, "admin")
+      events = @records.audit_page(after, limit + 1)
+      next_after = nil
+      if events.length() > limit
+        events.pop()
+        next_after = events[events.length() - 1].id()
       end
+      {"protocol": 1, "events": events.map() do |event| event.as_json() end, "next_after": next_after}
     end
 
     def change(name: String, version: String, action: String, reason: String, token: String)
       self.reason!(reason)
-      unless ["yank", "unyank", "takedown"].include?(action) then raise ArgumentError.new("invalid_request") end
-      @db.execute("BEGIN IMMEDIATE")
-      begin
+      unless ["yank", "unyank", "takedown"].include?(action) then raise InvalidRequest.new() end
+      @records.transaction() do |repo|
         scope = if action == "takedown" then "admin" else "manage:#{name}" end
         credential = self.authenticate(token, scope)
-        rows = @db.query("SELECT releases.* FROM releases JOIN cuts ON cuts.id = releases.cut_id WHERE cuts.name = ? AND version = ?", [name, version])
-        if action != "takedown"
-          owners = @db.query("SELECT owners.owner FROM owners JOIN cuts ON cuts.id = owners.cut_id WHERE cuts.name = ? AND owners.owner = ?", [name, credential["subject"]])
-          if owners.length() == 0 then raise RuntimeError.new("forbidden") end
+        cut = @records.cut(name)
+        if action != "takedown" && (cut == nil || !@records.owner?(cut.id(), credential.subject()))
+          raise Forbidden.new()
         end
-        if rows.length() == 0 then raise RuntimeError.new("not_found") end
-        row = rows[0]
+        release = cut == nil ? nil : @records.release(cut.id(), version)
+        if release == nil then raise NotFound.new() end
         changed = false
         if action == "takedown"
-          if row["takedown_reason"] == nil
-            @db.execute("UPDATE releases SET takedown_reason = ? WHERE id = ?", [reason, row["id"]])
+          unless release.taken_down?()
+            @records.take_down(release, reason)
             changed = true
           end
         else
-          if row["takedown_reason"] != nil then raise RuntimeError.new("not_found") end
-          desired = if action == "yank" then 1 else 0 end
-          if row["yanked"] != desired
-            @db.execute("UPDATE releases SET yanked = ? WHERE id = ?", [desired, row["id"]])
+          if release.taken_down?() then raise NotFound.new() end
+          yanked = action == "yank"
+          if release.yanked?() != yanked
+            @records.set_yanked(release, yanked)
             changed = true
           end
         end
         if changed
-          @db.execute("INSERT INTO audit_events (subject, action, cut_name, version, sha256, reason, created_at, credential_id, credential_scopes, credential_expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", [credential["subject"], action, name, version, row["sha256"], reason, Time.now().to_i(), credential["id"], credential["scopes"], credential["expires_at"]])
+          @records.audit({"subject": credential.subject(), "action": action, "cut_name": name, "version": version,
+            "sha256": release.sha256(), "reason": reason, "created_at": Time.now().to_i()}.merge(@records.credential_fields(credential)))
         end
-        @db.execute("COMMIT")
         {"protocol": 1, "name": name, "version": version, "taken_down": action == "takedown"}
-      rescue error: StandardError
-        @db.execute("ROLLBACK")
-        raise error
       end
     end
 
     def validate_credential(subject: String, scopes: Array, expires: Int, reason: String, operator: String)
       self.reason!(reason)
       if subject.strip().length() == 0 || subject.length() > 256 || operator.strip().length() == 0 || operator.length() > 256 || scopes.length() == 0 || expires <= Time.now().to_i()
-        raise ArgumentError.new("invalid_request")
+        raise InvalidRequest.new()
       end
       scopes.each() do |scope|
-        unless scope is String then raise ArgumentError.new("invalid_request") end
+        unless scope is String then raise InvalidRequest.new() end
         if scope != "admin"
           parts = scope.split(":")
-          if parts.length() != 2 || !["publish", "manage"].include?(parts[0])
-            raise ArgumentError.new("invalid_request")
-          end
+          if parts.length() != 2 || !["publish", "manage"].include?(parts[0]) then raise InvalidRequest.new() end
           name = parts[1]
-          if name.length() == 0 || name.length() > 63 then raise ArgumentError.new("invalid_request") end
+          if name.length() == 0 || name.length() > 63 then raise InvalidRequest.new() end
           chars = name.chars()
           index = 0
           while index < chars.length()
             code = chars[index].ord()
             letter = code >= 97 && code <= 122
-            if !letter && (index == 0 || !((code >= 48 && code <= 57) || code == 95))
-              raise ArgumentError.new("invalid_request")
-            end
+            if !letter && (index == 0 || !((code >= 48 && code <= 57) || code == 95)) then raise InvalidRequest.new() end
             index += 1
           end
         end
       end
     end
 
+    def revoke_row(credential: Credential, reason: String, operator: String)
+      @db.execute("UPDATE credentials SET revoked_at = ? WHERE id = ?", [Time.now().to_i(), credential.id()])
+      @records.audit({"subject": operator, "action": "credential_revoke", "reason": reason, "created_at": Time.now().to_i()}
+        .merge(@records.credential_fields(credential)))
+    end
+
     # Called only by the local operator CLI, under filesystem access control.
     def issue(subject: String, scopes: Array, expires: Int, reason: String, operator: String, previous: Int = 0)
       self.validate_credential(subject, scopes, expires, reason, operator)
       token = SecureRandom.hex(32)
-      @db.execute("BEGIN IMMEDIATE")
-      begin
+      @records.transaction() do |repo|
         if previous != 0
-          rows = @db.query("SELECT * FROM credentials WHERE id = ? AND revoked_at IS NULL", [previous])
-          if rows.length() != 1 then raise RuntimeError.new("not_found") end
-          if rows[0]["subject"] != subject || rows[0]["scopes"] != JSON.stringify(scopes)
-            raise ArgumentError.new("invalid_request")
-          end
-          @db.execute("UPDATE credentials SET revoked_at = ? WHERE id = ?", [Time.now().to_i(), previous])
-          @db.execute("INSERT INTO audit_events (subject, action, reason, created_at, credential_id, credential_scopes, credential_expires_at) VALUES (?, 'credential_revoke', ?, ?, ?, ?, ?)", [operator, reason, Time.now().to_i(), previous, rows[0]["scopes"], rows[0]["expires_at"]])
+          replaced = @records.credential(previous)
+          if replaced == nil || replaced.revoked_at() != nil then raise NotFound.new() end
+          if replaced.subject() != subject || replaced.scopes() != JSON.stringify(scopes) then raise InvalidRequest.new() end
+          self.revoke_row(replaced, reason, operator)
         end
         @db.execute("INSERT INTO credentials (token_digest, subject, scopes, expires_at, created_at) VALUES (?, ?, ?, ?, ?)", [Digest.sha256(token), subject, JSON.stringify(scopes), expires, Time.now().to_i()])
         id = @db.last_insert_row_id()
-        @db.execute("INSERT INTO audit_events (subject, action, reason, created_at, credential_id, credential_scopes, credential_expires_at) VALUES (?, 'credential_issue', ?, ?, ?, ?, ?)", [operator, reason, Time.now().to_i(), id, JSON.stringify(scopes), expires])
-        @db.execute("COMMIT")
+        @records.audit({"subject": operator, "action": "credential_issue", "reason": reason, "created_at": Time.now().to_i(),
+          "credential_id": id, "credential_scopes": JSON.stringify(scopes), "credential_expires_at": expires})
         {"id": id, "token": token, "subject": subject, "scopes": scopes, "expires_at": expires}
-      rescue error: StandardError
-        @db.execute("ROLLBACK")
-        raise error
       end
     end
 
     def revoke(id: Int, reason: String, operator: String)
       self.reason!(reason)
       self.reason!(operator)
-      if operator.length() > 256 then raise ArgumentError.new("invalid_request") end
-      @db.execute("BEGIN IMMEDIATE")
-      begin
-        rows = @db.query("SELECT * FROM credentials WHERE id = ?", [id])
-        if rows.length() != 1 then raise RuntimeError.new("not_found") end
-        row = rows[0]
-        if row["revoked_at"] == nil
-          @db.execute("UPDATE credentials SET revoked_at = ? WHERE id = ?", [Time.now().to_i(), id])
-          @db.execute("INSERT INTO audit_events (subject, action, reason, created_at, credential_id, credential_scopes, credential_expires_at) VALUES (?, 'credential_revoke', ?, ?, ?, ?, ?)", [operator, reason, Time.now().to_i(), id, row["scopes"], row["expires_at"]])
-        end
-        @db.execute("COMMIT")
+      if operator.length() > 256 then raise InvalidRequest.new() end
+      @records.transaction() do |repo|
+        credential = @records.credential(id)
+        if credential == nil then raise NotFound.new() end
+        if credential.revoked_at() == nil then self.revoke_row(credential, reason, operator) end
         {"id": id, "revoked": true}
-      rescue error: StandardError
-        @db.execute("ROLLBACK")
-        raise error
       end
     end
   end

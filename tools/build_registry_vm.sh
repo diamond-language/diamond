@@ -32,7 +32,7 @@ make CFLAGS_DEBUG='-O2 -g -march=x86-64-v3' facet
 FACET_BIN="$PWD/build/facet" DIAMOND_BIN="$PWD/build/diamond" build/diamond packages/registry/http_test.d6
 mkdir -p payload/bin payload/app payload/deploy
 cp build/diamond build/facet payload/bin/
-cp applications/registry/{app.d6,catalog.d6,catalog.html,catalog.js,catalog.css,cut.html,cut.js,markdown.js,credentials.d6,backup.d6,monitor.d6} payload/app/
+cp applications/registry/{app.d6,catalog.d6,catalog.html,catalog.js,catalog.css,cut.html,cut.js,markdown.js,credentials.d6,scrub.d6,backup.d6,monitor.d6} payload/app/
 FACET_BIN="$PWD/build/facet" tools/install_local_cuts.sh payload/app
 build/diamond tools/prepare_registry_seed.d6 "$PWD/payload/seed" --expect docs/registry-launch-inventory.json
 cp applications/registry/deploy/{registry.service,registry.env.example,nginx.conf.example,nginx-host.conf.example} payload/deploy/

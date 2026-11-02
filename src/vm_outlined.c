@@ -595,10 +595,15 @@ DiamondVmStatus outlined_file_path(DiamondVm *vm,const DiamondChunk *chunk,Diamo
     const bool has_second=registers[arg2].kind!=DIAMOND_VALUE_NIL;
     /* Dir.mkdir's second operand is the mode, an Int; every other selector
      * takes a String there. */
-    const bool second_is_mode=selector==DIAMOND_FILE_PATH_MKDIR||
+    const bool second_is_mode=selector==DIAMOND_FILE_PATH_CHMOD||selector==DIAMOND_FILE_PATH_MKDIR||
         selector==DIAMOND_FILE_PATH_MKDIR_P;
     if(second_is_mode&&has_second&&registers[arg2].kind!=DIAMOND_VALUE_INT) {
-        snprintf(vm->error,sizeof vm->error,"Dir.mkdir mode must be an Int");
+        snprintf(vm->error,sizeof vm->error,"%s mode must be an Int",
+            selector==DIAMOND_FILE_PATH_CHMOD?"File.chmod":"Dir.mkdir");
+        VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+    }
+    if(selector==DIAMOND_FILE_PATH_CHMOD&&!has_second) {
+        snprintf(vm->error,sizeof vm->error,"File.chmod requires a mode");
         VM_RETURN(DIAMOND_VM_TYPE_ERROR);
     }
     if(has_second&&!second_is_mode&&(registers[arg2].kind!=DIAMOND_VALUE_OBJECT||
@@ -706,6 +711,15 @@ DiamondVmStatus outlined_file_path(DiamondVm *vm,const DiamondChunk *chunk,Diamo
             path_result=DIAMOND_BOOL(lstat(path->chars,&path_stat)==0&&S_ISLNK(path_stat.st_mode));
             break;
         }
+        case DIAMOND_FILE_PATH_CHMOD:
+            VM_SANDBOX_GUARD("File.chmod", "filesystem");
+            if(chmod(path->chars,(mode_t)(registers[arg2].as.integer&07777))!=0) {
+                snprintf(vm->error,sizeof vm->error,"cannot change mode of '%.*s': %s",
+                    (int)path->length,path->chars,strerror(errno));
+                VM_RETURN(DIAMOND_VM_IO_ERROR);
+            }
+            path_result=registers[arg1];
+            break;
         case DIAMOND_FILE_PATH_MKDIR: {
             VM_SANDBOX_GUARD("Dir.mkdir", "filesystem");
             const mode_t mode=has_second?(mode_t)(registers[arg2].as.integer&07777):0777;

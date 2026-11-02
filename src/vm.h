@@ -704,6 +704,9 @@ typedef enum {
     /* IO.tty?(stream): whether :stdin, :stdout or :stderr is a terminal. The
      * first operand is that Symbol (or the same name as a String), not a path. */
     DIAMOND_FILE_PATH_TTY,
+    /* File.chmod(path, mode): sets the permission bits, following a symlink. Same Int
+     * second operand as MKDIR, but required. */
+    DIAMOND_FILE_PATH_CHMOD,
 } DiamondFilePathFunction;
 
 typedef enum DiamondMathFunction : uint8_t {
