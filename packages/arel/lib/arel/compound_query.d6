@@ -16,9 +16,9 @@ module Arel
       @limit_value = limit_value
       @offset_value = offset_value
     end
-    def left() = @left
+    def left() -> ArelQuerySource = @left
     def operator() -> String = @operator
-    def right() = @right
+    def right() -> ArelQuerySource = @right
     def orderings() -> Array = @orderings
     def limit_value() -> Int | Nil = @limit_value
     def offset_value() -> Int | Nil = @offset_value

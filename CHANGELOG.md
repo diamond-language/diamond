@@ -20,6 +20,15 @@ authoritative fine-grained record.
   `to_a` an `Array[T]`. It needs this runtime for the same reason, and its dependents take the new range.
 - Attribute annotations in a generic class can name its type parameters: `attr_accessor value: T`
   was rejected as an unknown type. Each instance's own binding decides what the writer accepts.
+- `-> Self` names the class a method was called on, in instance methods and `def self.x` alike, alone
+  or in a union such as `Self | Nil`. It is checked at run time and gives the caller a class fact when
+  the receiver's class is known. It is allowed only as a class method's own return type.
+- active_record 0.21.1: `Model.find` and `Model.find_by` return `Self | Nil`, so `Author.find(db, 1)` is
+  known to be an `Author`. A repository whose mapper builds something else now raises `TypeError`.
+- arel 0.35.3: the `ArelRenderable`, `ArelQuerySource` and `ArelStatement` interfaces describe what a
+  query or statement must provide, and `Query#source_query`, compound branches, CTE, `EXISTS` and scalar
+  subqueries and `PreparedStatements.for` now return them. A custom query reached through those needs a
+  `render_with` declared `-> Array`.
 
 ### Changed
 
@@ -29,6 +38,9 @@ authoritative fine-grained record.
 
 ### Fixed
 
+- A program whose annotations named a native type such as `Statement` or `Channel` failed bytecode
+  validation when loaded from the cache and recompiled on every run. A one-query ActiveRecord program
+  spends about 6% fewer instructions over 20,000 lookups now that its cache is used.
 - graphql 0.3.3: a document the lexer refuses, such as an unterminated string or a character outside
   the language, now returns a request-level `{"errors": [...]}` as the README promises. It used to raise out of
   `Schema#execute`, which a web server answers with a 500.

@@ -1,0 +1,76 @@
+# `-> Self` names the class a method was called on, including through inheritance.
+class Base
+  attr_reader label
+
+  def initialize(label)
+    @label = label
+  end
+
+  # Fluent: returning self needs no check.
+  def relabel(label: String) -> Self
+    @label = label
+    self
+  end
+
+  def clone_as(label: String) -> Self = self.build(label)
+  def build(label) = Base.new(label)
+
+  def self.make(label) -> Self = self.builder(label)
+  def self.builder(label) = Base.new(label)
+  def self.lookup(label: String | Nil) -> Self | Nil
+    return nil if label == nil
+    self.builder(label)
+  end
+  def self.first_of(labels: Array) -> Nil | Self
+    labels.each() do |label|
+      return self.builder(label)
+    end
+    nil
+  end
+  def self.wrong() -> Self = "not an instance"
+  def self.returns_class() -> Self = self
+end
+
+class Child < Base
+  def build(label) = Child.new(label)
+  def self.builder(label) = Child.new(label)
+  def child_only() -> String = "child #{self.label()}"
+end
+
+class Other < Base
+  def self.builder(label) = Child.new(label)
+end
+
+def describe(action)
+  begin
+    puts(action())
+  rescue error: TypeError
+    puts("TypeError: #{error.message()}")
+  end
+end
+
+puts(Base.make("a").label())
+# The fact follows the receiver: child_only is only known on Child.
+child = Child.make("b")
+puts(child.child_only())
+puts(child.relabel("c").child_only())
+puts(child.clone_as("d").child_only())
+puts(Child.lookup("e").label())
+puts(Child.lookup(nil))
+puts(Child.first_of(["f"]).child_only())
+puts(Child.first_of([]))
+
+# A subclass instance satisfies Self on its parent.
+def base_make_ok() = Base.lookup("g").label()
+describe(base_make_ok)
+
+# The wrong class, on a sibling, is refused.
+def sibling() = Other.make("h")
+describe(sibling)
+def sibling_union() = Other.lookup("i")
+describe(sibling_union)
+def not_an_instance() = Child.wrong()
+describe(not_an_instance)
+# A singleton's `self` is the class, not an instance of it.
+def class_value() = Child.returns_class()
+describe(class_value)

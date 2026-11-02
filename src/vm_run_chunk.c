@@ -2420,6 +2420,14 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 }
                 break;
             }
+            case DIAMOND_OP_CHECK_SELF_RETURN: {
+                uint16_t source=0,others=0,receiver=0; READ_OPERANDS(6);
+                source=OPERAND_SHORT(0); others=OPERAND_SHORT(2); receiver=OPERAND_SHORT(4);
+                const DiamondVmStatus self_status=check_self_return(vm,chunk,registers[source],
+                    others,registers[receiver]);
+                if(self_status!=DIAMOND_VM_OK)VM_RETURN(self_status);
+                break;
+            }
             /* Multi-value destructuring assignment (`a, b = expr`,
              * src/compiler.c's compile_multi_assignment) always emits a
              * DIAMOND_OP_CHECK_TYPE against an Array-only type set

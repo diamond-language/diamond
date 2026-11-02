@@ -857,6 +857,42 @@ void emit_type_check(Compiler *compiler, uint16_t reg, uint16_t set_index,
     }
 }
 
+/* `-> Self`'s check. An instance method returning `self` needs none. A singleton's register 0
+ * holds the class rather than an instance, so returning `self` there still fails the check. */
+void emit_self_return_check(Compiler *compiler,uint16_t reg,uint16_t others) {
+    if(reg==0&&!compiler->in_singleton_method&&!compiler->in_block)return;
+    emit_instruction(compiler,DIAMOND_OP_CHECK_SELF_RETURN,reg,others,0,3);
+}
+
+/* What a call to a `-> Self` method returns when the receiver's class is known: an instance of
+ * that class, plus the union's other members. Generic classes publish nothing, as the check
+ * covers the class and not its type arguments. */
+void publish_self_return_type(Compiler *compiler,uint16_t reg,const DiamondFunction *target,
+        size_t class_index,bool tooling_only) {
+    if(compiler->discovery_pass||class_index>=compiler->program->class_count||
+       compiler->program->classes[class_index]->type_parameter[0]!='\0')return;
+    uint16_t others=DIAMOND_NO_TYPE_SET;
+    if(target->self_return_others!=DIAMOND_NO_TYPE_SET) {
+        others=clone_type_set_into_current(compiler,target->type_sets,
+            target->type_set_count,target->self_return_others);
+        if(others==DIAMOND_NO_TYPE_SET)return;
+    } else {
+        if(!reserve_type_sets(compiler,1))return;
+        others=(uint16_t)compiler->function->type_set_count++;
+        compiler->function->type_sets[others]=(DiamondTypeSet){};
+    }
+    DiamondTypeSet *set=&compiler->function->type_sets[others];
+    if(set->count==DIAMOND_MAX_UNION_TYPES)return;
+    DiamondTypeMember *member=&set->members[set->count++];
+    *member=(DiamondTypeMember){.id=(uint16_t)(DIAMOND_TYPE_CLASS_BASE+class_index),
+        .argument_set=DIAMOND_NO_TYPE_SET,.second_argument_set=DIAMOND_NO_TYPE_SET,
+        .callable_arity=UINT8_MAX,.callable_return_set=DIAMOND_NO_TYPE_SET};
+    for(size_t index=0;index<16;index++)
+        member->callable_parameter_sets[index]=DIAMOND_NO_TYPE_SET;
+    if(tooling_only)compiler->tooling_type_sets[reg]=(int32_t)others;
+    else publish_known_type_set(compiler,reg,others);
+}
+
 void check_call_argument_types(Compiler *compiler,const DiamondFunction *callee,
         const uint16_t *arguments,size_t count,size_t parameter_offset,
         DiamondSpan span) {
@@ -2633,11 +2669,34 @@ int resolve_type_name(Compiler *compiler,const char *name,
      * either resolves this correctly there or, if the name genuinely
      * never exists, hits this exact fail() again for real. */
     if(!compiler->discovery_pass)
-        fail(compiler,diagnostic,"unknown type annotation");
+        fail(compiler,diagnostic,strcmp(name,"Self")==0?
+             "Self is only allowed as the return type of a class's method, or in a union there":
+             "unknown type annotation");
     return DIAMOND_TYPE_NIL;
 }
 
+/* `-> Self` at the top level of a return annotation, unless the program has its own type of
+ * that name. Consumes it and any `|` after it; true when the annotation continues. */
+static bool consume_self_return_member(Compiler *compiler,const char *name,
+        DiamondSpan span,bool *continues) {
+    if(strcmp(name,"Self")!=0||find_interface_name(compiler,name)>=0||
+       find_class_qualified_or_scoped(compiler,name)>=0)return false;
+    if(compiler->self_return_seen) {
+        fail(compiler,span,"duplicate type in union");return true;
+    }
+    if(compiler->current.kind==DIAMOND_TOKEN_LEFT_BRACKET) {
+        fail(compiler,span,"this type does not accept arguments");return true;
+    }
+    compiler->self_return_seen=true;
+    *continues=compiler->current.kind==DIAMOND_TOKEN_PIPE;
+    if(*continues)advance_token(compiler);
+    return true;
+}
+
 int parse_type_annotation(Compiler *compiler) {
+    /* Nested annotations (Array[Self], a Callable's return) never see this. */
+    const bool self_allowed=compiler->self_return_allowed;
+    compiler->self_return_allowed=false;
     if(!reserve_type_sets(compiler,1))return 0;
     const size_t set_index=compiler->function->type_set_count++;
     DiamondTypeSet *set=&compiler->function->type_sets[set_index];
@@ -2653,6 +2712,12 @@ int parse_type_annotation(Compiler *compiler) {
         if(!consume_qualified_name(compiler,type_name_buffer,
                                    sizeof type_name_buffer)) {
             fail(compiler,member_span,"type name is too long");break;
+        }
+        bool annotation_continues=false;
+        if(self_allowed&&consume_self_return_member(compiler,type_name_buffer,
+               member_span,&annotation_continues)) {
+            if(annotation_continues)continue;
+            break;
         }
         const int resolved=resolve_type_name(compiler,type_name_buffer,member_span);
         const bool native=diamond_type_operand_is_native(resolved);

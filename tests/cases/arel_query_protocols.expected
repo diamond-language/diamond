@@ -1,0 +1,13 @@
+true
+true
+SELECT "items"."id" FROM "items" UNION SELECT 1 AS id
+true
+true
+true
+nil
+TypeError: expected ArelRenderable, got NotRenderable
+TypeError: expected ArelRenderable, got Int
+true
+true
+0
+nil

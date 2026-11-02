@@ -16,7 +16,7 @@ module Arel
       @query = query
       @negated = negated
     end
-    def query() = @query
+    def query() -> ArelRenderable = @query
     def negated?() -> Bool = @negated
     def and_also(other) -> Logical = Logical.new(self, "AND", other)
     def or_else(other) -> Logical = Logical.new(self, "OR", other)
@@ -27,7 +27,7 @@ module Arel
     def initialize(query)
       @query = query
     end
-    def query() = @query
+    def query() -> ArelRenderable = @query
     def eq(value) -> Predicate = Predicate.new(self, "=", value)
     def not_eq(value) -> Predicate = Predicate.new(self, "!=", value)
     def lt(value) -> Predicate = Predicate.new(self, "<", value)
@@ -43,7 +43,7 @@ module Arel
       @recursive = recursive
     end
     def name() -> String = @name
-    def query() = @query
+    def query() -> ArelRenderable = @query
     def recursive?() -> Bool = @recursive
   end
 

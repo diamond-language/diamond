@@ -641,6 +641,10 @@ typedef enum DiamondOpCode : uint8_t {
     /* dest, class, type-set, positional Array, keyword-count/flags, pairs,
      * optional block. Explicit class binding precedes initialize. */
     DIAMOND_OP_NEW_TYPED,
+    /* value, type-set or DIAMOND_NO_TYPE_SET, receiver: `-> Self`. The value must be an
+     * instance of the receiver's class, or match the set holding the union's other members.
+     * selfhost/parser.d6 does not emit it, and the JIT leaves such a function interpreted. */
+    DIAMOND_OP_CHECK_SELF_RETURN,
     DIAMOND_OP_COUNT,
 } DiamondOpCode;
 
@@ -1243,6 +1247,12 @@ typedef struct DiamondFunction {
     bool nested;
     uint8_t capture_count;
     uint16_t return_type_set;
+    /* `-> Self`, alone or in a union. return_type_set stays unset, so interfaces, Callable
+     * facts and everything else that reads it treat the method as unannotated; only the
+     * body's own check and the call sites that know the receiver's class use these.
+     * self_return_others holds the union's other members, or DIAMOND_NO_TYPE_SET. */
+    bool returns_self;
+    uint16_t self_return_others;
     /* LSP-only best-effort return type, inferred from an unannotated
      * function/method's own body_result (compile_definition, src/
      * compiler.c) the same way compile_block already infers a block's

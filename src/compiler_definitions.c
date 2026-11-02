@@ -1716,15 +1716,24 @@ static void enter_definition_body(Compiler *compiler,DiamondFunction *function,D
 /* Consumes the `)` closing a def's parameters and parses an optional `-> Type`, returning its
  * type set (or -1) and recording it on the function. Part of compile_definition. */
 static int parse_definition_return_type(Compiler *compiler,DiamondFunction *function,
-        DiamondSpan *return_type_span_out) {
+        bool self_allowed,DiamondSpan *return_type_span_out) {
     int return_type = -1;
     DiamondSpan return_type_span = {};
     if (!compiler->failed) advance_token(compiler);
     if (!compiler->failed && compiler->current.kind == DIAMOND_TOKEN_ARROW) {
         advance_token(compiler);
         return_type_span=compiler->current.span;
+        compiler->self_return_allowed=self_allowed;
+        compiler->self_return_seen=false;
         return_type = parse_type_annotation(compiler);
-        function->return_type_set=(uint16_t)return_type;
+        compiler->self_return_allowed=false;
+        if(compiler->self_return_seen) {
+            function->returns_self=true;
+            function->self_return_others=!compiler->failed&&
+                function->type_sets[return_type].count>0?
+                (uint16_t)return_type:DIAMOND_NO_TYPE_SET;
+            return_type=-1;
+        } else function->return_type_set=(uint16_t)return_type;
     }
     *return_type_span_out=return_type_span;
     return return_type;
@@ -1734,7 +1743,9 @@ static int parse_definition_return_type(Compiler *compiler,DiamondFunction *func
  * `end`. Part of compile_definition. */
 static void finish_definition_body(Compiler *compiler,DiamondFunction *function,int return_type,
         DiamondSpan return_type_span,uint16_t body_result,bool body_diverges,bool endless) {
-    if (return_type >= 0 && !body_diverges) {
+    if(function->returns_self) {
+        if(!body_diverges)emit_self_return_check(compiler,body_result,function->self_return_others);
+    } else if (return_type >= 0 && !body_diverges) {
         emit_type_check(compiler,body_result,(uint16_t)return_type,
                         return_type_span);
     } else if(return_type<0) {
@@ -1779,6 +1790,8 @@ uint16_t compile_definition(Compiler *compiler, bool captures_self) {
     }
     function->return_type_set=DIAMOND_NO_TYPE_SET;
     function->inferred_return_type_set=DIAMOND_NO_TYPE_SET;
+    function->returns_self=false;
+    function->self_return_others=DIAMOND_NO_TYPE_SET;
     for(size_t index=0;index<DIAMOND_MAX_DECLARED_PARAMETERS;index++)
         function->parameter_type_sets[index]=DIAMOND_NO_TYPE_SET;
     /* current_class/current_module are compiler-wide "lexically inside a
@@ -1887,7 +1900,8 @@ uint16_t compile_definition(Compiler *compiler, bool captures_self) {
     if(!compiler->failed && !at_top_level)
         bind_captured_cells(compiler,&scope,captured_fact_registers);
     DiamondSpan return_type_span = {};
-    const int return_type=parse_definition_return_type(compiler,function,&return_type_span);
+    const int return_type=parse_definition_return_type(compiler,function,
+        direct_class_member||direct_class_singleton_member,&return_type_span);
     compiler->in_function=true;
     compiler->in_block=false;
     compiler->current_return_type=return_type;

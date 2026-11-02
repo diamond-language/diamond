@@ -4,9 +4,9 @@
       "archive": "arel.tar",
       "dependencies": {},
       "name": "arel",
-      "sha256": "a4619e3d550e6b8f26196444c43949768ad024854b1381b55e0c964307f9502a",
-      "size": 157696,
-      "version": "0.35.2"
+      "sha256": "8ff69c27260b14a76c5308da5e6807b4cc2c81c89d838728e2eaf46b697aa5df",
+      "size": 158208,
+      "version": "0.35.3"
     },
     {
       "archive": "active_record.tar",
@@ -14,9 +14,9 @@
         "arel": "^0.35.0"
       },
       "name": "active_record",
-      "sha256": "fe72e620dd6a9ce12896a8af10fe85db6b816a57f024053de34fc1d1dfe4ce91",
-      "size": 106496,
-      "version": "0.21.0"
+      "sha256": "e9bf3c17231ccb653a6b0dd4aea737742b0ff09e50f8ec889ebce535935c5db5",
+      "size": 105984,
+      "version": "0.21.1"
     },
     {
       "archive": "cookies.tar",

@@ -296,6 +296,11 @@ head_dump="$(sed -n '/^== head ==$/,$p' <<<"$actual")"
 [[ "$(grep -c 'CHECK_TYPE' <<<"$head_dump")" == "1" ]]
 grep -q 'INDEX_GET' <<<"$head_dump"
 
+# A native type in an annotation has to pass validation, or a cached program recompiles every run.
+actual="$("$diamond" --dump-bytecode -e $'def take(statement: Statement | Nil) = statement\ntake(nil)')"
+grep -q 'CHECK_TYPE.*Statement | Nil' <<<"$actual"
+if grep -q 'invalid type' <<<"$actual"; then exit 1; fi
+
 actual="$("$diamond" --dump-bytecode -e $'def nested(values: Array[Array[Int]]) -> Array[Int]\n values[0]\nend\nnested([[42]])')"
 nested_dump="$(sed -n '/^== nested ==$/,$p' <<<"$actual")"
 [[ "$(grep -c 'CHECK_TYPE' <<<"$nested_dump")" == "1" ]]

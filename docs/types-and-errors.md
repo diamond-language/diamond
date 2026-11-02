@@ -232,6 +232,37 @@ graphs and primitive bound returns; missing or conflicting bindings remain
 conservative. Inferred receiver facts remain editor-only and never remove runtime
 checks.
 
+`-> Self` is an instance of the class a method was called on, which lets a method
+shared through inheritance describe what each subclass gets back:
+
+```ruby
+class Model
+  def self.find(id: Int) -> Self | Nil = self.load(id)
+  def touch() -> Self
+    @touched = true
+    self
+  end
+end
+
+class Author < Model
+  def self.load(id: Int) = Author.new()
+  def greet() -> String = "hello"
+end
+
+puts(Author.find(1).touch().greet())
+```
+
+In a `def self.x` method the receiver is the class named at the call, and in an instance
+method it is the instance's own class. The result is checked when the method returns:
+a subclass instance is accepted, and a sibling class or the class value itself raises
+`TypeError`. Returning `self` from an instance method needs no check. `Self` can stand
+alone or join a union, but it can't appear in a parameter, inside `Array[Self]` or in an
+interface, and a program's own type named `Self` takes priority. The check covers the class
+and not a generic class's type arguments, so a call on a generic class publishes no fact.
+A method declaring `Self` counts as unannotated for interface conformance, has no
+return fact when the receiver's class isn't known, and always runs in the interpreter
+when it has to check.
+
 ```ruby
 interface Named
   def name() -> String

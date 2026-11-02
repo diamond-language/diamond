@@ -1,0 +1,62 @@
+require "../../packages/arel/lib/arel"
+
+# An extension's own query source satisfies the protocol with no declaration.
+class CannedQuery
+  def render_with(visitor) -> Array = ["SELECT 1 AS id", []]
+  def projection_count_known?() -> Bool = true
+  def projection_count() -> Int = 1
+end
+
+# It renders, but its columns can't be counted.
+class RenderOnly
+  def render_with(visitor) -> Array = ["SELECT 2 AS id", []]
+end
+
+class NotRenderable
+  def projection_count_known?() -> Bool = true
+  def projection_count() -> Int = 1
+end
+
+def attempt(action)
+  begin
+    puts(action())
+  rescue error: TypeError
+    puts("TypeError: #{error.message()}")
+  end
+end
+
+items = Arel.table("items")
+from_items = Arel.from(items)
+query = from_items.project([items.column("id")])
+compound = Arel::CompoundQuery.new(query, "UNION", CannedQuery.new())
+puts(compound.left() is ArelQuerySource)
+puts(compound.right() is CannedQuery)
+puts(compound.to_sql()[0])
+
+puts(Arel.exists(query).query() is ArelRenderable)
+puts(Arel::ScalarSubquery.new(compound).query() is ArelRenderable)
+puts(Arel::Cte.new("recent", RenderOnly.new()).query() is RenderOnly)
+puts(query.source_query())
+
+# A value outside the protocol is refused when it is read back.
+def not_renderable_exists() = Arel.exists(NotRenderable.new()).query()
+attempt(not_renderable_exists)
+def not_renderable_cte() = Arel::Cte.new("recent", 42).query()
+attempt(not_renderable_cte)
+
+# Statements: a native one, and the stand-in a connection without #prepare gets.
+db = SQLite3.open(":memory:")
+db.execute("CREATE TABLE items (id INTEGER PRIMARY KEY)")
+puts(Arel::PreparedStatements.for(db, "SELECT id FROM items") is Statement)
+
+class ForwardingConnection
+  def initialize(db)
+    @db = db
+  end
+  def query(sql: String, params = nil) -> Array = @db.query(sql, params)
+  def execute(sql: String, params = nil) -> Int = @db.execute(sql, params)
+end
+forwarding = ForwardingConnection.new(db)
+statement = Arel::PreparedStatements.for(forwarding, "SELECT id FROM items")
+puts(statement is Arel::UncachedStatement)
+puts(statement.query().length())

@@ -71,7 +71,7 @@ module Arel
   # Statements -- would leak for the rest of the process's lifetime
   # instead of being collected once closed.
   class PreparedStatements
-    def self.for(db, sql: String)
+    def self.for(db, sql: String) -> Statement | ArelStatement
       if @@unsupported == nil
         @@unsupported = {}
       end
