@@ -15,6 +15,10 @@ authoritative fine-grained record.
   credential inside it, stores display details at publish time so the catalog never
   spawns a process, and reports refusals through a sealed `Registry::Failure` hierarchy
   (registry 0.3.0, now on Mjolnir).
+- `array.sort() do |a, b| ... end` sorts with a comparison block, and stays stable.
+- `SemVer.valid?`, `SemVer.compare` and `SemVer.satisfies?` check and order version strings
+  with the same code `facet` resolves with.
+
 - A generic class variable that only a callable with no declared return could bind now stays
   open instead of raising "cannot infer generic class type parameter", so `Schema.new(build_row)`
   works with an unannotated `build_row`. The instance shows as `Schema[?]`, accepts any

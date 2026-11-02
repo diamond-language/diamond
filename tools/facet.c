@@ -254,7 +254,7 @@ bool git_rev_parse_head(const char *repository, char *out, size_t out_size,
 }
 
 /* Lists every tag on `url`'s remote whose name parses as a semver
- * version (with or without a leading v/V -- see tools/semver.h),
+ * version (with or without a leading v/V -- see src/semver.h),
  * writing each matching tag's own original name (not normalized) into
  * tags[0..*out_count). This is the entire "version database" a
  * version-constrained git dependency consults: a repository's own tags

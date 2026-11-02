@@ -1732,6 +1732,8 @@ DIAMOND_INTERNAL DiamondVmStatus outlined_tls_connect(DiamondVm *vm,const Diamon
         uint8_t instruction,size_t *ip_ref);
 DIAMOND_INTERNAL DiamondVmStatus outlined_mysql_open(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
         size_t *ip_ref);
+DIAMOND_INTERNAL DiamondVmStatus outlined_semver(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t *ip_ref);
 DIAMOND_INTERNAL DiamondVmStatus outlined_file_path(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
         size_t *ip_ref);
 DIAMOND_INTERNAL DiamondVmStatus outlined_tcp_listen_nonblock(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,

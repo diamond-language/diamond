@@ -1,0 +1,42 @@
+puts(SemVer.valid?("1.2.3"))
+puts(SemVer.valid?("1.2.3-rc.1+build.5"))
+puts(SemVer.valid?("v1.2.3"))
+puts(SemVer.valid?("1.2"))
+puts(SemVer.valid?("01.2.3"))
+puts(SemVer.valid?(""))
+puts(SemVer.valid?("1.2.3\u0000junk"))
+
+# Precedence, including numeric prerelease identifiers and ignored build metadata.
+puts(SemVer.compare("1.2.3", "1.2.4"))
+puts(SemVer.compare("1.10.0", "1.9.0"))
+puts(SemVer.compare("1.2.3", "1.2.3+build"))
+puts(SemVer.compare("1.0.0-rc.2", "1.0.0-rc.10"))
+puts(SemVer.compare("1.0.0-rc.1", "1.0.0"))
+puts(SemVer.compare("1.0.0-1", "1.0.0-alpha"))
+
+puts(["1.10.0", "1.2.0", "1.2.0-rc.1"].sort() do |a, b| SemVer.compare(a, b) end.inspect())
+
+# On 0.x a caret range does not cross a minor.
+puts(SemVer.satisfies?("1.5.0", "^1.2.0"))
+puts(SemVer.satisfies?("2.0.0", "^1.2.0"))
+puts(SemVer.satisfies?("0.4.1", "^0.4.0"))
+puts(SemVer.satisfies?("0.5.0", "^0.4.0"))
+puts(SemVer.satisfies?("1.2.9", "~1.2.0"))
+
+def refused(callback: Callable[0])
+  begin
+    callback()
+    puts("accepted")
+  rescue error: ArgumentError
+    puts("ArgumentError: " + error.message())
+  rescue error: TypeError
+    puts("TypeError: " + error.message())
+  end
+end
+
+refused() do SemVer.compare("1.2", "1.2.3") end
+refused() do SemVer.compare("1.2.3", "nope") end
+refused() do SemVer.satisfies?("nope", "^1.0.0") end
+refused() do SemVer.satisfies?("1.0.0", "^nope") end
+refused() do SemVer.compare(1, "1.2.3") end
+refused() do SemVer.valid?(nil) end

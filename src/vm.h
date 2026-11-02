@@ -645,8 +645,17 @@ typedef enum DiamondOpCode : uint8_t {
      * instance of the receiver's class, or match the set holding the union's other members.
      * selfhost/parser.d6 does not emit it, and the JIT leaves such a function interpreted. */
     DIAMOND_OP_CHECK_SELF_RETURN,
+    /* dest, first, second, selector: `SemVer.*`, see DiamondSemverFunction. */
+    DIAMOND_OP_SEMVER,
     DIAMOND_OP_COUNT,
 } DiamondOpCode;
+
+/* Selector for DIAMOND_OP_SEMVER. */
+typedef enum {
+    DIAMOND_SEMVER_VALID,
+    DIAMOND_SEMVER_COMPARE,
+    DIAMOND_SEMVER_SATISFIES,
+} DiamondSemverFunction;
 
 /* Selector for DIAMOND_OP_FILE_PATH -- one opcode for this small family
  * of fixed-arity path and filesystem utilities, the same "one opcode + a
