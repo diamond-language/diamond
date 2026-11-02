@@ -412,6 +412,10 @@ typedef struct DiamondSupervisorHandle {
 typedef struct DiamondFileHandle {
     DiamondObject object;
     FILE *stream;
+    /* A connected socket writes through its own stream over a duplicate of the
+     * descriptor. Sharing one stream fails: writing while unread bytes sit in
+     * its read-ahead makes stdio seek, and a socket cannot. Null for a file. */
+    FILE *write_stream;
     /* Written to since the last flush. C requires a flush between output and
      * input on one stream, and glibc's fread of a whole buffer's worth skips
      * its own, leaving a request unsent while the reply is awaited. */

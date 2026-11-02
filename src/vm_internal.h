@@ -927,6 +927,7 @@ DIAMOND_INTERNAL DiamondSupervisorHandle *allocate_supervisor_handle(DiamondVm *
 DIAMOND_INTERNAL void free_supervisor_reference(DiamondSupervisor *supervisor);
 
 DIAMOND_INTERNAL DiamondFileHandle *allocate_file_handle(DiamondVm *vm,FILE *stream);
+DiamondFileHandle *allocate_connected_file_handle(DiamondVm *vm,FILE *stream);
 
 DIAMOND_INTERNAL DiamondTlsSocketHandle *allocate_tls_socket_handle(DiamondVm *vm,SSL *ssl,int fd);
 

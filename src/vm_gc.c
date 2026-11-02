@@ -411,6 +411,8 @@ static void sweep_list(DiamondVm *vm, DiamondObject **list_head,
         } else if(unreached->kind==DIAMOND_OBJECT_FILE) {
             size=sizeof(DiamondFileHandle);
             FILE *stream=((DiamondFileHandle *)unreached)->stream;
+            FILE *write_stream=((DiamondFileHandle *)unreached)->write_stream;
+            if(write_stream!=nullptr)fclose(write_stream);
             if(stream!=nullptr)fclose(stream);
         } else if(unreached->kind==DIAMOND_OBJECT_LISTENER) {
             size=sizeof(DiamondListenerHandle);
