@@ -7,7 +7,7 @@ Repositories, associations, validation, migrations, and an optional model layer 
 From your project directory (see the [package guide](https://github.com/diamond-language/diamond/blob/main/docs/packages.md) for `facet`):
 
 ```sh
-facet init myapp          # once, if the project has no diamond.cut yet
+facet init myapp          # once, if the project has no Cutfile yet
 facet add active_record
 facet install
 ```

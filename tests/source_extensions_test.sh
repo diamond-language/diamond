@@ -31,7 +31,7 @@ printf 'puts(21 * 2)\n' > no_extension
 # entry point. Old releases remain usable; both cache suffixes stay out of
 # archives, and the source audit still checks legacy files.
 mkdir -p example/lib
-printf '%s\n' '{"name":"example","version":"1.0.0","summary":"An example","license":"MIT","maintainers":[{"name":"Test","contact":"test@example.com"}]}' > example/diamond.cut
+printf '%s\n' '{"name":"example","version":"1.0.0","summary":"An example","license":"MIT","maintainers":[{"name":"Test","contact":"test@example.com"}]}' > example/Cutfile
 printf 'example\n' > example/README.md
 printf 'MIT\n' > example/LICENSE
 printf 'def cut_value() = 18\n' > example/lib/example.d6

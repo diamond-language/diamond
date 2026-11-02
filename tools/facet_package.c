@@ -22,7 +22,7 @@ static bool regular_file(const char *path) {
     return lstat(path, &info) == 0 && S_ISREG(info.st_mode);
 }
 
-/* Top-level keys accepted in a publishable diamond.cut and in archive
+/* Top-level keys accepted in a publishable Cutfile and in archive
  * manifests; both validators share this list so they cannot drift. */
 static const char *const MANIFEST_KEYS[] = {
     "name", "version", "summary", "license", "dependencies", "maintainers",
@@ -567,8 +567,9 @@ bool all_zero(const unsigned char *bytes, size_t length) {
 }
 
 bool valid_archive_path(const char *path) {
-    if (strcmp(path, "diamond.cut") == 0 || strcmp(path, "README.md") == 0 ||
-        strcmp(path, "LICENSE") == 0) return true;
+    if (strcmp(path, DIAMOND_CUT_MANIFEST) == 0 ||
+        strcmp(path, DIAMOND_LEGACY_CUT_MANIFEST) == 0 ||
+        strcmp(path, "README.md") == 0 || strcmp(path, "LICENSE") == 0) return true;
     const char *prefixes[] = {"lib/", "bin/", "assets/"};
     bool allowed = false;
     for (size_t i = 0; i < sizeof prefixes / sizeof prefixes[0]; i++)
@@ -812,7 +813,13 @@ static bool read_archive_entries(FILE *archive, bool readme, FacetFileList *file
         }
         files.count++;
         total_bytes += size;
-        if (strcmp(path, "diamond.cut") == 0) {
+        if (strcmp(path, DIAMOND_CUT_MANIFEST) == 0 ||
+            strcmp(path, DIAMOND_LEGACY_CUT_MANIFEST) == 0) {
+            if (manifest_source != NULL) {
+                (void)snprintf(error, error_size, "archive has more than one manifest");
+                ok = false;
+                break;
+            }
             if (size > 1024 * 1024) {
                 (void)snprintf(error, error_size, "manifest exceeds 1 MiB");
                 ok = false;
@@ -1096,7 +1103,7 @@ int cmd_verify(int argc, char **argv) {
         }
     }
     if (ok && manifest == NULL) {
-        (void)snprintf(error, sizeof error, "archive is missing diamond.cut");
+        (void)snprintf(error, sizeof error, "archive is missing Cutfile");
         ok = false;
     }
     const DiamondManifestValue *name = NULL, *version = NULL;
@@ -1176,11 +1183,19 @@ int cmd_check(int argc, char **argv) {
     const char *directory_name = strrchr(root, '/');
     directory_name = directory_name == NULL ? root : directory_name + 1;
     char path[FACET_MAX_PATH];
-    if (snprintf(path, sizeof path, "%s/diamond.cut", root) >= (int)sizeof path ||
-        !regular_file(path)) {
-        fprintf(stderr, "facet: '%s' needs a regular diamond.cut\n", root);
+    const DiamondCutManifestLookup lookup = diamond_cut_manifest_find(root, path, sizeof path);
+    if (lookup == DIAMOND_CUT_MANIFEST_AMBIGUOUS) {
+        fprintf(stderr, "facet: '%s' has both " DIAMOND_CUT_MANIFEST " and "
+                DIAMOND_LEGACY_CUT_MANIFEST "; keep only " DIAMOND_CUT_MANIFEST "\n", root);
         return 65;
     }
+    if (lookup != DIAMOND_CUT_MANIFEST_FOUND || !regular_file(path)) {
+        fprintf(stderr, "facet: '%s' needs a regular " DIAMOND_CUT_MANIFEST "\n", root);
+        return 65;
+    }
+    /* `path` is reused below; the archive keeps whichever name the cut uses. */
+    char manifest_file[sizeof DIAMOND_LEGACY_CUT_MANIFEST];
+    (void)snprintf(manifest_file, sizeof manifest_file, "%s", strrchr(path, '/') + 1);
     char error[512];
     DiamondManifestValue *manifest = facet_read_hash(path, error, sizeof error);
     if (manifest == NULL) {
@@ -1272,7 +1287,7 @@ int cmd_check(int argc, char **argv) {
                 name->string);
         goto done;
     }
-    const char *metadata_files[] = {"diamond.cut", "README.md", "LICENSE"};
+    const char *metadata_files[] = {manifest_file, "README.md", "LICENSE"};
     for (size_t i = 0; i < sizeof metadata_files / sizeof metadata_files[0]; i++) {
         if (!add_file(&files, root, metadata_files[i], error, sizeof error)) {
             fprintf(stderr, "facet: %s\n", error);
@@ -1398,9 +1413,13 @@ int cmd_publish(int argc, char **argv) {
     }
     char manifest_path[FACET_MAX_PATH], error[512] = {0};
     FacetManifest manifest;
-    bool ok = snprintf(manifest_path, sizeof manifest_path, "%s/diamond.cut", root) <
-              (int)sizeof manifest_path && parse_cut_identity(manifest_path, &manifest,
-                                                            error, sizeof error);
+    const DiamondCutManifestLookup lookup =
+        diamond_cut_manifest_find(root, manifest_path, sizeof manifest_path);
+    if (lookup != DIAMOND_CUT_MANIFEST_FOUND)
+        (void)snprintf(error, sizeof error, "'%s' needs exactly one of "
+                       DIAMOND_CUT_MANIFEST " or " DIAMOND_LEGACY_CUT_MANIFEST, root);
+    bool ok = lookup == DIAMOND_CUT_MANIFEST_FOUND &&
+              parse_cut_identity(manifest_path, &manifest, error, sizeof error);
     if (!ok) {
         fprintf(stderr, "facet: %s\n", error);
         free(root);

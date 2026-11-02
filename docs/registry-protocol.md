@@ -101,7 +101,7 @@ Returns a release record:
 }
 ```
 
-The record's name and version must match the request. Dependency names and ranges use the same validation as `diamond.cut`. The archive path stays under the configured registry base; redirects to another origin are rejected. The digest is 64 lowercase hexadecimal characters. The size is a positive integer within the archive limit. Optional display metadata is separate from resolution fields and never supplies a download URL.
+The record's name and version must match the request. Dependency names and ranges use the same validation as `Cutfile`. The archive path stays under the configured registry base; redirects to another origin are rejected. The digest is 64 lowercase hexadecimal characters. The size is a positive integer within the archive limit. Optional display metadata is separate from resolution fields and never supplies a download URL.
 
 ### `GET /v1/blobs/sha256/<digest>`
 
@@ -133,7 +133,7 @@ A registry locked install fetches the digest-addressed blob from the locked regi
 `Authorization: Bearer <token>` credential authorized for that name. The
 request uses `Content-Type: application/octet-stream` and contains the exact
 uncompressed tar bytes. The server validates the archive with the same contract
-as `facet verify`, derives the version and dependencies from `diamond.cut`,
+as `facet verify`, derives the version and dependencies from `Cutfile`,
 compares its manifest name with the path, stores the blob by digest, and
 atomically creates the immutable release record. Repeating an identical request
 is idempotent; different bytes for an existing tuple are rejected. A successful

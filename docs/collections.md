@@ -443,7 +443,7 @@ Suited to session/remember-me/password-reset tokens and similar —
   identifiers compare as numbers, a prerelease sorts before its release, and build
   metadata is ignored.
 - `SemVer.satisfies?(version: String, range: String) -> Bool` takes the ranges
-  `diamond.cut` does (`^1.2.0`, `~1.2.0`, `>=1.0.0 <2.0.0`). On 0.x a caret range
+  `Cutfile` does (`^1.2.0`, `~1.2.0`, `>=1.0.0 <2.0.0`). On 0.x a caret range
   doesn't cross a minor.
 
 `compare` and `satisfies?` raise `ArgumentError` for a malformed version or range.

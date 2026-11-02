@@ -154,8 +154,8 @@ bash test.sh
 
 ```text
 greeter/
-  diamond.cut              the manifest: name and dependencies
-  diamond.dev.cut          dependencies only the tests need: minitest
+  Cutfile              the manifest: name and dependencies
+  Cutfile.dev          dependencies only the tests need: minitest
   main.d6                  the entry point: passes ARGV to Greeter.main and exits with its status
   lib/greeter.d6           the code
   test/greeter_test.d6     tests for it
@@ -223,9 +223,9 @@ log.info("starting")     # [2026-10-24 21:16:43] INFO greeter: starting
 ```
 
 `facet add` writes the newest release as a constraint, such as `"^0.5.0"`, which
-accepts any 0.5.x but not 0.6.0. `facet install` fetches what `diamond.cut` asks
-for into `cuts/` and records the exact versions and digests in `facet.lock`.
-Commit `facet.lock` and leave `cuts/` out of version control (the generated
+accepts any 0.5.x but not 0.6.0. `facet install` fetches what `Cutfile` asks
+for into `cuts/` and records the exact versions and digests in `Cutfile.lock`.
+Commit `Cutfile.lock` and leave `cuts/` out of version control (the generated
 `.gitignore` does); `facet install` recreates `cuts/` from the lock, and
 `facet update` moves to the newest versions the constraints allow. Constraints,
 git dependencies and publishing your own cut: [packages](packages.md).

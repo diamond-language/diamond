@@ -22,9 +22,6 @@ a concrete application gap.
 The user-facing name becomes **d6**, which remains a reference to Diamond. The name
 leans into the dice: rewriting in d6 is a saving throw.
 
-- **Project files:** `Cutfile`, `Cutfile.dev` and `Cutfile.lock` replace `diamond.cut`,
-  `diamond.dev.cut` and `facet.lock`. The old names stay readable, because published
-  cut archives can't change.
 - **Commands:** `d6`, `d6-lsp` and `d6-dap`, with the old names kept as aliases.
 - **Distribution and docs:** packages, asdf plugin, VS Code extension, guides, site and
   registry pages.

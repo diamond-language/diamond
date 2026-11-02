@@ -165,7 +165,7 @@ def write_package(work, name, version, body, dependencies)
   manifest = {"name": name, "version": version, "summary": "test cut", "license": "MIT",
               "maintainers": [{"name": "Test", "contact": "test@example.com"}],
               "dependencies": dependencies}
-  File.write(path + "/diamond.cut", JSON.stringify(manifest))
+  File.write(path + "/Cutfile", JSON.stringify(manifest))
   File.write(path + "/README.md", "test\n")
   File.write(path + "/LICENSE", "MIT\n")
   File.write(path + "/lib/" + name + ".d6", body)
@@ -360,9 +360,9 @@ class Scenario
     legacy_root = @work + "/legacy/greeter"
     Harness.mkdir_p(@work + "/legacy")
     run(["cp", "-R", @greeter, legacy_root], nil, nil)
-    manifest = JSON.parse(File.read(legacy_root + "/diamond.cut"))
+    manifest = JSON.parse(File.read(legacy_root + "/Cutfile"))
     manifest["version"] = "0.9.0"
-    File.write(legacy_root + "/diamond.cut", JSON.stringify(manifest))
+    File.write(legacy_root + "/Cutfile", JSON.stringify(manifest))
     @f.facet(["pack", legacy_root, @work + "/legacy.tar"], nil)
     legacy = File.read(@work + "/legacy.tar")
     field = ",\"maintainers\":" + JSON.stringify(manifest["maintainers"])

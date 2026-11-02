@@ -27,6 +27,41 @@ bool file_exists(const char *path) {
     return stat(path, &info) == 0;
 }
 
+/* The project's files have current names and former ones. A project that hasn't
+ * moved keeps working; anything facet creates gets the current name. */
+static const char *current_or_former(const char *current, const char *former) {
+    return !file_exists(current) && file_exists(former) ? former : current;
+}
+
+const char *project_manifest_path(void) {
+    return current_or_former(DIAMOND_CUT_MANIFEST, DIAMOND_LEGACY_CUT_MANIFEST);
+}
+
+const char *project_dev_manifest_path(void) {
+    return current_or_former("Cutfile.dev", "diamond.dev.cut");
+}
+
+const char *project_lock_path(void) {
+    return current_or_former(FACET_LOCK, FACET_FORMER_LOCK);
+}
+
+/* Having both names means one would be silently ignored. */
+bool project_files_unambiguous(char *error, size_t error_size) {
+    const char *const pairs[][2] = {
+        {DIAMOND_CUT_MANIFEST, DIAMOND_LEGACY_CUT_MANIFEST},
+        {"Cutfile.dev", "diamond.dev.cut"},
+        {FACET_LOCK, FACET_FORMER_LOCK},
+    };
+    for (size_t index = 0; index < sizeof pairs / sizeof pairs[0]; index++) {
+        if (file_exists(pairs[index][0]) && file_exists(pairs[index][1])) {
+            (void)snprintf(error, error_size, "found both %s and %s; keep only %s",
+                           pairs[index][0], pairs[index][1], pairs[index][0]);
+            return false;
+        }
+    }
+    return true;
+}
+
 bool valid_sha256(const char *text) {
     if (strlen(text) != 64) return false;
     for (size_t i = 0; i < 64; i++)
@@ -487,10 +522,10 @@ bool parse_manifest(const char *path, FacetManifest *manifest,
     return ok;
 }
 
-/* Reads diamond.dev.cut, the root project's development dependencies: a Hash
- * whose only key is `dependencies`, in diamond.cut's dependency format. Never
+/* Reads Cutfile.dev, the root project's development dependencies: a Hash
+ * whose only key is `dependencies`, in Cutfile's dependency format. Never
  * part of a cut archive (pack takes an allowlist), so released facets, which
- * reject unknown diamond.cut keys in an archive, never see it. */
+ * reject unknown Cutfile keys in an archive, never see it. */
 bool parse_dev_manifest(const char *path, FacetManifest *manifest,
                         char *error, size_t error_size) {
     memset(manifest, 0, sizeof *manifest);
@@ -519,24 +554,24 @@ bool parse_dev_manifest(const char *path, FacetManifest *manifest,
     return ok;
 }
 
-/* The manifest `facet install`/`update` resolve: diamond.cut's dependencies
- * followed by diamond.dev.cut's, when that file exists. One graph, so a cut
+/* The manifest `facet install`/`update` resolve: Cutfile's dependencies
+ * followed by Cutfile.dev's, when that file exists. One graph, so a cut
  * that both need resolves to a single version. A name in both is an error. */
 bool parse_project_manifest(FacetManifest *manifest, char *error, size_t error_size) {
-    if (!parse_manifest("diamond.cut", manifest, error, error_size)) return false;
-    if (!file_exists("diamond.dev.cut")) return true;
+    if (!parse_manifest(project_manifest_path(), manifest, error, error_size)) return false;
+    if (!file_exists(project_dev_manifest_path())) return true;
     FacetManifest *dev = malloc(sizeof *dev);
     if (dev == nullptr) {
-        (void)snprintf(error, error_size, "out of memory reading diamond.dev.cut");
+        (void)snprintf(error, error_size, "out of memory reading Cutfile.dev");
         return false;
     }
-    bool ok = parse_dev_manifest("diamond.dev.cut", dev, error, error_size);
+    bool ok = parse_dev_manifest(project_dev_manifest_path(), dev, error, error_size);
     for (size_t index = 0; ok && index < dev->dependency_count; index++) {
         const FacetDependency *dependency = &dev->dependencies[index];
         for (size_t other = 0; ok && other < manifest->dependency_count; other++) {
             if (strcmp(manifest->dependencies[other].name, dependency->name) == 0) {
                 (void)snprintf(error, error_size,
-                               "dependency '%s' is in both diamond.cut and diamond.dev.cut",
+                               "dependency '%s' is in both Cutfile and Cutfile.dev",
                                dependency->name);
                 ok = false;
             }
@@ -731,16 +766,16 @@ bool write_lockfile(const char *path, const FacetResolution *resolution,
 /* Writes `manifest` back out to `path` in a fixed, pretty-printed
  * canonical form -- used by `facet init`/`facet add` (write_lockfile's
  * own single-line style is deliberately not reused here: unlike
- * facet.lock, `diamond.cut` is meant to be hand-read, per docs/
+ * Cutfile.lock, `Cutfile` is meant to be hand-read, per docs/
  * packages.md's own "A manifest can be pretty-printed" note, which this
  * mirrors: a newline right after `{`, right after each `,`, and right
  * before `}`). This necessarily rewrites the *entire* file, not just the
  * dependency being added -- there is no Hash-literal-aware text editor
  * here, so any hand-added comment or unusual formatting in an existing
- * diamond.cut does not survive a `facet add`. Each individual dependency
+ * Cutfile does not survive a `facet add`. Each individual dependency
  * spec (the `{"git": ..., "tag": ...}` part) stays on one line -- short
  * enough that breaking it up further would hurt readability rather than
- * help it. write_dev_manifest writes diamond.dev.cut the same way. */
+ * help it. write_dev_manifest writes Cutfile.dev the same way. */
 static void write_dependencies(FILE *file, const FacetManifest *manifest) {
     fputs("  \"dependencies\": {\n", file);
     for (size_t index = 0; index < manifest->dependency_count; index++) {
@@ -826,9 +861,9 @@ static int cmd_init(int argc, char **argv) {
         fputs("usage: facet init [name]\n", stderr);
         return 64;
     }
-    if (file_exists("diamond.cut")) {
-        fprintf(stderr,
-                "facet: 'diamond.cut' already exists in the current directory\n");
+    if (file_exists(project_manifest_path())) {
+        fprintf(stderr, "facet: '%s' already exists in the current directory\n",
+                project_manifest_path());
         return 65;
     }
     FacetManifest manifest = {0};
@@ -849,11 +884,11 @@ static int cmd_init(int argc, char **argv) {
         return 64;
     }
     char error[512];
-    if (!write_manifest("diamond.cut", &manifest, error, sizeof error)) {
+    if (!write_manifest("Cutfile", &manifest, error, sizeof error)) {
         fprintf(stderr, "facet: %s\n", error);
         return 70;
     }
-    printf("facet: wrote diamond.cut (name: %s)\n", manifest.name);
+    printf("facet: wrote Cutfile (name: %s)\n", manifest.name);
     return 0;
 }
 
@@ -909,34 +944,35 @@ static int cmd_add(int argc, char **argv) {
                 "facet: specify exactly one of --tag, --branch, --commit, --version\n");
         return 64;
     }
-    if (!file_exists("diamond.cut")) {
+    if (!file_exists(project_manifest_path())) {
         fprintf(stderr,
-                "facet: no diamond.cut found in the current directory -- "
+                "facet: no Cutfile found in the current directory -- "
                 "run 'facet init' first\n");
         return 66;
     }
     char error[512];
     FacetManifest manifest;
-    if (!parse_manifest("diamond.cut", &manifest, error, sizeof error)) {
+    if (!project_files_unambiguous(error, sizeof error) ||
+        !parse_manifest(project_manifest_path(), &manifest, error, sizeof error)) {
         fprintf(stderr, "facet: %s\n", error);
         return 70;
     }
-    /* --dev adds to diamond.dev.cut (created on first use); a name may be in
+    /* --dev adds to Cutfile.dev (created on first use); a name may be in
      * only one of the two files. */
     FacetManifest dev_manifest = {0};
-    if (file_exists("diamond.dev.cut") &&
-        !parse_dev_manifest("diamond.dev.cut", &dev_manifest, error, sizeof error)) {
+    if (file_exists(project_dev_manifest_path()) &&
+        !parse_dev_manifest(project_dev_manifest_path(), &dev_manifest, error, sizeof error)) {
         fprintf(stderr, "facet: %s\n", error);
         return 70;
     }
     FacetManifest *target = dev ? &dev_manifest : &manifest;
-    const char *target_path = dev ? "diamond.dev.cut" : "diamond.cut";
+    const char *target_path = dev ? project_dev_manifest_path() : project_manifest_path();
     if (name[0] == '\0' || strlen(name) >= FACET_MAX_NAME || !is_safe_field(name)) {
         fprintf(stderr, "facet: '%s' is not a valid dependency name\n", name);
         return 64;
     }
     const FacetManifest *const existing_files[] = {&manifest, &dev_manifest};
-    const char *const existing_paths[] = {"diamond.cut", "diamond.dev.cut"};
+    const char *const existing_paths[] = {project_manifest_path(), project_dev_manifest_path()};
     for (size_t file_index = 0; file_index < 2; file_index++) {
         const FacetManifest *existing = existing_files[file_index];
         for (size_t index = 0; index < existing->dependency_count; index++) {

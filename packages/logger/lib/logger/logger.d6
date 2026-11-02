@@ -1,4 +1,4 @@
-# A small, leveled logger. Install via facet (see diamond.cut), then
+# A small, leveled logger. Install via facet (see Cutfile), then
 # `require_cut "logger"` to bring in the Logger class.
 #
 #   log = Logger.new("gremlin", "info", nil, "json")

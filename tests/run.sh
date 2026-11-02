@@ -1009,16 +1009,16 @@ mkdir -p "$manifest_dir/cuts/greeter/lib"
 printf 'def greet(name)\n  "hi, " + name\nend\n' >"$manifest_dir/cuts/greeter/lib/greeter.d6"
 printf 'require_cut "greeter"\ngreet("world")\n' >"$manifest_dir/main.d6"
 
-printf '{"name": "greeter", "version": "0.1.0"}\n' >"$manifest_dir/cuts/greeter/diamond.cut"
+printf '{"name": "greeter", "version": "0.1.0"}\n' >"$manifest_dir/cuts/greeter/Cutfile"
 actual="$(cd "$manifest_dir" && "$diamond_abs" main.d6)"
 [[ "$actual" == "hi, world" ]]
-rm -f "$manifest_dir/cuts/greeter/diamond.cut"
+rm -f "$manifest_dir/cuts/greeter/Cutfile"
 
 actual="$(cd "$manifest_dir" && "$diamond_abs" main.d6)"
 [[ "$actual" == "hi, world" ]]
 
 manifest_error="$(mktemp)"
-printf '{"name": "wrong_name"}\n' >"$manifest_dir/cuts/greeter/diamond.cut"
+printf '{"name": "wrong_name"}\n' >"$manifest_dir/cuts/greeter/Cutfile"
 if (cd "$manifest_dir" && "$diamond_abs" main.d6) >/dev/null 2>"$manifest_error"; then
     echo "mismatched manifest name unexpectedly succeeded" >&2
     rm -rf "$manifest_dir" "$manifest_error"
@@ -1026,7 +1026,7 @@ if (cd "$manifest_dir" && "$diamond_abs" main.d6) >/dev/null 2>"$manifest_error"
 fi
 grep -q "declares name 'wrong_name', expected 'greeter'" "$manifest_error"
 
-printf '42\n' >"$manifest_dir/cuts/greeter/diamond.cut"
+printf '42\n' >"$manifest_dir/cuts/greeter/Cutfile"
 if (cd "$manifest_dir" && "$diamond_abs" main.d6) >/dev/null 2>"$manifest_error"; then
     echo "non-Hash manifest unexpectedly succeeded" >&2
     rm -rf "$manifest_dir" "$manifest_error"
@@ -1034,7 +1034,7 @@ if (cd "$manifest_dir" && "$diamond_abs" main.d6) >/dev/null 2>"$manifest_error"
 fi
 grep -q "expected Hash literal" "$manifest_error"
 
-printf '{"version": "0.1.0"}\n' >"$manifest_dir/cuts/greeter/diamond.cut"
+printf '{"version": "0.1.0"}\n' >"$manifest_dir/cuts/greeter/Cutfile"
 if (cd "$manifest_dir" && "$diamond_abs" main.d6) >/dev/null 2>"$manifest_error"; then
     echo "manifest missing name key unexpectedly succeeded" >&2
     rm -rf "$manifest_dir" "$manifest_error"
@@ -1042,7 +1042,7 @@ if (cd "$manifest_dir" && "$diamond_abs" main.d6) >/dev/null 2>"$manifest_error"
 fi
 grep -q "must have a String 'name' key" "$manifest_error"
 
-printf '{"name": "greeter", "version": 1}\n' >"$manifest_dir/cuts/greeter/diamond.cut"
+printf '{"name": "greeter", "version": 1}\n' >"$manifest_dir/cuts/greeter/Cutfile"
 if (cd "$manifest_dir" && "$diamond_abs" main.d6) >/dev/null 2>"$manifest_error"; then
     echo "non-String version unexpectedly succeeded" >&2
     rm -rf "$manifest_dir" "$manifest_error"
@@ -1050,7 +1050,7 @@ if (cd "$manifest_dir" && "$diamond_abs" main.d6) >/dev/null 2>"$manifest_error"
 fi
 grep -q "key 'version' must be a String" "$manifest_error"
 
-printf 'this is not valid Diamond syntax )))\n' >"$manifest_dir/cuts/greeter/diamond.cut"
+printf 'this is not valid Diamond syntax )))\n' >"$manifest_dir/cuts/greeter/Cutfile"
 if (cd "$manifest_dir" && "$diamond_abs" main.d6) >/dev/null 2>"$manifest_error"; then
     echo "manifest with a compile error unexpectedly succeeded" >&2
     rm -rf "$manifest_dir" "$manifest_error"
@@ -1058,7 +1058,7 @@ if (cd "$manifest_dir" && "$diamond_abs" main.d6) >/dev/null 2>"$manifest_error"
 fi
 grep -q "must be data only" "$manifest_error"
 
-printf 'raise "manifest boom"\n' >"$manifest_dir/cuts/greeter/diamond.cut"
+printf 'raise "manifest boom"\n' >"$manifest_dir/cuts/greeter/Cutfile"
 if (cd "$manifest_dir" && "$diamond_abs" main.d6) >/dev/null 2>"$manifest_error"; then
     echo "manifest that raises unexpectedly succeeded" >&2
     rm -rf "$manifest_dir" "$manifest_error"
@@ -1068,7 +1068,7 @@ grep -q "must be data only" "$manifest_error"
 rm -f "$manifest_error"
 
 manifest_error="$(mktemp)"
-printf '{"name": "#{raise(\\"executed interpolation\\")}"}\n' >"$manifest_dir/cuts/greeter/diamond.cut"
+printf '{"name": "#{raise(\\"executed interpolation\\")}"}\n' >"$manifest_dir/cuts/greeter/Cutfile"
 if (cd "$manifest_dir" && "$diamond_abs" main.d6) >/dev/null 2>"$manifest_error"; then
     echo "interpolated manifest unexpectedly succeeded" >&2
     rm -rf "$manifest_dir" "$manifest_error"
@@ -1077,9 +1077,25 @@ fi
 grep -q "String interpolation is not allowed" "$manifest_error"
 rm -f "$manifest_error"
 
-printf '{"name": "greeter", "version": "0.1.0"}\n' >"$manifest_dir/cuts/greeter/diamond.cut"
+printf '{"name": "greeter", "version": "0.1.0"}\n' >"$manifest_dir/cuts/greeter/Cutfile"
 actual="$(cd "$manifest_dir" && DIAMOND_STRESS_GC=1 "$diamond_abs" main.d6)"
 [[ "$actual" == "hi, world" ]]
+
+# The former manifest name is still validated, and having both is an error.
+mv "$manifest_dir/cuts/greeter/Cutfile" "$manifest_dir/cuts/greeter/diamond.cut"
+[[ "$(cd "$manifest_dir" && "$diamond_abs" main.d6)" == "hi, world" ]]
+printf '{"name": "wrong_name"}\n' >"$manifest_dir/cuts/greeter/diamond.cut"
+if (cd "$manifest_dir" && "$diamond_abs" main.d6) >/dev/null 2>&1; then
+    echo "wrong name in diamond.cut unexpectedly accepted" >&2
+    exit 1
+fi
+printf '{"name": "greeter"}\n' | tee "$manifest_dir/cuts/greeter/diamond.cut" >"$manifest_dir/cuts/greeter/Cutfile"
+if (cd "$manifest_dir" && "$diamond_abs" main.d6) >/dev/null 2>"$manifest_error"; then
+    echo "a cut with both manifest names unexpectedly loaded" >&2
+    exit 1
+fi
+grep -q "has both Cutfile and diamond.cut" "$manifest_error"
+rm -f "$manifest_error"
 rm -rf "$manifest_dir"
 
 if "$diamond" -e $'def invalid[T, T](value: T) = value' >/dev/null 2>&1; then

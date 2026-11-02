@@ -73,12 +73,12 @@ function render(cut) {
   const install = document.querySelector('#install');
   const registry = base.href.replace(/\/$/, '');
   if (latest.yanked) {
-    install.append(node('p', 'Every release is yanked; existing facet.lock files can still install them.', 'empty'));
+    install.append(node('p', 'Every release is yanked; existing Cutfile.lock files can still install them.', 'empty'));
   } else {
     const command = `facet add ${cut.name} --registry ${registry} --version '^${cut.latest}'`;
     const box = node('div', '', 'command');
     const bar = node('div', '', 'command-bar');
-    bar.append(node('span', 'Add to diamond.cut'), copyButton(() => command));
+    bar.append(node('span', 'Add to Cutfile'), copyButton(() => command));
     box.append(bar, node('pre', `facet add ${cut.name} \\\n  --registry ${registry} \\\n  --version '^${cut.latest}'`));
     install.append(box);
   }

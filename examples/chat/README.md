@@ -6,8 +6,8 @@ A realtime chat room in the browser: WebSockets on
 thread that talks to the server over `Channel`s and is restarted by a
 `Supervisor` when it crashes.
 
-Its cuts come from the public registry, not this repository: `diamond.cut`
-names them and `facet.lock` pins the exact archives.
+Its cuts come from the public registry, not this repository: `Cutfile`
+names them and `Cutfile.lock` pins the exact archives.
 
 ## Run it
 

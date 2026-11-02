@@ -47,7 +47,7 @@ def shipped_app_files(root)
 end
 
 # Every cut the registry loads: its require_cut roots plus their dependencies, read from each
-# packages/<name>/diamond.cut.
+# packages/<name>/Cutfile.
 def cut_closure(root, roots)
   seen = []
   queue = roots.dup()
@@ -55,7 +55,7 @@ def cut_closure(root, roots)
     name = queue.pop()
     next if seen.include?(name)
     seen.push(name)
-    manifest = root + "/packages/" + name + "/diamond.cut"
+    manifest = root + "/packages/" + name + "/Cutfile"
     if File.exist?(manifest)
       dependencies = JSON.parse(File.read(manifest))["dependencies"]
       if dependencies != nil

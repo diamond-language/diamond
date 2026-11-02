@@ -14,7 +14,7 @@ diamond build main.d6 -o {{name}}   # a standalone executable
   status that returns.
 - `lib/{{name}}.d6` holds the logic.
 - `test/{{name}}_test.d6` tests it with minitest.
-  `diamond.dev.cut` lists it because only the tests need it.
+  `Cutfile.dev` lists it because only the tests need it.
 
 Add a dependency with `facet add <cut>`, fetch it with `facet install`, and load it with
 `require_cut "<cut>"`.

@@ -1,7 +1,7 @@
 /* `facet new <kind> <path>`: creates a runnable, tested project skeleton.
  * The templates live in tools/new_templates/ and are #embed'ed here, so
  * an installed facet needs no source checkout. Every project's tests use
- * the minitest cut, declared in diamond.dev.cut so that it never becomes
+ * the minitest cut, declared in Cutfile.dev so that it never becomes
  * a runtime dependency of a published library. */
 #define _XOPEN_SOURCE 700
 #ifdef __APPLE__
@@ -12,7 +12,7 @@
 #include <time.h>
 
 static constexpr unsigned char DEV_CUT[] = {
-#embed "new_templates/common/diamond.dev.cut" suffix(,)
+#embed "new_templates/common/Cutfile.dev" suffix(,)
     0
 };
 static constexpr unsigned char TEST_SH[] = {
@@ -36,7 +36,7 @@ static constexpr unsigned char CLI_TEST[] = {
     0
 };
 static constexpr unsigned char CLI_CUT[] = {
-#embed "new_templates/cli/diamond.cut" suffix(,)
+#embed "new_templates/cli/Cutfile" suffix(,)
     0
 };
 static constexpr unsigned char CLI_README[] = {
@@ -56,7 +56,7 @@ static constexpr unsigned char WEB_TEST[] = {
     0
 };
 static constexpr unsigned char WEB_CUT[] = {
-#embed "new_templates/web/diamond.cut" suffix(,)
+#embed "new_templates/web/Cutfile" suffix(,)
     0
 };
 static constexpr unsigned char WEB_README[] = {
@@ -76,7 +76,7 @@ static constexpr unsigned char TCP_TEST[] = {
     0
 };
 static constexpr unsigned char TCP_CUT[] = {
-#embed "new_templates/tcp/diamond.cut" suffix(,)
+#embed "new_templates/tcp/Cutfile" suffix(,)
     0
 };
 static constexpr unsigned char TCP_README[] = {
@@ -96,7 +96,7 @@ static constexpr unsigned char UDP_TEST[] = {
     0
 };
 static constexpr unsigned char UDP_CUT[] = {
-#embed "new_templates/udp/diamond.cut" suffix(,)
+#embed "new_templates/udp/Cutfile" suffix(,)
     0
 };
 static constexpr unsigned char UDP_README[] = {
@@ -112,7 +112,7 @@ static constexpr unsigned char LIB_TEST[] = {
     0
 };
 static constexpr unsigned char LIB_CUT[] = {
-#embed "new_templates/lib/diamond.cut" suffix(,)
+#embed "new_templates/lib/Cutfile" suffix(,)
     0
 };
 static constexpr unsigned char LIB_README[] = {
@@ -139,34 +139,34 @@ typedef struct NewFile {
 
 #define COMMON_FILES                                                  \
     {"test.sh", TEST_SH, true, true},                                 \
-    {"diamond.dev.cut", DEV_CUT, true, false}
+    {"Cutfile.dev", DEV_CUT, true, false}
 
 static const NewFile CLI_FILES[] = {
-    {"diamond.cut", CLI_CUT, false, false}, {"README.md", CLI_README, false, false},
+    {"Cutfile", CLI_CUT, false, false}, {"README.md", CLI_README, false, false},
     {".gitignore", APP_GITIGNORE, false, false}, {"main.d6", CLI_MAIN, false, false},
     {"lib/{{name}}.d6", CLI_LIB, false, false},
     {"test/{{name}}_test.d6", CLI_TEST, false, false}, COMMON_FILES,
 };
 static const NewFile WEB_FILES[] = {
-    {"diamond.cut", WEB_CUT, false, false}, {"README.md", WEB_README, false, false},
+    {"Cutfile", WEB_CUT, false, false}, {"README.md", WEB_README, false, false},
     {".gitignore", APP_GITIGNORE, false, false}, {"main.d6", WEB_MAIN, false, false},
     {"lib/{{name}}.d6", WEB_LIB, false, false},
     {"test/{{name}}_test.d6", WEB_TEST, false, false}, COMMON_FILES,
 };
 static const NewFile TCP_FILES[] = {
-    {"diamond.cut", TCP_CUT, false, false}, {"README.md", TCP_README, false, false},
+    {"Cutfile", TCP_CUT, false, false}, {"README.md", TCP_README, false, false},
     {".gitignore", APP_GITIGNORE, false, false}, {"main.d6", TCP_MAIN, false, false},
     {"lib/{{name}}.d6", TCP_LIB, false, false},
     {"test/{{name}}_test.d6", TCP_TEST, false, false}, COMMON_FILES,
 };
 static const NewFile UDP_FILES[] = {
-    {"diamond.cut", UDP_CUT, false, false}, {"README.md", UDP_README, false, false},
+    {"Cutfile", UDP_CUT, false, false}, {"README.md", UDP_README, false, false},
     {".gitignore", APP_GITIGNORE, false, false}, {"main.d6", UDP_MAIN, false, false},
     {"lib/{{name}}.d6", UDP_LIB, false, false},
     {"test/{{name}}_test.d6", UDP_TEST, false, false}, COMMON_FILES,
 };
 static const NewFile LIB_FILES[] = {
-    {"diamond.cut", LIB_CUT, false, false}, {"README.md", LIB_README, false, false},
+    {"Cutfile", LIB_CUT, false, false}, {"README.md", LIB_README, false, false},
     {"LICENSE", LIB_LICENSE, false, false}, {".gitignore", LIB_GITIGNORE, false, false},
     {"lib/{{name}}.d6", LIB_LIB, false, false},
     {"test/{{name}}_test.d6", LIB_TEST, false, false}, COMMON_FILES,
@@ -423,7 +423,7 @@ int cmd_new(int argc, char **argv) {
 
     printf("facet: created %s %s in %s\n", argv[2], values.name, root);
     if (placeholder_maintainer)
-        printf("facet: set the maintainer in diamond.cut and LICENSE "
+        printf("facet: set the maintainer in Cutfile and LICENSE "
                "(git config user.name/user.email were not usable)\n");
     printf("\n  cd %s\n", root);
     printf("  facet install\n");

@@ -17,4 +17,4 @@ this machine; use `HOST=0.0.0.0` to accept outside datagrams.
 - `main.d6` binds the socket and calls `{{Name}}.serve`.
 - `lib/{{name}}.d6` holds the protocol (`{{Name}}.respond`) and the receive loop.
 - `test/{{name}}_test.d6` tests the protocol with minitest.
-  `diamond.dev.cut` lists it because only the tests need it.
+  `Cutfile.dev` lists it because only the tests need it.

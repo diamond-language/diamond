@@ -64,7 +64,7 @@ nearest-rank method.
   executable; `smoke_test.sh` checks that it prints exactly what the
   interpreter prints.
 
-It needs no cuts, so there is no `diamond.cut`.
+It needs no cuts, so there is no `Cutfile`.
 
 ## Test
 

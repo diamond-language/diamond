@@ -1,5 +1,7 @@
 #include "manifest_literal.h"
 
+#include <sys/stat.h>
+
 #include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -314,4 +316,26 @@ bool diamond_manifest_get_bool(const DiamondManifestValue *hash, const char *key
     if (value == NULL || value->kind != DIAMOND_MANIFEST_BOOLEAN) return false;
     *out = strcmp(value->string, "true") == 0;
     return true;
+}
+
+static bool format_manifest_path(char *path, size_t path_size, const char *directory,
+                                 const char *name) {
+    const int written = snprintf(path, path_size, "%s/%s", directory, name);
+    return written > 0 && (size_t)written < path_size;
+}
+
+DiamondCutManifestLookup diamond_cut_manifest_find(const char *directory, char *path,
+                                                   size_t path_size) {
+    struct stat info;
+    if (!format_manifest_path(path, path_size, directory, DIAMOND_LEGACY_CUT_MANIFEST))
+        return DIAMOND_CUT_MANIFEST_PATH_TOO_LONG;
+    const bool has_legacy = stat(path, &info) == 0;
+    if (!format_manifest_path(path, path_size, directory, DIAMOND_CUT_MANIFEST))
+        return DIAMOND_CUT_MANIFEST_PATH_TOO_LONG;
+    const bool has_current = stat(path, &info) == 0;
+    if (has_current && has_legacy) return DIAMOND_CUT_MANIFEST_AMBIGUOUS;
+    if (has_current) return DIAMOND_CUT_MANIFEST_FOUND;
+    if (!has_legacy) return DIAMOND_CUT_MANIFEST_MISSING;
+    (void)format_manifest_path(path, path_size, directory, DIAMOND_LEGACY_CUT_MANIFEST);
+    return DIAMOND_CUT_MANIFEST_FOUND;
 }

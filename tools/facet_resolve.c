@@ -55,7 +55,7 @@ typedef struct FacetConstraintHistory {
     size_t count;
 } FacetConstraintHistory;
 
-/* A cloned dependency's own diamond.cut, still needing its own
+/* A cloned dependency's own Cutfile, still needing its own
  * dependencies walked -- see resolve_full_graph's own comment. */
 typedef struct FacetWorkItem {
     char path[FACET_MAX_PATH];
@@ -77,7 +77,7 @@ static bool resolve_manifest_dependencies(const FacetManifest *manifest,
 /* --- dependency resolution ---
  *
  * An exact-ref dependency (tag/branch/commit) resolves exactly as
- * before: clone it immediately, and if it has its own diamond.cut,
+ * before: clone it immediately, and if it has its own Cutfile,
  * queue that manifest's own dependencies for the same treatment. A
  * name seen twice with the same (git, ref) is idempotent (also what
  * makes a genuine cycle terminate safely, with no separate cycle-
@@ -185,6 +185,26 @@ static bool work_queue_push(FacetWorkQueue *queue, const char *path,
     return true;
 }
 
+/* Queues a fetched dependency's own manifest, if it has one. */
+static bool queue_nested_manifest(FacetWorkQueue *queue, const char *directory,
+        const char *cut_name, char *error, size_t error_size) {
+    char path[FACET_MAX_PATH];
+    switch (diamond_cut_manifest_find(directory, path, sizeof path)) {
+    case DIAMOND_CUT_MANIFEST_MISSING:
+        return true;
+    case DIAMOND_CUT_MANIFEST_FOUND:
+        return work_queue_push(queue, path, cut_name, error, error_size);
+    case DIAMOND_CUT_MANIFEST_AMBIGUOUS:
+        (void)snprintf(error, error_size, "cut '%s' has both " DIAMOND_CUT_MANIFEST " and "
+                       DIAMOND_LEGACY_CUT_MANIFEST, cut_name);
+        return false;
+    case DIAMOND_CUT_MANIFEST_PATH_TOO_LONG:
+        break;
+    }
+    (void)snprintf(error, error_size, "path too long while resolving '%s'", cut_name);
+    return false;
+}
+
 static bool handle_exact_dependency(const FacetDependency *dependency,
         const char *required_by, FacetResolution *resolution, FacetPendingTable *pending,
         FacetWorkQueue *queue, const char *scratch_root, char *error, size_t error_size) {
@@ -256,18 +276,7 @@ static bool handle_exact_dependency(const FacetDependency *dependency,
     (void)snprintf(resolved->required_by, sizeof resolved->required_by, "%s",
                    required_by);
 
-    char nested_manifest_path[FACET_MAX_PATH];
-    written = snprintf(nested_manifest_path, sizeof nested_manifest_path,
-                       "%s/diamond.cut", scratch_path);
-    if (written < 0 || (size_t)written >= sizeof nested_manifest_path) {
-        (void)snprintf(error, error_size, "path too long while resolving '%s'",
-                       dependency->name);
-        return false;
-    }
-    if (file_exists(nested_manifest_path)) {
-        return work_queue_push(queue, nested_manifest_path, dependency->name, error, error_size);
-    }
-    return true;
+    return queue_nested_manifest(queue, scratch_path, dependency->name, error, error_size);
 }
 
 /* `history`/`needs_restart` are the real-backtracking mechanism
@@ -650,7 +659,7 @@ static bool registry_release(const FacetPendingSemver *entry, const char *versio
  * its repository's own semver tags, picks the highest one satisfying
  * the (already fully intersected, as far as the graph explored so far
  * shows) accumulated constraint, clones it, and queues its own
- * diamond.cut if it has one. MAX_TAGS is a soft cap (a repository with
+ * Cutfile if it has one. MAX_TAGS is a soft cap (a repository with
  * more published semver tags than that has its oldest-discovered ones
  * silently dropped from consideration) -- generous enough that this is
  * not a realistic concern for any real package. */
@@ -727,17 +736,7 @@ static bool resolve_one_pending(FacetPendingTable *pending, FacetResolution *res
     (void)snprintf(resolved->version, sizeof resolved->version, "%s", best_tag);
     (void)snprintf(resolved->required_by, sizeof resolved->required_by, "%s", entry.first_requester);
 
-    char nested_manifest_path[FACET_MAX_PATH];
-    written = snprintf(nested_manifest_path, sizeof nested_manifest_path,
-                       "%s/diamond.cut", scratch_path);
-    if (written < 0 || (size_t)written >= sizeof nested_manifest_path) {
-        (void)snprintf(error, error_size, "path too long while resolving '%s'", entry.name);
-        return false;
-    }
-    if (file_exists(nested_manifest_path)) {
-        return work_queue_push(queue, nested_manifest_path, entry.name, error, error_size);
-    }
-    return true;
+    return queue_nested_manifest(queue, scratch_path, entry.name, error, error_size);
 }
 
 /* One graph-walk attempt -- see resolve_full_graph's own comment below
@@ -825,7 +824,7 @@ bool resolve_full_graph(const FacetManifest *manifest, FacetResolution *resoluti
 }
 
 /* --- install: move each resolved package's checkout into
- * cuts/<name>, stripping .git first - facet.lock, not a
+ * cuts/<name>, stripping .git first - Cutfile.lock, not a
  * live repo sitting inside cuts/, is the source of truth
  * for "what commit." The scratch root lives inside cuts/
  * itself so this rename() is always same-filesystem. --- */
@@ -1023,8 +1022,8 @@ static bool prepare_registry_package(const FacetResolved *resolved,
     (void)remove(archive);
     char manifest_path[FACET_MAX_PATH];
     FacetManifest manifest;
-    if (snprintf(manifest_path, sizeof manifest_path, "%s/diamond.cut", destination) >=
-            (int)sizeof manifest_path ||
+    if (diamond_cut_manifest_find(destination, manifest_path, sizeof manifest_path) !=
+            DIAMOND_CUT_MANIFEST_FOUND ||
         !parse_cut_identity(manifest_path, &manifest, error, error_size) ||
         strcmp(manifest.name, resolved->name) != 0 || !manifest.has_version ||
         strcmp(manifest.version, resolved->version) != 0) {
@@ -1046,7 +1045,7 @@ static bool install_resolution(const FacetResolution *resolution,
         (void)snprintf(scratch_path, sizeof scratch_path, "%s/%s", scratch_root,
                        resolved->name);
         if (!file_exists(scratch_path)) {
-            /* facet.lock-driven install: resolution didn't clone anything
+            /* Cutfile.lock-driven install: resolution didn't clone anything
              * (it skipped the walk entirely), so clone the pinned commit now. */
             if (resolved->source != FACET_SOURCE_GIT) {
                 (void)snprintf(error, error_size,
@@ -1145,7 +1144,7 @@ static bool install_resolution(const FacetResolution *resolution,
     return true;
 }
 
-/* Whether facet.lock still answers every direct dependency in the project manifest:
+/* Whether Cutfile.lock still answers every direct dependency in the project manifest:
  * present, from the same source, and within its version constraint or at its
  * pinned commit. A changed tag or branch is not visible in the lock, which records
  * only the commit it resolved to; `facet update` picks those up. */
@@ -1178,8 +1177,8 @@ static bool lock_covers_manifest(const FacetResolution *lock, const FacetManifes
 
 int run_install_or_update(bool force_resolve) {
     char error[512] = {0};
-    if (!file_exists("diamond.cut")) {
-        fprintf(stderr, "facet: no diamond.cut found in the current directory\n");
+    if (!file_exists(project_manifest_path())) {
+        fprintf(stderr, "facet: no Cutfile found in the current directory\n");
         return 66;
     }
     const char *scratch_root = "cuts/.facet-tmp";
@@ -1191,12 +1190,15 @@ int run_install_or_update(bool force_resolve) {
     FacetResolution resolution = {0};
     FacetResolution previous = {0};
     FacetManifest manifest;
-    const bool has_lock = file_exists("facet.lock");
-    bool ok = (!has_lock || parse_lockfile("facet.lock", &previous, error, sizeof error)) &&
+    const char *lock_path = project_lock_path();
+    const bool has_lock = file_exists(lock_path);
+    bool ok = project_files_unambiguous(error, sizeof error) &&
+        (!has_lock || parse_lockfile(lock_path, &previous, error, sizeof error)) &&
         parse_project_manifest(&manifest, error, sizeof error);
     bool resolve = force_resolve || !has_lock;
     if (ok && !resolve && !lock_covers_manifest(&previous, &manifest)) {
-        printf("facet: diamond.cut changed since facet.lock was written; resolving\n");
+        printf("facet: %s changed since %s was written; resolving\n",
+               project_manifest_path(), lock_path);
         resolve = true;
     }
     if (ok && !resolve) {
@@ -1206,8 +1208,10 @@ int run_install_or_update(bool force_resolve) {
          * not upgrade the others. */
         registry_update_preference = has_lock ? &previous : NULL;
         ok = resolve_full_graph(&manifest, &resolution, scratch_root, error, sizeof error) &&
-             write_lockfile("facet.lock", &resolution, error, sizeof error);
+             write_lockfile(FACET_LOCK, &resolution, error, sizeof error);
         registry_update_preference = NULL;
+        /* The new lock replaces one under the former name. */
+        if (ok && strcmp(lock_path, FACET_LOCK) != 0) (void)remove(lock_path);
     }
     for (size_t index = 0; ok && index < resolution.count; index++) {
         if (resolution.packages[index].source == FACET_SOURCE_REGISTRY)

@@ -128,7 +128,7 @@ function render() {
     const command = `facet add ${release.name} --registry ${base.href.replace(/\/$/, '')} --version '${release.version}'`;
     const box = node('div', '', 'command');
     const display = `facet add ${release.name} \\\n  --registry ${base.href.replace(/\/$/, '')} \\\n  --version '${release.version}'`;
-    const text = release.yanked ? 'Available through an existing facet.lock only.' : display;
+    const text = release.yanked ? 'Available through an existing Cutfile.lock only.' : display;
     if (!release.yanked) {
       const bar = node('div', '', 'command-bar');
       bar.append(node('span', 'Install'), copyButton(() => command));
