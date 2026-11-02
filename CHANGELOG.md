@@ -13,6 +13,8 @@ authoritative fine-grained record.
   which left only a linker error to go on.
 - `write` followed by a large `read(n)` on a socket no longer hangs. The write sat
   unsent in the buffer while the read waited for the reply.
+- Writing to a socket no longer fails with "flush failed: Illegal seek" when unread bytes are waiting
+  in its read buffer. Blocking sockets now use one more file descriptor each.
 
 ## 0.22.0 — 2026-11-01
 

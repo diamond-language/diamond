@@ -3573,7 +3573,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     close(connected_fd);
                     VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
                 }
-                DiamondFileHandle *handle=allocate_file_handle(vm,stream);
+                DiamondFileHandle *handle=allocate_connected_file_handle(vm,stream);
                 if(handle==nullptr) {
                     fclose(stream);
                     VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);

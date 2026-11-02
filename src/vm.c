@@ -395,6 +395,8 @@ static void free_object_list(const DiamondVm *vm,DiamondObject *object) {
             diamond_fiber_free(((DiamondFiberHandle *)object)->fiber);
         } else if(object->kind==DIAMOND_OBJECT_FILE) {
             FILE *stream=((DiamondFileHandle *)object)->stream;
+            FILE *write_stream=((DiamondFileHandle *)object)->write_stream;
+            if(write_stream!=nullptr)fclose(write_stream);
             if(stream!=nullptr)fclose(stream);
         } else if(object->kind==DIAMOND_OBJECT_LISTENER) {
             DiamondListenerHandle *listener=(DiamondListenerHandle *)object;
@@ -1123,6 +1125,24 @@ void free_supervisor_reference(DiamondSupervisor *supervisor) {
     }
     pthread_mutex_destroy(&supervisor->lock);
     free(supervisor);
+}
+
+/* A connected socket's handle: stream reads, and a duplicate descriptor writes. */
+DiamondFileHandle *allocate_connected_file_handle(DiamondVm *vm,FILE *stream) {
+    const int writer_fd=fcntl(fileno(stream),F_DUPFD_CLOEXEC,0);
+    if(writer_fd<0)return nullptr;
+    FILE *write_stream=fdopen(writer_fd,"w");
+    if(write_stream==nullptr) {
+        close(writer_fd);
+        return nullptr;
+    }
+    DiamondFileHandle *handle=allocate_file_handle(vm,stream);
+    if(handle==nullptr) {
+        fclose(write_stream);
+        return nullptr;
+    }
+    handle->write_stream=write_stream;
+    return handle;
 }
 
 DiamondFileHandle *allocate_file_handle(DiamondVm *vm,FILE *stream) {

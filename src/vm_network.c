@@ -1593,7 +1593,7 @@ DiamondVmStatus listener_invoke_helper(DiamondVm *vm,
         close(client_fd);
         return DIAMOND_VM_OUT_OF_MEMORY;
     }
-    DiamondFileHandle *client_handle=allocate_file_handle(vm,client_stream);
+    DiamondFileHandle *client_handle=allocate_connected_file_handle(vm,client_stream);
     if(client_handle==nullptr) {
         fclose(client_stream);
         return DIAMOND_VM_OUT_OF_MEMORY;

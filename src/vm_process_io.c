@@ -1641,6 +1641,10 @@ DiamondVmStatus file_invoke_helper(DiamondVm *vm,
     }
     if(close_method) {
         if(argc!=0)return DIAMOND_VM_ARITY_ERROR;
+        if(target_file->write_stream!=nullptr) {
+            fclose(target_file->write_stream);
+            target_file->write_stream=nullptr;
+        }
         if(target_file->stream!=nullptr) {
             fclose(target_file->stream);
             target_file->stream=nullptr;
@@ -1658,9 +1662,11 @@ DiamondVmStatus file_invoke_helper(DiamondVm *vm,
     /* Half-close of a connected socket (TCPSocket.connect, an accepted
      * connection): everything written so far is flushed, then the peer sees
      * EOF while this side can still read the reply. */
+    FILE *const writer=target_file->write_stream!=nullptr?
+        target_file->write_stream:target_file->stream;
     if(shutdown_write_method) {
         if(argc!=0)return DIAMOND_VM_ARITY_ERROR;
-        if(fflush(target_file->stream)!=0) {
+        if(fflush(writer)!=0) {
             snprintf(vm->error,sizeof vm->error,"flush failed: %s",strerror(errno));
             return DIAMOND_VM_IO_ERROR;
         }
@@ -1676,7 +1682,7 @@ DiamondVmStatus file_invoke_helper(DiamondVm *vm,
      * record. (It doesn't fsync; see File.sync for that.) */
     if(flush_method) {
         if(argc!=0)return DIAMOND_VM_ARITY_ERROR;
-        if(fflush(target_file->stream)!=0) {
+        if(fflush(writer)!=0) {
             snprintf(vm->error,sizeof vm->error,"flush failed: %s",
                 strerror(errno));
             return DIAMOND_VM_IO_ERROR;
@@ -1686,7 +1692,7 @@ DiamondVmStatus file_invoke_helper(DiamondVm *vm,
     if((read_method||gets_method)&&target_file->write_pending) {
         target_file->write_pending=false;
         errno=0;
-        if(fflush(target_file->stream)!=0) {
+        if(fflush(writer)!=0) {
             snprintf(vm->error,sizeof vm->error,"flush failed: %s",strerror(errno));
             return DIAMOND_VM_IO_ERROR;
         }
@@ -1779,9 +1785,9 @@ DiamondVmStatus file_invoke_helper(DiamondVm *vm,
     if(status!=DIAMOND_VM_OK)return status;
     const DiamondString *text=(const DiamondString *)converted.as.object;
     errno=0;
-    const size_t written=fwrite(text->chars,1,text->length,target_file->stream);
+    const size_t written=fwrite(text->chars,1,text->length,writer);
     target_file->write_pending=true;
-    if(written!=text->length||ferror(target_file->stream)) {
+    if(written!=text->length||ferror(writer)) {
         snprintf(vm->error,sizeof vm->error,"write error: %s",strerror(errno));
         return DIAMOND_VM_IO_ERROR;
     }
