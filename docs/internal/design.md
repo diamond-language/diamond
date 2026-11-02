@@ -1,6 +1,6 @@
-# Diamond design
+# d6 design
 
-Diamond is a personal research language. These notes describe the current
+d6 is a personal research language. These notes describe the current
 implementation, followed by decisions that are intentionally still open.
 
 Ruby familiarity is a surface and object-model influence only; behavioral or
@@ -15,7 +15,7 @@ library compatibility with Ruby is explicitly out of scope.
 
 ## Implementation
 
-Diamond is implemented in C23, requiring GCC 15+ or Clang 19+ with `#embed`.
+d6 is implemented in C23, requiring GCC 15+ or Clang 19+ with `#embed`.
 Linux is the primary development target; validated FreeBSD, macOS, musl, and
 arm64 coverage is described in [portability](../portability.md). It uses
 a register bytecode VM with 256 registers per call frame. Bytecode instructions
@@ -78,7 +78,7 @@ both operands first would leave the first allocation unrooted from any GC
 scan between the two calls, letting a collection triggered by the second
 allocation sweep it away while it was still needed.
 
-Nested Diamond calls recurse through the C call stack, one native activation
+Nested d6 calls recurse through the C call stack, one native activation
 per call depth, and a call-depth counter enforces a hard ceiling
 (`DIAMOND_MAX_CALL_DEPTH`) so uncontrolled recursion fails as a rescuable
 `SystemStackError` instead of exhausting the process's real native stack. The
@@ -110,11 +110,11 @@ function, capped at 256.
 
 Each opcode carries the line and column of the source token that produced it.
 The disassembler displays these coordinates, and the VM uses them while
-unwinding failed calls to build Diamond-level stack traces without exposing C
+unwinding failed calls to build d6-level stack traces without exposing C
 implementation frames.
 
 `raise value` emits a dedicated exception opcode. The VM roots the raised
-Diamond value and propagates a distinct exception status through functions,
+d6 value and propagates a distinct exception status through functions,
 methods, and closures, appending the same source-mapped frames used by runtime
 errors until a handler catches the value.
 
@@ -128,7 +128,7 @@ handler.
 Rescue bindings may include up to eight pipe-separated primitive or nominal
 types. During unwinding, a handler matches any member; mismatched handlers are
 discarded and lookup continues outward. Nominal filters accept subclasses;
-unannotated handlers match every raised Diamond value.
+unannotated handlers match every raised d6 value.
 
 Every program includes `Exception`, `StandardError`, `RuntimeError`, `TypeError`,
 `ArgumentError`, `IndexError`, `ZeroDivisionError`, `RangeError`,
@@ -156,13 +156,13 @@ conservatively.
 The C23 executable embeds `lib/core.d6` with `#embed` and prefixes it to each
 file or `-e` program before compilation. An internal line reset keeps user
 diagnostics and stack traces at their original coordinates. Core helpers are
-therefore ordinary Diamond functions using the same bytecode, typing, exception,
+therefore ordinary d6 functions using the same bytecode, typing, exception,
 and GC paths as application code; C only loads and composes the source.
 
 Dynamic invocation recognizes one native collection primitive: zero-argument
 `length()` on arrays, hashes, and strings (string length counts stored bytes).
 Bounds decisions, fallback behavior, and empty predicates are implemented in
-the Diamond prelude using that primitive.
+the d6 prelude using that primitive.
 
 Strings also natively support `index_of(needle)` (first match position as
 an `Int`, or `nil` if not found), `slice(start, length)` (a substring,
@@ -175,18 +175,18 @@ general-purpose.
 
 `JSON.parse` is the one core-library function pulled out of the prelude
 entirely and reimplemented natively (`String#parse_json`, `src/vm.c`) --
-a deliberate exception to "core helpers are ordinary Diamond functions"
+a deliberate exception to "core helpers are ordinary d6 functions"
 above, made only after measuring a real bottleneck (~330ms/MB parsing a
 real training-corpus-scale JSON dataset, dominated by per-character
 interpreter dispatch) rather than pre-emptively. `JSON.stringify` stays
-pure Diamond; no comparable cost was ever measured for it. See `src/
+pure d6; no comparable cost was ever measured for it. See `src/
 vm.c`'s own json_parse_value comment for the parser itself, and
 CHANGELOG.md's "Performance" entry for the measured speedup.
 
 Arrays use a growable separately allocated value buffer whose capacity is part
 of GC accounting. Native `push` grows that buffer and enforces every persistent
 element contract; `pop` returns `nil` when empty. Membership, callback iteration,
-and mapping are Diamond prelude loops built from these primitives.
+and mapping are d6 prelude loops built from these primitives.
 
 Hashes expose insertion-ordered `key_at(index)` and `value_at(index)` primitives;
 invalid positions raise `IndexError`. The prelude builds key/value extraction,
@@ -513,7 +513,7 @@ form remains `#<Class>`. Arrays and hashes use a growable native formatter that
 recurses through nested collections and tracks active object identities to emit
 finite `[...]` or `{...}` markers for cycles.
 
-`Sized` is Diamond's first structural interface. Its contract is a zero-arity
+`Sized` is d6's first structural interface. Its contract is a zero-arity
 `length` method. `String`, `Array`, and `Hash` satisfy it natively; user classes
 satisfy it by defining or inheriting a method with that name and arity. The same
 structural test drives annotation checks, subtype reasoning, union narrowing,
@@ -695,7 +695,7 @@ cache machinery. This keeps instances compact and makes field-name collisions
 explicitly shared state rather than layout corruption.
 
 Interfaces share the same lexical namespace and may be referenced through a
-qualified type name. Namespace constant declarations evaluate ordinary Diamond
+qualified type name. Namespace constant declarations evaluate ordinary d6
 expressions during entry execution and store the resulting value in a VM root
 table. `GET_NAMESPACE_CONSTANT` makes those bindings available from methods and
 other function chunks without capturing the entry frame. Each binding is
@@ -790,7 +790,7 @@ value-taking counterpart: it repoints an *existing* method slot to a
 different already-compiled function, rather than resolving names at compile
 time. `name` is any expression evaluating to a `String`; `callable` is any
 expression evaluating to a `Callable` value, which in practice means a
-nested, named function referenced by its bare name (Diamond has no anonymous
+nested, named function referenced by its bare name (d6 has no anonymous
 closure literal). Because classes are not first-class runtime values,
 `redefine_method` is recognized contextually at the same call site that
 already special-cases `ClassName.new(...)`, and compiles to a dedicated
@@ -891,7 +891,7 @@ instances would be left with a too-small allocation.
 
 **Why `body_source` can't name another class directly.** `class <Name>`
 above declares a brand-new, unrelated class inside the throwaway
-program -- Diamond's cross-program isolation (the same fact that makes
+program -- d6's cross-program isolation (the same fact that makes
 two independently-compiled `ProgramBuilder` programs safe to run
 side-by-side, disambiguated by `DiamondInstance.owner`) means this can
 never collide with a same-named class in the real, currently-running
@@ -1105,7 +1105,7 @@ that function's own class/interface/generic/`Sized` handling for free (not
 merely a narrow "same class" check -- see `value_matches_type`, src/vm.c)
 and compiles to `DIAMOND_OP_IS_TYPE` (dest, source, resolved-type-byte).
 Neither special form constructs, reads, or passes a `DIAMOND_VALUE_CLASS`
-at any point -- there remains no first-class Class value in Diamond a
+at any point -- there remains no first-class Class value in d6 a
 program could use to pass a type as an ordinary runtime argument instead.
 
 For a direct `value == nil` or `value != nil` condition, the compiler splits a
@@ -1124,7 +1124,7 @@ delimiter the existing sequence compiler handles inline or multiline bodies.
 Loop bodies similarly accept a newline or `do`, allowing compact loops without
 altering their condition, redo, next, or value-bearing break targets.
 The `not` keyword shares prefix precedence and the `NOT` bytecode instruction
-with `!`, producing a strict Boolean from Diamond truthiness.
+with `!`, producing a strict Boolean from d6 truthiness.
 `and` and `or` share precedence and short-circuit jump generation with `&&` and
 `||`; like those operators, they return one of their operand values.
 
@@ -1421,7 +1421,7 @@ that path, exercised only by the validation-failure returns.
 raises `SystemExit` -- an ordinary (if unusually-rescued-by-default)
 exception that unwinds the stack and runs every `ensure` block on the
 way out. This version skips all of that: `exit_helper` calls libc
-`exit()` straight from the opcode handler, so no Diamond-level unwind
+`exit()` straight from the opcode handler, so no d6-level unwind
 happens at all. That's a deliberate, smaller scope for a first version,
 not an oversight -- a soft variant would need a new
 rescuable-but-uncatchable-by-default exception class plus real
@@ -1437,7 +1437,7 @@ the only sensible behavior for a single flat `exit()` with no notion of
 "which thread asked" in its own semantics; a scoped per-thread stop was
 never the goal here.
 
-`stdout`/`stderr` are flushed before the real `exit()` call -- Diamond's
+`stdout`/`stderr` are flushed before the real `exit()` call -- d6's
 own `puts`/`print` go through ordinary buffered C stream writes
 (`DIAMOND_OP_PRINT`), and libc's `exit()` only flushes streams it still
 considers open and owns, which is expected to include process-standard
@@ -1453,7 +1453,7 @@ into an ordinary `Array`. A final `&block` parameter may follow it;
 the prologue preserves that closure in its own register rather than collecting
 it into the Array. Call-site *spread* (`foo(*array)`) remains the architecturally
 separate caller-side counterpart described below. Motivated by
-`packages/div` and `delegate`/`compile_method`'s own documented "Diamond
+`packages/div` and `delegate`/`compile_method`'s own documented "d6
 does not currently have variadic/splat call support" scope cuts
 (`docs/roadmap.md`); this closes that gap for parameter *definitions*,
 though `delegate`/`compile_method` themselves don't grow splat-target
@@ -1649,7 +1649,7 @@ accepting any `N` between `required_arity` and `arity`; extended so a
 variadic function's upper bound is simply unbounded -- `N >=
 required_arity` alone. The *other* Callable-checking function in this
 same area, `runtime_member_satisfies`, compares two *declared* type
-annotations against each other (not a live value), and Diamond's type
+annotations against each other (not a live value), and d6's type
 syntax has no way to spell "variadic" in a `Callable[N]` annotation at
 all -- so that comparison needed no change.
 
@@ -1721,7 +1721,7 @@ somewhere reachable).
 
 Instance invocation needs one temporary C argument vector because the
 implicit receiver must precede the spread elements and runtime-compiled
-methods may append bound values. It copies values, not Diamond objects; the
+methods may append bound values. It copies values, not d6 objects; the
 receiver, spread Array, and method descriptor remain the owning GC roots for
 the complete nested call.
 

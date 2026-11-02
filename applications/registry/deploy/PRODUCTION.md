@@ -79,9 +79,9 @@ as `diamond-registry` with `ProtectSystem=strict` and `NoNewPrivileges=yes`.
 The droplet's other sites (the Skindicate app on skindicate.art and
 modartist.app) were checked after activation.
 
-**Always address the host as `root@dilang.tech`** in Diamond tooling, scripts,
+**Always address the host as `root@dilang.tech`** in d6 tooling, scripts,
 and docs. The droplet currently also hosts Skindicate, which is expected to move
-to its own server; Diamond deployments must keep working when it does and must
+to its own server; d6 deployments must keep working when it does and must
 never target a Skindicate hostname.
 
 **Reboot drill, 2026-09-24:** after a verified snapshot, the host was rebooted at

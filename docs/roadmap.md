@@ -1,11 +1,11 @@
-# Diamond roadmap
+# d6 roadmap
 
 This roadmap tracks possible work. Completed work belongs in the
 [changelog](../CHANGELOG.md), current behavior in the topic guides, and
 implementation rationale in design documents. A section here says what is not
 done yet; when something lands, delete it (see "Completion policy").
 
-Diamond is a research language. Priorities can change when measurements expose
+d6 is a research language. Priorities can change when measurements expose
 a more valuable runtime, language, or tooling question.
 
 Broader reliability work waits for usage beyond the current two users; existing verification
@@ -125,7 +125,7 @@ New package work should be driven by a concrete application or interoperability 
   applications expose a missing query, association, migration, or dialect feature.
 - Add another SQL dialect only with a live server for verification.
 - Improve package documentation, examples, and compatibility tests.
-- Avoid framework magic that hides database access or weakens Diamond's type and error
+- Avoid framework magic that hides database access or weakens d6's type and error
   contracts.
 
 ## Runtime research
@@ -185,8 +185,8 @@ demonstrate that current bytecode/source metadata is insufficient.
 
 ### Ergonomics without compatibility chasing
 
-Ruby-inspired syntax should remain familiar, but Diamond is not a Ruby compatibility
-implementation. New syntax and core methods should satisfy a demonstrated Diamond use
+Ruby-inspired syntax should remain familiar, but d6 is not a Ruby compatibility
+implementation. New syntax and core methods should satisfy a demonstrated d6 use
 case and have clear typing, dispatch, and error semantics.
 
 Areas worth considering:
@@ -223,7 +223,7 @@ A first stability pass should cover:
 
 ### Self-hosted frontend
 
-The Diamond-written lexer and compiler are useful differential oracles and can bootstrap
+The d6-written lexer and compiler are useful differential oracles and can bootstrap
 through themselves. The native C compiler remains the production frontend.
 
 Keep the self-hosted implementation at practical parity where it protects the language,
@@ -244,7 +244,7 @@ goal needs it.
 
 ### Fewer languages to build and test
 
-Getting Diamond built, tested and deployed should not need a second scripting language on
+Getting d6 built, tested and deployed should not need a second scripting language on
 the machine, and the build and test dependency set should stay a C compiler, make and a POSIX
 shell.
 

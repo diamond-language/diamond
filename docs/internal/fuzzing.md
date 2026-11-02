@@ -14,7 +14,7 @@ built with the same compiler as everything else.
 ## Why compile-only, never execute
 
 The harness calls `diamond_compile` and stops — it never calls
-`diamond_vm_run` on the result. Diamond has real native bridges (`File`,
+`diamond_vm_run` on the result. d6 has real native bridges (`File`,
 `TCPSocket`/`TCPServer`, `Regexp` — see `docs/io.md`), so actually
 *executing* an arbitrary fuzzer-mutated program isn't safe without
 sandboxing and resource limits this harness doesn't attempt: a mutated
@@ -24,7 +24,7 @@ Compile-only fuzzing already covers the highest-value target — memory
 safety in code that runs on 100% of untrusted input, before any of it is
 ever considered "valid enough to run" — without that risk.
 
-Fuzzing execution *of a compiled Diamond program* (arbitrary program logic,
+Fuzzing execution *of a compiled d6 program* (arbitrary program logic,
 with real I/O bridges reachable) is still a distinct, separable, higher-
 effort project for later. The pieces now exist -- `DIAMOND_MAX_INSTRUCTIONS`/
 `DIAMOND_MAX_WALL_MILLISECONDS` budgets and sandbox mode (docs/sandbox.md), which
@@ -55,7 +55,7 @@ Without constants, strings and functions the harness could not reach any opcode
 that names one -- the verifier rejected them all. This is
 exactly what `ProgramBuilder`-constructed bytecode looks like from
 `run_chunk`'s point of view — `ProgramBuilder#run`'s `#emit_byte`/
-`#patch_byte` API lets Diamond code append raw bytes to a function's code
+`#patch_byte` API lets d6 code append raw bytes to a function's code
 array with no idea what instruction it's building, bypassing every
 guarantee the compiler's own register allocator normally provides. It was
 exactly this gap — a register operand read straight off the bytecode

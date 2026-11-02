@@ -1,7 +1,7 @@
 # Project board authenticated-write benchmark
 
 Exercises every route in the real project-board HTTP stack with a
-Diamond-native threaded client. Each client visits home, logs in once, retains
+d6-native threaded client. Each client visits home, logs in once, retains
 its real session cookie across all iterations, and logs out once at the end.
 Every iteration exercises project index/new/create/show/edit/update, task
 new/create/edit/update/delete, and project delete. The client extracts the
@@ -17,7 +17,7 @@ without maintaining a special benchmark code path. SQLite runs in WAL mode
 with a five-second busy timeout to serialize concurrent writers without
 treating ordinary lock contention as failed requests.
 
-The default runner starts six Gremlin server workers and six Diamond load
+The default runner starts six Gremlin server workers and six d6 load
 threads, each performing 100 CRUD iterations (7,824 requests total, including
 one login/logout lifecycle per client):
 
@@ -27,7 +27,7 @@ bash bench/project_board_http/run.sh
 ```
 
 Configure it with `SERVER_THREADS`, `LOAD_THREADS`, and `ITERATIONS`. The load
-driver is itself an ordinary Diamond script and can also target an already
+driver is itself an ordinary d6 script and can also target an already
 running server directly:
 
 ```sh

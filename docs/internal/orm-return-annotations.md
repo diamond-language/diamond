@@ -16,7 +16,7 @@ The first batch adds declared returns for:
   placement (`String | Nil`).
 - Query counts and Insert/Update/Delete execution counts (`Int`), and statement
   row queries (`Array`). PostgreSQL integer OIDs and MariaDB integer field types
-  decode to Diamond integers, as SQLite does; execution counts are integers in
+  decode to d6 integers, as SQLite does; execution counts are integers in
   all three native drivers. UncachedStatement forwards the same contracts.
 - Compound operator, orderings, and projection metadata; fixed join/CTE metadata;
   write CTE and structure accessors; conflict columns and constraint names.
@@ -80,7 +80,7 @@ of the package; the baseline package came from `55c363ed`.
 | JIT enabled, batch B | 1.436 s | 1.561 s | 8.7% slower |
 
 Correction: the initial harness set `DIAMOND_JIT=0` for its intended interpreter
-mode, but Diamond then enabled JIT whenever the variable was present. Both batches
+mode, but d6 then enabled JIT whenever the variable was present. Both batches
 above enabled JIT. The corrected comparison below unsets the variable for
 interpreter runs.
 

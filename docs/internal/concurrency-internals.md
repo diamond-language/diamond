@@ -1,6 +1,6 @@
 # Concurrency internals
 
-This document records the architectural constraints behind Diamond's Fiber
+This document records the architectural constraints behind d6's Fiber
 and Thread implementations. For language-level usage, see [Fibers](../fibers.md)
 and [Threads](../threads.md).
 
@@ -21,7 +21,7 @@ NEW -> RUNNABLE -> RUNNING -> SUSPENDED -> RUNNABLE
 
 The C scheduler is a single-threaded FIFO queue. It can run one fiber or drain
 the queue, requeueing suspended fibers and continuing after individual fiber
-failures. This scheduler is an embedding API; Diamond programs build scheduling
+failures. This scheduler is an embedding API; d6 programs build scheduling
 policy from `Fiber#resume`, non-blocking I/O, and `IO.poll`.
 
 Fiber handles are managed heap objects. Collection marks the entry closure,
@@ -44,7 +44,7 @@ rejected. Class-variable storage is heap state and therefore is not inherited
 from the spawning VM.
 
 `Thread#join` has three outcomes: copy a normal result into the caller, copy
-and re-raise an uncaught Diamond exception, or synthesize `ThreadError` for an
+and re-raise an uncaught d6 exception, or synthesize `ThreadError` for an
 internal VM failure. Joining is mutex-protected and idempotent. The child sets
 an atomic finished flag for `alive?`; successful `pthread_join` supplies the
 happens-before edge for reading all other result fields.
@@ -54,7 +54,7 @@ Garbage collection block-joins an abandoned thread before freeing those
 resources. A process-wide atomic count enforces the 64-thread limit.
 
 Fiber setup uses thread-local native state, allowing fibers to run inside
-multiple isolated Diamond VMs concurrently.
+multiple isolated d6 VMs concurrently.
 
 ## Channels
 

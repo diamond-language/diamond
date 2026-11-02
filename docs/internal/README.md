@@ -1,8 +1,8 @@
 # Internal docs
 
 Implementation rationale, design history, and maintainer-only tooling for
-Diamond's own runtime and toolchain -- none of this is needed to write or
-run Diamond programs. If you're looking for language/API documentation,
+d6's own runtime and toolchain -- none of this is needed to write or
+run d6 programs. If you're looking for language/API documentation,
 start at [`docs/syntax.md`](../syntax.md) or [`docs/io.md`](../io.md) instead.
 
 - [Design and VM architecture](design.md) -- implementation rationale, VM

@@ -1,6 +1,6 @@
 # WebAssembly build and the browser REPL
 
-`wasm/build.sh` compiles the interpreter to `wasm32-wasip1` so a page can run Diamond with no
+`wasm/build.sh` compiles the interpreter to `wasm32-wasip1` so a page can run d6 with no
 server. The output is `build/wasm/diamond.wasm`; its size varies with the runtime
 and bundled SQLite version. Serve it with `application/wasm` and HTTP compression.
 

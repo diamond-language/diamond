@@ -48,7 +48,7 @@ target, skindicate's own `User#initialize`-shaped row hydration
 JIT-eligible. `attributes["email"]`-style Hash access compiles a fresh
 `DIAMOND_OP_STRING` construction for the literal key on *every* call --
 this is not a benchmark-specific quirk, string-literal Hash keys are
-pervasive in ordinary Diamond code -- and string construction is a real
+pervasive in ordinary d6 code -- and string construction is a real
 allocation, landing squarely back in "needs the general frame/GC-root
 contract" territory this whole extension had been sidestepping. Confirmed
 end-to-end on a smaller case built specifically to isolate this (`tests/
@@ -958,7 +958,7 @@ Instance" (the compiler only ever writes a real, already-resolved class's
 own id here), and `diamond_jit_invoke_instance` (Phase 7) dispatches by the
 *runtime* instance's own class regardless, so knowing *which* compile-time
 class doesn't matter. A union type_set (`count != 1`) is rejected
-unconditionally, including a nilable `other: Box | Nil` (Diamond has no
+unconditionally, including a nilable `other: Box | Nil` (d6 has no
 `Type?` sugar -- nilability is spelled as a union with `Nil`) -- correct,
 since a nil receiver must still raise through the interpreter, not hit this
 Instance-only trampoline.
@@ -1480,7 +1480,7 @@ which receiver kind calls it. So the actual remaining blocker for
 about) -- it's that the hot methods themselves are unannotated. Adding
 `-> Type` annotations to Arel/ActiveRecord's own hot accessors is real,
 separate, application-level work (skindicate.dia's own package code,
-not the Diamond compiler/JIT), not attempted here.
+not the d6 compiler/JIT), not attempted here.
 
 *Update, after this phase:* `Query#projections` was annotated `-> Array` in
 `8e7f6554`, and the `Query` builders (`where`, `order`, `take`, the joins, ...),
@@ -1758,7 +1758,7 @@ compares every literal read against the same read through a variable, for Hash, 
 
 ## Why the interop seam is already clean
 
-Every Diamond call recurses `run_chunk` (`src/vm.c:13823`), which pushes a
+Every d6 call recurses `run_chunk` (`src/vm.c:13823`), which pushes a
 `DiamondFrame` onto the singly-linked `vm->frames` chain and pops it on every
 return path:
 
@@ -1809,7 +1809,7 @@ A JIT'd function must, for the duration of its execution:
 
 ### What must be published (GC-root contract)
 
-Diamond's GC is non-moving generational mark/sweep (write barrier + card
+d6's GC is non-moving generational mark/sweep (write barrier + card
 marking; see [`gc-generational-design.md`](gc-generational-design.md)) with
 **precise, explicit roots** -- there is no conservative native-stack scan.
 `mark_frame_chain` (`src/vm.c:543-552`) marks exactly
@@ -1822,14 +1822,14 @@ frame on `vm->frames`. This is close to the best case for a JIT:
   out from under the JIT, so there's no read-barrier or handle-indirection
   problem to solve.
 - **Precise roots** mean the collector will never find a `DiamondValue` the
-  JIT didn't explicitly publish through `frame->registers`. Any live Diamond
+  JIT didn't explicitly publish through `frame->registers`. Any live d6
   value the JIT is keeping in a machine register or spilled to its own native
   stack (not the published `DiamondValue` array) **is invisible to `mark_frame_chain`**
   and will be collected out from under it the moment a GC-triggering
   operation runs (any allocation, effectively any call to interpreter/runtime
   helpers).
 - The concrete contract: **at every safepoint** (any call into `run_chunk`,
-  any allocation, any runtime helper that can allocate), every Diamond value
+  any allocation, any runtime helper that can allocate), every d6 value
   the JIT'd code still needs afterward must already be written into its
   published `frame->registers` array, not sitting only in a machine register.
   This is exactly what `run_chunk` already does by construction (its
@@ -1952,9 +1952,9 @@ the per-thread chunk pointer) is explicit future work, not v1.
 `DIAMOND_MAX_CALL_DEPTH = 95` (`src/vm.c:168`) is calibrated against
 interpreter C-stack usage: the long rationale at `src/vm.c:122-167` sizes it
 against `run_chunk`'s own ~8KB-per-activation C-stack frame (giant
-opcode-switch locals), not against Diamond call semantics directly. A JIT'd
+opcode-switch locals), not against d6 call semantics directly. A JIT'd
 frame does not run `run_chunk`'s opcode switch and should use dramatically
-less native C stack per Diamond-level call. Two consequences to decide, not
+less native C stack per d6-level call. Two consequences to decide, not
 yet decided:
 
 - If JIT'd frames count against the same 95-deep counter, JIT'd code gets no

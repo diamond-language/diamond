@@ -71,7 +71,7 @@ comments):
 
 Getting the session cache to exist at all took a real detour: `handler`
 must be a zero-capture `Callable` under `threads > 1` (`Thread.new`
-hard-rejects any closure that captures locals), and Diamond has no
+hard-rejects any closure that captures locals), and d6 has no
 class-variable or other static-storage mechanism a zero-capture function
 could reach by name instead -- confirmed directly (`@@x` doesn't parse;
 `def self.x` methods have no per-class field storage). `packages/gremlin`

@@ -185,7 +185,7 @@ done
 ```
 
 All runs here finished in well under 20 seconds each and use at most a few
-tens of MB of live Diamond heap (a 40,000-entry session cache with small
+tens of MB of live d6 heap (a 40,000-entry session cache with small
 payloads) -- nowhere near the memory scale that made `bench/burn_in`'s own
 earlier unsupervised push crash the machine (see that directory's own
 README); no watchdog is needed for this workload.

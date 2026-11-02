@@ -1,6 +1,6 @@
 # Lifting the 180-class limit
 
-Since 0.18.0 a Diamond program holds up to `DIAMOND_MAX_CLASSES` = 1,024 classes
+Since 0.18.0 a d6 program holds up to `DIAMOND_MAX_CLASSES` = 1,024 classes
 and structs, **cuts included**. The following describes the original 180-class
 limit and the migration that removed it.
 
