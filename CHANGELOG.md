@@ -6,6 +6,8 @@ authoritative fine-grained record.
 
 ## Unreleased
 
+## 0.23.0 — 2026-11-02
+
 ### Changed
 
 - **Diamond is now d6.** The `.deb` and `.rpm` packages are called `d6-lang` and replace an installed
@@ -27,7 +29,7 @@ authoritative fine-grained record.
 
 - REPL input longer than the terminal is wide now wraps properly. Each keystroke after the wrap used
   to repeat the prompt and first row on a new line.
-- A failed `diamond build` from an installed kit now gives the commands that install the compiler
+- A failed `d6 build` from an installed kit now gives the commands that install the compiler
   and development packages. apt and dnf skip those recommendations on a machine behind on updates,
   which left only a linker error to go on.
 - `write` followed by a large `read(n)` on a socket no longer hangs. The write sat
