@@ -12,7 +12,7 @@ is in [registry-protocol.md](registry-protocol.md).
 `facet check <cut-directory>` now performs the first local preflight. It checks
 the canonical name and directory, strict version spelling, summary, nonempty
 license declaration, public maintainers, data-only runtime dependency ranges, and regular
-`diamond.cut`, `README.md`, `LICENSE`, and `lib/<name>.d6` files. It rejects
+`Cutfile`, `README.md`, `LICENSE`, and `lib/<name>.d6` files. It rejects
 unknown manifest keys. It audits the candidate runtime file tree and
 `--files` prints the sorted included file list. It does not yet verify SPDX
 expressions. It checks statically visible literal imports
@@ -36,7 +36,7 @@ has the same layout:
 
 ```text
 <cut root>/
-  diamond.cut             required for publication
+  Cutfile             required for publication
   README.md               required for publication
   LICENSE                 required for publication
   lib/
@@ -46,7 +46,7 @@ has the same layout:
   tests/                  optional development tests
 ```
 
-`facet check --files` currently selects `diamond.cut`, `README.md`, `LICENSE`,
+`facet check --files` currently selects `Cutfile`, `README.md`, `LICENSE`,
 and regular files under `lib/`, `bin/`, and `assets/`. The latter two directories
 are optional. Other top-level files and directories, including tests, VCS
 files, lockfiles, build output, and installed `cuts/`, are excluded. A hidden,
@@ -84,7 +84,10 @@ application because the compiler currently uses a flat program namespace.
 
 ## Manifest
 
-The publishable `diamond.cut` is **data**, using a restricted literal
+Releases published before the rename contain `diamond.cut` instead of `Cutfile`, and
+tools still read them. A directory or archive with both names is rejected.
+
+The publishable `Cutfile` is **data**, using a restricted literal
 grammar: one Hash literal with String keys and String, Hash, Array, Boolean,
 or integer literal values as needed by the schema. No calls, interpolation,
 variable references, `require`, or other executable expressions. Duplicate
@@ -134,7 +137,7 @@ imports where static inspection can find them.
 
 Published library dependency ranges should cover versions actually tested,
 without pinning every dependency to a single release. The consuming
-application's `facet.lock` records the exact resolved graph. Published library
+application's `Cutfile.lock` records the exact resolved graph. Published library
 lockfiles are not used to resolve a consumer's graph.
 
 ### Maintainers in existing archives

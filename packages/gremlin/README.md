@@ -7,7 +7,7 @@ Serve concurrent HTTP requests with fiber-based connection handling.
 From your project directory (see the [package guide](https://github.com/diamond-language/diamond/blob/main/docs/packages.md) for `facet`):
 
 ```sh
-facet init myapp          # once, if the project has no diamond.cut yet
+facet init myapp          # once, if the project has no Cutfile yet
 facet add gremlin
 facet install
 ```

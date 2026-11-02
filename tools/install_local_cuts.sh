@@ -26,7 +26,7 @@ fi
 export LC_ALL=C
 names=()
 for directory in "$source_root"/packages/*; do
-    if [[ -f "$directory/diamond.cut" ]]; then
+    if [[ -f "$directory/Cutfile" ]]; then
         names+=("${directory##*/}")
     fi
 done

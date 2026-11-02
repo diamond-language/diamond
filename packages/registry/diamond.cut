@@ -1,1 +1,0 @@
-{"name": "registry", "version": "0.3.0", "summary": "Cut registry storage primitives", "license": "MIT", "maintainers": [{"name": "Chad 'Matrix9180' Ingram", "contact": "https://github.com/diamond-language/diamond"}], "dependencies": {"mjolnir": "^0.4.0"}}

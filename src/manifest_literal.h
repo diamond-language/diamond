@@ -22,6 +22,23 @@ typedef struct DiamondManifestValue {
     struct DiamondManifestValue *next;
 } DiamondManifestValue;
 
+/* A cut's manifest is `Cutfile`. Published archives and older projects still
+ * use the former name, and those stay readable. */
+#define DIAMOND_CUT_MANIFEST "Cutfile"
+#define DIAMOND_LEGACY_CUT_MANIFEST "diamond.cut"
+
+typedef enum DiamondCutManifestLookup {
+    DIAMOND_CUT_MANIFEST_MISSING,
+    DIAMOND_CUT_MANIFEST_FOUND,
+    /* Both names exist. Picking one would silently ignore the other. */
+    DIAMOND_CUT_MANIFEST_AMBIGUOUS,
+    DIAMOND_CUT_MANIFEST_PATH_TOO_LONG,
+} DiamondCutManifestLookup;
+
+/* Finds the manifest in `directory`. On FOUND, `path` holds its path. */
+DiamondCutManifestLookup diamond_cut_manifest_find(const char *directory, char *path,
+                                                   size_t path_size);
+
 /* Parses one data-only Hash. The returned tree owns all decoded strings. */
 DiamondManifestValue *diamond_manifest_parse(const char *source, char *error,
                                               size_t error_size);

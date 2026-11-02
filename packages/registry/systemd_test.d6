@@ -165,7 +165,7 @@ class Drill
     @token = JSON.parse(issued)["token"]
     @cut = @work + "/canary"
     Harness.mkdir_p(@cut + "/lib")
-    File.write(@cut + "/diamond.cut", JSON.stringify({"name": "canary", "version": "1.0.0", "summary": "systemd canary",
+    File.write(@cut + "/Cutfile", JSON.stringify({"name": "canary", "version": "1.0.0", "summary": "systemd canary",
       "license": "MIT", "maintainers": [{"name": "Test", "contact": "test@example.com"}], "dependencies": {}}))
     File.write(@cut + "/README.md", "Systemd staging canary\n")
     File.write(@cut + "/LICENSE", "MIT\n")
@@ -200,9 +200,9 @@ class Drill
     check(self.request("/v1/blobs/sha256/" + @digest, "GET", nil, {}) == [200, @payload], "the restored blob is gone")
     check(self.request("/v1/cuts/canary/versions", "POST", @payload, @headers)[0] == 200, "the restored publish was not idempotent")
     check(self.request("/v1/cuts/canary/versions", "POST", @payload, {})[0] == 401, "the restored service accepted no credential")
-    manifest = JSON.parse(File.read(@cut + "/diamond.cut"))
+    manifest = JSON.parse(File.read(@cut + "/Cutfile"))
     manifest["version"] = "1.0.1"
-    File.write(@cut + "/diamond.cut", JSON.stringify(manifest))
+    File.write(@cut + "/Cutfile", JSON.stringify(manifest))
     run([@work + "/facet", "pack", @cut, @work + "/new-release.tar"], nil, nil)
     new_payload = File.read(@work + "/new-release.tar")
     check(self.request("/v1/cuts/canary/versions", "POST", new_payload, @headers)[0] == 201, "a new release was not a 201")

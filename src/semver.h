@@ -3,7 +3,7 @@
  * docs/packages.md). Deliberately standalone:
  * no dependency on facet.c, the Diamond compiler, or the VM, since this
  * is plain string/number parsing with no need for any of that (and
- * `docs/packages.md`'s own `diamond.cut` `version` field is a plain
+ * `docs/packages.md`'s own `Cutfile` `version` field is a plain
  * String -- nothing here needs to run *inside* the language either).
  *
  * This module never fetches anything: whatever list of version strings

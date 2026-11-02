@@ -141,7 +141,7 @@ class Drill
     @token = JSON.parse(issued.stdout())["token"]
     package = @work + "/canary"
     Harness.mkdir_p(package + "/lib")
-    File.write(package + "/diamond.cut", JSON.stringify({"name": "canary", "version": "1.0.0", "summary": "staging canary",
+    File.write(package + "/Cutfile", JSON.stringify({"name": "canary", "version": "1.0.0", "summary": "staging canary",
       "license": "MIT", "maintainers": [{"name": "Test", "contact": "test@example.com"}], "dependencies": {}}))
     File.write(package + "/README.md", "Staging canary\n")
     File.write(package + "/LICENSE", "MIT\n")
@@ -234,11 +234,11 @@ class Drill
     inventory.each() do |cut|
       wanted[cut["name"]] = {"registry": @url, "version": cut["version"]} unless dependencies.include?(cut["name"])
     end
-    manifest = JSON.parse(File.read(launch + "/diamond.cut"))
+    manifest = JSON.parse(File.read(launch + "/Cutfile"))
     manifest["dependencies"] = wanted
-    File.write(launch + "/diamond.cut", JSON.stringify(manifest))
+    File.write(launch + "/Cutfile", JSON.stringify(manifest))
     run([@facet, "update"], @env, launch)
-    lock_bytes = File.read(launch + "/facet.lock")
+    lock_bytes = File.read(launch + "/Cutfile.lock")
     # The canonical facet writer emits one outer trailing comma; remove only that final separator.
     lock = JSON.parse(lock_bytes.sub(Regexp.new(",\\s*}\\s*$"), "}"))
     check(lock.keys().sort() == inventory.map() do |cut| cut["name"] end.sort(), "the resolved cut set differs")
@@ -253,7 +253,7 @@ class Drill
     Harness.remove_tree(launch + "/cuts")
     Harness.sleep_ms(3000)
     run([@facet, "install"], @env, launch)
-    check(File.read(launch + "/facet.lock") == lock_bytes, "a locked reinstall changed the lockfile")
+    check(File.read(launch + "/Cutfile.lock") == lock_bytes, "a locked reinstall changed the lockfile")
     installed = Dir.entries(launch + "/cuts")
     check(lock.keys().all?() do |name| installed.include?(name) end, "not every cut was reinstalled")
     puts("launch seed: #{inventory.length()} exact archives published, resolved, loaded, and reinstalled")

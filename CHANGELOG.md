@@ -6,6 +6,15 @@ authoritative fine-grained record.
 
 ## Unreleased
 
+### Changed
+
+- **`Cutfile` replaces `diamond.cut`.** `Cutfile.dev` and `Cutfile.lock` likewise replace
+  `diamond.dev.cut` and `facet.lock`, and `facet` creates only the new names. To move a project,
+  rename the files. Projects and published cuts under the old names keep working, and `facet`
+  stops with an error when both names exist, since one would be silently ignored. Releases of a
+  cut that contain `Cutfile` can't be installed by `facet` from 0.22.0 or older. Every published
+  cut gets a patch release carrying the new name.
+
 ### Fixed
 
 - A failed `diamond build` from an installed kit now gives the commands that install the compiler

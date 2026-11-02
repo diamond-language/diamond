@@ -27,15 +27,15 @@ def verify(root, registry, inventory_path)
   begin
     facet = root + "/build/facet"
     run([facet, "init", "launch-verification"], work)
-    manifest = JSON.parse(File.read(work + "/diamond.cut"))
+    manifest = JSON.parse(File.read(work + "/Cutfile"))
     wanted = {}
     cuts.each() do |cut|
       wanted[cut["name"]] = {"registry": registry, "version": cut["version"]} unless dependencies.include?(cut["name"])
     end
     manifest["dependencies"] = wanted
-    File.write(work + "/diamond.cut", JSON.stringify(manifest))
+    File.write(work + "/Cutfile", JSON.stringify(manifest))
     run([facet, "update"], work)
-    lock_bytes = File.read(work + "/facet.lock")
+    lock_bytes = File.read(work + "/Cutfile.lock")
     lock = JSON.parse(lock_bytes.sub(Regexp.new(",\\s*}\\s*$"), "}"))
     unless lock.keys().sort() == cuts.map() do |cut| cut["name"] end.sort()
       raise ArgumentError.new("resolved cut set differs from inventory")
@@ -54,7 +54,7 @@ def verify(root, registry, inventory_path)
     end
     remove_tree(work + "/cuts")
     run([facet, "install"], work)
-    unless File.read(work + "/facet.lock") == lock_bytes
+    unless File.read(work + "/Cutfile.lock") == lock_bytes
       raise ArgumentError.new("locked reinstall changed the lockfile")
     end
     puts("#{cuts.length()} public cuts resolved, digest-checked, loaded, and reinstalled from unchanged lock")

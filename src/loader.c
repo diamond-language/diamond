@@ -72,13 +72,22 @@ static char *read_source(const char *path) {
 /* Manifest metadata is parsed without compiling or running Diamond code. */
 static bool validate_cut_manifest(Loader *loader,const char *name,
         size_t name_length,const char *including_path,size_t including_line) {
+    char directory[DIAMOND_MAX_SOURCE_PATH];
     char manifest_path[DIAMOND_MAX_SOURCE_PATH];
-    const int written=snprintf(manifest_path,sizeof manifest_path,
-        "cuts/%.*s/diamond.cut",(int)name_length,name);
+    const int written=snprintf(directory,sizeof directory,"cuts/%.*s",(int)name_length,name);
+    if(written<=0||(size_t)written>=sizeof directory)return true;
+    const DiamondCutManifestLookup lookup=
+        diamond_cut_manifest_find(directory,manifest_path,sizeof manifest_path);
+    if(lookup==DIAMOND_CUT_MANIFEST_AMBIGUOUS) {
+        (void)snprintf(loader->error,loader->error_capacity,
+            "%s:%zu: cut '%.*s' has both " DIAMOND_CUT_MANIFEST " and "
+            DIAMOND_LEGACY_CUT_MANIFEST "; keep only " DIAMOND_CUT_MANIFEST,
+            including_path,including_line,(int)name_length,name);
+        return false;
+    }
     char canonical_manifest[DIAMOND_MAX_SOURCE_PATH];
-    const bool has_manifest=written>0&&(size_t)written<sizeof manifest_path&&
-        realpath(manifest_path,canonical_manifest)!=nullptr;
-    if(!has_manifest)return true;
+    if(lookup!=DIAMOND_CUT_MANIFEST_FOUND||
+       realpath(manifest_path,canonical_manifest)==nullptr)return true;
 
     char *source=read_source(canonical_manifest);
     if(source==nullptr) {

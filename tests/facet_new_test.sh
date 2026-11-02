@@ -48,8 +48,8 @@ for kind in cli web tcp udp lib; do
     "$facet" new "$kind" "demo_$kind" >/dev/null || fail "facet new $kind"
     [[ -f "demo_$kind/lib/demo_$kind.d6" && -f "demo_$kind/test/demo_${kind}_test.d6" ]] ||
         fail "$kind: missing lib or test file"
-    cmp -s "demo_$kind/diamond.dev.cut" "$root/tools/new_templates/common/diamond.dev.cut" ||
-        fail "$kind: diamond.dev.cut differs from the template"
+    cmp -s "demo_$kind/Cutfile.dev" "$root/tools/new_templates/common/Cutfile.dev" ||
+        fail "$kind: Cutfile.dev differs from the template"
     [[ ! -e "demo_$kind/test/minitest.d6" ]] || fail "$kind: minitest is copied, not a dev dependency"
     [[ -x "demo_$kind/test.sh" ]] || fail "$kind: test.sh is not executable"
     grep -q '{{' -r "demo_$kind" && fail "$kind: unsubstituted placeholder"
@@ -102,7 +102,7 @@ ok
 
 # --- the lib project is publishable, with placeholder maintainer ---
 "$facet" check demo_lib >/dev/null || fail "facet check on the lib project"
-grep -q '"name": "Your Name", "contact": "you@example.com"' demo_lib/diamond.cut ||
+grep -q '"name": "Your Name", "contact": "you@example.com"' demo_lib/Cutfile ||
     fail "lib placeholder maintainer"
 grep -q "Copyright (c) $(date -u +%Y) Your Name" demo_lib/LICENSE || fail "lib LICENSE"
 ok
@@ -110,12 +110,12 @@ ok
 # --- the git identity fills the maintainer when it is usable ---
 printf '[user]\n\tname = Ada Lovelace\n\temail = ada@example.com\n' >"$work/gitconfig"
 GIT_CONFIG_GLOBAL="$work/gitconfig" "$facet" new lib ada_lib >/dev/null
-grep -q '"name": "Ada Lovelace", "contact": "ada@example.com"' ada_lib/diamond.cut ||
+grep -q '"name": "Ada Lovelace", "contact": "ada@example.com"' ada_lib/Cutfile ||
     fail "lib maintainer from git config"
 # git strips bare quotes from config values; escaped ones survive.
 printf '[user]\n\tname = Ada \\"quoted\\"\n\temail = ada@example.com\n' >"$work/gitconfig"
 GIT_CONFIG_GLOBAL="$work/gitconfig" "$facet" new lib quoted_lib >/dev/null
-grep -q '"name": "Your Name", "contact": "ada@example.com"' quoted_lib/diamond.cut ||
+grep -q '"name": "Your Name", "contact": "ada@example.com"' quoted_lib/Cutfile ||
     fail "a quote in user.name must fall back to the placeholder"
 ok
 
@@ -173,7 +173,7 @@ web_deps="gremlin rack http logger"
 for dep in $web_deps; do
     refuses 64 "already uses" new web "$dep"
     # Every cut the template pulls in must be in this list.
-    for transitive in $(client deps "$root/packages/$dep/diamond.cut"); do
+    for transitive in $(client deps "$root/packages/$dep/Cutfile"); do
         [[ " $web_deps " == *" $transitive "* ]] || fail "web dependency $dep needs $transitive, which is not reserved"
     done
     for name in $(grep -rhoE '^\s*(class|module|struct) [A-Z][A-Za-z0-9]*' "$root/packages/$dep/lib" | awk '{print $2}' | sort -u); do
@@ -185,14 +185,14 @@ ok
 # --- the templates' constraints accept the versions in packages/ ---
 # Caret on 0.x pins the minor version; on 1.0 and later, the major.
 while read -r name wanted; do
-    have="$(client version "$root/packages/$name/diamond.cut")"
+    have="$(client version "$root/packages/$name/Cutfile")"
     if [[ "${wanted%%.*}" == 0 ]]; then line="${wanted%.*}"; else line="${wanted%%.*}"; fi
     [[ "$have" == "$line".* ]] || fail "a template wants $name ^$wanted, packages/ has $have"
     [[ "$(printf '%s\n%s\n' "$wanted" "$have" | sort -V | head -1)" == "$wanted" ]] ||
         fail "a template wants $name ^$wanted, packages/ has older $have"
 done < <(sed -nE 's/^ *"([a-z_0-9]+)": \{"registry": "[^"]*", "version": "\^([0-9.]+)"\}.*/\1 \2/p' \
-    "$root/tools/new_templates/web/diamond.cut" "$root/tools/new_templates/common/diamond.dev.cut")
-[[ "$(cat "$root/tools/new_templates/web/diamond.cut" "$root/tools/new_templates/common/diamond.dev.cut" |
+    "$root/tools/new_templates/web/Cutfile" "$root/tools/new_templates/common/Cutfile.dev")
+[[ "$(cat "$root/tools/new_templates/web/Cutfile" "$root/tools/new_templates/common/Cutfile.dev" |
     grep -c '"version": "^')" == 3 ]] || fail "template dependency lines did not parse"
 ok
 

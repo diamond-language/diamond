@@ -30,47 +30,47 @@ def greet(name)
   "hello, " + name
 end
 EOF
-echo '{"name": "greeter", "version": "1.0.0"}' > greeter_repo/diamond.cut
+echo '{"name": "greeter", "version": "1.0.0"}' > greeter_repo/Cutfile
 commit_repo greeter_repo
 (cd greeter_repo && git tag v1.0.0)
 greeter_v1="$(cd greeter_repo && git rev-parse v1.0.0)"
 
 mkdir project1
-cat > project1/diamond.cut <<EOF
+cat > project1/Cutfile <<EOF
 {"name": "myapp", "dependencies": {"greeter": {"git": "$work/greeter_repo", "tag": "v1.0.0"}}}
 EOF
 (cd project1 && "$facet" install >/dev/null)
 
 [[ -f project1/cuts/greeter/greeter.d6 ]]
 [[ ! -d project1/cuts/greeter/.git ]]
-[[ -f project1/facet.lock ]]
-grep -q '"source": "git"' project1/facet.lock
+[[ -f project1/Cutfile.lock ]]
+grep -q '"source": "git"' project1/Cutfile.lock
 
 # Older Git locks without a source key remain readable. Unknown source
 # types and fields, and mixed source fields, fail before installation.
-cp project1/facet.lock project1/facet.lock.new
-sed 's/"source": "git", //' project1/facet.lock.new > project1/facet.lock
+cp project1/Cutfile.lock project1/Cutfile.lock.new
+sed 's/"source": "git", //' project1/Cutfile.lock.new > project1/Cutfile.lock
 (cd project1 && "$facet" install >/dev/null)
-mv project1/facet.lock.new project1/facet.lock
-cp project1/facet.lock project1/facet.lock.good
-sed 's/"source": "git"/"source": "registry"/' project1/facet.lock.good > project1/facet.lock
+mv project1/Cutfile.lock.new project1/Cutfile.lock
+cp project1/Cutfile.lock project1/Cutfile.lock.good
+sed 's/"source": "git"/"source": "registry"/' project1/Cutfile.lock.good > project1/Cutfile.lock
 if (cd project1 && "$facet" install) >/dev/null 2>&1; then
     echo "facet accepted mixed Git and registry lock fields" >&2
     exit 1
 fi
-sed 's/"source": "git"/"source": "git", "sha256": "unchecked"/' project1/facet.lock.good > project1/facet.lock
+sed 's/"source": "git"/"source": "git", "sha256": "unchecked"/' project1/Cutfile.lock.good > project1/Cutfile.lock
 if (cd project1 && "$facet" install) >/dev/null 2>&1; then
     echo "facet accepted an unknown lockfile field" >&2
     exit 1
 fi
-mv project1/facet.lock.good project1/facet.lock
-cp project1/facet.lock project1/facet.lock.git
+mv project1/Cutfile.lock.good project1/Cutfile.lock
+cp project1/Cutfile.lock project1/Cutfile.lock.git
 
 # A locked registry install fetches only the digest-addressed artifact, verifies
 # its locked size and digest, validates the archive, and replaces the cut from
 # staging. A fake curl keeps the test local while exercising the argv contract.
 mkdir -p registry_source/greeter/lib fake_bin
-printf '%s\n' '{"name": "greeter", "version": "1.2.3", "summary": "Registry greeter", "license": "MIT", "maintainers": [{"name": "Test", "contact": "test@example.com"}]}' > registry_source/greeter/diamond.cut
+printf '%s\n' '{"name": "greeter", "version": "1.2.3", "summary": "Registry greeter", "license": "MIT", "maintainers": [{"name": "Test", "contact": "test@example.com"}]}' > registry_source/greeter/Cutfile
 printf '%s\n' '# Registry greeter' > registry_source/greeter/README.md
 printf '%s\n' 'MIT' > registry_source/greeter/LICENSE
 printf '%s\n' 'def greet(name)' '  "registry hello, " + name' 'end' > registry_source/greeter/lib/greeter.d6
@@ -97,11 +97,11 @@ export FACET_TEST_ARCHIVE="$work/registry_greeter.tar"
 export FACET_TEST_CURL_URL="$work/registry_url"
 saved_path="$PATH"
 export PATH="$work/fake_bin:$PATH"
-# A lock that does not match diamond.cut is resolved again, so the registry lock
+# A lock that does not match Cutfile is resolved again, so the registry lock
 # below needs a registry dependency.
-cp project1/diamond.cut project1/diamond.cut.git
-printf '%s\n' '{"name": "myapp", "dependencies": {"greeter": {"registry": "https://cuts.example/api", "version": "^1.2.0"}}}' > project1/diamond.cut
-cat > project1/facet.lock <<EOF
+cp project1/Cutfile project1/Cutfile.git
+printf '%s\n' '{"name": "myapp", "dependencies": {"greeter": {"registry": "https://cuts.example/api", "version": "^1.2.0"}}}' > project1/Cutfile
+cat > project1/Cutfile.lock <<EOF
 {"greeter": {"source": "registry", "registry": "https://cuts.example/api", "version": "1.2.3", "sha256": "$digest", "size": $archive_size}}
 EOF
 (cd project1 && "$facet" install >/dev/null)
@@ -135,7 +135,7 @@ unset FACET_TEST_PUBLISH_OK
 
 # Failed locked installs leave the previously verified cut in place.
 bad_digest="$(printf '0%.0s' {1..64})"
-cat > project1/facet.lock <<EOF
+cat > project1/Cutfile.lock <<EOF
 {"greeter": {"source": "registry", "registry": "https://cuts.example/api", "version": "1.2.3", "sha256": "$bad_digest", "size": $archive_size}}
 EOF
 if (cd project1 && "$facet" install) >/dev/null 2>&1; then
@@ -146,7 +146,7 @@ actual="$(cd project1 && "$diamond" -e 'require_cut "greeter"
 greet("world")')"
 [[ "$actual" == "registry hello, world" ]]
 
-cat > project1/facet.lock <<EOF
+cat > project1/Cutfile.lock <<EOF
 {"greeter": {"source": "registry", "registry": "https://cuts.example/api", "version": "1.2.3", "sha256": "$digest", "size": $((archive_size + 1))}}
 EOF
 if (cd project1 && "$facet" install) >/dev/null 2>&1; then
@@ -159,12 +159,12 @@ greet("world")')"
 
 # A valid archive whose manifest identity disagrees with the lock is also
 # rejected before the installed cut is replaced.
-sed -i 's/"version": "1.2.3"/"version": "1.2.4"/' registry_source/greeter/diamond.cut
+sed -i 's/"version": "1.2.3"/"version": "1.2.4"/' registry_source/greeter/Cutfile
 "$facet" pack registry_source/greeter registry_other.tar >/dev/null
 other_digest="$(sha256sum registry_other.tar | cut -d' ' -f1)"
 other_size="$(stat -c %s registry_other.tar)"
 export FACET_TEST_ARCHIVE="$work/registry_other.tar"
-cat > project1/facet.lock <<EOF
+cat > project1/Cutfile.lock <<EOF
 {"greeter": {"source": "registry", "registry": "https://cuts.example/api", "version": "1.2.3", "sha256": "$other_digest", "size": $other_size}}
 EOF
 if (cd project1 && "$facet" install) >/dev/null 2>&1; then
@@ -177,7 +177,7 @@ greet("world")')"
 export FACET_TEST_ARCHIVE="$work/registry_greeter.tar"
 
 check_bad_registry_lock() {
-    printf '%s\n' "$1" > project1/facet.lock
+    printf '%s\n' "$1" > project1/Cutfile.lock
     if (cd project1 && "$facet" install) >/dev/null 2>registry_error; then
         echo "facet accepted invalid registry lock: $2" >&2
         exit 1
@@ -194,8 +194,8 @@ check_bad_registry_lock "{\"greeter\": {\"source\": \"registry\", \"registry\": 
 check_bad_registry_lock "{\"greeter\": {\"source\": \"registry\", \"registry\": \"https://cuts.example\", \"version\": \"1.2.3\", \"sha256\": \"$digest\", \"size\": 0}}" "zero size"
 check_bad_registry_lock "{\"greeter\": {\"source\": \"registry\", \"registry\": \"https://cuts.example\", \"version\": \"1.2.3\", \"sha256\": \"$digest\", \"size\": \"12345\"}}" "string size"
 check_bad_registry_lock "{\"greeter\": {\"source\": \"registry\", \"registry\": \"https://cuts.example\", \"version\": \"1.2.3\", \"sha256\": \"$digest\", \"size\": 18446744073709551616}}" "overflowing size"
-mv project1/facet.lock.git project1/facet.lock
-mv project1/diamond.cut.git project1/diamond.cut
+mv project1/Cutfile.lock.git project1/Cutfile.lock
+mv project1/Cutfile.git project1/Cutfile
 export PATH="$saved_path"
 unset FACET_TEST_ARCHIVE FACET_TEST_CURL_URL
 (cd project1 && "$facet" install >/dev/null)
@@ -228,13 +228,13 @@ greet("world")')"
 
 mkdir c_repo
 printf 'def c_value()\n  3\nend\n' > c_repo/c.d6
-echo '{"name": "c"}' > c_repo/diamond.cut
+echo '{"name": "c"}' > c_repo/Cutfile
 commit_repo c_repo
 (cd c_repo && git tag v1.0.0)
 
 mkdir b_repo
 printf 'require_cut "c"\ndef b_value()\n  c_value() + 1\nend\n' > b_repo/b.d6
-cat > b_repo/diamond.cut <<EOF
+cat > b_repo/Cutfile <<EOF
 {"name": "b", "dependencies": {"c": {"git": "$work/c_repo", "tag": "v1.0.0"}}}
 EOF
 commit_repo b_repo
@@ -242,14 +242,14 @@ commit_repo b_repo
 
 mkdir a_repo
 printf 'require_cut "b"\ndef a_value()\n  b_value() + 1\nend\n' > a_repo/a.d6
-cat > a_repo/diamond.cut <<EOF
+cat > a_repo/Cutfile <<EOF
 {"name": "a", "dependencies": {"b": {"git": "$work/b_repo", "tag": "v1.0.0"}}}
 EOF
 commit_repo a_repo
 (cd a_repo && git tag v1.0.0)
 
 mkdir project2
-cat > project2/diamond.cut <<EOF
+cat > project2/Cutfile <<EOF
 {"name": "myapp", "dependencies": {"a": {"git": "$work/a_repo", "tag": "v1.0.0"}}}
 EOF
 (cd project2 && "$facet" install >/dev/null)
@@ -264,19 +264,19 @@ a_value()')"
 
 mkdir shared_repo
 echo 'shared' > shared_repo/shared.d6
-echo '{"name": "shared"}' > shared_repo/diamond.cut
+echo '{"name": "shared"}' > shared_repo/Cutfile
 commit_repo shared_repo
 (cd shared_repo && git tag v1.0.0)
 
 mkdir y_repo
 printf 'require_cut "shared"\n' > y_repo/y.d6
-cat > y_repo/diamond.cut <<EOF
+cat > y_repo/Cutfile <<EOF
 {"name": "y", "dependencies": {"shared": {"git": "$work/shared_repo", "branch": "main"}}}
 EOF
 commit_repo y_repo
 
 mkdir project3
-cat > project3/diamond.cut <<EOF
+cat > project3/Cutfile <<EOF
 {"name": "myapp", "dependencies": {"shared": {"git": "$work/shared_repo", "tag": "v1.0.0"}, "y": {"git": "$work/y_repo", "branch": "main"}}}
 EOF
 error_file="$(mktemp)"
@@ -289,15 +289,15 @@ grep -q "myapp" "$error_file"
 grep -q "'y'" "$error_file"
 rm -f "$error_file"
 
-# --- a dependency whose own diamond.cut declares the wrong name is rejected ---
+# --- a dependency whose own Cutfile declares the wrong name is rejected ---
 
 mkdir mislabeled_repo
 echo 'x' > mislabeled_repo/x.d6
-echo '{"name": "not-what-it-is-called"}' > mislabeled_repo/diamond.cut
+echo '{"name": "not-what-it-is-called"}' > mislabeled_repo/Cutfile
 commit_repo mislabeled_repo
 
 mkdir project4
-cat > project4/diamond.cut <<EOF
+cat > project4/Cutfile <<EOF
 {"name": "myapp", "dependencies": {"thing": {"git": "$work/mislabeled_repo", "branch": "main"}}}
 EOF
 error_file="$(mktemp)"
@@ -311,7 +311,7 @@ rm -f "$error_file"
 # --- malformed dependency shapes are rejected before any cloning happens ---
 
 mkdir project5
-echo '{"name": "myapp", "dependencies": "oops"}' > project5/diamond.cut
+echo '{"name": "myapp", "dependencies": "oops"}' > project5/Cutfile
 error_file="$(mktemp)"
 if (cd project5 && "$facet" install) >/dev/null 2>"$error_file"; then
     echo "facet install unexpectedly accepted a non-Hash dependencies key" >&2
@@ -320,7 +320,7 @@ fi
 grep -q "'dependencies' must be a Hash" "$error_file"
 rm -f "$error_file"
 
-echo '{"name": "myapp", "dependencies": {"x": {"git": "url"}}}' > project5/diamond.cut
+echo '{"name": "myapp", "dependencies": {"x": {"git": "url"}}}' > project5/Cutfile
 error_file="$(mktemp)"
 if (cd project5 && "$facet" install) >/dev/null 2>"$error_file"; then
     echo "facet install unexpectedly accepted a dependency with no ref key" >&2
@@ -329,7 +329,7 @@ fi
 grep -q "must specify exactly one of tag/branch/commit" "$error_file"
 rm -f "$error_file"
 
-echo '{"name": "myapp", "dependencies": {"x": {"git": "url", "tag": "a", "branch": "b"}}}' > project5/diamond.cut
+echo '{"name": "myapp", "dependencies": {"x": {"git": "url", "tag": "a", "branch": "b"}}}' > project5/Cutfile
 error_file="$(mktemp)"
 if (cd project5 && "$facet" install) >/dev/null 2>"$error_file"; then
     echo "facet install unexpectedly accepted a dependency with ambiguous ref keys" >&2
@@ -338,7 +338,7 @@ fi
 grep -q "must specify exactly one of tag/branch/commit" "$error_file"
 rm -f "$error_file"
 
-echo '{"name": "myapp", "dependencies": {"x": {"tag": "a"}}}' > project5/diamond.cut
+echo '{"name": "myapp", "dependencies": {"x": {"tag": "a"}}}' > project5/Cutfile
 error_file="$(mktemp)"
 if (cd project5 && "$facet" install) >/dev/null 2>"$error_file"; then
     echo "facet install unexpectedly accepted a dependency with no git key" >&2
@@ -359,7 +359,7 @@ rm -f "$error_file"
 # execution through git's own hook/pack mechanisms). ---
 
 mkdir project7
-cat > project7/diamond.cut <<'EOF'
+cat > project7/Cutfile <<'EOF'
 {"name": "myapp", "dependencies": {"x": {"git": "--upload-pack=touch /tmp/facet_injection_probe", "tag": "main"}}}
 EOF
 rm -f /tmp/facet_injection_probe
@@ -377,7 +377,7 @@ fi
 rm -f "$error_file"
 
 mkdir project8
-cat > project8/diamond.cut <<EOF
+cat > project8/Cutfile <<EOF
 {"name": "myapp", "dependencies": {"greeter": {"git": "$work/greeter_repo", "tag": "--upload-pack=touch /tmp/facet_injection_probe"}}}
 EOF
 error_file="$(mktemp)"
@@ -393,15 +393,15 @@ fi
 }
 rm -f "$error_file"
 
-# --- no diamond.cut at all ---
+# --- no Cutfile at all ---
 
 mkdir project6
 error_file="$(mktemp)"
 if (cd project6 && "$facet" install) >/dev/null 2>"$error_file"; then
-    echo "facet install unexpectedly succeeded with no diamond.cut" >&2
+    echo "facet install unexpectedly succeeded with no Cutfile" >&2
     exit 1
 fi
-grep -q "no diamond.cut found" "$error_file"
+grep -q "no Cutfile found" "$error_file"
 rm -f "$error_file"
 
 # --- bare invocation and unknown subcommand print usage ---
@@ -419,7 +419,7 @@ rm -f "$error_file"
 
 mkdir semver_repo
 echo 'def semver_value() = 1' > semver_repo/semver.d6
-echo '{"name": "semver"}' > semver_repo/diamond.cut
+echo '{"name": "semver"}' > semver_repo/Cutfile
 commit_repo semver_repo
 (cd semver_repo && git tag v1.0.0)
 echo 'def semver_value() = 2' > semver_repo/semver.d6
@@ -428,28 +428,28 @@ echo 'def semver_value() = 3' > semver_repo/semver.d6
 (cd semver_repo && git add -A && git commit -q -m "2.0.0" && git tag v2.0.0)
 
 mkdir project9
-cat > project9/diamond.cut <<EOF
+cat > project9/Cutfile <<EOF
 {"name": "myapp", "dependencies": {"semver": {"git": "$work/semver_repo", "version": "^1.0.0"}}}
 EOF
 (cd project9 && "$facet" install >/dev/null)
 actual="$(cd project9 && "$diamond" -e 'require_cut "semver"
 semver_value()')"
 [[ "$actual" == "2" ]]
-grep -q '"version": "v1.2.0"' project9/facet.lock
+grep -q '"version": "v1.2.0"' project9/Cutfile.lock
 
 # --- compatible version constraints from two different requesters
 # intersect instead of hard-conflicting ---
 
 mkdir uses_semver_a_repo
 printf 'require_cut "semver"\ndef a_value() = semver_value()\n' > uses_semver_a_repo/uses_semver_a.d6
-cat > uses_semver_a_repo/diamond.cut <<EOF
+cat > uses_semver_a_repo/Cutfile <<EOF
 {"name": "uses_semver_a", "dependencies": {"semver": {"git": "$work/semver_repo", "version": ">=1.0.0 <2.0.0"}}}
 EOF
 commit_repo uses_semver_a_repo
 (cd uses_semver_a_repo && git tag v1.0.0)
 
 mkdir project10
-cat > project10/diamond.cut <<EOF
+cat > project10/Cutfile <<EOF
 {"name": "myapp", "dependencies": {"uses_semver_a": {"git": "$work/uses_semver_a_repo", "tag": "v1.0.0"}, "semver": {"git": "$work/semver_repo", "version": "^1.2.0"}}}
 EOF
 (cd project10 && "$facet" install >/dev/null)
@@ -462,14 +462,14 @@ a_value()')"
 
 mkdir uses_semver_b_repo
 printf 'require_cut "semver"\n' > uses_semver_b_repo/uses_semver_b.d6
-cat > uses_semver_b_repo/diamond.cut <<EOF
+cat > uses_semver_b_repo/Cutfile <<EOF
 {"name": "uses_semver_b", "dependencies": {"semver": {"git": "$work/semver_repo", "version": "^2.0.0"}}}
 EOF
 commit_repo uses_semver_b_repo
 (cd uses_semver_b_repo && git tag v1.0.0)
 
 mkdir project11
-cat > project11/diamond.cut <<EOF
+cat > project11/Cutfile <<EOF
 {"name": "myapp", "dependencies": {"uses_semver_b": {"git": "$work/uses_semver_b_repo", "tag": "v1.0.0"}, "semver": {"git": "$work/semver_repo", "version": "^1.0.0"}}}
 EOF
 error_file="$(mktemp)"
@@ -485,7 +485,7 @@ rm -f "$error_file"
 # dependency is a hard error, in both discovery orders ---
 
 mkdir project12
-cat > project12/diamond.cut <<EOF
+cat > project12/Cutfile <<EOF
 {"name": "myapp", "dependencies": {"semver": {"git": "$work/semver_repo", "tag": "v1.0.0"}, "uses_semver_a": {"git": "$work/uses_semver_a_repo", "tag": "v1.0.0"}}}
 EOF
 error_file="$(mktemp)"
@@ -497,7 +497,7 @@ grep -q "mixing an exact ref and a version constraint" "$error_file"
 rm -f "$error_file"
 
 mkdir project13
-cat > project13/diamond.cut <<EOF
+cat > project13/Cutfile <<EOF
 {"name": "myapp", "dependencies": {"uses_semver_a": {"git": "$work/uses_semver_a_repo", "tag": "v1.0.0"}, "semver": {"git": "$work/semver_repo", "tag": "v1.0.0"}}}
 EOF
 error_file="$(mktemp)"
@@ -512,7 +512,7 @@ rm -f "$error_file"
 # before any cloning happens ---
 
 mkdir project14
-echo '{"name": "myapp", "dependencies": {"x": {"git": "url", "version": "not-a-constraint"}}}' > project14/diamond.cut
+echo '{"name": "myapp", "dependencies": {"x": {"git": "url", "version": "not-a-constraint"}}}' > project14/Cutfile
 error_file="$(mktemp)"
 if (cd project14 && "$facet" install) >/dev/null 2>"$error_file"; then
     echo "facet install unexpectedly accepted an invalid version constraint" >&2
@@ -521,7 +521,7 @@ fi
 grep -q "invalid 'version' constraint" "$error_file"
 rm -f "$error_file"
 
-echo '{"name": "myapp", "dependencies": {"x": {"git": "url", "tag": "a", "version": "^1.0.0"}}}' > project14/diamond.cut
+echo '{"name": "myapp", "dependencies": {"x": {"git": "url", "tag": "a", "version": "^1.0.0"}}}' > project14/Cutfile
 error_file="$(mktemp)"
 if (cd project14 && "$facet" install) >/dev/null 2>"$error_file"; then
     echo "facet install unexpectedly accepted both a tag and a version key" >&2
@@ -533,7 +533,7 @@ rm -f "$error_file"
 # --- no tag satisfies the constraint at all ---
 
 mkdir project15
-cat > project15/diamond.cut <<EOF
+cat > project15/Cutfile <<EOF
 {"name": "myapp", "dependencies": {"semver": {"git": "$work/semver_repo", "version": "^9.0.0"}}}
 EOF
 error_file="$(mktemp)"
@@ -549,20 +549,20 @@ rm -f "$error_file"
 
 mkdir project16
 (cd project16 && "$facet" init explicit-name >/dev/null)
-[[ "$(cd project16 && DIAMOND_PRINT_RESULT=1 "$diamond" diamond.cut)" == "{name: explicit-name}" ]]
+[[ "$(cd project16 && DIAMOND_PRINT_RESULT=1 "$diamond" Cutfile)" == "{name: explicit-name}" ]]
 
 error_file="$(mktemp)"
 if (cd project16 && "$facet" init another-name) >/dev/null 2>"$error_file"; then
-    echo "facet init unexpectedly overwrote an existing diamond.cut" >&2
+    echo "facet init unexpectedly overwrote an existing Cutfile" >&2
     exit 1
 fi
 grep -q "already exists" "$error_file"
 rm -f "$error_file"
-[[ "$(cd project16 && DIAMOND_PRINT_RESULT=1 "$diamond" diamond.cut)" == "{name: explicit-name}" ]]
+[[ "$(cd project16 && DIAMOND_PRINT_RESULT=1 "$diamond" Cutfile)" == "{name: explicit-name}" ]]
 
 mkdir -p project17/my-default-name-dir
 (cd project17/my-default-name-dir && "$facet" init >/dev/null)
-[[ "$(cd project17/my-default-name-dir && DIAMOND_PRINT_RESULT=1 "$diamond" diamond.cut)" == "{name: my-default-name-dir}" ]]
+[[ "$(cd project17/my-default-name-dir && DIAMOND_PRINT_RESULT=1 "$diamond" Cutfile)" == "{name: my-default-name-dir}" ]]
 
 # --- facet add: appends a dependency and the result actually installs
 # -- one real end-to-end check per ref kind (tag/branch/commit/version),
@@ -600,14 +600,14 @@ mkdir project21_registry
 (cd project21_registry && "$facet" init myapp >/dev/null &&
     "$facet" add greeter --registry https://cuts.example/api \
         --version "^1.0.0" >/dev/null)
-[[ "$(cd project21_registry && DIAMOND_PRINT_RESULT=1 "$diamond" diamond.cut)" == \
+[[ "$(cd project21_registry && DIAMOND_PRINT_RESULT=1 "$diamond" Cutfile)" == \
     "{name: myapp, dependencies: {greeter: {registry: https://cuts.example/api, version: ^1.0.0}}}" ]]
 
 # Registry update resolves metadata (including transitive dependencies) before
 # downloading either archive, skips yanked versions, writes the full lock, and
 # then installs both verified artifacts.
 mkdir -p registry_source/logger/lib registry_metadata
-printf '%s\n' '{"name": "logger", "version": "1.0.0", "summary": "Registry logger", "license": "MIT", "maintainers": [{"name": "Test", "contact": "test@example.com"}]}' > registry_source/logger/diamond.cut
+printf '%s\n' '{"name": "logger", "version": "1.0.0", "summary": "Registry logger", "license": "MIT", "maintainers": [{"name": "Test", "contact": "test@example.com"}]}' > registry_source/logger/Cutfile
 printf '%s\n' '# Registry logger' > registry_source/logger/README.md
 printf '%s\n' 'MIT' > registry_source/logger/LICENSE
 printf '%s\n' 'def registry_log()' '  "logged"' 'end' > registry_source/logger/lib/logger.d6
@@ -622,7 +622,7 @@ cat > registry_metadata/greeter-release <<EOF
 EOF
 # A real 1.3.0 archive, so a resolve that moves to it can install it.
 mkdir -p registry_source13 && cp -r registry_source/greeter registry_source13/greeter
-sed -i -E 's/"version": "[0-9.]+"/"version": "1.3.0"/' registry_source13/greeter/diamond.cut
+sed -i -E 's/"version": "[0-9.]+"/"version": "1.3.0"/' registry_source13/greeter/Cutfile
 "$facet" pack registry_source13/greeter registry_greeter13.tar >/dev/null
 greeter13_digest="$(sha256sum registry_greeter13.tar | cut -d' ' -f1)"
 greeter13_size="$(stat -c %s registry_greeter13.tar)"
@@ -635,7 +635,7 @@ EOF
 cat > registry_metadata/logger-release <<EOF
 {"protocol": 1, "name": "logger", "version": "1.0.0", "dependencies": {}, "yanked": false, "archive": {"path": "/v1/blobs/sha256/$logger_digest", "sha256": "$logger_digest", "size": $logger_size}}
 EOF
-cat > project21_registry/facet.lock <<EOF
+cat > project21_registry/Cutfile.lock <<EOF
 {"greeter": {"source": "registry", "registry": "https://cuts.example/api", "version": "1.2.3", "sha256": "$digest", "size": $archive_size}}
 EOF
 cat > fake_bin/curl <<'EOF'
@@ -672,8 +672,8 @@ export FACET_TEST_LOGGER_ARCHIVE="$work/registry_logger.tar"
 export FACET_TEST_GREETER13_DIGEST="$greeter13_digest"
 export FACET_TEST_GREETER13_ARCHIVE="$work/registry_greeter13.tar"
 (cd project21_registry && "$facet" update >/dev/null)
-grep -q '"greeter": {"source": "registry"' project21_registry/facet.lock
-grep -q '"logger": {"source": "registry"' project21_registry/facet.lock
+grep -q '"greeter": {"source": "registry"' project21_registry/Cutfile.lock
+grep -q '"logger": {"source": "registry"' project21_registry/Cutfile.lock
 [[ -f project21_registry/cuts/greeter/lib/greeter.d6 ]]
 [[ -f project21_registry/cuts/logger/lib/logger.d6 ]]
 
@@ -683,10 +683,10 @@ mkdir project21_latest
 (cd project21_latest && "$facet" init myapp >/dev/null &&
     "$facet" add greeter --registry https://cuts.example/api >/dev/null &&
     "$facet" add logger >/dev/null)
-[[ "$(cd project21_latest && DIAMOND_PRINT_RESULT=1 "$diamond" diamond.cut)" == \
+[[ "$(cd project21_latest && DIAMOND_PRINT_RESULT=1 "$diamond" Cutfile)" == \
     "{name: myapp, dependencies: {greeter: {registry: https://cuts.example/api, version: ^1.3.0}, logger: {registry: https://cuts.dilang.tech, version: ^1.0.0}}}" ]]
 
-# facet install re-resolves when diamond.cut asks for something facet.lock does not
+# facet install re-resolves when Cutfile asks for something Cutfile.lock does not
 # hold, keeping locked versions that still fit: logger is added, greeter stays at
 # 1.2.3 though 1.3.0 exists. A constraint the lock no longer meets moves it.
 mkdir project21_stale
@@ -694,22 +694,22 @@ mkdir project21_stale
     "$facet" add greeter --registry https://cuts.example/api --version "^1.0.0" >/dev/null &&
     "$facet" add logger --registry https://cuts.example/api >/dev/null)
 printf '{"greeter": {"source": "registry", "registry": "https://cuts.example/api", "version": "1.2.3", "sha256": "%s", "size": %s}}\n' \
-    "$digest" "$archive_size" > project21_stale/facet.lock
+    "$digest" "$archive_size" > project21_stale/Cutfile.lock
 stale_output="$(cd project21_stale && "$facet" install)"
-grep -q "diamond.cut changed since facet.lock was written; resolving" <<<"$stale_output"
-grep -q '"greeter": {"source": "registry", "registry": "https://cuts.example/api", "version": "1.2.3"' project21_stale/facet.lock
-grep -q '"logger": {"source": "registry"' project21_stale/facet.lock
+grep -q "Cutfile changed since Cutfile.lock was written; resolving" <<<"$stale_output"
+grep -q '"greeter": {"source": "registry", "registry": "https://cuts.example/api", "version": "1.2.3"' project21_stale/Cutfile.lock
+grep -q '"logger": {"source": "registry"' project21_stale/Cutfile.lock
 [[ -f project21_stale/cuts/logger/lib/logger.d6 ]]
 current_output="$(cd project21_stale && "$facet" install)"
 if grep -q "resolving" <<<"$current_output"; then
-    echo "facet install re-resolved a lock that already covers diamond.cut" >&2
+    echo "facet install re-resolved a lock that already covers Cutfile" >&2
     exit 1
 fi
-sed -i '/"greeter"/s/"version": "^1.0.0"}/"version": "^1.3.0"}/' project21_stale/diamond.cut
-grep -q '"greeter": {"registry": "https://cuts.example/api", "version": "^1.3.0"}' project21_stale/diamond.cut
+sed -i '/"greeter"/s/"version": "^1.0.0"}/"version": "^1.3.0"}/' project21_stale/Cutfile
+grep -q '"greeter": {"registry": "https://cuts.example/api", "version": "^1.3.0"}' project21_stale/Cutfile
 (cd project21_stale && "$facet" install >/dev/null)
-grep -q '"greeter": {"source": "registry", "registry": "https://cuts.example/api", "version": "1.3.0"' project21_stale/facet.lock
-grep -q '1.3.0' project21_stale/cuts/greeter/diamond.cut
+grep -q '"greeter": {"source": "registry", "registry": "https://cuts.example/api", "version": "1.3.0"' project21_stale/Cutfile.lock
+grep -q '1.3.0' project21_stale/cuts/greeter/Cutfile
 export PATH="$saved_path"
 unset FACET_TEST_METADATA FACET_TEST_GREETER_DIGEST FACET_TEST_LOGGER_DIGEST
 unset FACET_TEST_GREETER_ARCHIVE FACET_TEST_LOGGER_ARCHIVE
@@ -780,7 +780,7 @@ mkdir project23
 error_file="$(mktemp)"
 if (cd project23 && "$facet" add greeter --git "$work/greeter_repo" --tag v1.0.0) \
         >/dev/null 2>"$error_file"; then
-    echo "facet add unexpectedly succeeded with no diamond.cut present" >&2
+    echo "facet add unexpectedly succeeded with no Cutfile present" >&2
     exit 1
 fi
 grep -q "run 'facet init' first" "$error_file"
@@ -791,7 +791,7 @@ rm -f "$error_file"
 # that it does so losslessly for every ref kind, not just the new one) ---
 
 (cd project18 && "$facet" add other --git "$work/greeter_repo" --branch main >/dev/null)
-[[ "$(cd project18 && DIAMOND_PRINT_RESULT=1 "$diamond" diamond.cut)" == \
+[[ "$(cd project18 && DIAMOND_PRINT_RESULT=1 "$diamond" Cutfile)" == \
     "{name: myapp, dependencies: {greeter: {git: $work/greeter_repo, tag: v1.0.0}, other: {git: $work/greeter_repo, branch: main}}}" ]]
 
 # --- real backtracking: a name resolved via one requester's own looser
@@ -800,21 +800,21 @@ rm -f "$error_file"
 # version-constrained deps both go pending immediately with nothing
 # queued yet, so `semver` resolves -- to v1.2.0, the highest match for
 # root's own "^1.0.0" -- a full outer-loop iteration before `needs_old`
-# resolves and its own clone's diamond.cut is ever read) resolves to the
+# resolves and its own clone's Cutfile is ever read) resolves to the
 # one tag satisfying *both* constraints instead of hard-erroring the way
 # it used to (the exact scenario docs/roadmap.md's former "not attempted
 # yet" gap named) ---
 
 mkdir needs_old_repo
 printf 'require_cut "semver"\ndef old_value() = semver_value()\n' > needs_old_repo/needs_old.d6
-cat > needs_old_repo/diamond.cut <<EOF
+cat > needs_old_repo/Cutfile <<EOF
 {"name": "needs_old", "dependencies": {"semver": {"git": "$work/semver_repo", "version": ">=1.0.0 <1.2.0"}}}
 EOF
 commit_repo needs_old_repo
 (cd needs_old_repo && git tag v1.0.0)
 
 mkdir project24
-cat > project24/diamond.cut <<EOF
+cat > project24/Cutfile <<EOF
 {"name": "myapp", "dependencies": {"semver": {"git": "$work/semver_repo", "version": "^1.0.0"}, "needs_old": {"git": "$work/needs_old_repo", "version": "^1.0.0"}}}
 EOF
 output_file="$(mktemp)"
@@ -824,14 +824,14 @@ rm -f "$output_file"
 actual="$(cd project24 && "$diamond" -e 'require_cut "semver"
 semver_value()')"
 [[ "$actual" == "1" ]]
-grep -q '"version": "v1.0.0"' project24/facet.lock
+grep -q '"version": "v1.0.0"' project24/Cutfile.lock
 
 # --- ...but a genuinely disjoint pair of constraints (no tag could ever
 # satisfy both, independent of resolution order) still hard-errors right
 # away -- no restart wasted on an unsatisfiable graph ---
 
 mkdir project25
-cat > project25/diamond.cut <<EOF
+cat > project25/Cutfile <<EOF
 {"name": "myapp", "dependencies": {"semver": {"git": "$work/semver_repo", "version": "^2.0.0"}, "needs_old": {"git": "$work/needs_old_repo", "version": "^1.0.0"}}}
 EOF
 error_file="$(mktemp)"
@@ -845,7 +845,7 @@ rm -f "$error_file"
 
 # Metadata must not execute while facet reads a project manifest or lockfile.
 mkdir project26
-printf '{"name": "myapp"}\nraise "executed manifest"\n' > project26/diamond.cut
+printf '{"name": "myapp"}\nraise "executed manifest"\n' > project26/Cutfile
 error_file="$(mktemp)"
 if (cd project26 && "$facet" install) >/dev/null 2>"$error_file"; then
     echo "facet accepted executable manifest" >&2
@@ -855,8 +855,8 @@ grep -q "must be data only" "$error_file"
 if grep -q "executed manifest" "$error_file"; then echo "unexpected match: grep -q .executed manifest. ..error_file." >&2; exit 1; fi
 rm -f "$error_file"
 
-printf '{"name": "myapp"}\n' > project26/diamond.cut
-printf '{}\nraise "executed lock"\n' > project26/facet.lock
+printf '{"name": "myapp"}\n' > project26/Cutfile
+printf '{}\nraise "executed lock"\n' > project26/Cutfile.lock
 error_file="$(mktemp)"
 if (cd project26 && "$facet" install) >/dev/null 2>"$error_file"; then
     echo "facet accepted executable lockfile" >&2
@@ -866,8 +866,8 @@ grep -q "must be data only" "$error_file"
 if grep -q "executed lock" "$error_file"; then echo "unexpected match: grep -q .executed lock. ..error_file." >&2; exit 1; fi
 rm -f "$error_file"
 
-printf '{"name": "#{raise(\"executed interpolation\")}"}\n' > project26/diamond.cut
-rm -f project26/facet.lock
+printf '{"name": "#{raise(\"executed interpolation\")}"}\n' > project26/Cutfile
+rm -f project26/Cutfile.lock
 error_file="$(mktemp)"
 if (cd project26 && "$facet" install) >/dev/null 2>"$error_file"; then
     echo "facet accepted interpolated manifest String" >&2
@@ -877,7 +877,7 @@ grep -q "String interpolation is not allowed" "$error_file"
 if grep -q "executed interpolation" "$error_file"; then echo "unexpected match: grep -q .executed interpolation. ..error_file." >&2; exit 1; fi
 rm -f "$error_file"
 
-printf '{"name": "myapp"' > project26/diamond.cut
+printf '{"name": "myapp"' > project26/Cutfile
 error_file="$(mktemp)"
 if (cd project26 && "$facet" install) >/dev/null 2>"$error_file"; then
     echo "facet accepted truncated manifest" >&2
@@ -886,7 +886,7 @@ fi
 grep -q "expected ',' or closing delimiter" "$error_file"
 rm -f "$error_file"
 
-printf '{"name": "myapp", "name": "other"}\n' > project26/diamond.cut
+printf '{"name": "myapp", "name": "other"}\n' > project26/Cutfile
 error_file="$(mktemp)"
 if (cd project26 && "$facet" install) >/dev/null 2>"$error_file"; then
     echo "facet accepted duplicate manifest key" >&2
@@ -895,11 +895,11 @@ fi
 grep -q "duplicate Hash key" "$error_file"
 rm -f "$error_file"
 
-printf '{"name": "my\\u0061pp"}\n' > project26/diamond.cut
+printf '{"name": "my\\u0061pp"}\n' > project26/Cutfile
 (cd project26 && "$facet" install >/dev/null)
-[[ -f project26/facet.lock ]]
+[[ -f project26/Cutfile.lock ]]
 
-printf '{"name": "myapp"}\000{"name": "other"}\n' > project26/diamond.cut
+printf '{"name": "myapp"}\000{"name": "other"}\n' > project26/Cutfile
 error_file="$(mktemp)"
 if (cd project26 && "$facet" update) >/dev/null 2>"$error_file"; then
     echo "facet accepted NUL in manifest" >&2
@@ -910,7 +910,7 @@ rm -f "$error_file"
 
 # --- publishable cut preflight, independent of the project working directory ---
 mkdir -p checkcut/lib
-printf '{"name": "checkcut", "version": "1.2.0", "summary": "A checked cut", "license": "MIT", "maintainers": [{"name": "Test", "contact": "test@example.com"}], "dependencies": {"logger": "^0.4.0"}}\n' > checkcut/diamond.cut
+printf '{"name": "checkcut", "version": "1.2.0", "summary": "A checked cut", "license": "MIT", "maintainers": [{"name": "Test", "contact": "test@example.com"}], "dependencies": {"logger": "^0.4.0"}}\n' > checkcut/Cutfile
 printf '# Checkcut\n' > checkcut/README.md
 printf 'MIT License\n' > checkcut/LICENSE
 printf 'def checkcut_value() = 1\n' > checkcut/lib/checkcut.d6
@@ -948,7 +948,7 @@ grep -q "needs a regular LICENSE" "$error_file"
 rm -f "$error_file"
 printf 'MIT License\n' > checkcut/LICENSE
 
-printf '{"name": "checkcut", "version": "1.2.0", "summary": "A checked cut", "license": "MIT", "maintainers": [{"name": "Test", "contact": "test@example.com"}], "dependencies": {"logger": {"git": "example", "version": "^0.4.0"}}}\n' > checkcut/diamond.cut
+printf '{"name": "checkcut", "version": "1.2.0", "summary": "A checked cut", "license": "MIT", "maintainers": [{"name": "Test", "contact": "test@example.com"}], "dependencies": {"logger": {"git": "example", "version": "^0.4.0"}}}\n' > checkcut/Cutfile
 error_file="$(mktemp)"
 if "$facet" check checkcut >/dev/null 2>"$error_file"; then
     echo "facet check accepted a Git dependency in a release manifest" >&2
@@ -963,7 +963,7 @@ for maintainers in '' ', "maintainers": []' \
     ', "maintainers": [{"name": "Test", "contact": "test@localhost"}]' \
     ', "maintainers": [{"name": "Test", "contact": "test@example.com", "role": "lead"}]' \
     ', "maintainers": [{"name": "A", "contact": "a@example.com"}, {"name": "B", "contact": "a@example.com"}]'; do
-    printf '{"name": "checkcut", "version": "1.2.0", "summary": "A checked cut", "license": "MIT"%s}\n' "$maintainers" > checkcut/diamond.cut
+    printf '{"name": "checkcut", "version": "1.2.0", "summary": "A checked cut", "license": "MIT"%s}\n' "$maintainers" > checkcut/Cutfile
     error_file="$(mktemp)"
     if "$facet" check checkcut >/dev/null 2>"$error_file"; then
         echo "facet check accepted invalid maintainers: $maintainers" >&2
@@ -972,7 +972,7 @@ for maintainers in '' ', "maintainers": []' \
     grep -q "maintainer" "$error_file"
     rm -f "$error_file"
 done
-printf '{"name": "checkcut", "version": "1.2.0", "summary": "A checked cut", "license": "MIT", "maintainers": [{"name": "Test \\"Q\\"", "contact": "test@example.com"}, {"name": "Site", "contact": "https://example.com/issues"}]}\n' > checkcut/diamond.cut
+printf '{"name": "checkcut", "version": "1.2.0", "summary": "A checked cut", "license": "MIT", "maintainers": [{"name": "Test \\"Q\\"", "contact": "test@example.com"}, {"name": "Site", "contact": "https://example.com/issues"}]}\n' > checkcut/Cutfile
 # Byte-level archive edits without a scripting language: `grep -b` reports where the text
 # sits, `dd conv=notrunc` writes over exactly those bytes and nothing else.
 blank_match() { # FILE ERE: overwrite the first match with spaces, keeping the archive length
@@ -1011,7 +1011,7 @@ blank_match "$maintained_archive" ', "maintainers": \[.*\]'
 [[ "$("$facet" verify "$maintained_archive" --json)" == *'"maintainers":[]}' ]]
 rm -rf "$(dirname "$maintained_archive")"
 
-printf '{"name": "checkcut", "version": "1.2.0", "summary": "A checked cut", "license": "MIT", "maintainers": [{"name": "Test", "contact": "test@example.com"}]}\n' > checkcut/diamond.cut
+printf '{"name": "checkcut", "version": "1.2.0", "summary": "A checked cut", "license": "MIT", "maintainers": [{"name": "Test", "contact": "test@example.com"}]}\n' > checkcut/Cutfile
 mkdir -p checkcut/lib/checkcut checkcut/tests
 printf 'def helper() = 2\n' > checkcut/lib/checkcut/helper.d6
 printf 'ignored test\n' > checkcut/tests/test.d6
@@ -1173,64 +1173,127 @@ for name in active_record active_auth active_discussion active_social active_tag
     (cd packaged_project && "$diamond" -e "require_cut \"$name\"" >/dev/null)
 done
 
-# --- development dependencies (diamond.dev.cut) ---
+# --- development dependencies (Cutfile.dev) ---
 
-# The root project's diamond.dev.cut joins the same resolution as diamond.cut
-# and lands in the same facet.lock; a dependency's own diamond.dev.cut is never
+# The root project's Cutfile.dev joins the same resolution as Cutfile
+# and lands in the same Cutfile.lock; a dependency's own Cutfile.dev is never
 # read (this one names a repository that does not exist).
 cd "$work"
 mkdir checker_repo
 printf 'def check_value() = "checked"\n' > checker_repo/checker.d6
-echo '{"name": "checker", "version": "0.1.0"}' > checker_repo/diamond.cut
-echo '{"dependencies": {"ghost": {"git": "/nonexistent/ghost", "tag": "v1"}}}' > checker_repo/diamond.dev.cut
+echo '{"name": "checker", "version": "0.1.0"}' > checker_repo/Cutfile
+echo '{"dependencies": {"ghost": {"git": "/nonexistent/ghost", "tag": "v1"}}}' > checker_repo/Cutfile.dev
 commit_repo checker_repo
 (cd checker_repo && git tag v0.1.0)
 mkdir dev_project
-cat > dev_project/diamond.cut <<EOF
+cat > dev_project/Cutfile <<EOF
 {"name": "devapp", "dependencies": {"greeter": {"git": "$work/greeter_repo", "tag": "v1.0.0"}}}
 EOF
 (cd dev_project && "$facet" add checker --dev --git "$work/checker_repo" --version "^0.1.0" >/dev/null)
-grep -q '"checker"' dev_project/diamond.dev.cut
-if grep -q checker dev_project/diamond.cut; then echo "facet add --dev wrote diamond.cut" >&2; exit 1; fi
+grep -q '"checker"' dev_project/Cutfile.dev
+if grep -q checker dev_project/Cutfile; then echo "facet add --dev wrote Cutfile" >&2; exit 1; fi
 (cd dev_project && "$facet" update >/dev/null)
 [[ -f dev_project/cuts/greeter/greeter.d6 && -f dev_project/cuts/checker/checker.d6 ]]
 [[ ! -e dev_project/cuts/ghost ]]
-grep -q '"checker"' dev_project/facet.lock
+grep -q '"checker"' dev_project/Cutfile.lock
 [[ "$(cd dev_project && "$diamond" -e 'require_cut "checker"
 check_value()')" == checked ]]
 
 # A name may be in only one of the two files, for add and for resolution.
 if (cd dev_project && "$facet" add greeter --dev --git "$work/greeter_repo" --tag v1.0.0) >/dev/null 2>&1; then
-    echo "facet add --dev accepted a name already in diamond.cut" >&2
+    echo "facet add --dev accepted a name already in Cutfile" >&2
     exit 1
 fi
 if (cd dev_project && "$facet" add checker --git "$work/checker_repo" --tag v0.1.0) >/dev/null 2>&1; then
-    echo "facet add accepted a name already in diamond.dev.cut" >&2
+    echo "facet add accepted a name already in Cutfile.dev" >&2
     exit 1
 fi
-cp dev_project/diamond.dev.cut dev_project/diamond.dev.cut.good
-cat > dev_project/diamond.dev.cut <<EOF
+cp dev_project/Cutfile.dev dev_project/Cutfile.dev.good
+cat > dev_project/Cutfile.dev <<EOF
 {"dependencies": {"greeter": {"git": "$work/greeter_repo", "tag": "v1.0.0"}}}
 EOF
 if (cd dev_project && "$facet" update) >/dev/null 2>&1; then
     echo "facet resolved a name present in both manifests" >&2
     exit 1
 fi
-echo '{"dependencies": {}, "name": "x"}' > dev_project/diamond.dev.cut
+echo '{"dependencies": {}, "name": "x"}' > dev_project/Cutfile.dev
 if (cd dev_project && "$facet" update) >/dev/null 2>&1; then
-    echo "facet accepted an unknown diamond.dev.cut key" >&2
+    echo "facet accepted an unknown Cutfile.dev key" >&2
     exit 1
 fi
-mv dev_project/diamond.dev.cut.good dev_project/diamond.dev.cut
+mv dev_project/Cutfile.dev.good dev_project/Cutfile.dev
 
-# diamond.dev.cut is never part of a cut archive.
+# Cutfile.dev is never part of a cut archive.
 mkdir -p dev_cut/lib
-printf '%s\n' '{"name": "dev_cut", "version": "0.1.0", "summary": "Dev cut", "license": "MIT", "maintainers": [{"name": "Test", "contact": "test@example.com"}]}' > dev_cut/diamond.cut
+printf '%s\n' '{"name": "dev_cut", "version": "0.1.0", "summary": "Dev cut", "license": "MIT", "maintainers": [{"name": "Test", "contact": "test@example.com"}]}' > dev_cut/Cutfile
 printf '# Dev cut\n' > dev_cut/README.md
 printf 'MIT\n' > dev_cut/LICENSE
 printf 'def dev_cut_value() = 1\n' > dev_cut/lib/dev_cut.d6
-cp dev_project/diamond.dev.cut dev_cut/diamond.dev.cut
+cp dev_project/Cutfile.dev dev_cut/Cutfile.dev
 "$facet" pack dev_cut dev_cut.tar >/dev/null
-if tar -tf dev_cut.tar | grep -q diamond.dev.cut; then echo "facet pack included diamond.dev.cut" >&2; exit 1; fi
+if tar -tf dev_cut.tar | grep -q Cutfile.dev; then echo "facet pack included Cutfile.dev" >&2; exit 1; fi
+
+# --- the former names: diamond.cut, diamond.dev.cut and facet.lock ---
+
+# A project that hasn't moved still installs. Its next resolve writes the lock
+# under the new name and removes the old one.
+mkdir former_project
+former_manifest="$(printf '{"name": "former_project", "dependencies": {"greeter": {"git": "%s", "tag": "v1.0.0"}}}' "$work/greeter_repo")"
+printf '%s\n' "$former_manifest" > former_project/diamond.cut
+(cd former_project && "$facet" install >/dev/null)
+[[ -f former_project/cuts/greeter/greeter.d6 && -f former_project/Cutfile.lock ]]
+[[ ! -e former_project/Cutfile ]]
+mv former_project/Cutfile.lock former_project/facet.lock
+(cd former_project && "$facet" install >/dev/null)
+[[ -f former_project/facet.lock && ! -e former_project/Cutfile.lock ]]
+(cd former_project && "$facet" update >/dev/null)
+[[ -f former_project/Cutfile.lock && ! -e former_project/facet.lock ]]
+
+# `facet add` edits the file the project already has.
+(cd former_project && "$facet" add checker --dev --git "$work/checker_repo" --version "^0.1.0" >/dev/null)
+grep -q '"checker"' former_project/Cutfile.dev
+(cd former_project && "$facet" add ghost --git "$work/greeter_repo" --tag v1.0.0 >/dev/null)
+grep -q '"ghost"' former_project/diamond.cut
+[[ ! -e former_project/Cutfile ]]
+if (cd former_project && "$facet" init >/dev/null 2>&1); then
+    echo "facet init overwrote a project using the former manifest name" >&2
+    exit 1
+fi
+
+# Two names for one file means one is silently ignored, so it stops instead.
+cp former_project/diamond.cut former_project/Cutfile
+if (cd former_project && "$facet" install >/dev/null 2>"$error_file"); then
+    echo "facet install accepted both Cutfile and diamond.cut" >&2
+    exit 1
+fi
+grep -q 'found both Cutfile and diamond.cut' "$error_file"
+rm former_project/Cutfile
+
+# A cut under the former name still packs and verifies, because published
+# archives contain it. An archive holding both names is rejected.
+mkdir -p former_cut/lib
+printf '%s\n' '{"name": "former_cut", "version": "0.1.0", "summary": "Former cut", "license": "MIT", "maintainers": [{"name": "T", "contact": "t@example.com"}]}' > former_cut/diamond.cut
+printf '# Former cut\n' > former_cut/README.md
+printf 'MIT\n' > former_cut/LICENSE
+printf 'def former_cut_value() = 1\n' > former_cut/lib/former_cut.d6
+"$facet" check former_cut >/dev/null
+"$facet" pack former_cut former_cut.tar >/dev/null
+tar -tf former_cut.tar | grep -qx 'diamond.cut'
+"$facet" verify former_cut.tar >/dev/null
+cp former_cut/diamond.cut former_cut/Cutfile
+if "$facet" check former_cut >/dev/null 2>"$error_file"; then
+    echo "facet check accepted both Cutfile and diamond.cut" >&2
+    exit 1
+fi
+grep -q 'has both Cutfile and diamond.cut' "$error_file"
+if tar --version 2>/dev/null | grep -q GNU; then
+    tar --format=ustar --numeric-owner --owner=0 --group=0 --mtime=@0 --mode=0644 -C former_cut \
+        -cf both_manifests.tar Cutfile LICENSE README.md diamond.cut lib/former_cut.d6
+    if "$facet" verify both_manifests.tar >/dev/null 2>"$error_file"; then
+        echo "facet verify accepted an archive with two manifests" >&2
+        exit 1
+    fi
+    grep -q 'more than one manifest' "$error_file"
+fi
 
 echo "all facet tests passed"

@@ -18,7 +18,7 @@ reverse proxy.
 - `lib/{{name}}.d6` holds the routes (`{{Name}}.route`) and the middleware chain
   (`{{Name}}.build_chain`).
 - `test/{{name}}_test.d6` calls the handler with request hashes, so the tests start no
-  server. It uses minitest, which `diamond.dev.cut` lists because only the tests need it.
+  server. It uses minitest, which `Cutfile.dev` lists because only the tests need it.
 
-`facet install` writes `facet.lock`; commit it so every checkout gets the same versions.
-`facet update` moves to the newest versions the constraints in `diamond.cut` allow.
+`facet install` writes `Cutfile.lock`; commit it so every checkout gets the same versions.
+`facet update` moves to the newest versions the constraints in `Cutfile` allow.

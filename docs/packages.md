@@ -33,7 +33,7 @@ verified artifacts from `packages/` into that project's `cuts/` directory.
 This development bootstrap does not
 resolve registry versions or write a registry lockfile.
 
-An existing `facet.lock` may pin a registry artifact with `source`, `registry`,
+An existing `Cutfile.lock` may pin a registry artifact with `source`, `registry`,
 `version`, `sha256`, and `size`. `facet install` uses `curl` to fetch only that
 digest-addressed HTTPS archive, validates it with the same checks as
 `facet verify`, and stages every cut before replacing installed copies. It does
@@ -90,7 +90,7 @@ keeps meaning exactly what it always meant.
 ```
 cuts/
   greeter/
-    diamond.cut           # manifest (optional)
+    Cutfile           # manifest (optional)
     lib/
       greeter.d6       # public entry point, same name as the cut
       helpers.d6        # implementation components
@@ -105,11 +105,11 @@ migrated yet.
 ## Manifests
 
 ```ruby
-# cuts/greeter/diamond.cut
+# cuts/greeter/Cutfile
 {"name": "greeter", "version": "0.1.0"}
 ```
 
-A cut may optionally include `cuts/<name>/diamond.cut` — a fixed filename,
+A cut may optionally include `cuts/<name>/Cutfile` — a fixed filename,
 not parameterized by the cut's own name, since the same file also has to
 work unmodified as the manifest sitting at a dependency's own repository
 root before `facet` ever installs it anywhere (see "`facet`" below). If
@@ -128,17 +128,17 @@ A manifest must contain a single data-only Hash literal. The loader and
 calls, interpolation, duplicate keys, and trailing code are rejected.
 `require` and `require_cut` are not supported inside metadata.
 
-If no `diamond.cut` exists at all, none of this applies — the cut resolves
+If no `Cutfile` exists at all, none of this applies — the cut resolves
 exactly as it would with no manifest support at all.
 
 A manifest can be pretty-printed across multiple lines. Whitespace is allowed
 around keys, colons, values, commas, and braces. A trailing comma is accepted
-for compatibility with existing `facet.lock` files.
+for compatibility with existing `Cutfile.lock` files.
 
 ### Dependencies
 
 ```ruby
-# diamond.cut, at your project's own root
+# Cutfile, at your project's own root
 {"name": "myapp", "version": "0.1.0", "dependencies": {"greeter": {"git": "https://example.com/user/greeter", "tag": "v1.0.0"}}}
 ```
 
@@ -185,29 +185,29 @@ that `require_cut` can find it.
 
 ### Development dependencies
 
-Cuts a project needs only for tests or development go in `diamond.dev.cut`,
-next to `diamond.cut`. Its only key is `dependencies`, in the format above:
+Cuts a project needs only for tests or development go in `Cutfile.dev`,
+next to `Cutfile`. Its only key is `dependencies`, in the format above:
 
 ```ruby
-# diamond.dev.cut
+# Cutfile.dev
 {"dependencies": {"checker": {"registry": "https://cuts.dilang.tech", "version": "^0.1.0"}}}
 ```
 
 `facet install` and `facet update` read it only in the project they run in. A
-dependency's own `diamond.dev.cut` is never read, so the cuts it tests itself
+dependency's own `Cutfile.dev` is never read, so the cuts it tests itself
 with are not installed into projects that use it. Development dependencies
-resolve in the same graph as `diamond.cut`'s (a cut both name, directly or
-transitively, gets one version) and are recorded in the same `facet.lock`. A name
+resolve in the same graph as `Cutfile`'s (a cut both name, directly or
+transitively, gets one version) and are recorded in the same `Cutfile.lock`. A name
 may be in only one of the two files.
 
-`diamond.dev.cut` is never part of a published cut: `facet pack` takes only
-`diamond.cut`, `README.md`, `LICENSE`, `lib/`, `bin/` and `assets/`. It is a
-separate file, not a key in `diamond.cut`, because every released facet rejects
-an unknown key in a cut archive's `diamond.cut`.
+`Cutfile.dev` is never part of a published cut: `facet pack` takes only
+`Cutfile`, `README.md`, `LICENSE`, `lib/`, `bin/` and `assets/`. It is a
+separate file, not a key in `Cutfile`, because every released facet rejects
+an unknown key in a cut archive's `Cutfile`.
 
 ## `facet`
 
-`facet install` reads `diamond.cut` in the current directory, resolves
+`facet install` reads `Cutfile` in the current directory, resolves
 every dependency (recursively — a dependency's own `dependencies` are
 followed too), fetches each one via `git clone`/`checkout` (never a
 shell — arguments go straight to `execvp`, so a URL or ref pulled from
@@ -216,31 +216,31 @@ result into `cuts/<name>/` with `.git/` stripped (the lockfile below is
 the source of truth for "what commit," not a live repository sitting
 inside `cuts/`). Because a resolved dependency's own cloned checkout is
 moved into place as-is (`rename`, not a re-copy that could rewrite
-anything), its manifest keeps the same fixed `diamond.cut` filename it had at
+anything), its manifest keeps the same fixed `Cutfile` filename it had at
 its own repository root — this is exactly why that filename isn't
-parameterized by the cut's own name. It writes `facet.lock` alongside
-`diamond.cut` — a Diamond `Hash` literal, same as a manifest. `facet` itself
+parameterized by the cut's own name. It writes `Cutfile.lock` alongside
+`Cutfile` — a Diamond `Hash` literal, same as a manifest. `facet` itself
 always writes it compact/single-line (it's machine-generated, not
 something you're meant to hand-edit), but reads one back the same way it
 reads any manifest, so a hand-edited lockfile can be pretty-printed too
 if you ever want to:
 
 ```ruby
-# facet.lock
+# Cutfile.lock
 {"greeter": {"source": "git", "git": "https://example.com/user/greeter", "commit": "a1b2c3d..."}}
 ```
 
 a flat map of every resolved cut (the whole transitive set, already
-flattened) to its exact commit. Once `facet.lock` exists, `facet
+flattened) to its exact commit. Once `Cutfile.lock` exists, `facet
 install` installs exactly what it says without re-resolving anything —
 the fast, reproducible path, unaffected by a tag or branch moving in
-the meantime — as long as the lock still covers `diamond.cut` and
-`diamond.dev.cut`. When a direct dependency is missing from the lock, comes
+the meantime — as long as the lock still covers `Cutfile` and
+`Cutfile.dev`. When a direct dependency is missing from the lock, comes
 from a different source, is locked outside its version constraint, or names a
 different commit, `facet install` says so and resolves again, keeping each
 locked registry version that still fits. A changed tag or branch is not
 visible in the lock, which records only the commit; `facet update` picks it up.
-`facet update` always re-resolves from `diamond.cut`
+`facet update` always re-resolves from `Cutfile`
 (picking up anything a tracked branch has moved to) and rewrites the
 lock.
 
@@ -250,7 +250,7 @@ their pinned source, version, digest, and archive size. Unknown source types
 and lockfile fields fail explicitly.
 
 For Git dependencies, resolving *is* fetching: discovering a dependency's own
-transitive dependencies requires a clone of it to read its `diamond.cut`.
+transitive dependencies requires a clone of it to read its `Cutfile`.
 Registry dependencies use their metadata API during `facet update`, so their
 complete graph is resolved before any archive is downloaded.
 
@@ -294,7 +294,7 @@ not a manifest problem, if it somehow doesn't). A genuinely disjoint
 pair of constraints is unaffected by any of this — that's still an
 immediate hard error, not a reason to retry.
 
-A cloned dependency's own `diamond.cut` must declare a `name` matching
+A cloned dependency's own `Cutfile` must declare a `name` matching
 the dependency key it was fetched as — the same rule `require_cut` already
 enforces for hand-installed cuts (see above) — so a misconfigured
 or renamed dependency fails clearly at `facet install` time rather than
@@ -325,8 +325,8 @@ Every kind shares one layout:
 
 ```text
 <name>/
-  diamond.cut
-  diamond.dev.cut          minitest, a development dependency
+  Cutfile
+  Cutfile.dev          minitest, a development dependency
   README.md
   .gitignore
   main.d6                  (not for lib) the entry point
@@ -336,7 +336,7 @@ Every kind shares one layout:
 ```
 
 The tests load the `minitest` cut with `require_cut "minitest"`. It is listed in
-[`diamond.dev.cut`](#development-dependencies), so `facet install` fetches it
+[`Cutfile.dev`](#development-dependencies), so `facet install` fetches it
 for the project's own tests, but a `lib` project's users never install it.
 `test.sh` stops with a reminder when `cuts/minitest` is missing.
 
@@ -350,7 +350,7 @@ reserved list still matches the compiler and library sources.
 ### `facet init` and `facet add`
 
 ```sh
-facet init [name]     # writes a fresh diamond.cut; defaults name to the
+facet init [name]     # writes a fresh Cutfile; defaults name to the
                        # current directory's own basename if omitted
 facet add <name> [--dev] [--registry <https-url>] [--version <constraint>]
 facet add <name> [--dev] --git <url> (--tag <ref> | --branch <ref> | --commit <ref> | --version <constraint>)
@@ -361,11 +361,11 @@ public registry at `https://cuts.dilang.tech`. Without `--version`, `facet add`
 asks the registry for the newest release that is not yanked and writes `^` plus
 that version, so `facet update` takes compatible releases only.
 
-`--dev` adds the dependency to `diamond.dev.cut` instead, creating it if needed
+`--dev` adds the dependency to `Cutfile.dev` instead, creating it if needed
 (see "Development dependencies" above); the name must not already be in either
 file.
 
-`facet init` refuses to run if `diamond.cut` already exists — it never
+`facet init` refuses to run if `Cutfile` already exists — it never
 overwrites one. `facet add` requires one to already exist (`facet init`
 first, or hand-write one), parses it, appends the new dependency (a hard
 error if that name is already present — edit the existing entry by hand,
@@ -376,12 +376,12 @@ install` would reject it later: for a git dependency exactly one of `--tag`/`--b
 constraint (`src/semver.h`'s own grammar) — so a mistake is caught
 immediately, not at the next `facet install`.
 
-`facet add` rewrites the **entire** `diamond.cut`, not just the one entry
+`facet add` rewrites the **entire** `Cutfile`, not just the one entry
 being added — there's no Hash-literal-aware text editor here, only a
 parse-the-whole-thing-and-regenerate-it round trip (mirroring how `facet
-install`/`update` already regenerate `facet.lock` from scratch every
+install`/`update` already regenerate `Cutfile.lock` from scratch every
 time). Any hand-added comment or unusual formatting in an existing
-`diamond.cut` does not survive a `facet add`; the regenerated file uses
+`Cutfile` does not survive a `facet add`; the regenerated file uses
 the same pretty-printed, multi-line style described above. It does
 round-trip every existing dependency's own ref kind exactly (a `branch`
 dependency stays a `branch` dependency after adding an unrelated one) —
@@ -392,7 +392,7 @@ tracks*, not just how the file looks.
 ### A real example: `packages/http`
 
 HTTP support is an ordinary cut rather than part of the runtime. The bundled
-example at `packages/http` has its own `diamond.cut`, README, and tests, and is
+example at `packages/http` has its own `Cutfile`, README, and tests, and is
 loaded with `require_cut` rather than discovered by the core `require` path.
 
 To use it from another project the same way any `facet` dependency
@@ -420,7 +420,7 @@ the first place.
 
 ## Packages in this repository
 
-Each lives in `packages/NAME` with its own `diamond.cut`, README and tests, and installs
+Each lives in `packages/NAME` with its own `Cutfile`, README and tests, and installs
 with `facet` like any other cut.
 
 | Package | What it is |
@@ -444,7 +444,7 @@ with `facet` like any other cut.
 | `jobs` | Durable database-backed background jobs |
 | `log_viewer` | Format structured JSON log streams |
 | `logger` | Leveled text and structured JSON logging |
-| `minitest` | Assertions, skips, setup/teardown hooks and a test runner (a copy of `lib/minitest.d6`); `facet new` projects list it in `diamond.dev.cut` |
+| `minitest` | Assertions, skips, setup/teardown hooks and a test runner (a copy of `lib/minitest.d6`); `facet new` projects list it in `Cutfile.dev` |
 | `mjolnir` | Stateless data mapper on Arel: schemas, immutable queries, changesets, and a Repo |
 | `multipart` | Parse multipart form data and file uploads |
 | `network_safety` | Guard outbound HTTP URLs against local names and private IPv4 literals |
@@ -463,7 +463,7 @@ with `facet` like any other cut.
   cut, "Dependencies" above) — that one is real now. A cut's own
   top-level `version` staying inert isn't an oversight sharing the same
   gap: `facet` learns what versions a dependency actually has from its
-  git tags, never from a `diamond.cut` string the requester would have
+  git tags, never from a `Cutfile` string the requester would have
   to trust regardless.
 - **Two versions of the same cut coexisting** is architecturally
   constrained, not just unbuilt: Diamond compiles every `require`/

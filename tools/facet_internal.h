@@ -103,6 +103,12 @@ typedef struct FacetResolution {
 /* facet.c */
 bool same_file_timestamps(const struct stat *left, const struct stat *right);
 bool file_exists(const char *path);
+#define FACET_LOCK "Cutfile.lock"
+#define FACET_FORMER_LOCK "facet.lock"
+const char *project_manifest_path(void);
+const char *project_dev_manifest_path(void);
+const char *project_lock_path(void);
+bool project_files_unambiguous(char *error, size_t error_size);
 bool valid_sha256(const char *text);
 bool valid_registry_url(const char *url);
 bool canonical_registry_version(const char *text);

@@ -10,7 +10,7 @@ runtime dependency on this cut.
 From your project directory (see the [package guide](https://github.com/diamond-language/diamond/blob/main/docs/packages.md) for `facet`):
 
 ```sh
-facet init myapp          # once, if the project has no diamond.cut yet
+facet init myapp          # once, if the project has no Cutfile yet
 facet add div
 facet install
 ```
@@ -25,7 +25,7 @@ A typical layout keeps templates under `views/` and application code beside it:
 
 ```
 myapp/
-  diamond.cut
+  Cutfile
   cuts/div/ cuts/http/        # installed by facet
   app.d6
   views/

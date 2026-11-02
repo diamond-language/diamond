@@ -26,6 +26,6 @@ facet check .                    # check the cut can be published
 ```
 
 `lib/{{name}}.d6` is the public entry point. `test/{{name}}_test.d6` uses minitest,
-which `diamond.dev.cut` lists as a development dependency: users of {{name}} do not
-install it, and neither `diamond.dev.cut`, `test/` nor `test.sh` is published. Before publishing, fill in `summary` in `diamond.cut` and check that the
+which `Cutfile.dev` lists as a development dependency: users of {{name}} do not
+install it, and neither `Cutfile.dev`, `test/` nor `test.sh` is published. Before publishing, fill in `summary` in `Cutfile` and check that the
 maintainer contact is one you want listed publicly in the registry.
