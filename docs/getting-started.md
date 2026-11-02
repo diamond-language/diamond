@@ -18,15 +18,19 @@ and install it:
 
 ```sh
 # Ubuntu 26.04
+sudo apt update && sudo apt upgrade
 sudo apt install ~/Downloads/diamond-lang_0.22.0-1_amd64.deb
 
 # Fedora 44
+sudo dnf upgrade
 sudo dnf install ~/Downloads/diamond-lang-0.22.0-1.fc44.x86_64.rpm
 ```
 
 The package puts `diamond`, `facet`, `diamond-lsp` and `diamond-dap` in
 `/usr/bin`. It recommends `gcc` and the libraries' development packages, which
-only `diamond build` needs; apt and dnf install recommendations by default.
+only `diamond build` needs. apt and dnf install recommendations by default, but
+skip any that would need an installed package upgraded, so upgrade first. If you
+didn't, `diamond build` prints the commands that install what it's missing.
 
 ### From source
 
@@ -343,11 +347,12 @@ connections are in [databases](databases.md).
 
 `diamond-lsp` gives diagnostics as you type, hover, go-to-definition,
 completion and formatting in any editor with a language-server client; point
-it at the binary over stdio. For VS Code, link the extension from the
-checkout:
+it at the binary over stdio. The VS Code extension isn't in the packages, so
+clone the repository and link it from there:
 
 ```sh
-ln -s "$PWD/editors/vscode" ~/.vscode/extensions/diamond-language
+git clone https://github.com/diamond-language/diamond.git
+ln -s "$PWD/diamond/editors/vscode" ~/.vscode/extensions/diamond-language
 ```
 
 [Language server](lsp.md), [the VS Code extension](../editors/vscode/README.md),
@@ -363,8 +368,8 @@ diamond build main.d6 -o greeter
 ./greeter Grace           # Hello, Grace!
 ```
 
-It needs a C compiler, which links the program against the kit `make install`
-put in `lib/diamond`. The executable links SQLite, libpq, MariaDB Connector/C,
+It needs a C compiler, which links the program against the kit the package or
+`make install` put in `lib/diamond`. The executable links SQLite, libpq, MariaDB Connector/C,
 OpenSSL, libcrypt and zlib dynamically, so the machine it runs on needs those
 runtime libraries. Fully static builds with a musl kit, cross-compiling, and
 the build cache are in [deployment](deployment.md).
@@ -386,6 +391,6 @@ In roughly this order:
 5. The runtime underneath: [object model](object-model.md),
    [runtime reference](runtime-reference.md).
 
-The runnable sample applications under `examples/` and `applications/` in the
-checkout show larger programs; [the README](../README.md#repository-layout)
-lists them.
+The runnable sample applications under `examples/` and `applications/` in
+[the repository](https://github.com/diamond-language/diamond) show larger
+programs; [the README](../README.md#repository-layout) lists them.

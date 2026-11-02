@@ -6,6 +6,12 @@ authoritative fine-grained record.
 
 ## Unreleased
 
+### Fixed
+
+- A failed `diamond build` from an installed kit now gives the commands that install the compiler
+  and development packages. apt and dnf skip those recommendations on a machine behind on updates,
+  which left only a linker error to go on.
+
 ## 0.22.0 — 2026-11-01
 
 ### Added
