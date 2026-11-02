@@ -26,11 +26,11 @@ sudo dnf upgrade
 sudo dnf install ~/Downloads/diamond-lang-0.22.0-1.fc44.x86_64.rpm
 ```
 
-The package puts `diamond`, `facet`, `diamond-lsp` and `diamond-dap` in
+The package puts `d6`, `facet`, `d6-lsp` and `d6-dap` in
 `/usr/bin`. It recommends `gcc` and the libraries' development packages, which
-only `diamond build` needs. apt and dnf install recommendations by default, but
+only `d6 build` needs. apt and dnf install recommendations by default, but
 skip any that would need an installed package upgraded, so upgrade first. If you
-didn't, `diamond build` prints the commands that install what it's missing.
+didn't, `d6 build` prints the commands that install what it's missing.
 
 ### From source
 
@@ -61,14 +61,14 @@ make release facet lsp dap
 make install PREFIX=$HOME/.local
 ```
 
-This puts `diamond`, `facet`, `diamond-lsp` and `diamond-dap` in
+This puts `d6`, `facet`, `d6-lsp` and `d6-dap` in
 `~/.local/bin` (add it to your `PATH` if it is not there already), plus the kit
-`diamond build` links executables with in `~/.local/lib/diamond`.
+`d6 build` links executables with in `~/.local/lib/diamond`.
 
 Either way, check it:
 
 ```sh
-diamond --version     # diamond 0.22.0
+d6 --version     # d6 0.22.0
 ```
 
 The [asdf-diamond](https://github.com/diamond-language/asdf-diamond) plugin
@@ -76,11 +76,11 @@ does the same build for asdf or mise users.
 
 ## 2. The REPL
 
-Run `diamond` with no arguments in a terminal. Each line is evaluated and its
+Run `d6` with no arguments in a terminal. Each line is evaluated and its
 value printed, and later lines see earlier definitions:
 
 ```text
-diamond REPL -- Ctrl-D, exit, or quit to leave
+d6 REPL -- Ctrl-D, exit, or quit to leave
 {> name = "Ada"
 Ada
 {> "Hello, #{name}!"
@@ -89,11 +89,11 @@ Hello, Ada!
 [1, 2, 3]
 ```
 
-Type `exit` or `quit`, or press Ctrl-D on an empty line, to leave. `diamond -e CODE` runs
+Type `exit` or `quit`, or press Ctrl-D on an empty line, to leave. `d6 -e CODE` runs
 one expression from the shell:
 
 ```sh
-diamond -e '[1, 2, 3].map() do |n| n * n end'     # [1, 4, 9]
+d6 -e '[1, 2, 3].map() do |n| n * n end'     # [1, 4, 9]
 ```
 
 Line editing, history and completion: [REPL](repl.md).
@@ -111,7 +111,7 @@ end
 ```
 
 ```sh
-diamond hello.d6
+d6 hello.d6
 ```
 
 ```text
@@ -119,9 +119,9 @@ Hello, Ada!
 Hello, Grace!
 ```
 
-A script prints only what it writes. The REPL and `diamond -e` are different:
+A script prints only what it writes. The REPL and `d6 -e` are different:
 they also print the value of the last expression, which is why
-`diamond -e '20 + 22'` prints `42` without a `puts`.
+`d6 -e '20 + 22'` prints `42` without a `puts`.
 
 Three things trip up newcomers from other scripting languages:
 
@@ -148,7 +148,7 @@ The language itself: [core syntax](core-syntax.md), [callables](callables.md),
 facet new cli greeter
 cd greeter
 facet install             # fetch minitest, the test library, into cuts/
-diamond main.d6 Ada       # Hello, Ada!
+d6 main.d6 Ada       # Hello, Ada!
 bash test.sh
 ```
 
@@ -237,7 +237,7 @@ facet new web hello_web
 cd hello_web
 facet install
 bash test.sh
-diamond main.d6           # hello_web listening on http://127.0.0.1:8080
+d6 main.d6           # hello_web listening on http://127.0.0.1:8080
 ```
 
 ## 7. A web app with a database
@@ -307,7 +307,7 @@ end
 ```
 
 ```sh
-diamond main.d6 &
+d6 main.d6 &
 curl -d 'milk' localhost:8080/notes      # {"id":1}
 curl -d '' localhost:8080/notes          # {"title":["can't be blank"]}
 curl localhost:8080/notes                # ["milk"]
@@ -345,7 +345,7 @@ connections are in [databases](databases.md).
 
 ## 8. Editor support
 
-`diamond-lsp` gives diagnostics as you type, hover, go-to-definition,
+`d6-lsp` gives diagnostics as you type, hover, go-to-definition,
 completion and formatting in any editor with a language-server client; point
 it at the binary over stdio. The VS Code extension isn't in the packages, so
 clone the repository and link it from there:
@@ -356,15 +356,15 @@ ln -s "$PWD/diamond/editors/vscode" ~/.vscode/extensions/diamond-language
 ```
 
 [Language server](lsp.md), [the VS Code extension](../editors/vscode/README.md),
-and [debugging](debugging.md) with breakpoints through `diamond-dap`.
+and [debugging](debugging.md) with breakpoints through `d6-dap`.
 
 ## 9. Build and deploy
 
-`diamond build` compiles a program into a standalone executable that needs
-neither `diamond` nor the source at run time:
+`d6 build` compiles a program into a standalone executable that needs
+neither `d6` nor the source at run time:
 
 ```sh
-diamond build main.d6 -o greeter
+d6 build main.d6 -o greeter
 ./greeter Grace           # Hello, Grace!
 ```
 

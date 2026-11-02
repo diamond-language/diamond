@@ -10,7 +10,7 @@ From the repository root:
 ```sh
 make debug facet
 bash tools/install_local_cuts.sh .
-build/diamond examples/bookmarks/web.d6
+build/d6 examples/bookmarks/web.d6
 # Open http://127.0.0.1:18111
 ```
 
@@ -45,7 +45,7 @@ Run the original in-process checks from this directory after installing cuts:
 
 ```sh
 bash ../../tools/install_local_cuts.sh .
-../../build/diamond smoke_test.d6
+../../build/d6 smoke_test.d6
 ```
 
 From the repository root, `bash examples/web_apps_test.sh` checks real HTTP,

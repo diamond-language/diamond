@@ -1,6 +1,6 @@
 # REPL
 
-This document covers the interactive REPL (`build/diamond` with no file
+This document covers the interactive REPL (`build/d6` with no file
 argument, when stdin is a terminal) — line editing, history, and how it
 falls back to plain-pipe behavior for scripted use.
 
@@ -72,7 +72,7 @@ practice (every arrow/function key sends its CSI bytes back-to-back).
 Pressing **Tab** completes the identifier (or `receiver.method`) at the
 cursor, reusing the LSP's own completion engine in-process (no
 subprocess, no JSON-RPC transport) — the same candidate list an editor
-connected to `diamond lsp` would see for the same position. Exactly one
+connected to `d6 lsp` would see for the same position. Exactly one
 match splices the unmatched remainder into the buffer at the cursor and
 redraws, the same way typing it would have; two or more matches print
 every candidate label on a fresh line below the prompt (unfiltered by

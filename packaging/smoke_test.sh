@@ -1,29 +1,33 @@
 #!/usr/bin/env bash
 # Checks an installed diamond-lang package: the tools are on PATH under /usr,
 # a script and -e run, a facet new project installs its test cut from the
-# registry and its tests pass, and diamond build
+# registry and its tests pass, and d6 build
 # links that project into an executable with the packaged kit. Runs in a clean
 # container after the package is installed (see packaging/ci.sh).
 set -euo pipefail
 
 expected_version="${1:?usage: smoke_test.sh VERSION}"
-for tool in diamond facet diamond-lsp diamond-dap; do
+for tool in d6 facet d6-lsp d6-dap; do
     [[ "$(readlink -f "$(command -v "$tool")")" == "/usr/bin/$tool" ]] || { echo "$tool is not /usr/bin/$tool" >&2; exit 1; }
 done
-[[ "$(diamond --version)" == "diamond $expected_version" ]]
+for suffix in "" -lsp -dap; do
+    [[ "$(readlink -f "$(command -v "diamond$suffix")")" == "/usr/bin/d6$suffix" ]] || { echo "diamond$suffix does not link to d6$suffix" >&2; exit 1; }
+done
+[[ "$(d6 --version)" == "d6 $expected_version" ]]
+[[ "$(d6 -e '20 + 22')" == 42 ]]
 [[ "$(diamond -e '20 + 22')" == 42 ]]
 
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 cd "$work"
 printf 'puts("Hello, #{ARGV[0]}!")\n' > hello.d6
-[[ "$(diamond hello.d6 Ada)" == "Hello, Ada!" ]]
+[[ "$(d6 hello.d6 Ada)" == "Hello, Ada!" ]]
 
 facet new cli greeter >/dev/null
 cd greeter
 facet install >/dev/null
 bash test.sh >/dev/null
-[[ "$(diamond main.d6 Ada)" == "Hello, Ada!" ]]
-diamond build main.d6 -o greeter >/dev/null
+[[ "$(d6 main.d6 Ada)" == "Hello, Ada!" ]]
+d6 build main.d6 -o greeter >/dev/null
 [[ "$(./greeter Grace)" == "Hello, Grace!" ]]
 echo "package smoke test passed"

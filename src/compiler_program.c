@@ -716,7 +716,7 @@ void diamond_program_init_fresh(DiamondProgram *program) {
     for(size_t index=0;index<DIAMOND_BUILTIN_CLASS_COUNT;index++) {
         DiamondClass *class=diamond_program_class_slot(program,index);
         if(class==nullptr) {
-            (void)fputs("diamond: out of memory allocating the built-in classes\n",stderr);
+            (void)fputs("d6: out of memory allocating the built-in classes\n",stderr);
             abort();
         }
         /* A builtin class can be reopened by user code (`class Exception
@@ -747,7 +747,7 @@ void diamond_program_init_fresh(DiamondProgram *program) {
         (void)snprintf(class->name,sizeof class->name,"%s",builtins[index].name);
         class->superclass=builtins[index].superclass;
         if(!diamond_class_reserve_fields(class,3)) {
-            (void)fputs("diamond: out of memory allocating the built-in classes\n",stderr);
+            (void)fputs("d6: out of memory allocating the built-in classes\n",stderr);
             abort();
         }
         class->field_count=3;

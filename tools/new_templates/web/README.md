@@ -6,7 +6,7 @@ A web application written in [Diamond](https://getdiamond.codes), served by
 
 ```sh
 facet install              # fetch gremlin, rack and minitest into cuts/
-diamond main.d6            # http://127.0.0.1:8080
+d6 main.d6            # http://127.0.0.1:8080
 bash test.sh               # run the tests
 ```
 

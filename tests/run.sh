@@ -38,7 +38,7 @@ run_cases_abs="$(realpath ./build/run_cases)"
 
 # Debug-family builds (the default `make`, sanitize, tsan) append a note
 # saying so; a release build prints the bare version.
-expected_version="diamond 0.22.0"
+expected_version="d6 0.22.0"
 actual="$($diamond --version)"
 [[ "$actual" == "$expected_version" ||
    "$actual" == "$expected_version (debug build: unoptimized, much slower than \`make release\`)" ]] || {
@@ -53,7 +53,7 @@ actual="$($diamond --version)"
 
 for help_flag in -h --help; do
     help_output="$($diamond "$help_flag")"
-    [[ "$help_output" == *"Usage: diamond [OPTIONS] [FILE [ARGS...]]"* ]]
+    [[ "$help_output" == *"Usage: d6 [OPTIONS] [FILE [ARGS...]]"* ]]
     [[ "$help_output" == *"-h, --help"* ]]
     [[ "$help_output" == *"-v, --version"* ]]
 done

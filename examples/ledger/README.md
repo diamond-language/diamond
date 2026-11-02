@@ -5,7 +5,7 @@ moves money between accounts and must balance to the cent. The bookkeeping
 is small; the point is a tour of Diamond's object model.
 
 ```text
-$ diamond ledger.d6
+$ d6 ledger.d6
 opened 10 accounts
 power bill $187.00 split: $62.34 + $62.33 + $62.33 = $187.00
 16 entries posted
@@ -84,5 +84,5 @@ failure the demo provokes.
 bash smoke_test.sh
 ```
 
-This runs the demo under the interpreter and as a `diamond build` binary and
+This runs the demo under the interpreter and as a `d6 build` binary and
 compares both with `expected.txt`.

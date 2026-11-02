@@ -39,7 +39,7 @@ static char *absolute_path(const char *path);
 static char *read_file(const char *path) {
     FILE *file = fopen(path, "rb");
     if (file == nullptr) {
-        fprintf(stderr, "diamond: cannot open '%s': %s\n", path, strerror(errno));
+        fprintf(stderr, "d6: cannot open '%s': %s\n", path, strerror(errno));
         return nullptr;
     }
     /* open(2)/fopen(3) succeed on a directory on Linux -- it's read(2)
@@ -53,30 +53,30 @@ static char *read_file(const char *path) {
      * depending on how a given driver's read(2) happens to behave. */
     struct stat file_status;
     if (fstat(fileno(file), &file_status) == 0 && S_ISDIR(file_status.st_mode)) {
-        fprintf(stderr, "diamond: cannot read '%s': %s\n", path, strerror(EISDIR));
+        fprintf(stderr, "d6: cannot read '%s': %s\n", path, strerror(EISDIR));
         fclose(file);
         return nullptr;
     }
     if (fseek(file, 0, SEEK_END) != 0) {
-        fprintf(stderr, "diamond: cannot seek '%s': %s\n", path,
+        fprintf(stderr, "d6: cannot seek '%s': %s\n", path,
                 strerror(errno));
         fclose(file);
         return nullptr;
     }
     const long length = ftell(file);
     if (length < 0) {
-        fprintf(stderr, "diamond: cannot determine size of '%s': %s\n", path,
+        fprintf(stderr, "d6: cannot determine size of '%s': %s\n", path,
                 strerror(errno));
         fclose(file);
         return nullptr;
     }
     if ((unsigned long long)length >= SIZE_MAX) {
-        fprintf(stderr, "diamond: file '%s' is too large\n", path);
+        fprintf(stderr, "d6: file '%s' is too large\n", path);
         fclose(file);
         return nullptr;
     }
     if (fseek(file, 0, SEEK_SET) != 0) {
-        fprintf(stderr, "diamond: cannot read '%s': %s\n", path,
+        fprintf(stderr, "d6: cannot read '%s': %s\n", path,
                 strerror(errno));
         fclose(file);
         return nullptr;
@@ -84,13 +84,13 @@ static char *read_file(const char *path) {
 
     char *source = malloc((size_t)length + 1);
     if (source == nullptr) {
-        fprintf(stderr, "diamond: out of memory reading '%s'\n", path);
+        fprintf(stderr, "d6: out of memory reading '%s'\n", path);
         fclose(file);
         return nullptr;
     }
     const size_t read_count = fread(source, 1, (size_t)length, file);
     if (read_count != (size_t)length) {
-        fprintf(stderr, "diamond: cannot read '%s': %s\n", path,
+        fprintf(stderr, "d6: cannot read '%s': %s\n", path,
                 ferror(file) ? strerror(errno) : "unexpected end of file");
         free(source);
         fclose(file);
@@ -128,24 +128,24 @@ static bool write_compiled_program_to_temp(const DiamondProgram *program,
     if (tmp_dir == nullptr || tmp_dir[0] == '\0') tmp_dir = "/tmp";
     char *absolute_tmp_dir = absolute_path(tmp_dir);
     if (absolute_tmp_dir == nullptr) {
-        fprintf(stderr, "diamond: cannot resolve temporary directory\n");
+        fprintf(stderr, "d6: cannot resolve temporary directory\n");
         return false;
     }
     const int written = snprintf(path_out, path_out_capacity,
         "%s/diamond-aot-XXXXXX", absolute_tmp_dir);
     free(absolute_tmp_dir);
     if (written < 0 || (size_t)written >= path_out_capacity) {
-        fprintf(stderr, "diamond: temporary directory path is too long\n");
+        fprintf(stderr, "d6: temporary directory path is too long\n");
         return false;
     }
     const int fd = mkstemp(path_out);
     if (fd < 0) {
-        fprintf(stderr, "diamond: cannot create temporary file: %s\n", strerror(errno));
+        fprintf(stderr, "d6: cannot create temporary file: %s\n", strerror(errno));
         return false;
     }
     FILE *file = fdopen(fd, "wb");
     if (file == nullptr) {
-        fprintf(stderr, "diamond: cannot open temporary file: %s\n", strerror(errno));
+        fprintf(stderr, "d6: cannot open temporary file: %s\n", strerror(errno));
         close(fd);
         unlink(path_out);
         return false;
@@ -153,7 +153,7 @@ static bool write_compiled_program_to_temp(const DiamondProgram *program,
     bool ok = diamond_program_write_compiled(program, file);
     if (fclose(file) != 0) ok = false;
     if (!ok) {
-        fprintf(stderr, "diamond: failed to serialize compiled program\n");
+        fprintf(stderr, "d6: failed to serialize compiled program\n");
         unlink(path_out);
     }
     return ok;
@@ -168,7 +168,7 @@ static bool write_compiled_program_to_temp(const DiamondProgram *program,
 static bool write_embed_data_file(const char *bin_path, const char *embed_path) {
     FILE *file = fopen(embed_path, "w");
     if (file == nullptr) {
-        fprintf(stderr, "diamond: cannot create '%s': %s\n", embed_path, strerror(errno));
+        fprintf(stderr, "d6: cannot create '%s': %s\n", embed_path, strerror(errno));
         return false;
     }
     const int written = fprintf(file,
@@ -184,7 +184,7 @@ static bool write_embed_data_file(const char *bin_path, const char *embed_path) 
         bin_path);
     const int closed = fclose(file);
     const bool ok = written >= 0 && closed == 0;
-    if (!ok) fprintf(stderr, "diamond: error writing '%s'\n", embed_path);
+    if (!ok) fprintf(stderr, "d6: error writing '%s'\n", embed_path);
     return ok;
 }
 
@@ -292,7 +292,7 @@ static int run_make_aot_build(const char *embed_path, const char *output_path,
     char *absolute_embed = absolute_path(embed_path);
     char *absolute_output = absolute_path(output_path);
     if (repo_root == nullptr || absolute_embed == nullptr || absolute_output == nullptr) {
-        fprintf(stderr, "diamond: cannot locate Diamond build files or resolve build paths\n");
+        fprintf(stderr, "d6: cannot locate d6 build files or resolve build paths\n");
         free(repo_root);free(absolute_embed);free(absolute_output);
         return 74;
     }
@@ -300,7 +300,7 @@ static int run_make_aot_build(const char *embed_path, const char *output_path,
     char *output_arg=make_assignment("AOT_OUTPUT",absolute_output);
     char *cc_arg=cc!=nullptr?make_assignment("CC",cc):nullptr;
     if(embed_arg==nullptr||output_arg==nullptr||(cc!=nullptr&&cc_arg==nullptr)) {
-        fprintf(stderr,"diamond: out of memory\n");
+        fprintf(stderr,"d6: out of memory\n");
         free(embed_arg);free(output_arg);free(cc_arg);
         free(repo_root);free(absolute_embed);free(absolute_output);return 74;
     }
@@ -319,19 +319,19 @@ static int run_make_aot_build(const char *embed_path, const char *output_path,
 
     const pid_t child = fork();
     if (child < 0) {
-        fprintf(stderr, "diamond: fork failed: %s\n", strerror(errno));
+        fprintf(stderr, "d6: fork failed: %s\n", strerror(errno));
         free(embed_arg);free(output_arg);free(cc_arg);
         free(repo_root);free(absolute_embed);free(absolute_output);
         return 74;
     }
     if (child == 0) {
         execvp("make", args);
-        fprintf(stderr, "diamond: cannot exec 'make': %s\n", strerror(errno));
+        fprintf(stderr, "d6: cannot exec 'make': %s\n", strerror(errno));
         _exit(127);
     }
     int status = 0;
     if (waitpid(child, &status, 0) < 0) {
-        fprintf(stderr, "diamond: waitpid failed: %s\n", strerror(errno));
+        fprintf(stderr, "d6: waitpid failed: %s\n", strerror(errno));
         free(embed_arg);free(output_arg);free(cc_arg);
         free(repo_root);free(absolute_embed);free(absolute_output);
         return 74;
@@ -339,7 +339,7 @@ static int run_make_aot_build(const char *embed_path, const char *output_path,
     free(embed_arg);free(output_arg);free(cc_arg);
     free(repo_root);free(absolute_embed);free(absolute_output);
     if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) {
-        fprintf(stderr, "diamond: build failed\n");
+        fprintf(stderr, "d6: build failed\n");
         return 74;
     }
     return 0;
@@ -456,11 +456,11 @@ static bool append_kit_lines(const char *kit, const char *name, char **args,
 static int wait_for_child(pid_t child, const char *tool) {
     int status = 0;
     if (waitpid(child, &status, 0) < 0) {
-        fprintf(stderr, "diamond: waitpid failed: %s\n", strerror(errno));
+        fprintf(stderr, "d6: waitpid failed: %s\n", strerror(errno));
         return 74;
     }
     if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) {
-        fprintf(stderr, "diamond: %s failed\n", tool);
+        fprintf(stderr, "d6: %s failed\n", tool);
         return 74;
     }
     return 0;
@@ -473,7 +473,7 @@ static int wait_for_child(pid_t child, const char *tool) {
  * installed package upgraded, so a machine behind on updates arrives here with nothing else to
  * tell it what to do. */
 static void print_link_failure_hint(void) {
-    fputs("diamond: building needs a C compiler and the development packages of the libraries it links.\n",
+    fputs("d6: building needs a C compiler and the development packages of the libraries it links.\n",
         stderr);
     if (access("/usr/bin/apt-get", X_OK) == 0) {
         fputs("  sudo apt update && sudo apt upgrade\n"
@@ -493,12 +493,12 @@ static int run_kit_aot_build(const char *kit, const char *embed_path,
     char *version = version_path != nullptr ? read_file(version_path) : nullptr;
     free(version_path);
     if (version == nullptr) {
-        fprintf(stderr, "diamond: AOT kit '%s' is incomplete\n", kit);
+        fprintf(stderr, "d6: AOT kit '%s' is incomplete\n", kit);
         return 74;
     }
     version[strcspn(version, "\n")] = '\0';
     if (strcmp(version, DIAMOND_VERSION) != 0) {
-        fprintf(stderr, "diamond: AOT kit '%s' is for Diamond %s, not %s\n",
+        fprintf(stderr, "d6: AOT kit '%s' is for d6 %s, not %s\n",
                 kit, version, DIAMOND_VERSION);
         free(version);
         return 74;
@@ -511,7 +511,7 @@ static int run_kit_aot_build(const char *kit, const char *embed_path,
         if (recorded != nullptr) recorded[strcspn(recorded, "\n")] = '\0';
         const bool matches = recorded != nullptr && strcmp(recorded, target) == 0;
         if (!matches) {
-            fprintf(stderr, "diamond: AOT kit '%s' is for target '%s', not '%s'\n",
+            fprintf(stderr, "d6: AOT kit '%s' is for target '%s', not '%s'\n",
                     kit, recorded != nullptr ? recorded : "this machine", target);
             free(recorded);
             return 74;
@@ -531,11 +531,11 @@ static int run_kit_aot_build(const char *kit, const char *embed_path,
     if (cc_override != nullptr) {
         args[count++] = (char *)cc_override;
     } else if (!append_kit_lines(kit, "cc", args, &count, 2, &cc_text) || count != 1) {
-        fprintf(stderr, "diamond: AOT kit '%s' does not name a compiler\n", kit);
+        fprintf(stderr, "d6: AOT kit '%s' does not name a compiler\n", kit);
         goto done;
     }
     if (lto && (runtime == nullptr || access(runtime, R_OK) != 0)) {
-        fprintf(stderr, "diamond: AOT kit '%s' has no LTO runtime (build the kit with "
+        fprintf(stderr, "d6: AOT kit '%s' has no LTO runtime (build the kit with "
             "`make aot-kit AOT_LTO=1`, see docs/deployment.md)\n", kit);
         goto done;
     }
@@ -543,14 +543,14 @@ static int run_kit_aot_build(const char *kit, const char *embed_path,
         !append_kit_lines(kit, lto ? "compile-lto.args" : "compile.args", args, &count,
             MAX_ARGS, &compile_text) ||
         count + 3 >= MAX_ARGS) {
-        fprintf(stderr, "diamond: AOT kit '%s' is incomplete\n", kit);
+        fprintf(stderr, "d6: AOT kit '%s' is incomplete\n", kit);
         goto done;
     }
     args[count++] = (char *)embed_path;
     args[count++] = runtime;
     args[count++] = reginold;
     if (!append_kit_lines(kit, "link.args", args, &count, MAX_ARGS - 2, &link_text)) {
-        fprintf(stderr, "diamond: AOT kit '%s' is incomplete\n", kit);
+        fprintf(stderr, "d6: AOT kit '%s' is incomplete\n", kit);
         goto done;
     }
     args[count++] = (char *)"-o";
@@ -559,12 +559,12 @@ static int run_kit_aot_build(const char *kit, const char *embed_path,
 
     const pid_t child = fork();
     if (child < 0) {
-        fprintf(stderr, "diamond: fork failed: %s\n", strerror(errno));
+        fprintf(stderr, "d6: fork failed: %s\n", strerror(errno));
         goto done;
     }
     if (child == 0) {
         execvp(args[0], args);
-        fprintf(stderr, "diamond: cannot exec '%s': %s\n", args[0], strerror(errno));
+        fprintf(stderr, "d6: cannot exec '%s': %s\n", args[0], strerror(errno));
         _exit(127);
     }
     result = wait_for_child(child, "link");
@@ -587,7 +587,7 @@ done:
  * (still dynamically links whatever `diamond` itself does). */
 static int handle_build_command(int argc, char **argv) {
     if (argc < 3) {
-        fprintf(stderr, "usage: diamond build SOURCE [-o OUTPUT] [--cc=COMPILER] [--target=TRIPLE] [--lto]\n");
+        fprintf(stderr, "usage: d6 build SOURCE [-o OUTPUT] [--cc=COMPILER] [--target=TRIPLE] [--lto]\n");
         return 64;
     }
     const char *source_path = argv[2];
@@ -605,11 +605,11 @@ static int handle_build_command(int argc, char **argv) {
         } else if (strncmp(argv[index], "--target=", 9) == 0) {
             target = argv[index] + 9;
             if (!target_name_is_valid(target)) {
-                fprintf(stderr, "diamond: invalid build target '%s'\n", target);
+                fprintf(stderr, "d6: invalid build target '%s'\n", target);
                 return 64;
             }
         } else {
-            fprintf(stderr, "diamond: unrecognized build option '%s'\n", argv[index]);
+            fprintf(stderr, "d6: unrecognized build option '%s'\n", argv[index]);
             return 64;
         }
     }
@@ -617,7 +617,7 @@ static int handle_build_command(int argc, char **argv) {
     if (output_path == nullptr) {
         derived_output = derive_output_path(source_path);
         if (derived_output == nullptr) {
-            fprintf(stderr, "diamond: out of memory\n");
+            fprintf(stderr, "d6: out of memory\n");
             return 74;
         }
         output_path = derived_output;
@@ -630,7 +630,7 @@ static int handle_build_command(int argc, char **argv) {
     }
     DiamondProgram *program = calloc(1, sizeof *program);
     if (program == nullptr) {
-        fprintf(stderr, "diamond: out of memory\n");
+        fprintf(stderr, "d6: out of memory\n");
         free(source);
         free(derived_output);
         return 74;
@@ -672,11 +672,11 @@ static int handle_build_command(int argc, char **argv) {
     int status;
     if (target != nullptr && kit == nullptr) {
         fprintf(stderr,
-            "diamond: no AOT kit for target '%s' (build one with `make aot-kit-cross "
+            "d6: no AOT kit for target '%s' (build one with `make aot-kit-cross "
             "TARGET_TRIPLE=%s SYSROOT=...`, see docs/deployment.md)\n", target, target);
         status = 74;
     } else if (lto && kit == nullptr) {
-        fprintf(stderr, "diamond: --lto needs an installed AOT kit built with "
+        fprintf(stderr, "d6: --lto needs an installed AOT kit built with "
             "`make aot-kit AOT_LTO=1` (see docs/deployment.md)\n");
         status = 74;
     } else {
@@ -688,8 +688,8 @@ static int handle_build_command(int argc, char **argv) {
     unlink(bin_path);
     unlink(embed_path);
     if (status == 0) {
-        if (target != nullptr) printf("diamond: built '%s' for %s\n", output_path, target);
-        else printf("diamond: built '%s'\n", output_path);
+        if (target != nullptr) printf("d6: built '%s' for %s\n", output_path, target);
+        else printf("d6: built '%s'\n", output_path);
     }
     free(derived_output);
     return status;
@@ -712,7 +712,7 @@ static void cache_clear_file(const char *path, CacheClearTotals *totals) {
     if (lstat(path, &info) != 0 || !S_ISREG(info.st_mode)) return;
     if (!diamond_cache_file_is_cache(path)) return;
     if (!totals->dry_run && unlink(path) != 0) {
-        fprintf(stderr, "diamond: cannot remove %s: %s\n", path, strerror(errno));
+        fprintf(stderr, "d6: cannot remove %s: %s\n", path, strerror(errno));
         totals->failed = true;
         return;
     }
@@ -724,7 +724,7 @@ static void cache_clear_file(const char *path, CacheClearTotals *totals) {
 static void cache_clear_directory(const char *directory, CacheClearTotals *totals) {
     DIR *handle = opendir(directory);
     if (handle == nullptr) {
-        fprintf(stderr, "diamond: cannot read %s: %s\n", directory, strerror(errno));
+        fprintf(stderr, "d6: cannot read %s: %s\n", directory, strerror(errno));
         totals->failed = true;
         return;
     }
@@ -759,7 +759,7 @@ static void cache_clear_directory(const char *directory, CacheClearTotals *total
  * without running it. */
 static int handle_cache_warm(int argc, char **argv) {
     if (argc < 4) {
-        fprintf(stderr, "usage: diamond cache warm SOURCE...\n");
+        fprintf(stderr, "usage: d6 cache warm SOURCE...\n");
         return 64;
     }
     int worst = 0;
@@ -779,8 +779,8 @@ static int handle_cache_warm(int argc, char **argv) {
 static int handle_cache_command(int argc, char **argv) {
     if (argc >= 3 && strcmp(argv[2], "warm") == 0) return handle_cache_warm(argc, argv);
     if (argc < 3 || strcmp(argv[2], "clear") != 0) {
-        fprintf(stderr, "usage: diamond cache clear [--dry-run] [PATH...]\n"
-                        "       diamond cache warm SOURCE...\n");
+        fprintf(stderr, "usage: d6 cache clear [--dry-run] [PATH...]\n"
+                        "       d6 cache warm SOURCE...\n");
         return 64;
     }
     CacheClearTotals totals = {0};
@@ -795,7 +795,7 @@ static int handle_cache_command(int argc, char **argv) {
     for (int index = first_path; index < argc; index++) {
         struct stat info;
         if (stat(argv[index], &info) != 0) {
-            fprintf(stderr, "diamond: cannot read %s: %s\n", argv[index], strerror(errno));
+            fprintf(stderr, "d6: cannot read %s: %s\n", argv[index], strerror(errno));
             totals.failed = true;
         } else if (S_ISDIR(info.st_mode)) {
             cache_clear_directory(argv[index], &totals);
@@ -815,14 +815,14 @@ static int handle_cache_command(int argc, char **argv) {
 }
 
 static void print_usage(FILE *stream) {
-    fputs("Usage: diamond [OPTIONS] [FILE [ARGS...]]\n"
-          "       diamond -e CODE [ARGS...]\n"
-          "       diamond --dump-bytecode[=user|all] [-e CODE | FILE] [ARGS...]\n"
-          "       diamond build SOURCE [-o OUTPUT] [--cc=COMPILER] [--target=TRIPLE] [--lto]\n"
-          "       diamond cache clear [--dry-run] [PATH...]\n"
-          "       diamond cache warm SOURCE...\n"
+    fputs("Usage: d6 [OPTIONS] [FILE [ARGS...]]\n"
+          "       d6 -e CODE [ARGS...]\n"
+          "       d6 --dump-bytecode[=user|all] [-e CODE | FILE] [ARGS...]\n"
+          "       d6 build SOURCE [-o OUTPUT] [--cc=COMPILER] [--target=TRIPLE] [--lto]\n"
+          "       d6 cache clear [--dry-run] [PATH...]\n"
+          "       d6 cache warm SOURCE...\n"
           "\n"
-          "Run a Diamond program, evaluate source, or start the REPL when no\n"
+          "Run a d6 program, evaluate source, or start the REPL when no\n"
           "arguments are given and standard input is a terminal.\n"
           "\n"
           "Options:\n"
@@ -834,14 +834,14 @@ static void print_usage(FILE *stream) {
           "  -h, --help          display this help and exit\n"
           "  -v, --version       display version information and exit\n"
           "\n"
-          "'diamond build' compiles SOURCE into a standalone executable (default\n"
+          "'d6 build' compiles SOURCE into a standalone executable (default\n"
           "output: SOURCE's own basename with its extension stripped) -- see\n"
           "docs/deployment.md. It links with a C compiler against the installed\n"
-          "AOT kit, or against the Diamond build checkout when there is no kit.\n"
+          "AOT kit, or against the d6 source checkout when there is no kit.\n"
           "\n"
-          "'diamond cache clear' removes the bytecode caches (.d6c files) next to\n"
+          "'d6 cache clear' removes the bytecode caches (.d6c files) next to\n"
           "scripts: those of the given files, every one under the given\n"
-          "directories, or under the current directory. 'diamond cache warm'\n"
+          "directories, or under the current directory. 'd6 cache warm'\n"
           "compiles scripts and writes their caches without running them, for\n"
           "image builds -- see docs/caching.md.\n"
           "\n"
@@ -864,7 +864,7 @@ static int diamond_main(int argc, char **argv) {
     }
     if (argc == 2 && (strcmp(argv[1], "-v") == 0 ||
                       strcmp(argv[1], "--version") == 0)) {
-        printf("diamond %s%s\n", DIAMOND_VERSION, DIAMOND_BUILD_NOTE);
+        printf("d6 %s%s\n", DIAMOND_VERSION, DIAMOND_BUILD_NOTE);
         return 0;
     }
     if (argc == 2 && (strcmp(argv[1], "-h") == 0 ||

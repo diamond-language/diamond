@@ -1,13 +1,13 @@
 # Deployment
 
-`diamond build` compiles a `.d6` program into a standalone native executable:
-no `diamond` interpreter, no `.d6` source file, and no recompilation step at
+`d6 build` compiles a `.d6` program into a standalone native executable:
+no `d6` interpreter, no `.d6` source file, and no recompilation step at
 run time. It exists for shipping a finished Diamond program to a machine
 that doesn't have (and shouldn't need) a Diamond checkout, alongside the
-ordinary `diamond program.d6` interpreter path.
+ordinary `d6 program.d6` interpreter path.
 
 ```sh
-./build/diamond build app.d6 -o app
+./build/d6 build app.d6 -o app
 ./app arg1 arg2
 ```
 
@@ -15,16 +15,16 @@ You can also invoke the Diamond binary from the application directory:
 
 ```sh
 cd ../skindicate.dia
-../diamond/build/diamond build app.d6
+../diamond/build/d6 build app.d6
 ```
 
 ## CLI contract
 
 ```text
-diamond build SOURCE [-o OUTPUT] [--cc=COMPILER] [--target=TRIPLE] [--lto]
+d6 build SOURCE [-o OUTPUT] [--cc=COMPILER] [--target=TRIPLE] [--lto]
 ```
 
-- `SOURCE` is compiled exactly the way `diamond program.d6` compiles it --
+- `SOURCE` is compiled exactly the way `d6 program.d6` compiles it --
   identical `require` resolution, identical embedded-prelude-template fast
   path -- so anything that runs correctly under the interpreter compiles
   identically under `build`.
@@ -42,11 +42,11 @@ diamond build SOURCE [-o OUTPUT] [--cc=COMPILER] [--target=TRIPLE] [--lto]
   default one. It needs an installed kit built with `AOT_LTO=1`; without one it exits 74
   and says how to build it. It does not combine with the checkout's `make` path.
 - A compile error (a real syntax/type/name error in `SOURCE` or anything it
-  `require`s) prints the same diagnostic `diamond program.d6` would and
+  `require`s) prints the same diagnostic `d6 program.d6` would and
   exits 65 -- the C compiler and `make` are never invoked in this case.
 - A `make`/link failure (a missing toolchain or system library) exits 74.
 - On success, prints `diamond: built 'OUTPUT'` and exits 0.
-- An installed `diamond` (see "Installed AOT kit" below) links with a single
+- An installed `d6` (see "Installed AOT kit" below) links with a single
   compiler invocation against its prebuilt kit and needs neither this
   checkout nor `make`. Without a kit it uses the checkout, as follows.
 - The compiler finds its own build checkout from the Diamond executable,
@@ -67,7 +67,7 @@ diamond build SOURCE [-o OUTPUT] [--cc=COMPILER] [--target=TRIPLE] [--lto]
 
 ## Installed AOT kit
 
-`make aot-kit` collects everything `diamond build` needs to link into
+`make aot-kit` collects everything `d6 build` needs to link into
 `build/aot-kit/`: the runtime archive `libdiamond-aot.a` (compiled at `-O2`),
 `libreginold.a`, and one-argument-per-line files recording the compiler,
 compile flags, link flags, and Diamond version. `make install` copies the
@@ -78,7 +78,7 @@ make release facet lsp dap
 make install PREFIX="$HOME/.local"
 ```
 
-An installed `diamond build` finds the kit at `<bin>/../lib/diamond/aot`
+An installed `d6 build` finds the kit at `<bin>/../lib/diamond/aot`
 (`DIAMOND_AOT_KIT` overrides the location), refuses a kit recorded for a
 different Diamond version, and runs one `cc` command: the generated program
 data plus the two archives and the recorded link flags. It still needs a C23
@@ -89,10 +89,10 @@ against.
 
 ### Optional LTO runtime
 
-The default runtime is compiled at `-O2` without link-time optimization, so `diamond build`
+The default runtime is compiled at `-O2` without link-time optimization, so `d6 build`
 links in a fraction of a second. `make aot-kit AOT_LTO=1` (or `make install AOT_LTO=1`) adds a
 second archive, `libdiamond-aot-lto.a`, holding the same sources at `-O3` as fat LTO objects,
-plus `compile-lto.args`; `diamond build --lto` links against that, so the compiler optimizes
+plus `compile-lto.args`; `d6 build --lto` links against that, so the compiler optimizes
 the runtime and the program together. Measured on five `bench/` programs against the default:
 `-O2` with LTO is about 2% slower and `-O3` with LTO about 3% faster (instructions and cycles
 both), and every `--lto` build recompiles the runtime in that link, about 38 s instead of
@@ -118,7 +118,7 @@ signal may not emit that summary. The JIT remains off when `DIAMOND_JIT` is
 unset, empty or `0`, including for standalone binaries.
 
 At the language level, the produced binary behaves exactly like
-`diamond program.d6`: it sets `ARGV` from its own command-line arguments, prints only what
+`d6 program.d6`: it sets `ARGV` from its own command-line arguments, prints only what
 the program writes, and honours `DIAMOND_PRINT_RESULT` the same way
 ([running a program](core-syntax.md#running-a-program)).
 
@@ -126,14 +126,14 @@ the program writes, and honours `DIAMOND_PRINT_RESULT` the same way
 
 - **Not a fully static/hermetic binary by default.** (A static musl kit
   produces one; see "Static musl binaries" below.) The produced executable still
-  dynamically links whatever `diamond` itself links against on this
+  dynamically links whatever `d6` itself links against on this
   platform -- OpenSSL, SQLite3, `libpq`, the MariaDB client library, zlib,
   `libcrypt`, and their own transitive dependencies (confirmed with `ldd`
   against a real build). "No separate interpreter, source file, or
   recompilation step" is the actual guarantee; the binary is exactly as
-  portable across machines as `diamond` itself is, no more and no less.
+  portable across machines as `d6` itself is, no more and no less.
 - **Cross-compilation needs a prepared kit.** Without `--target` the binary targets
-  the machine `diamond build` ran on; see "Cross-compilation" below.
+  the machine `d6 build` ran on; see "Cross-compilation" below.
 - **The Diamond build checkout is still needed at build time.** `diamond
   build` invokes its checkout's `make aot-build` target to link the binary;
   there is no separate installed runtime library yet. The finished binary
@@ -145,7 +145,7 @@ See [docs/roadmap.md](roadmap.md) for what's explicitly deferred here
 
 ## Cross-compilation
 
-`diamond build app.d6 --target=aarch64-linux-gnu` produces a binary for another
+`d6 build app.d6 --target=aarch64-linux-gnu` produces a binary for another
 platform. The compiled program is portable between targets with the same word size
 and byte order (the program image records both and a mismatched image is refused when
 it loads); what changes is the runtime, which must be compiled and linked for the
@@ -156,7 +156,7 @@ and `libcrypt`. A *cross kit* holds that runtime, built once per target:
 make release
 make aot-kit-cross TARGET_TRIPLE=aarch64-linux-gnu SYSROOT=/opt/sysroots/aarch64 \
      CROSS_FLAGS_EXTRA='--gcc-install-dir=/opt/sysroots/aarch64/usr/lib/gcc/aarch64-redhat-linux/16'
-./build/diamond build app.d6 --target=aarch64-linux-gnu
+./build/d6 build app.d6 --target=aarch64-linux-gnu
 ```
 
 - A cross build needs a C23 compiler that targets the triple (clang 19+ with
@@ -165,9 +165,9 @@ make aot-kit-cross TARGET_TRIPLE=aarch64-linux-gnu SYSROOT=/opt/sysroots/aarch64
   into a directory work; `CROSS_FLAGS_EXTRA` passes anything else the driver needs
   (`--gcc-install-dir`, `-fuse-ld=lld`).
 - The kit lands in `build/aot-targets/TRIPLE`; `make install` copies every such kit
-  to `PREFIX/lib/diamond/aot/targets/TRIPLE`, which an installed `diamond` searches
+  to `PREFIX/lib/diamond/aot/targets/TRIPLE`, which an installed `d6` searches
   first. The kit records the sysroot path, so the sysroot must still exist where
-  `diamond build --target` links.
+  `d6 build --target` links.
 - The prelude snapshot is generated by the host build and reginold is rebuilt from a
   scratch copy for the target, so the host build is left alone.
 - The JIT is x86-64/glibc only, so other targets run on the interpreter.
@@ -189,7 +189,7 @@ architecture, including a `FROM scratch` container:
 make aot-kit-cross TARGET_TRIPLE=x86_64-alpine-linux-musl SYSROOT=/opt/sysroots/alpine \
      NO_MYSQL=1 STATIC=1 \
      CROSS_FLAGS_EXTRA='--gcc-install-dir=/opt/sysroots/alpine/usr/lib/gcc/x86_64-alpine-linux-musl/15.2.0 -rtlib=libgcc --unwindlib=libgcc'
-./build/diamond build app.d6 --target=x86_64-alpine-linux-musl
+./build/d6 build app.d6 --target=x86_64-alpine-linux-musl
 ```
 
 - The sysroot needs static libraries: `libc.a`, `libssl.a`/`libcrypto.a`, `libsqlite3.a`,
@@ -209,7 +209,7 @@ make aot-kit-cross TARGET_TRIPLE=x86_64-alpine-linux-musl SYSROOT=/opt/sysroots/
 
 ## Building for a different target distro
 
-Because `diamond build` links against whatever OpenSSL/SQLite3/`libpq`/MariaDB
+Because `d6 build` links against whatever OpenSSL/SQLite3/`libpq`/MariaDB
 client/glibc versions the *build machine* has ("Not a fully static/hermetic
 binary" above), a binary built on one distro isn't guaranteed to run on
 another -- most concretely, glibc is backward- but not forward-compatible, so
@@ -241,7 +241,7 @@ wrong-platform object file left over from the other one. The safe shape is:
 2. `cp -r` it into the container's own writable layer at container start (an
    ephemeral copy, gone when the container exits).
 3. Build entirely inside that copy, using the container's own freshly-built
-   `diamond` (never the host's).
+   `d6` (never the host's).
 4. Copy only the finished binary back out, via a second, **read-write** bind
    mount pointing at a dedicated output directory -- the only thing that
    crosses the container boundary in either direction besides the initial

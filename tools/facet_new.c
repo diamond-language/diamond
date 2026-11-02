@@ -428,6 +428,6 @@ int cmd_new(int argc, char **argv) {
     printf("\n  cd %s\n", root);
     printf("  facet install\n");
     printf("  bash test.sh\n");
-    if (strcmp(argv[2], "lib") != 0) printf("  diamond main.d6\n");
+    if (strcmp(argv[2], "lib") != 0) printf("  d6 main.d6\n");
     return 0;
 }

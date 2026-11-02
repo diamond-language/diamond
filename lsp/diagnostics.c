@@ -110,7 +110,7 @@ static JsonValue *build_diagnostic(const char *text,size_t text_length,size_t li
     json_object_set(range,"end",end);
     json_object_set(entry,"range",range);
     json_object_set(entry,"severity",json_number(1));
-    json_object_set(entry,"source",json_string_z("diamond"));
+    json_object_set(entry,"source",json_string_z("d6"));
     json_object_set(entry,"message",json_string_z(message));
     return entry;
 }

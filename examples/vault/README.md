@@ -6,15 +6,15 @@ encoding builtins: `BCrypt`, `Cipher` (AES-256-GCM), `HMAC`, `Digest`,
 
 ```text
 $ export VAULT_PASSWORD='correct horse'
-$ diamond vault.d6 secrets.vault init
+$ d6 vault.d6 secrets.vault init
 created secrets.vault
-$ echo 'hunter2' | diamond vault.d6 secrets.vault add wifi
+$ echo 'hunter2' | d6 vault.d6 secrets.vault add wifi
 stored wifi
-$ diamond vault.d6 secrets.vault get wifi
+$ d6 vault.d6 secrets.vault get wifi
 hunter2
-$ VAULT_PASSWORD=nope diamond vault.d6 secrets.vault get wifi
+$ VAULT_PASSWORD=nope d6 vault.d6 secrets.vault get wifi
 vault: wrong password
-$ diamond vault.d6 secrets.vault verify
+$ d6 vault.d6 secrets.vault verify
 ok
 ```
 
@@ -68,6 +68,6 @@ bash smoke_test.sh
 ```
 
 This stores and reads secrets under the interpreter and as a
-`diamond build` binary, checks nothing sensitive is stored in the clear,
+`d6 build` binary, checks nothing sensitive is stored in the clear,
 and tampers with a vault two ways: a flipped ciphertext byte (GCM rejects
 it) and an entry copied under another name (only the HMAC catches it).

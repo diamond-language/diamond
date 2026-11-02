@@ -6,7 +6,7 @@ itself, `rejected/` holds four small programs that the compiler refuses to
 run, one per kind of mistake it catches.
 
 ```text
-$ diamond grades.d6 testdata/scores.csv
+$ d6 grades.d6 testdata/scores.csv
 Students
   name         mean median grade
   ada          92.3   91.0 A     3 course(s): math, physics, poetry
@@ -70,5 +70,5 @@ Rejected
 bash smoke_test.sh
 ```
 
-This checks the report under the interpreter and as a `diamond build`
+This checks the report under the interpreter and as a `d6 build`
 binary, the exit codes, and every program in `rejected/`.

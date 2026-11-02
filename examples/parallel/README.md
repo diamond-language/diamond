@@ -5,7 +5,7 @@ worker pool and a pipeline wired together with `Channel`s, what thread
 isolation means in practice, and what happens when a worker fails.
 
 ```text
-$ diamond parallel.d6 --time
+$ d6 parallel.d6 --time
 == fan-out
   range 1: 3711 runs for 238 steps
   ...
@@ -21,7 +21,7 @@ restarts: 2, last error: uncaught exception: RuntimeError: flaked on attempt 2
 `expected.txt` has the complete output. `--time` adds timings on stderr;
 stdout is the same on every run, whatever order the threads finish in.
 (Timings above are from a debug build; `make release` is roughly 10x
-faster. `diamond --version` says which one you have.)
+faster. `d6 --version` says which one you have.)
 
 ## What it shows
 
@@ -58,6 +58,6 @@ worker fails at the call.
 bash smoke_test.sh
 ```
 
-This runs the demo under the interpreter and as a `diamond build` binary,
+This runs the demo under the interpreter and as a `d6 build` binary,
 checks both against `expected.txt`, and checks that `--time` changes only
 stderr.

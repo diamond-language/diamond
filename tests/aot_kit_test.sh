@@ -9,7 +9,9 @@ trap 'rm -rf "$test_dir"' EXIT
 prefix="$test_dir/prefix"
 
 make -C "$repo_dir" --no-print-directory install PREFIX="$prefix" > "$test_dir/install.log"
-test -x "$prefix/bin/diamond"
+test -x "$prefix/bin/d6" && test ! -L "$prefix/bin/d6"
+test "$(readlink "$prefix/bin/diamond")" = d6
+test "$("$prefix/bin/diamond" --version)" = "$("$prefix/bin/d6" --version)"
 for file in libdiamond-aot.a libreginold.a version cc compile.args link.args; do
     test -s "$prefix/lib/diamond/aot/$file"
 done
@@ -22,9 +24,13 @@ chmod +x "$test_dir/shim/make"
 mkdir "$test_dir/app"
 cd "$test_dir/app"
 printf '%s\n' 'def double(value: Int) -> Int = value * 2' 'puts(double(21))' > app.d6
-PATH="$test_dir/shim:$PATH" "$prefix/bin/diamond" build app.d6 > build.log
-grep -q "diamond: built 'app'" build.log
+PATH="$test_dir/shim:$PATH" "$prefix/bin/d6" build app.d6 > build.log
+grep -q "d6: built 'app'" build.log
 test "$(./app)" = "42"
+
+# The former name finds the same kit through its symlink.
+PATH="$test_dir/shim:$PATH" "$prefix/bin/diamond" build app.d6 -o app_via_link > build.log
+test "$(./app_via_link)" = "42"
 
 # A missing compiler says what to install rather than ending at "link failed".
 if "$prefix/bin/diamond" build app.d6 --cc=no-such-compiler -o nocc 2> nocc.err; then
@@ -41,7 +47,7 @@ if DIAMOND_AOT_KIT="$test_dir/other-kit" "$prefix/bin/diamond" build app.d6 -o o
     echo "mismatched AOT kit was accepted" >&2
     exit 1
 fi
-grep -q 'is for Diamond 0.0.0-other' other.err
+grep -q 'is for d6 0.0.0-other' other.err
 test ! -e other
 
 # --lto needs the kit's LTO runtime: a kit without one says how to build it.
@@ -62,7 +68,7 @@ if "$cc_name" -flto "$test_dir/lto_probe.c" -o "$test_dir/lto_probe" 2> /dev/nul
     test -s "$test_dir/lto-kit/compile-lto.args"
     DIAMOND_AOT_KIT="$test_dir/lto-kit" PATH="$test_dir/shim:$PATH" \
         "$prefix/bin/diamond" build app.d6 --lto -o app_lto > lto.log
-    grep -q "diamond: built 'app_lto'" lto.log
+    grep -q "d6: built 'app_lto'" lto.log
     test "$(./app_lto)" = "42"
 else
     echo "skipping the --lto build: $cc_name cannot link LTO objects here"

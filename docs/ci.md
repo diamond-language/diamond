@@ -89,7 +89,7 @@ before sending INT, then see `caught INT` before connecting the client.
 Both waits are bounded and report captured output on failure. Run it alone:
 
 ```sh
-DIAMOND_BIN=./build/diamond bash tests/signal_interrupt.sh
+DIAMOND_BIN=./build/d6 bash tests/signal_interrupt.sh
 ```
 
 ## Pinned actions

@@ -38,29 +38,32 @@ stage="$work/stage"
 make CC=gcc CFLAGS_DEBUG="$tools_flags" install DESTDIR="$stage" PREFIX=/usr >/dev/null
 
 # The binaries must not report themselves as debug builds.
-version_line="$("$stage/usr/bin/diamond" --version)"
-if [[ "$version_line" != "diamond $version" ]]; then
+version_line="$("$stage/usr/bin/d6" --version)"
+if [[ "$version_line" != "d6 $version" ]]; then
     echo "packaging: unexpected version line: $version_line" >&2
     exit 1
 fi
 
 description="Diamond is a gradually typed, object-oriented language with a register-based
-bytecode VM. This package provides the diamond interpreter and REPL, the facet
-package manager, the diamond-lsp language server, the diamond-dap debug adapter,
-and the runtime kit diamond build links standalone executables against."
+bytecode VM. This package provides the d6 interpreter and REPL, the facet
+package manager, the d6-lsp language server, the d6-dap debug adapter, and the
+runtime kit d6 build links standalone executables against. The former diamond,
+diamond-lsp and diamond-dap commands remain as links to them."
 
 if [[ "$format" == deb ]]; then
     doc="$stage/usr/share/doc/diamond-lang"
     mkdir -p "$doc"
     cp LICENSE "$doc/copyright"
     cp README.md "$doc/README.md"
-    strip --strip-unneeded "$stage"/usr/bin/*
+    # The former command names are symlinks; only the real binaries get processed.
+    mapfile -t binaries < <(find "$stage/usr/bin" -type f)
+    strip --strip-unneeded "${binaries[@]}"
     arch="$(dpkg --print-architecture)"
     # dpkg-shlibdeps derives the runtime library packages from the binaries'
     # NEEDED entries; it insists on a debian/control in the working directory.
     mkdir -p "$work/shlibs/debian"
     printf 'Source: diamond-lang\n\nPackage: diamond-lang\nArchitecture: any\n' > "$work/shlibs/debian/control"
-    depends="$(cd "$work/shlibs" && dpkg-shlibdeps -O "$stage"/usr/bin/* | sed -n 's/^shlibs:Depends=//p')"
+    depends="$(cd "$work/shlibs" && dpkg-shlibdeps -O "${binaries[@]}" | sed -n 's/^shlibs:Depends=//p')"
     mkdir -p "$stage/DEBIAN"
     {
         printf 'Package: diamond-lang\n'

@@ -307,6 +307,7 @@ $(REGINOLD_LIB):
 
 $(TARGET): $(OBJECTS) $(REPL_COMPLETION_OBJECTS) $(REGINOLD_LIB)
 	$(CC) $(OBJECTS) $(REPL_COMPLETION_OBJECTS) $(LDFLAGS) $(LDLIBS) -o $@
+	ln -sf diamond $(BUILD_DIR)/d6
 
 # The bytecode cache (docs/caching.md) must not reuse a .d6c compiled by a
 # different compiler, even when the file format is unchanged. A checksum of
@@ -667,6 +668,7 @@ LSP_SOURCES := $(wildcard lsp/*.c)
 $(BUILD_DIR)/diamond-lsp: $(LSP_SOURCES) $(API_DBG_OBJECTS) $(REGINOLD_LIB) | $(PRELUDE_BIN)
 	@mkdir -p $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) -Ilsp $(CFLAGS_COMMON) $(CFLAGS_DEBUG) $(API_DBG_OBJECTS) $(LSP_SOURCES) $(LDLIBS) -o $@
+	ln -sf diamond-lsp $(BUILD_DIR)/d6-lsp
 
 lsp: $(BUILD_DIR)/diamond-lsp
 
@@ -725,6 +727,7 @@ DAP_JSON_SOURCES := lsp/json.c lsp/rpc.c
 $(BUILD_DIR)/diamond-dap: $(DAP_SOURCES) $(DAP_JSON_SOURCES) $(API_DBG_OBJECTS) $(REGINOLD_LIB) | $(PRELUDE_BIN)
 	@mkdir -p $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) -Ilsp $(CFLAGS_COMMON) $(CFLAGS_DEBUG) $(API_DBG_OBJECTS) $(DAP_JSON_SOURCES) $(DAP_SOURCES) $(LDLIBS) -o $@
+	ln -sf diamond-dap $(BUILD_DIR)/d6-dap
 
 dap: $(BUILD_DIR)/diamond-dap
 
@@ -897,10 +900,21 @@ INSTALL_TOOLS := $(TARGET) $(BUILD_DIR)/facet $(BUILD_DIR)/diamond-lsp $(BUILD_D
 
 .PHONY: install
 install: aot-kit
-	@test -x $(TARGET) || { echo 'Build diamond first, e.g. make release' >&2; exit 1; }
+	@test -x $(TARGET) || { echo 'Build d6 first, e.g. make release' >&2; exit 1; }
 	mkdir -p $(DESTDIR)$(PREFIX)/bin $(DESTDIR)$(PREFIX)/lib/diamond/aot
+	# build/diamond* install as d6*, with the former names as links.
 	for tool in $(INSTALL_TOOLS); do \
-		if [ -x "$$tool" ]; then cp "$$tool" $(DESTDIR)$(PREFIX)/bin/; fi; \
+		if [ -x "$$tool" ]; then \
+			name=$$(basename "$$tool"); \
+			case "$$name" in \
+			diamond*) \
+				new="d6$${name#diamond}"; \
+				rm -f "$(DESTDIR)$(PREFIX)/bin/$$name"; \
+				cp "$$tool" "$(DESTDIR)$(PREFIX)/bin/$$new"; \
+				ln -s "$$new" "$(DESTDIR)$(PREFIX)/bin/$$name" ;; \
+			*) cp "$$tool" "$(DESTDIR)$(PREFIX)/bin/" ;; \
+			esac; \
+		fi; \
 	done
 	rm -rf $(DESTDIR)$(PREFIX)/lib/diamond/aot
 	cp -R $(AOT_KIT_DIR) $(DESTDIR)$(PREFIX)/lib/diamond/aot

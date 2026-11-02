@@ -1,7 +1,7 @@
 # Installed cuts; `facet install` recreates them from Cutfile.lock.
 cuts/
-# Bytecode caches diamond writes next to each script.
+# Bytecode caches d6 writes next to each script.
 *.d6c
-# Executables built with `diamond build`.
+# Executables built with `d6 build`.
 /main
 /{{name}}

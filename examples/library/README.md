@@ -104,14 +104,14 @@ without touching development data.
 cd examples/library
 bash ../../tools/install_local_cuts.sh .
 bash compile_views.sh              # compiles lib/views/*.html.div (once, or after editing a view)
-../../build/diamond setup_db.d6    # creates library.db, seeds it
-../../build/diamond app.d6         # starts the server on :18080
+../../build/d6 setup_db.d6    # creates library.db, seeds it
+../../build/d6 app.d6         # starts the server on :18080
 ```
 
 For production:
 
 ```sh
-DIAMOND_ENV=production DIAMOND_DATABASE_PATH=/srv/diamond/library.db ../../build/diamond app.d6
+DIAMOND_ENV=production DIAMOND_DATABASE_PATH=/srv/diamond/library.db ../../build/d6 app.d6
 ```
 
 Then, in another terminal:

@@ -3,7 +3,7 @@
 Loads a sheet of `NAME = FORMULA` lines and prints the evaluated grid.
 
 ```text
-$ diamond spreadsheet.d6 testdata/budget.txt
+$ d6 spreadsheet.d6 testdata/budget.txt
            A         B         C         D
 1       1200      rent    1644.5    822.25
 2      340.5 groceries   411.125       889
@@ -79,5 +79,5 @@ can't be opened.
 bash smoke_test.sh
 ```
 
-Runs the program under the interpreter and as a `diamond build` binary,
+Runs the program under the interpreter and as a `d6 build` binary,
 and checks the grid, `--cell`, and every error path.

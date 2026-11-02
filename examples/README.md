@@ -11,13 +11,13 @@ bash tools/install_local_cuts.sh .
 
 | Example | Run | What to try / learn |
 | --- | --- | --- |
-| [Task board](task_board) | `build/diamond examples/task_board/web.d6` → http://127.0.0.1:18110 | Create a project and task, edit notes, change status. Open `bash examples/task_board/board` against the same database and press `r`: CLI, TUI, and web share Mjolnir validation and frozen entities. |
-| [Site checker](site_checker) | `build/diamond examples/site_checker/check.d6 examples/site_checker/urls.txt` | Get `OK … — 200 (… ms)` or `FAIL` lines; add `--json` for scripts. Bounded worker pools, real HTTP, redirects, timeouts, and cancellation. |
-| [Bookmarks](bookmarks) | `build/diamond examples/bookmarks/web.d6` → http://127.0.0.1:18111 | Save a link, tag and search it, export JSON, then reimport. Persistent changesets, URL safety, migration, structured logs. |
-| [Import desk](job_service) | `build/diamond examples/job_service/service.d6 18090 /tmp/diamond-jobs.sqlite` → http://127.0.0.1:18090 | Queue the sample CSV. See row progress, validation errors, cancel/retry, and contacts surviving restart. Durable jobs, supervisor, deadlines, atomic/idempotent writes. |
+| [Task board](task_board) | `build/d6 examples/task_board/web.d6` → http://127.0.0.1:18110 | Create a project and task, edit notes, change status. Open `bash examples/task_board/board` against the same database and press `r`: CLI, TUI, and web share Mjolnir validation and frozen entities. |
+| [Site checker](site_checker) | `build/d6 examples/site_checker/check.d6 examples/site_checker/urls.txt` | Get `OK … — 200 (… ms)` or `FAIL` lines; add `--json` for scripts. Bounded worker pools, real HTTP, redirects, timeouts, and cancellation. |
+| [Bookmarks](bookmarks) | `build/d6 examples/bookmarks/web.d6` → http://127.0.0.1:18111 | Save a link, tag and search it, export JSON, then reimport. Persistent changesets, URL safety, migration, structured logs. |
+| [Import desk](job_service) | `build/d6 examples/job_service/service.d6 18090 /tmp/diamond-jobs.sqlite` → http://127.0.0.1:18090 | Queue the sample CSV. See row progress, validation errors, cancel/retry, and contacts surviving restart. Durable jobs, supervisor, deadlines, atomic/idempotent writes. |
 | [Project board](project_board) | Follow its setup/compile-views instructions | Authenticated ActiveRecord/Rack application with rendered views; a separate example from the Mjolnir task board. |
 | [Notes](notes) | Follow its README | A CLI notebook using SQLite directly, full-text search, and tags, with commands and sample output. |
-| [Parallel](parallel) | `build/diamond examples/parallel/parallel.d6` | Deterministic thread/channel/supervisor walkthrough, with optional timing. |
+| [Parallel](parallel) | `build/d6 examples/parallel/parallel.d6` | Deterministic thread/channel/supervisor walkthrough, with optional timing. |
 | [Pipeline](pipeline) | Follow its README | Streaming stages and backpressure. |
 | [Chat](chat) | Follow its README | WebSocket server and browser clients. |
 | [Guestbook](guestbook), [Library](library) | Follow their setup instructions | Smaller HTTP/database examples and server-rendered application structure. |

@@ -6,7 +6,7 @@ that gives up on a crash loop instead of retrying forever, and a `case` that
 needs one branch for a whole family of classes.
 
 ```text
-$ diamond dispatcher.d6
+$ d6 dispatcher.d6
 == routing
   job 1 -> primary
   job 2 -> primary
@@ -56,5 +56,5 @@ make debug
 bash examples/dispatcher/smoke_test.sh
 ```
 
-The smoke test runs the program interpreted and as a `diamond build` binary
+The smoke test runs the program interpreted and as a `d6 build` binary
 and compares both with `expected.txt`.

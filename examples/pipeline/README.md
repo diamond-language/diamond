@@ -9,7 +9,7 @@ this example keeps a multi-stage pipeline flowing while stages are denied,
 run away, or crash.
 
 ```text
-$ diamond pipeline.d6 ../../build/diamond
+$ d6 pipeline.d6 ../../build/d6
 == results
   #1 Ada -> ada=Lovelace#29010
   #2 grace -> grace=Hopper#9147
@@ -32,8 +32,8 @@ $ diamond pipeline.d6 ../../build/diamond
 pipeline.d6 DIAMOND_BINARY [MANIFEST]
 ```
 
-`DIAMOND_BINARY` is the `diamond` used to run each stage (a stage runs as
-`diamond --sandbox stage.d6`, in its own process). `MANIFEST` defaults to
+`DIAMOND_BINARY` is the `d6` used to run each stage (a stage runs as
+`d6 --sandbox stage.d6`, in its own process). `MANIFEST` defaults to
 `manifest.json`. Exit status is 0 on completion, 64 for a usage error, and 66
 when the manifest can't be read.
 
@@ -80,4 +80,4 @@ items -> [normalize] -> [enrich] -> [seal] -> results
 | `lib/worker.d6` | the supervised stage worker: sandboxed run, classify, retry |
 | `stages/*.d6` | the untrusted stages (`normalize`, `enrich`, `seal`) |
 | `manifest.json` | stages, grants, budgets, and the input items |
-| `smoke_test.sh` | interpreted and `diamond build` runs against `testdata/` |
+| `smoke_test.sh` | interpreted and `d6 build` runs against `testdata/` |

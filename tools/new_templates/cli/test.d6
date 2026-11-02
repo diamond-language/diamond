@@ -1,4 +1,4 @@
-# Run with `diamond test/{{name}}_test.d6`, or `bash test.sh` for every test file.
+# Run with `d6 test/{{name}}_test.d6`, or `bash test.sh` for every test file.
 require_cut "minitest"
 require "../lib/{{name}}"
 

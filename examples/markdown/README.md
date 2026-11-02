@@ -6,7 +6,7 @@ inline `code`, **strong**, *emphasis*, and links. It's a tour of Diamond's
 string and `Regexp` handling.
 
 ```text
-$ diamond markdown.d6 --toc testdata/sample.md
+$ d6 markdown.d6 --toc testdata/sample.md
 <nav>
 <ul>
   <li><a href="#getting-started">Getting started</a></li>
@@ -69,5 +69,5 @@ bash smoke_test.sh
 ```
 
 This converts `testdata/sample.md` under the interpreter and as a
-`diamond build` binary, checks the HTML against `testdata/sample.html`, and
+`d6 build` binary, checks the HTML against `testdata/sample.html`, and
 covers stdin input, `--stats`, and the exit codes.

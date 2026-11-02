@@ -12,7 +12,7 @@ $ cat testdata/schema.json
           "in_print": {"type": "Bool"}},
  "Author": {...}}
 
-$ diamond models.d6 testdata/schema.json
+$ d6 models.d6 testdata/schema.json
 == generated methods
   Book responds to title: true
   Book responds to in_print?: true
@@ -68,5 +68,5 @@ bash smoke_test.sh
 ```
 
 This compares the demo's output with `testdata/expected.txt` under the
-interpreter and as a `diamond build` binary, and checks that removing a
+interpreter and as a `d6 build` binary, and checks that removing a
 field from the schema removes its generated method.

@@ -7,15 +7,15 @@ without letting it touch anything outside the process itself. Ordinary computati
 runs to completion and can report a result.
 
 ```sh
-diamond --sandbox untrusted.d6
+d6 --sandbox untrusted.d6
 # or, equivalently:
-DIAMOND_SANDBOX=1 diamond untrusted.d6
+DIAMOND_SANDBOX=1 d6 untrusted.d6
 ```
 
 Any value except `0` enables it, including an empty one, so a wrapper script that expands
-an unset variable keeps the sandbox on. `diamond --sandbox` is a thin convenience that sets
+an unset variable keeps the sandbox on. `d6 --sandbox` is a thin convenience that sets
 the same environment variable to `1` before running normally, overriding any `0`; both forms, and `DIAMOND_SANDBOX=1 ./program` against
-a `diamond build`-produced [standalone binary](deployment.md), behave identically.
+a `d6 build`-produced [standalone binary](deployment.md), behave identically.
 
 ## What's denied
 
@@ -52,7 +52,7 @@ ALLOW` (only consulted once `DIAMOND_SANDBOX` is already set) names categories t
 through instead:
 
 ```sh
-DIAMOND_SANDBOX=1 DIAMOND_SANDBOX_ALLOW=network diamond app.d6   # filesystem/database/subprocess still denied
+DIAMOND_SANDBOX=1 DIAMOND_SANDBOX_ALLOW=network d6 app.d6   # filesystem/database/subprocess still denied
 ```
 
 Five categories, comma-separated when combining more than one:
@@ -103,9 +103,9 @@ network at all) and combine naturally with `--sandbox` for defense in depth (see
 guarantee against code that rescues them):
 
 ```sh
-DIAMOND_MAX_INSTRUCTIONS=1000000 diamond untrusted.d6
-DIAMOND_MAX_WALL_MILLISECONDS=5000 diamond untrusted.d6
-DIAMOND_MAX_MEMORY_BYTES=100000000 diamond untrusted.d6
+DIAMOND_MAX_INSTRUCTIONS=1000000 d6 untrusted.d6
+DIAMOND_MAX_WALL_MILLISECONDS=5000 d6 untrusted.d6
+DIAMOND_MAX_MEMORY_BYTES=100000000 d6 untrusted.d6
 ```
 
 - `DIAMOND_MAX_INSTRUCTIONS` -- opcode dispatch count.

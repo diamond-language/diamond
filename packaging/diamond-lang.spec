@@ -26,17 +26,21 @@ Recommends:     zlib-devel
 
 %description
 Diamond is a gradually typed, object-oriented language with a register-based
-bytecode VM. This package provides the diamond interpreter and REPL, the facet
-package manager, the diamond-lsp language server, the diamond-dap debug adapter,
-and the runtime kit diamond build links standalone executables against.
+bytecode VM. This package provides the d6 interpreter and REPL, the facet
+package manager, the d6-lsp language server, the d6-dap debug adapter,
+and the runtime kit d6 build links standalone executables against. The former diamond,
+diamond-lsp and diamond-dap commands remain as links to them.
 
 %install
 cp -a %{diamond_stage}/. %{buildroot}/
 
 %files
+%{_bindir}/d6
 %{_bindir}/diamond
 %{_bindir}/facet
+%{_bindir}/d6-lsp
 %{_bindir}/diamond-lsp
+%{_bindir}/d6-dap
 %{_bindir}/diamond-dap
 /usr/lib/diamond
 %license %{_datadir}/licenses/diamond-lang/LICENSE

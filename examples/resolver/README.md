@@ -7,18 +7,18 @@ exercise Diamond's type system: generics, union types, sealed hierarchies with
 exhaustive `case`, `Comparable`, and `freeze`.
 
 ```text
-$ diamond resolver.d6 testdata/index.txt web:">=1.0.0"
+$ d6 resolver.d6 testdata/index.txt web:">=1.0.0"
 web 2.0.0
 rack 2.0.0
 json 2.0.0
 
-$ diamond resolver.d6 testdata/index.txt web:"=1.1.0"
+$ d6 resolver.d6 testdata/index.txt web:"=1.1.0"
 web 1.1.0
 rack 1.2.0
 json 1.1.0
 logger 0.5.0
 
-$ diamond resolver.d6 testdata/index.txt admin:"*"
+$ d6 resolver.d6 testdata/index.txt admin:"*"
 conflict: json must be exactly 1.0.0 (wanted by admin 1.0.0)
   but 2.0.0 is already chosen
 ```
@@ -107,7 +107,7 @@ the same walk to a solution.
 bash smoke_test.sh
 ```
 
-Runs the program interpreted and as a `diamond build` binary over eleven
+Runs the program interpreted and as a `d6 build` binary over eleven
 resolutions (including the conflict, the pinned workaround, a missing package,
 a cycle and `--check`), comparing both to `testdata/session.expected`; checks
 every error status and message; and runs `testdata/frozen.d6` for the freezing

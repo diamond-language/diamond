@@ -5,7 +5,7 @@ levels deep) to search completely, with no need for alpha-beta pruning or
 a transposition table.
 
 ```text
-$ diamond tictactoe.d6 --best "XX......."
+$ d6 tictactoe.d6 --best "XX......."
 o plays 2 -> o loses with best play
 ```
 
@@ -14,7 +14,7 @@ losing position for O no matter what it does, which is exactly what the
 search finds: blocking at 2 is O's *least bad* move, and it still loses.
 
 ```text
-$ diamond tictactoe.d6 --self
+$ d6 tictactoe.d6 --self
 . . .
 . . .
 . . .
@@ -75,6 +75,6 @@ a position that's already won or full).
 bash smoke_test.sh
 ```
 
-Runs the program under the interpreter and as a `diamond build` binary,
+Runs the program under the interpreter and as a `d6 build` binary,
 and checks a full self-play game, two tactical `--best` positions, and
 every error path.

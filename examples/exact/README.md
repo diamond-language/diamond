@@ -5,7 +5,7 @@ determinant, or invert a matrix, with every answer a true fraction rather
 than a float that is nearly right.
 
 ```text
-$ diamond exact.d6 solve testdata/system.txt
+$ d6 exact.d6 solve testdata/system.txt
 x1 = -5/22
 x2 = 1/2
 x3 = 15/22
@@ -17,7 +17,7 @@ order-5 inverse is exactly all integers, and the tool proves it by
 multiplying back:
 
 ```text
-$ diamond exact.d6 inverse testdata/hilbert.txt
+$ d6 exact.d6 inverse testdata/hilbert.txt
 [    25    -300     1050    -1400     630 ]
 [  -300    4800   -18900    26880  -12600 ]
 ...
@@ -70,7 +70,7 @@ a bad matrix (ragged rows, non-square for `det`/`inverse`, singular for
 bash smoke_test.sh
 ```
 
-Runs each command under the interpreter and as a `diamond build` binary,
+Runs each command under the interpreter and as a `d6 build` binary,
 compares the solved system and the Hilbert inverse to golden files, and
 checks the determinant, the contradictory and underdetermined systems, and
 every error path and exit status.

@@ -6,7 +6,7 @@ processes, each under `DIAMOND_MAX_WALL_MILLISECONDS=300`, and reports how each
 one ended.
 
 ```text
-$ diamond host.d6 diamond
+$ d6 host.d6 diamond
 quick
   finishes inside the budget; nothing trips
   exited normally
@@ -58,5 +58,5 @@ make debug
 bash examples/budget/smoke_test.sh
 ```
 
-The smoke test runs the host interpreted and as a `diamond build` binary and
+The smoke test runs the host interpreted and as a `d6 build` binary and
 compares both with `expected.txt`.

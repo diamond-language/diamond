@@ -10,7 +10,7 @@ From the repository root:
 ```sh
 make debug
 bash tools/install_local_cuts.sh .
-build/diamond examples/job_service/service.d6 18090 /tmp/diamond-jobs.sqlite
+build/d6 examples/job_service/service.d6 18090 /tmp/diamond-jobs.sqlite
 # Open http://127.0.0.1:18090
 ```
 
