@@ -1683,6 +1683,14 @@ DiamondVmStatus file_invoke_helper(DiamondVm *vm,
         }
         registers[dest]=registers[recv];return DIAMOND_VM_OK;
     }
+    if((read_method||gets_method)&&target_file->write_pending) {
+        target_file->write_pending=false;
+        errno=0;
+        if(fflush(target_file->stream)!=0) {
+            snprintf(vm->error,sizeof vm->error,"flush failed: %s",strerror(errno));
+            return DIAMOND_VM_IO_ERROR;
+        }
+    }
     if(read_method) {
         if(argc>1)return DIAMOND_VM_ARITY_ERROR;
         bool bounded=false;size_t limit=0;
@@ -1772,6 +1780,7 @@ DiamondVmStatus file_invoke_helper(DiamondVm *vm,
     const DiamondString *text=(const DiamondString *)converted.as.object;
     errno=0;
     const size_t written=fwrite(text->chars,1,text->length,target_file->stream);
+    target_file->write_pending=true;
     if(written!=text->length||ferror(target_file->stream)) {
         snprintf(vm->error,sizeof vm->error,"write error: %s",strerror(errno));
         return DIAMOND_VM_IO_ERROR;
