@@ -5,8 +5,17 @@ The corrected A record is **142.93.192.149**. External health and catalog
 requests succeeded. Since 2026-09-25 nginx terminates TLS with certbot
 certificates (see "Proxy and certificates" below); Caddy was retired.
 
-Runtime revision: `43b640d06afefc5def1a3c5b2129e778a0296791` (v0.21.0, deployed
-2026-10-31 with `tools/deploy_registry.sh` after a verified snapshot). Before the upgrade,
+Runtime revision: `1ef04ee578dba796f808d69998e22e1e308244dd` (v0.22.0, deployed
+2026-11-01 with `tools/deploy_registry.sh` after a verified snapshot). Before the upgrade, after
+its own verified snapshot, one 30-minute credential (35, `publish:` for each cut, revoked) published
+arel 0.35.3, active_record 0.21.1, graphsql 0.2.3, mjolnir 0.4.0 and registry 0.3.0 (digests in
+`docs/registry-launch-inventory.json`). `tools/verify_registry_launch.d6` passed for all 20 public
+cuts before and after the upgrade. Startup backfilled `release_details` for all 128 served releases,
+and `scrub.d6` found no bad blobs. `REGISTRY_BLOB_REDIRECT` is not set: the service still sends blobs
+itself, and the host keeps `StateDirectoryMode=0700` until someone enables it (see OPERATIONS.md).
+
+v0.21.0 (`43b640d06afefc5def1a3c5b2129e778a0296791`) was deployed
+2026-10-31 with `tools/deploy_registry.sh` after a verified snapshot. Before that upgrade,
 after its own verified snapshot, one 30-minute credential (33, `publish:` for each cut,
 revoked) published arel 0.35.2 (sha256
 `a4619e3d550e6b8f26196444c43949768ad024854b1381b55e0c964307f9502a`), http 0.2.3
