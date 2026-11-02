@@ -4,7 +4,7 @@ Replays a log of `name score` events into a ranked board, announcing rank
 changes as they happen.
 
 ```text
-$ diamond leaderboard.d6 testdata/season1.txt --top 4
+$ d6 leaderboard.d6 testdata/season1.txt --top 4
 ann joins with 50
 bob joins with 70
 bob takes the lead from ann
@@ -70,6 +70,6 @@ file can't be read.
 bash smoke_test.sh
 ```
 
-Runs the program interpreted and as a `diamond build` binary and compares the
+Runs the program interpreted and as a `d6 build` binary and compares the
 full replay and the `--quiet` form to golden files, checks `--versus` from
 both sides, and checks every error path and exit status.

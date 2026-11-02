@@ -5,7 +5,7 @@ pipelines built from those generators, as two-way coroutines, and as tasks
 under a small cooperative scheduler.
 
 ```text
-$ diamond generators.d6
+$ d6 generators.d6
 == infinite generators
 naturals:  0 1 2 3 4 5 6 7
 fibonacci: 0 1 1 2 3 5 8 13 21 34 55 89
@@ -71,5 +71,5 @@ Fibers are cooperative and share one OS thread; for parallel work see
 bash smoke_test.sh
 ```
 
-This runs the demo under the interpreter and as a `diamond build` binary and
+This runs the demo under the interpreter and as a `d6 build` binary and
 compares both with `expected.txt`.

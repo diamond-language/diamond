@@ -25,7 +25,7 @@ Pipe the NDJSON stream through the optional log viewer for compact human
 output while developing:
 
 ```sh
-../../build/diamond app.d6 | DIAMOND_BIN=../../build/diamond cuts/log_viewer/bin/diamond-log
+../../build/d6 app.d6 | DIAMOND_BIN=../../build/d6 cuts/log_viewer/bin/diamond-log
 ```
 
 ## Environments
@@ -48,21 +48,21 @@ the selected database, so use it deliberately.
 cd examples/project_board
 bash ../../tools/install_local_cuts.sh .
 bash compile_views.sh
-../../build/diamond setup_db.d6
-../../build/diamond app.d6
+../../build/d6 setup_db.d6
+../../build/d6 app.d6
 ```
 
 For production:
 
 ```sh
-DIAMOND_ENV=production DIAMOND_DATABASE_PATH=/srv/diamond/project-board.db LOG_LEVEL=info ../../build/diamond app.d6
+DIAMOND_ENV=production DIAMOND_DATABASE_PATH=/srv/diamond/project-board.db LOG_LEVEL=info ../../build/d6 app.d6
 ```
 
 Run the direct-dispatch smoke test (public reads and association rendering, denied anonymous writes, failed login, missing/forged CSRF rejection, validation failures without persistence, complete project/task create-update-delete flows, cascading project deletion, logout, rejected stale sessions, and expired-session deletion) with:
 
 ```sh
-DIAMOND_ENV=test ../../build/diamond setup_db.d6
-DIAMOND_ENV=test ../../build/diamond smoke_test.d6
+DIAMOND_ENV=test ../../build/d6 setup_db.d6
+DIAMOND_ENV=test ../../build/d6 smoke_test.d6
 ```
 
 Open <http://127.0.0.1:18081/> and sign in with:

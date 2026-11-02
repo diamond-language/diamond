@@ -47,7 +47,7 @@ package ecosystem are its own.
   time, not just documentation.
 - **Compiled, not just interpreted.** Source goes through a real Pratt
   compiler to register bytecode, run on a VM with inline caches, object
-  shapes, quickening, and an opt-in x86-64 JIT. `diamond build` produces a
+  shapes, quickening, and an opt-in x86-64 JIT. `d6 build` produces a
   standalone executable, no separate interpreter or `.d6` file needed at run
   time; with a target kit it cross-compiles, and with a musl kit it links fully
   statically.
@@ -56,7 +56,7 @@ package ecosystem are its own.
   threads an ongoing mailbox, and a `Supervisor` restarts a crashed worker
   automatically (Erlang's `one_for_one`, not exception handling).
 - **A sandbox mode is built into the language itself**
-  (`diamond --sandbox`), not bolted on: denies filesystem, network, and
+  (`d6 --sandbox`), not bolted on: denies filesystem, network, and
   subprocess access for running untrusted code.
 - **No general `eval`.** `ClassName.compile_method` compiles a capture-free
   method body from a source string; there's no arbitrary code evaluation in
@@ -78,9 +78,9 @@ When both `helper.d6` and `helper.di` exist, `require "helper"` loads
 
 ```sh
 make
-./build/diamond -e '20 + 22'
-./build/diamond program.d6
-./build/diamond              # REPL, when stdin is a terminal
+./build/d6 -e '20 + 22'
+./build/d6 program.d6
+./build/d6              # REPL, when stdin is a terminal
 ```
 
 Build a standalone binary (from the repo root; see
@@ -88,7 +88,7 @@ Build a standalone binary (from the repo root; see
 builds):
 
 ```sh
-./build/diamond build app.d6 -o app
+./build/d6 build app.d6 -o app
 ./app
 ```
 
@@ -130,7 +130,7 @@ sandbox.
 ## Learn more
 
 - [Getting started](docs/getting-started.md) -- install, the REPL, a first
-  project with `facet new`, tests, dependencies and `diamond build`, then a
+  project with `facet new`, tests, dependencies and `d6 build`, then a
   reading order for the rest of `docs/`
 - [CHANGELOG.md](CHANGELOG.md) -- completed capability milestones
 - [docs/roadmap.md](docs/roadmap.md) -- candidate work, explicitly

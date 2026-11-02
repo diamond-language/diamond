@@ -10,10 +10,10 @@ From the repository root:
 ```sh
 make debug facet
 bash tools/install_local_cuts.sh .
-build/diamond examples/site_checker/check.d6 examples/site_checker/urls.txt
+build/d6 examples/site_checker/check.d6 examples/site_checker/urls.txt
 # OK https://example.com/ — 200 (... ms)
 # OK https://example.org/ — 200 (... ms)
-build/diamond examples/site_checker/check.d6 --json --workers 4 --timeout-ms 2000 examples/site_checker/urls.txt
+build/d6 examples/site_checker/check.d6 --json --workers 4 --timeout-ms 2000 examples/site_checker/urls.txt
 ```
 
 One URL per line; blank lines and `#` comments are ignored. A list contains
@@ -32,7 +32,7 @@ stops scheduling work; active HTTP calls finish or hit their I/O timeout before
 workers join. No further results are printed after cancellation.
 
 Build a standalone executable with
-`build/diamond build examples/site_checker/check.d6 -o /tmp/site-check`.
+`build/d6 build examples/site_checker/check.d6 -o /tmp/site-check`.
 `bash examples/site_checker/smoke_test.sh` tests interpreted and compiled modes
 against a local fixture: no public internet is needed. CI runs it through
 `make test-example-apps`.

@@ -70,7 +70,7 @@ shared bucket for the API route.
 ```sh
 cd examples/guestbook
 bash ../../tools/install_local_cuts.sh .
-../../build/diamond app.d6
+../../build/d6 app.d6
 ```
 
 Then, in another terminal:
@@ -97,7 +97,7 @@ zero setup -- see `boot.d6`'s own comment.
 
 ```sh
 bash ../../tools/install_local_cuts.sh .
-../../build/diamond smoke_test.d6
+../../build/d6 smoke_test.d6
 ```
 
 Direct-dispatch (calls `web_app`/`api_app`/`rack_app` straight from

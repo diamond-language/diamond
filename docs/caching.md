@@ -1,6 +1,6 @@
 # Bytecode caching
 
-`diamond script.d6` caches the compiled program in a sibling `.d6c` file next to the
+`d6 script.d6` caches the compiled program in a sibling `.d6c` file next to the
 source, so a second, unchanged run skips compilation entirely. No flag, no separate
 command -- it's on by default for the ordinary CLI.
 
@@ -9,8 +9,8 @@ suffix (or none) receive an appended `.d6c`. `cache clear` recognizes both
 cache suffixes and still removes only files containing a valid cache header.
 
 ```sh
-diamond app.d6   # first run: compiles, writes app.d6c
-diamond app.d6   # second run: reads app.d6c, skips straight to running
+d6 app.d6   # first run: compiles, writes app.d6c
+d6 app.d6   # second run: reads app.d6c, skips straight to running
 ```
 
 On a real, substantial multi-file application (skindicate.dia's own `app.d6`),
@@ -36,7 +36,7 @@ is no way around that without caching the load step separately, which this doesn
 attempt.
 
 A `.d6c` file that's missing, truncated, damaged, hand-edited, or was written by a
-different build of `diamond` is treated exactly like a cache miss: `diamond` falls back
+different build of `d6` is treated exactly like a cache miss: `d6` falls back
 to a clean recompile and, on success, overwrites the stale file. This never crashes and
 never affects a script's own observable behavior -- caching is a pure optimization.
 Every read checks, in order:
@@ -81,10 +81,10 @@ target is refused); older files are ignored and rebuilt.
 ## Removing caches
 
 ```sh
-diamond cache clear app.d6        # app.d6c only
-diamond cache clear src/ lib/     # every .d6c under those directories
-diamond cache clear               # every .d6c under the current directory
-diamond cache clear --dry-run     # list what would go, remove nothing
+d6 cache clear app.d6        # app.d6c only
+d6 cache clear src/ lib/     # every .d6c under those directories
+d6 cache clear               # every .d6c under the current directory
+d6 cache clear --dry-run     # list what would go, remove nothing
 ```
 
 It removes only files that start with a Diamond cache's magic bytes, so an unrelated file
@@ -96,7 +96,7 @@ run, so clearing is always safe.
 ## Warming caches
 
 ```sh
-diamond cache warm app.d6 lib/worker.d6
+d6 cache warm app.d6 lib/worker.d6
 ```
 
 compiles each script and writes its cache without running it, which is what an image or
@@ -104,7 +104,7 @@ package build wants: run it once while the directory is still writable, and a re
 deployment (a container image, a system-wide install) then reads the cache on every start.
 It prints `cached PATH`, or `up to date PATH` when a valid cache is already there, and exits
 65 if a script does not compile or 73 if the cache could not be written. A cache is only valid
-for the `diamond` binary that wrote it, so warm with the binary the deployment runs.
+for the `d6` binary that wrote it, so warm with the binary the deployment runs.
 
 ## Disabling it
 
@@ -122,7 +122,7 @@ stderr, useful for confirming the feature is actually doing something.
 - **A step-debugger session (`DIAMOND_DEBUG_BREAKPOINTS` set).** Already forces a
   live, uncached compile unconditionally, so the DAP server's own assumptions about a
   freshly-compiled combined source buffer stay true.
-- **`diamond build`.** Its own AOT-embed mechanism already means the *produced* binary
+- **`d6 build`.** Its own AOT-embed mechanism already means the *produced* binary
   never recompiles at all at run time; this cache is unrelated to that one-shot build
   command.
 - **`tests/run_cases.c`'s own batch corpus runner** (the default for `make test`) never
@@ -131,5 +131,5 @@ stderr, useful for confirming the feature is actually doing something.
   into. This is deliberate: a stale-but-fingerprint-compatible cache surviving between two
   test runs could otherwise mask a real compiler regression the test suite exists to
   catch. `DIAMOND_CASE_RUNNER=subprocess` runs every case through the real CLI instead,
-  which does write caches next to the test sources (`diamond cache clear tests/cases`
+  which does write caches next to the test sources (`d6 cache clear tests/cases`
   removes them).

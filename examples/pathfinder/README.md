@@ -4,7 +4,7 @@ Shortest routes across an ASCII map, three ways: breadth-first search,
 Dijkstra's algorithm, and A*. The map is printed with the route drawn as `*`.
 
 ```text
-$ diamond pathfinder.d6 --algo astar --stats testdata/mud.txt
+$ d6 pathfinder.d6 --algo astar --stats testdata/mud.txt
 ##############
 #S...........#
 #*9999999999.#
@@ -13,7 +13,7 @@ $ diamond pathfinder.d6 --algo astar --stats testdata/mud.txt
 #***#G*****9.#
 ##############
 astar: 22 steps, cost 22, looked at 47 cells
-$ diamond pathfinder.d6 --algo bfs --stats testdata/mud.txt
+$ d6 pathfinder.d6 --algo bfs --stats testdata/mud.txt
 ##############
 #S*********..#
 #.99999999*9.#
@@ -61,7 +61,7 @@ column).
 
 `smoke_test.sh` compares every algorithm's output on two maps, with and
 without diagonal moves, against stored results, through the interpreter and a
-`diamond build` binary. The searches were also fuzzed against an independent
+`d6 build` binary. The searches were also fuzzed against an independent
 Python implementation on about four hundred random weighted maps (with and without
 walls, diagonals, and unreachable goals): BFS matches the true minimum step
 count, and Dijkstra and A* the true minimum cost, on every one.

@@ -9,17 +9,17 @@ From the repository root:
 ```sh
 make debug facet
 bash tools/install_local_cuts.sh .
-build/diamond examples/task_board/app.d6 project Diamond
-build/diamond examples/task_board/app.d6 add 1 "Ship a terminal board"
-build/diamond examples/task_board/app.d6 move 1 doing
-build/diamond examples/task_board/app.d6 list --project 1 --status doing
+build/d6 examples/task_board/app.d6 project Diamond
+build/d6 examples/task_board/app.d6 add 1 "Ship a terminal board"
+build/d6 examples/task_board/app.d6 move 1 doing
+build/d6 examples/task_board/app.d6 list --project 1 --status doing
 # #1 [doing] Diamond / Ship a terminal board
-build/diamond examples/task_board/app.d6 edit 1 "Ship the board"
-build/diamond examples/task_board/app.d6 projects
-build/diamond examples/task_board/app.d6 notes 1 "Keep benchmark results here"
-build/diamond examples/task_board/app.d6 show 1
+build/d6 examples/task_board/app.d6 edit 1 "Ship the board"
+build/d6 examples/task_board/app.d6 projects
+build/d6 examples/task_board/app.d6 notes 1 "Keep benchmark results here"
+build/d6 examples/task_board/app.d6 show 1
 bash examples/task_board/board
-build/diamond examples/task_board/web.d6
+build/d6 examples/task_board/web.d6
 # Open http://127.0.0.1:18110
 ```
 
@@ -151,7 +151,7 @@ stderr; results go to stdout.
 Run the store, controller, and CLI tests (with isolated temporary databases) using:
 
 ```sh
-DIAMOND_BIN="$PWD/build/diamond" bash examples/task_board/test.sh
+DIAMOND_BIN="$PWD/build/d6" bash examples/task_board/test.sh
 ```
 
 When Python 3 is available, this also exercises the real launcher in a

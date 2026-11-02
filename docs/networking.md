@@ -487,7 +487,7 @@ survives `exec`, so `kill -INT` will not reach a Diamond handler in a process
 started with a plain `... &`. Reset the signal before executing the program:
 
 ```sh
-(trap - INT; exec ./build/diamond signal_test.d6) &
+(trap - INT; exec ./build/d6 signal_test.d6) &
 ```
 
 ## TLS: `TLSSocket.connect`/`TLSServer.listen`/`.accept`

@@ -6,17 +6,17 @@ legacy Diamond sources can still be assigned the Diamond language manually.
 Syntax highlighting for `.d6` files — a TextMate grammar (`syntaxes/diamond.tmLanguage.json`)
 built directly from `src/lexer.h`/`src/lexer.c`'s own token list, not derived
 from or dependent on any other language's grammar — plus live diagnostics
-from `diamond-lsp` (`lsp/`, `docs/lsp.md`) and gutter-breakpoint debugging
-via `diamond-dap` (`dap/`, `docs/debugging.md`). No compiled code, no
+from `d6-lsp` (`lsp/`, `docs/lsp.md`) and gutter-breakpoint debugging
+via `d6-dap` (`dap/`, `docs/debugging.md`). No compiled code, no
 `node_modules`, no build step: `package.json` + `language-configuration.json`
 + the grammar file + `extension.js` are the entire extension. `extension.js`
-is a small hand-rolled LSP client (spawns `diamond-lsp`, frames
+is a small hand-rolled LSP client (spawns `d6-lsp`, frames
 `Content-Length` JSON-RPC over its stdio, republishes diagnostics) rather
 than a dependency on `vscode-languageclient` — matching `lsp/`'s own
 from-scratch, zero-external-dependency convention, and meaning there's
 nothing to `npm install` on either side: VS Code's extension host already
 bundles Node. The debugger integration needs even less of its own code:
-`diamond-dap` already speaks real DAP, so the extension only registers a
+`d6-dap` already speaks real DAP, so the extension only registers a
 `DebugAdapterDescriptorFactory` telling VS Code which binary to spawn —
 VS Code's own built-in debug UI and protocol handling do the rest.
 
@@ -24,12 +24,12 @@ VS Code's own built-in debug UI and protocol handling do the rest.
 ## workspace symbol search
 
 1. Build the language server: `make lsp` (from the repo root). This
-   produces `build/diamond-lsp`.
-2. Either put that binary on your `PATH` under the name `diamond-lsp`, or
+   produces `build/d6-lsp`.
+2. Either put that binary on your `PATH` under the name `d6-lsp`, or
    point the extension at it directly: open VS Code settings and set
    `diamond.languageServerPath` to the built binary's absolute path (e.g.
-   `/path/to/diamond/build/diamond-lsp`).
-3. Open a `.d6` file. The extension activates on the `diamond` language,
+   `/path/to/diamond/build/d6-lsp`).
+3. Open a `.d6` file. The extension activates on the `d6` language,
    spawns the server, and diagnostics appear as you type (Diamond's
    compiler stops at the first error, so at most one diagnostic per file
    at a time). A top-level function name or a class name — at its own
@@ -52,16 +52,16 @@ If the server fails to start (wrong path, not built yet), VS Code shows an
 error notification with the attempted path; server stderr and lifecycle
 events are logged to the "Diamond Language Server" output channel. The
 `Diamond: Restart Language Server` command restarts it without reloading
-the whole window — useful after rebuilding `diamond-lsp`.
+the whole window — useful after rebuilding `d6-lsp`.
 
 ## Debugging (`dap/`)
 
 1. Build the debug adapter: `make dap` (from the repo root). This produces
-   `build/diamond-dap`, plus make sure `build/diamond` itself (or whatever
-   `diamond` binary you want debuggee programs actually run under) is
+   `build/d6-dap`, plus make sure `build/d6` itself (or whatever
+   `d6` binary you want debuggee programs actually run under) is
    built and either on `PATH` or set via `DIAMOND_BIN` in your own shell
-   profile -- `diamond-dap` execvp's it to run each debuggee.
-2. Either put `diamond-dap` on your `PATH`, or set `diamond.debugAdapterPath`
+   profile -- `d6-dap` execvp's it to run each debuggee.
+2. Either put `d6-dap` on your `PATH`, or set `diamond.debugAdapterPath`
    in VS Code settings to its absolute path, the same way
    `diamond.languageServerPath` works for the language server above.
 3. Open a `.d6` file, set a gutter breakpoint on any line with a real
@@ -81,7 +81,7 @@ the whole window — useful after rebuilding `diamond-lsp`.
 ## `.div` templates (`packages/div`)
 
 A `.div` file (see `packages/div/README.md` for the tag grammar) gets its
-own `diamond-template` language id, separate from `diamond` — highlighted
+own `diamond-template` language id, separate from `d6` — highlighted
 via `syntaxes/diamond-template.tmLanguage.json`, an ERB-style embedded
 grammar: everything outside `<% %>` is plain HTML (VS Code's own built-in
 `text.html.basic` grammar, not bundled here), everything inside a tag is
@@ -92,7 +92,7 @@ errors back to their real template position — see `docs/lsp.md`'s own
 `.div` section for what is and isn't covered, e.g. a call to another
 template's own partial reports a false "undefined function"); hover,
 go-to-definition, completion, and workspace symbol search don't — those
-providers stay registered against `diamond` alone.
+providers stay registered against `d6` alone.
 
 ## Trying it locally
 

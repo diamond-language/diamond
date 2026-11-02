@@ -3,10 +3,10 @@
 A command-line tool that summarizes newline-delimited JSON logs, such as the
 structured output of the [`logger`](../../packages/logger/README.md) cut,
 gremlin, and the package registry. It runs under the interpreter or ships as
-one binary built with `diamond build`.
+one binary built with `d6 build`.
 
 ```text
-$ diamond build logstat.d6
+$ d6 build logstat.d6
 $ ./logstat testdata/sample.ndjson
 9 lines, 2 unparsed
 
@@ -60,7 +60,7 @@ nearest-rank method.
   compile time.
 - **A real CLI.** Argument parsing from `ARGV`, file and stdin input, errors
   on stderr through `warn`, and conventional exit codes through `exit`.
-- **Shipping one file.** `diamond build logstat.d6` produces a standalone
+- **Shipping one file.** `d6 build logstat.d6` produces a standalone
   executable; `smoke_test.sh` checks that it prints exactly what the
   interpreter prints.
 

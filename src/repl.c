@@ -587,7 +587,7 @@ static ReplLineResult read_line_piped(FILE *real_stdout, const char *prompt,
     while (read_raw_byte(&byte)) {
         line_result = REPL_LINE_OK;
         if (!buffer_append(line_buffer, (const char *)&byte, 1)) {
-            fprintf(stderr, "diamond: out of memory reading input\n");
+            fprintf(stderr, "d6: out of memory reading input\n");
             line_result = REPL_LINE_EOF;
             break;
         }
@@ -609,7 +609,7 @@ static bool run_capturing_stdout(FILE *capture, int real_stdout_fd,
      * its output read back as an empty string. */
     if (ftruncate(fileno(capture), 0) != 0 ||
         lseek(fileno(capture), 0, SEEK_SET) != 0) {
-        fprintf(stderr, "diamond: cannot reset output capture\n");
+        fprintf(stderr, "d6: cannot reset output capture\n");
     }
     /* dup2 onto STDOUT_FILENO, not a direct `stdout = capture`
      * assignment: `stdout` is a plain, reassignable `FILE *` global
@@ -625,14 +625,14 @@ static bool run_capturing_stdout(FILE *capture, int real_stdout_fd,
      * original fd 1, taken above) is what restores it afterward. */
     fflush(stdout);
     if (dup2(fileno(capture), STDOUT_FILENO) < 0) {
-        fprintf(stderr, "diamond: cannot redirect stdout for output capture\n");
+        fprintf(stderr, "d6: cannot redirect stdout for output capture\n");
     }
     const bool ran_ok = run_candidate(program, result, result_vm, run_error,
                                       error_message, error_size);
 
     fflush(stdout);
     if (dup2(real_stdout_fd, STDOUT_FILENO) < 0) {
-        fprintf(stderr, "diamond: cannot restore stdout after output capture\n");
+        fprintf(stderr, "d6: cannot restore stdout after output capture\n");
     }
     return ran_ok;
 }
@@ -651,7 +651,7 @@ static char *read_capture(FILE *capture) {
      * capture's own buffering last cached), not what was actually
      * written. */
     if (fseek(capture, 0, SEEK_END) != 0) {
-        fprintf(stderr, "diamond: cannot resync output capture\n");
+        fprintf(stderr, "d6: cannot resync output capture\n");
     }
     const long captured_length = ftell(capture);
     char *captured = nullptr;
@@ -730,14 +730,14 @@ static ReplRetry recompile_as_statement(const ReplBuffer *session, const ReplBuf
         }
     }
     if (*program == nullptr) {
-        fprintf(stderr, "diamond: out of memory allocating program\n");
+        fprintf(stderr, "d6: out of memory allocating program\n");
         return REPL_RETRY_OUT_OF_MEMORY;
     }
     diamond_program_free(*program);
     free(*program);
     *program = calloc(1, sizeof **program);
     if (*program == nullptr) {
-        fprintf(stderr, "diamond: out of memory allocating program\n");
+        fprintf(stderr, "d6: out of memory allocating program\n");
         return REPL_RETRY_OUT_OF_MEMORY;
     }
     ReplBuffer wrapped_source;
@@ -796,18 +796,18 @@ static void enter_raw_mode(struct termios *original_termios) {
 static int open_repl_output(FILE **capture_out, int *real_stdout_fd_out, FILE **real_stdout_out) {
     FILE *capture = tmpfile();
     if (capture == nullptr) {
-        fprintf(stderr, "diamond: cannot create temporary file for REPL output capture\n");
+        fprintf(stderr, "d6: cannot create temporary file for REPL output capture\n");
         return 74;
     }
     const int real_stdout_fd = dup(STDOUT_FILENO);
     if (real_stdout_fd < 0) {
-        fprintf(stderr, "diamond: cannot duplicate stdout\n");
+        fprintf(stderr, "d6: cannot duplicate stdout\n");
         fclose(capture);
         return 74;
     }
     FILE *real_stdout = fdopen(real_stdout_fd, "w");
     if (real_stdout == nullptr) {
-        fprintf(stderr, "diamond: cannot open stdout duplicate\n");
+        fprintf(stderr, "d6: cannot open stdout duplicate\n");
         close(real_stdout_fd);
         fclose(capture);
         return 74;
@@ -842,7 +842,7 @@ int diamond_repl_run(void) {
      * before its first redirect), the banner suddenly appeared, but
      * interleaved into the middle of the first evaluated expression's
      * own output instead of at the top where it belongs. */
-    fputs("diamond REPL -- Ctrl-D, exit, or quit to leave\n", real_stdout);
+    fputs("d6 REPL -- Ctrl-D, exit, or quit to leave\n", real_stdout);
     fflush(real_stdout);
 
     ReplBuffer session;
@@ -942,7 +942,7 @@ int diamond_repl_run(void) {
             const bool appended = buffer_append(&pending, line_buffer.data, line_buffer.length);
             buffer_free(&line_buffer);
             if (!appended) {
-                fprintf(stderr, "diamond: out of memory reading input\n");
+                fprintf(stderr, "d6: out of memory reading input\n");
                 eof = true;
                 break;
             }
@@ -951,7 +951,7 @@ int diamond_repl_run(void) {
             buffer_init(&candidate_source);
             if (!buffer_append(&candidate_source, session.data, session.length) ||
                 !append_repl_pending(&candidate_source, &pending)) {
-                fprintf(stderr, "diamond: out of memory reading input\n");
+                fprintf(stderr, "d6: out of memory reading input\n");
                 buffer_free(&candidate_source);
                 eof = true;
                 break;
@@ -959,7 +959,7 @@ int diamond_repl_run(void) {
 
             program = calloc(1,sizeof *program);
             if (program == nullptr) {
-                fprintf(stderr, "diamond: out of memory allocating program\n");
+                fprintf(stderr, "d6: out of memory allocating program\n");
                 buffer_free(&candidate_source);
                 eof = true;
                 break;

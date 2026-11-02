@@ -3,7 +3,7 @@
 A small Mustache-style template renderer over a JSON context.
 
 ```text
-$ diamond template.d6 testdata/invoice.mustache testdata/invoice.json
+$ d6 template.d6 testdata/invoice.mustache testdata/invoice.json
 Invoice for Ada Lovelace
 
   2x widget @ $5
@@ -87,5 +87,5 @@ can't be opened.
 bash smoke_test.sh
 ```
 
-Runs the program under the interpreter and as a `diamond build` binary,
+Runs the program under the interpreter and as a `d6 build` binary,
 and checks the rendered invoice and every error path.

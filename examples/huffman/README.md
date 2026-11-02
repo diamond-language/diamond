@@ -5,9 +5,9 @@ frequencies, give each byte a bit string, and pack those into a real
 binary file.
 
 ```text
-$ diamond huffman.d6 --encode testdata/sample.txt out.huf
+$ d6 huffman.d6 --encode testdata/sample.txt out.huf
 testdata/sample.txt: 2250 -> 1351 bytes (60%)
-$ diamond huffman.d6 --decode out.huf back.txt
+$ d6 huffman.d6 --decode out.huf back.txt
 out.huf: decoded 2250 bytes
 $ cmp testdata/sample.txt back.txt && echo identical
 identical
@@ -64,7 +64,7 @@ decode), and 66 when a file can't be opened.
 bash smoke_test.sh
 ```
 
-Runs the program under the interpreter and as a `diamond build` binary,
+Runs the program under the interpreter and as a `d6 build` binary,
 checks the compressed output is byte-for-byte reproducible and decodes
 back to the exact original, a single-symbol file round-trips, and every
 error path.

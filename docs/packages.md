@@ -45,7 +45,7 @@ form separate from and never competing with ordinary `require` — plus the
 optional manifest a cut can declare its identity with, and `facet`, the
 standalone tool that fetches and installs cuts. `facet` is a separate
 program (its own binary, `build/facet`, built from `tools/facet*.c`), not
-part of the `diamond` runtime or its release — the same relationship
+part of the `d6` runtime or its release — the same relationship
 RubyGems' `gem` has to `ruby`.
 
 ## `require_cut "name"`

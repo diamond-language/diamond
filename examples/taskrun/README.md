@@ -18,14 +18,14 @@ package: compile assets
 docs:
   echo writing docs
 
-$ diamond taskrun.d6 --plan all
+$ d6 taskrun.d6 --plan all
 1. clean
 2. compile
 3. assets
 4. package
 5. docs
 6. all
-$ diamond taskrun.d6 -j 4 all
+$ d6 taskrun.d6 -j 4 all
 == clean: ok
   $ echo removing build/
   removing build/
@@ -70,6 +70,6 @@ bash smoke_test.sh
 ```
 
 This checks ordering and output under the interpreter and as a
-`diamond build` binary, failure handling, every error exit, that `-j 3`
+`d6 build` binary, failure handling, every error exit, that `-j 3`
 runs three 0.4-second tasks in well under 1.2 seconds, and that a child
 writing 200 KB of output completes.

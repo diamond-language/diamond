@@ -268,13 +268,13 @@ static int run_source_from_bundle_program(const char *name, DiamondSourceBundle 
     const size_t source_length=strlen(bundle->source);
     const size_t reset_length=sizeof(DIAMOND_USER_LINE_RESET)-1;
     if(source_length > SIZE_MAX - prelude_length - reset_length - 1) {
-        fprintf(stderr,"diamond: expanded source is too large\n");
+        fprintf(stderr,"d6: expanded source is too large\n");
         diamond_source_bundle_free(bundle);
         return 74;
     }
     char *combined=malloc(prelude_length+reset_length+source_length+1);
     if(combined==nullptr) {
-        fprintf(stderr,"diamond: out of memory building expanded source\n");
+        fprintf(stderr,"d6: out of memory building expanded source\n");
         diamond_source_bundle_free(bundle);
         return 74;
     }
@@ -312,7 +312,7 @@ int diamond_run_source_with_program(const char *name, const char *source,
     const double start_time=trace_startup ? diamond_monotonic_seconds() : 0;
     DiamondSourceBundle bundle;char load_error[768];
     if(!diamond_load_program(name,source,&bundle,load_error,sizeof load_error)) {
-        fprintf(stderr,"diamond: %s\n",load_error);return 74;
+        fprintf(stderr,"d6: %s\n",load_error);return 74;
     }
     const double loaded_time=trace_startup ? diamond_monotonic_seconds() : 0;
     return run_source_from_bundle_program(name,&bundle,dump_bytecode,program,
@@ -362,7 +362,7 @@ int diamond_run_source_with_template(const char *name, const char *source,
     const double start_time=trace_startup ? diamond_monotonic_seconds() : 0;
     DiamondSourceBundle bundle;char load_error[768];
     if(!diamond_load_program(name,source,&bundle,load_error,sizeof load_error)) {
-        fprintf(stderr,"diamond: %s\n",load_error);return 74;
+        fprintf(stderr,"d6: %s\n",load_error);return 74;
     }
     const double loaded_time=trace_startup ? diamond_monotonic_seconds() : 0;
     return run_source_from_bundle_template(name,&bundle,dump_bytecode,program,template,
@@ -428,14 +428,14 @@ int diamond_run_source(const char *name, const char *source, DiamondBytecodeDump
         int script_argc, char *const *script_argv) {
     DiamondProgram *program=calloc(1,sizeof *program);
     if(program==nullptr) {
-        fprintf(stderr,"diamond: out of memory allocating program\n");
+        fprintf(stderr,"d6: out of memory allocating program\n");
         return 74;
     }
     const bool trace_startup=diamond_env_flag("DIAMOND_TRACE_STARTUP");
     const double start_time=trace_startup ? diamond_monotonic_seconds() : 0;
     DiamondSourceBundle bundle;char load_error[768];
     if(!diamond_load_program(name,source,&bundle,load_error,sizeof load_error)) {
-        fprintf(stderr,"diamond: %s\n",load_error);
+        fprintf(stderr,"d6: %s\n",load_error);
         free(program);
         return 74;
     }
@@ -576,7 +576,7 @@ static bool compile_bundle_for_run(const char *name, const DiamondSourceBundle *
     const size_t reset_length=sizeof(DIAMOND_USER_LINE_RESET)-1;
     char *combined=malloc(prelude_length+reset_length+source_length+1);
     if(combined==nullptr) {
-        fprintf(stderr,"diamond: out of memory building expanded source\n");
+        fprintf(stderr,"d6: out of memory building expanded source\n");
         return false;
     }
     size_t offset=diamond_prelude_write(combined,mentions_json);
@@ -592,7 +592,7 @@ static bool compile_bundle_for_run(const char *name, const DiamondSourceBundle *
 bool diamond_compile_source(const char *name, const char *source, DiamondProgram *program) {
     DiamondSourceBundle bundle;char load_error[768];
     if(!diamond_load_program(name,source,&bundle,load_error,sizeof load_error)) {
-        fprintf(stderr,"diamond: %s\n",load_error);
+        fprintf(stderr,"d6: %s\n",load_error);
         return false;
     }
     DiamondProgram *template=build_embedded_prelude_template();
@@ -608,19 +608,19 @@ bool diamond_compile_source(const char *name, const char *source, DiamondProgram
 int diamond_warm_cache(const char *name, const char *source) {
     char *cache_path=diamond_cache_path_for(name);
     if(cache_path==nullptr) {
-        fprintf(stderr,"diamond: cannot cache '%s'\n",name);
+        fprintf(stderr,"d6: cannot cache '%s'\n",name);
         return 64;
     }
     DiamondSourceBundle bundle;char load_error[768];
     if(!diamond_load_program(name,source,&bundle,load_error,sizeof load_error)) {
-        fprintf(stderr,"diamond: %s\n",load_error);
+        fprintf(stderr,"d6: %s\n",load_error);
         free(cache_path);
         return 74;
     }
     DiamondProgram *program=calloc(1,sizeof *program);
     DiamondProgram *template=build_embedded_prelude_template();
     if(program==nullptr||template==nullptr) {
-        fprintf(stderr,"diamond: out of memory\n");
+        fprintf(stderr,"d6: out of memory\n");
         free(program);
         if(template!=nullptr) {diamond_program_free(template);free(template);}
         diamond_source_bundle_free(&bundle);
@@ -645,7 +645,7 @@ int diamond_warm_cache(const char *name, const char *source) {
         if(written) {
             printf("cached %s\n",cache_path);
         } else {
-            fprintf(stderr,"diamond: cannot write %s\n",cache_path);
+            fprintf(stderr,"d6: cannot write %s\n",cache_path);
             status=73;
         }
     }

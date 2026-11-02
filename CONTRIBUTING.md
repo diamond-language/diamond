@@ -82,10 +82,10 @@ make            # debug build (default)
 make release    # -O3, no assertions
 make sanitize   # ASan/UBSan
 make tsan       # ThreadSanitizer
-make lsp        # build/diamond-lsp
+make lsp        # build/d6-lsp
 ```
 
-`sanitize`, `tsan` and `release` rebuild `build/diamond` and `build/run_cases` with their own flags,
+`sanitize`, `tsan` and `release` rebuild `build/d6` and `build/run_cases` with their own flags,
 so switching between them (and back to `debug`) recompiles those. The tools (`facet`, the LSP and
 DAP servers, the API and fiber tests) share one set of debug objects in `build/dbg/`, and the two
 fuzzers share one instrumented set in `build/fuzz/`; a variant switch leaves both alone. Under
@@ -111,7 +111,7 @@ make test-stress-threads  # every Thread/Channel/Supervisor case, 60 runs each p
 make test-stress-threads-tsan  # the same loop under ThreadSanitizer, 10 runs each
 make release && bash tests/sweep_cases.sh   # every case again under full stress GC + the JIT, diffed against the plain run
 make test-self-host    # ~1400-case lexer/parser differential corpus -- periodic, not per-push
-make test-cross-build  # `diamond build --target` kit lookup/validation; a real cross build
+make test-cross-build  # `d6 build --target` kit lookup/validation; a real cross build
                         # when DIAMOND_CROSS_SYSROOT and DIAMOND_CROSS_TARGET are set
 ```
 
@@ -154,19 +154,19 @@ already-set `ASAN_OPTIONS` always wins over the Makefile's own default).
 
 `packaging/build.sh deb` (on Ubuntu, with `dpkg-dev`) or `packaging/build.sh rpm`
 (on Fedora, with `rpm-build`) builds a `diamond-lang` package into
-`build/packages`. It holds `diamond`, `facet`, `diamond-lsp`, `diamond-dap` and the AOT
+`build/packages`. It holds `d6`, `facet`, `d6-lsp`, `d6-dap` and the AOT
 kit under `/usr`. The script runs `make clean` first and builds for `x86-64-v3` instead of
 the Makefile's `-march=native`, because the package runs on other machines. The runtime
 libraries are dependencies: `dpkg-shlibdeps` works them out for the `.deb`, and rpm
 generates them for the `.rpm`. `curl` and `ca-certificates` are required too, because
 `facet` downloads cuts with `curl`. `git` (for git-source cuts), `gcc` and the libraries'
 development packages are recommended rather than required, because only some commands
-need them: `gcc` and the development packages only `diamond build`.
+need them: `gcc` and the development packages only `d6 build`.
 
 `packaging/ci.sh deb|rpm` builds in an `ubuntu:26.04` or `fedora:44` container,
 installs the package into a fresh container of the same image, and runs
 `packaging/smoke_test.sh` there: `-e`, a script, a `facet new cli` project (its
-`facet install` from cuts.dilang.tech, then its tests), and `diamond build`. `CONTAINER=podman` uses podman instead of docker. CI runs both in the
+`facet install` from cuts.dilang.tech, then its tests), and `d6 build`. `CONTAINER=podman` uses podman instead of docker. CI runs both in the
 `test-packages` job.
 
 Self-hosting is in minimal-compat maintenance mode (see docs/roadmap.md):

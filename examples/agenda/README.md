@@ -13,7 +13,7 @@ monthly 31 Pay credit card
 yearly 10-03 Anniversary
 2026-10-02 18:30 Concert
 
-$ diamond agenda.d6 --today 2026-09-25 --days 7 events.txt
+$ d6 agenda.d6 --today 2026-09-25 --days 7 events.txt
 Fri 25 Sep 2026
   08:15   Commute
   09:30   Standup
@@ -25,7 +25,7 @@ Wed 30 Sep 2026
   09:30   Standup
 ...
 
-$ diamond agenda.d6 --today 2026-09-25 --cal events.txt
+$ d6 agenda.d6 --today 2026-09-25 --cal events.txt
        September 2026
  Mo  Tu  We  Th  Fr  Sa  Su
       1*  2*  3*  4*  5   6
@@ -72,6 +72,6 @@ bash smoke_test.sh
 ```
 
 This checks the agenda, the calendar, and an offset view against expected
-output (interpreted and as a `diamond build` binary), month-end and
+output (interpreted and as a `d6 build` binary), month-end and
 leap-year clamping, a month with five Fridays, a biweekly rule, and the
 error exits.

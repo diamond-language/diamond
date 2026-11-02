@@ -5,10 +5,10 @@ client sends gets one line back.
 
 ```sh
 facet install                   # fetch minitest, the test library, into cuts/
-diamond main.d6                 # listens on 127.0.0.1:7000
+d6 main.d6                 # listens on 127.0.0.1:7000
 printf 'PING\nhello\n' | nc -q1 127.0.0.1 7000    # PONG, echo: hello
 bash test.sh                    # run the tests
-diamond build main.d6 -o {{name}}   # a standalone executable
+d6 build main.d6 -o {{name}}   # a standalone executable
 ```
 
 `PORT` and `HOST` set the address. The default host, `127.0.0.1`, is reachable only from

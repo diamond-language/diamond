@@ -1,7 +1,7 @@
 # Language server
 
 `lsp/` is a Language Server Protocol implementation for Diamond — a
-standalone binary (`build/diamond-lsp`, built from `lsp/*.c` plus the
+standalone binary (`build/d6-lsp`, built from `lsp/*.c` plus the
 same compiler/VM sources every other Diamond binary shares) that speaks
 LSP's standard `Content-Length`-framed JSON-RPC over stdio, the transport
 every mainstream editor already knows how to launch a custom language
@@ -540,7 +540,7 @@ This is a server-side capability, so clients must send `.div` documents to
 the server. The bundled VS Code extension assigns `.div` and `.html.div` the
 `diamond-template` language id and sends their open, change, and close events.
 It deliberately does not apply Diamond's TextMate grammar to the surrounding
-HTML. Other language providers remain registered only for ordinary `diamond`
+HTML. Other language providers remain registered only for ordinary `d6`
 documents, matching the diagnostics-only template support.
 
 Each `.html.div` file is also translated and compiled **in isolation** —
@@ -603,7 +603,7 @@ snapshot from before it.
 make lsp
 ```
 
-produces `build/diamond-lsp`. Point any editor's "custom language server"
+produces `build/d6-lsp`. Point any editor's "custom language server"
 configuration at that binary with stdio as the transport (no `--stdio`
 flag needed or accepted — stdio is the only transport this server
 speaks). The exact configuration step is editor-specific; consult your

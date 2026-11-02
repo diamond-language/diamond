@@ -5,7 +5,7 @@ tokenizer, a Pratt parser, a sealed syntax tree, an evaluator, and a
 simplifier. Errors point at the column that caused them.
 
 ```text
-$ diamond calc.d6
+$ d6 calc.d6
 > area = pi * 3 ^ 2
 => 28.274333882308138
 > 2 ^ 100
@@ -62,5 +62,5 @@ bash smoke_test.sh
 ```
 
 This replays `testdata/session.txt` through the interpreter and through a
-`diamond build` binary, and compares both transcripts with
+`d6 build` binary, and compares both transcripts with
 `testdata/session.expected`.

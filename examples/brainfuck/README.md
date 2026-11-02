@@ -4,7 +4,7 @@ A Brainfuck interpreter whose main loop is a self-recursive tail call, and a
 companion `depth.d6` that measures which recursion shapes Diamond optimizes.
 
 ```text
-$ diamond brainfuck.d6 testdata/hello.bf --steps
+$ d6 brainfuck.d6 testdata/hello.bf --steps
 Hello World!
 906 instructions
 ```
@@ -16,7 +16,7 @@ calls. This program never gets near it, because a function's own tail call
 reuses its frame.
 
 ```text
-$ diamond depth.d6
+$ d6 depth.d6
 shape                                 depth   result
 self tail call                       100000   ok
 non-tail: 1 + f(n - 1)               100000   stack overflow
@@ -69,6 +69,6 @@ limit), and 66 when the file can't be read.
 bash smoke_test.sh
 ```
 
-Runs the interpreter and `depth.d6` interpreted and as `diamond build`
+Runs the interpreter and `depth.d6` interpreted and as `d6 build`
 binaries: output and instruction counts of the sample programs, the step
 limit, each error message and exit status, and the depth table.

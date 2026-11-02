@@ -14,7 +14,7 @@ names them and `Cutfile.lock` pins the exact archives.
 ```sh
 cd examples/chat
 facet install          # installs the locked cuts into cuts/
-diamond app.d6         # set CHAT_PORT to change the default 18095
+d6 app.d6         # set CHAT_PORT to change the default 18095
 ```
 
 Open http://127.0.0.1:18095 in two browser windows, pick names, and chat.
@@ -52,7 +52,7 @@ with `textContent`, so chat text can't inject markup.
 ## Test
 
 ```sh
-../../build/diamond smoke_test.d6
+../../build/d6 smoke_test.d6
 ```
 
 This starts the real server and uses a minimal WebSocket client written in

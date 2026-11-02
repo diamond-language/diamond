@@ -113,7 +113,7 @@ what a real workload would need.
   window, `Checkpoint.save` after every epoch. Prints an estimated
   total training time up front (based on a measured seconds/step
   constant) before committing to a run -- adjust `max_stories`/
-  `epochs` if that number is too long. Usage: `../../build/diamond
+  `epochs` if that number is too long. Usage: `../../build/d6
   train_corpus.d6 <folder> [checkpoint_path] [max_files] [max_stories]`.
 - `generate.d6` -- loads a checkpoint and greedily (argmax, no
   temperature/top-k yet) generates text continuing a prompt, one byte
@@ -121,13 +121,13 @@ what a real workload would need.
   over the whole context so far (clamped to the last `max_seq_len`
   tokens, since the positional embedding table only has that many
   rows), fine for a demo, not how a real implementation would do this.
-  Usage: `../../build/diamond generate.d6 <checkpoint_path> <prompt>
+  Usage: `../../build/d6 generate.d6 <checkpoint_path> <prompt>
   [num_tokens]`. Its own model config (d_model/heads/d_ff/layers/
   seq_len) must exactly match whatever `train_corpus.d6` was run
   with -- `Checkpoint.load!` only checks the parameter *count*, not
   each Tensor's shape.
 
-Run any of them with `../../build/diamond demo.d6` (or `benchmark.d6`,
+Run any of them with `../../build/d6 demo.d6` (or `benchmark.d6`,
 `gradcheck.d6`, `train.d6`, `train_corpus.d6`, `generate.d6`) from this
 directory.
 

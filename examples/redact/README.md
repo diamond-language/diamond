@@ -5,7 +5,7 @@ issue: emails, IP addresses, payment card numbers, bearer tokens, AWS keys,
 `password=`-style values, and private key headers, plus any rules you add.
 
 ```text
-$ diamond redact.d6 --summary --rules testdata/rules.txt testdata/app.log
+$ d6 redact.d6 --summary --rules testdata/rules.txt testdata/app.log
 2026-09-26T10:00:01Z INFO login ok user=[email-1] ip=[ipv4-1]
 2026-09-26T10:00:02Z INFO GET /api/orders Authorization: Bearer [bearer-1]
 2026-09-26T10:00:03Z WARN payment declined card=[card-1] user=[email-1]
@@ -76,6 +76,6 @@ line number), and 66 when a file can't be opened.
 bash smoke_test.sh
 ```
 
-It runs the program under the interpreter and as a `diamond build` binary,
+It runs the program under the interpreter and as a `d6 build` binary,
 and checks both modes, the summary, stdin input, tags that carry across
 files, and every exit status.

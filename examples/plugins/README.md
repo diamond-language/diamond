@@ -4,7 +4,7 @@ A host that runs untrusted Diamond scripts as sandboxed plugins, each in its
 own subprocess, with the host deciding per plugin what it's allowed to touch.
 
 ```text
-$ diamond host.d6 $(which diamond)
+$ d6 host.d6 $(which diamond)
 wordcount
   ok             words=9 vowels=11 longest=quick
 peek (untrusted)
@@ -62,7 +62,7 @@ that one entry (`filesystem`, `network`, `database`, `subprocess` — see
   process. A crashed or malicious plugin can't corrupt the host's own
   memory; the host only ever sees its exit code, stdout, and stderr.
 - **Classifying a crash from the outside.** The host never sees the
-  plugin's raised exception as an object — only the text `diamond`'s own
+  plugin's raised exception as an object — only the text `d6`'s own
   uncaught-error reporter wrote to stderr — so `classify()` pattern-matches
   on that text (`"sandbox denies"`, `"resource limit exceeded"`) the same
   way a real process-supervision tool would.
@@ -76,6 +76,6 @@ that one entry (`filesystem`, `network`, `database`, `subprocess` — see
 bash smoke_test.sh
 ```
 
-Runs the host under the interpreter and as a `diamond build` binary, and
+Runs the host under the interpreter and as a `d6 build` binary, and
 checks that all five manifest entries come back with the status their own
 design intends.

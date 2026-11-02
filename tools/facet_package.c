@@ -13,7 +13,8 @@ bool publishable_name(const char *name) {
         if (!((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_'))
             return false;
     }
-    return strcmp(name, "diamond") != 0 && strcmp(name, "facet") != 0 &&
+    return strcmp(name, "d6") != 0 && strcmp(name, "diamond") != 0 &&
+           strcmp(name, "facet") != 0 &&
            strcmp(name, "cuts") != 0;
 }
 

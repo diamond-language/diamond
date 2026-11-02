@@ -5,7 +5,7 @@ does, and applies a unified diff (from `udiff`, `diff -u`, or `git diff`) to
 a file, forwards or backwards.
 
 ```text
-$ diamond udiff.d6 testdata/old.txt testdata/new.txt
+$ d6 udiff.d6 testdata/old.txt testdata/new.txt
 --- testdata/old.txt
 +++ testdata/new.txt
 @@ -1,11 +1,14 @@
@@ -24,7 +24,7 @@ $ diamond udiff.d6 testdata/old.txt testdata/new.txt
  Sphinx of black quartz,
  judge my vow.
 +And one more line.
-$ diamond udiff.d6 --apply -R testdata/diff.expected testdata/new.txt | cmp testdata/old.txt -
+$ d6 udiff.d6 --apply -R testdata/diff.expected testdata/new.txt | cmp testdata/old.txt -
 ```
 
 ## Usage
@@ -81,5 +81,5 @@ when reading a patch and never written, so a file's missing final newline is
 not preserved.
 
 ```bash
-bash smoke_test.sh          # interpreter, then a `diamond build` binary
+bash smoke_test.sh          # interpreter, then a `d6 build` binary
 ```

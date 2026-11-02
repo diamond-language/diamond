@@ -22,9 +22,8 @@ a concrete application gap.
 The user-facing name becomes **d6**, which remains a reference to Diamond. The name
 leans into the dice: rewriting in d6 is a saving throw.
 
-- **Commands:** `d6`, `d6-lsp` and `d6-dap`, with the old names kept as aliases.
-- **Distribution and docs:** packages, asdf plugin, VS Code extension, guides, site and
-  registry pages.
+- **Distribution and docs:** package names, asdf plugin, VS Code extension, the "Diamond"
+  in guides and cut READMEs, site and registry pages.
 - **GitHub:** the org becomes `roll1d6` or `rolld6` (not yet chosen). Rename it last.
 - **Domain:** to be chosen later. `cuts.dilang.tech` stays as the registry address.
 - **Unchanged:** the **cut** and **facet** names, and `DIAMOND_` constants, environment
@@ -66,7 +65,7 @@ Current behavior: [threads](threads.md).
   `Thread.new`/`Channel` boundary, and a supervised child cannot reference its parent
   by design. Needs a concrete use case.
 
-### `diamond build`
+### `d6 build`
 
 Current behavior: [deployment](deployment.md).
 
@@ -77,7 +76,7 @@ Current behavior: [deployment](deployment.md).
 - **MySQL in static builds** -- a static musl kit leaves the MariaDB client out; including
   it needs Connector/C built from source as a static archive.
 - **Static output for glibc and non-Linux targets** -- only musl/Linux is supported;
-  `diamond` itself does not link statically.
+  `d6` itself does not link statically.
 
 ### Sandbox mode
 

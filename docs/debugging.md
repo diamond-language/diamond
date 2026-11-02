@@ -5,7 +5,7 @@ Diamond's only debugging primitive at the language level is the source
 debugging](runtime-reference.md#debugging)): it pauses execution, prints
 the pause site and every currently-live local, then blocks on one line of
 stdin before resuming. `dap/` adds a real Debug Adapter Protocol (DAP)
-server, `diamond-dap`, that gives an editor's own gutter breakpoints the
+server, `d6-dap`, that gives an editor's own gutter breakpoints the
 identical pause -- without editing source -- for VS Code's "Run & Debug"
 view or any other DAP-compatible client (`editors/vscode`'s own
 "Debugging" section covers the VS Code side specifically).
@@ -45,14 +45,14 @@ opcode checks a runtime, freely mutable set of "currently armed" lines
 actually pause. A `setBreakpoints` request sent at any time -- before
 launch, while the debuggee is running, or while it's already stopped at
 a different line -- replaces that set wholesale and takes effect with no
-recompile or restart: `diamond-dap` resolves its complete, current
+recompile or restart: `d6-dap` resolves its complete, current
 breakpoint table (across every source the client has ever set
 breakpoints for) and pushes it over the same control channel described
 below.
 
 This does mean a debug session's compiled bytecode is meaningfully
 larger than an ordinary run's (every statement in the whole program --
-prelude included, since `diamond-dap` always compiles fresh with no
+prelude included, since `d6-dap` always compiles fresh with no
 cache -- gets its own check, not just the handful of lines actually
 selected). Accepted deliberately: a debug session already forgoes the
 bytecode cache, the embedded-prelude-template fast path, and JIT
@@ -127,21 +127,21 @@ frame has targets.
 editor (DAP client)  <--stdio, DAP-->  diamond-dap  <--control socket-->  diamond (the debuggee)
 ```
 
-- `diamond-dap` (`dap/main.c`) speaks ordinary DAP over its own stdio
+- `d6-dap` (`dap/main.c`) speaks ordinary DAP over its own stdio
   (`Content-Length`-framed JSON, via `lsp/json.c`/`lsp/rpc.c` -- the
-  identical transport `diamond-lsp` already uses).
+  identical transport `d6-lsp` already uses).
 - `setBreakpoints` records `(source path, line)` pairs, replacing
   whatever was previously stored for that one path; the real spawn waits
   for `configurationDone` (DAP's own signal that a client is done
   sending its initial breakpoints) rather than `launch` itself, so a
   breakpoint that arrives after `launch` but before `configurationDone`
   still lands in the debuggee's *initial* armed set.
-- At `configurationDone`, `diamond-dap` loads and require-expands the
+- At `configurationDone`, `d6-dap` loads and require-expands the
   program exactly the way the CLI's own non-template compile path does
   (`run_source_from_bundle_program`, `src/run_source.c`), resolves every
   stored breakpoint's original `(path, line)` against that expanded
   buffer (`diamond_resolve_source_position`,
-  `src/compiler.h`), and spawns `diamond <program> [args...]` with two
+  `src/compiler.h`), and spawns `d6 <program> [args...]` with two
   environment variables set (see below) and a dedicated `AF_UNIX`
   `SOCK_STREAM` socketpair wired to one end as the "control channel" --
   `DIAMOND_DEBUG_FD` names its fd number in the child.
@@ -168,7 +168,7 @@ editor (DAP client)  <--stdio, DAP-->  diamond-dap  <--control socket-->  diamon
   place and only resuming once a `continue`/`next`/`stepIn`/`stepOut`
   arrives -- rather than a single fixed read; the VM itself never links a
   JSON library for this (`parse_debug_command` hand-scans the fixed set
-  of shapes it needs to recognize instead), only `diamond-dap` (which
+  of shapes it needs to recognize instead), only `d6-dap` (which
   needs to speak real DAP to its own client) does. A
   `DIAMOND_OP_BREAKPOINT_CHECK` also does a quick non-blocking check of
   the same control fd before deciding whether it is armed, on every 32nd
@@ -178,7 +178,7 @@ editor (DAP client)  <--stdio, DAP-->  diamond-dap  <--control socket-->  diamon
   and stepping are still decided at every statement. See "Live
   breakpoints" above for why that has to happen there rather than via some
   other mechanism.
-- `diamond-dap` translates that payload's `(name, line, column)` --
+- `d6-dap` translates that payload's `(name, line, column)` --
   expressed in the same expanded-buffer terms the compiler itself
   used -- back to `(original file, original line)` via
   `diamond_resolve_diagnostic_location`, the same reverse mapping
@@ -213,7 +213,7 @@ The stopped frame uses that offset to report the source file and line.
   all) also still triggers it.
 - `DIAMOND_DEBUG_BREAKPOINT_OFFSETS=<offset>[,<offset>...]` -- the initial
   armed set of byte offsets to line starts in the expanded source. This is
-  what `diamond-dap` supplies; live `setBreakpoints` commands replace the
+  what `d6-dap` supplies; live `setBreakpoints` commands replace the
   entire set using `{"command":"setBreakpoints","offsets":[...]}`.
   An empty value arms no breakpoints.
 - `DIAMOND_DEBUG_BREAKPOINTS=<line>[,<line>...]` -- the legacy manual
@@ -224,7 +224,7 @@ The stopped frame uses that offset to report the source file and line.
 ## Building it
 
 ```sh
-make dap        # build/diamond-dap
+make dap        # build/d6-dap
 make test-dap   # tests/dap_test.sh -- a scripted setBreakpoints+launch+
                  # configurationDone+continue session against a fixture
 ```

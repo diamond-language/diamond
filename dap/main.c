@@ -480,7 +480,7 @@ static void handle_configuration_done(DapServer *server, const JsonValue *reques
         setenv("DIAMOND_DEBUG_FD", debug_fd_value, 1);
         setenv("DIAMOND_DEBUG_BREAKPOINT_OFFSETS", breakpoints_env, 1);
         const char *diamond_bin = getenv("DIAMOND_BIN");
-        if(diamond_bin == nullptr) diamond_bin = "diamond";
+        if(diamond_bin == nullptr) diamond_bin = "d6";
         char *argv[4 + DAP_MAX_ARGS];
         size_t argc = 0;
         argv[argc++] = (char *)diamond_bin; /* argv[0]: the executable's own name. */
@@ -490,8 +490,8 @@ static void handle_configuration_done(DapServer *server, const JsonValue *reques
         argv[argc] = nullptr;
         execvp(diamond_bin, argv);
         /* execvp only returns on failure. */
-        fprintf(stderr, "diamond-dap: cannot exec '%s': %s\n",
-            diamond_bin != nullptr ? diamond_bin : "diamond", strerror(errno));
+        fprintf(stderr, "d6-dap: cannot exec '%s': %s\n",
+            diamond_bin != nullptr ? diamond_bin : "d6", strerror(errno));
         _exit(127);
     }
 

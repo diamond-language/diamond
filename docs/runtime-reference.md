@@ -60,7 +60,7 @@ for the full rules.
 
 `ARGV` and `ENV` are plain global values, not calls — `ARGV` is an
 `Array` of `String`s, the script's own trailing command-line arguments
-(`diamond script.d6 one two` → `ARGV == ["one", "two"]`; `[]` for `-e`/a
+(`d6 script.d6 one two` → `ARGV == ["one", "two"]`; `[]` for `-e`/a
 file run with no trailing args, or from the REPL). `ENV` is a `Hash` of
 `String` to `String`, a snapshot of the process environment taken at
 startup — `ENV["PATH"]`, `ENV["HOME"]`, etc.; a missing key is `nil`,
@@ -77,7 +77,7 @@ name given and `__dir__` the working directory). Each file gets its own: one
 that is `require`d reports itself, not the file that required it, which makes
 `"#{__dir__}/data.json"` the way to find files next to a script whatever the
 working directory is. They are substituted when the program is loaded, so a
-bytecode cache or a `diamond build` binary keeps the path it was compiled
+bytecode cache or a `d6 build` binary keeps the path it was compiled
 from. Text in a comment or string that only mentions them is left alone;
 inside a string they work in `#{...}` interpolation.
 
@@ -255,7 +255,7 @@ real pass's output).
 
 ### Targeted bytecode dumps
 
-`diamond --dump-bytecode=user FILE [ARGS...]` (or `-e CODE [ARGS...]`)
+`d6 --dump-bytecode=user FILE [ARGS...]` (or `-e CODE [ARGS...]`)
 prints the application's bytecode and its `require`/`require_cut` imports,
 excluding the bundled core/JSON preamble. Instruction offsets, registers,
 function IDs, and jump targets retain their values in the complete program.
@@ -273,7 +273,7 @@ means. A flag is on when it is set to anything other than an empty value or `0`.
 A numeric one takes a positive integer and is ignored otherwise. Every report
 goes to standard error, and the counter reports print once, after the program
 has finished without a runtime error; a server stopped by a signal never
-prints them. They apply to the `diamond` command.
+prints them. They apply to the `d6` command.
 
 Documented with their features instead: `DIAMOND_JIT`, `DIAMOND_JIT_THRESHOLD`
 and `DIAMOND_TRACE_JIT` ([deployment](deployment.md)); `DIAMOND_NO_CACHE` and

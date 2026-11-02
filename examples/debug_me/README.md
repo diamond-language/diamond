@@ -10,7 +10,7 @@ From the repository root:
 
 ```sh
 make debug
-build/diamond examples/debug_me/debug_me.d6
+build/d6 examples/debug_me/debug_me.d6
 ```
 
 The `debugger()` call pauses inside `line_total` after calculating `total`.
@@ -32,7 +32,7 @@ Change `+` to `*`, run again, and confirm that the paused `total` is now 36.
 Remove `debugger()` once satisfied. The supplied solution does both:
 
 ```sh
-build/diamond examples/debug_me/solution.d6
+build/d6 examples/debug_me/solution.d6
 # Total: 36 cents
 ```
 
@@ -42,7 +42,7 @@ prompt or terminal stepping commands. EOF also resumes immediately, which is
 useful for automated runs:
 
 ```sh
-build/diamond examples/debug_me/debug_me.d6 </dev/null
+build/d6 examples/debug_me/debug_me.d6 </dev/null
 ```
 
 ## Editor walkthrough
@@ -50,8 +50,8 @@ build/diamond examples/debug_me/debug_me.d6 </dev/null
 Build the adapter with `make dap` and follow the
 [VS Code debugger setup](../../editors/vscode/README.md#debugging-dap).
 Ensure the editor inherits `DIAMOND_BIN` pointing to the absolute path of
-`build/diamond`, or has `diamond` on its PATH. Set `diamond.debugAdapterPath`
-to the absolute path of `build/diamond-dap`.
+`build/d6`, or has `d6` on its PATH. Set `diamond.debugAdapterPath`
+to the absolute path of `build/d6-dap`.
 
 Open `debug_me.d6` and set a gutter breakpoint on `total = price + quantity`.
 Launch **Debug Diamond File**. The breakpoint pauses before the calculation;

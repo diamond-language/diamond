@@ -4,7 +4,7 @@ Conway's Game of Life: loads a pattern and prints it, then each
 generation after it.
 
 ```text
-$ diamond life.d6 testdata/glider.txt 4
+$ d6 life.d6 testdata/glider.txt 4
 ........
 ........
 ..#.....
@@ -66,5 +66,5 @@ can't be opened.
 bash smoke_test.sh
 ```
 
-Runs the program under the interpreter and as a `diamond build` binary,
+Runs the program under the interpreter and as a `d6 build` binary,
 and checks a glider over 4 generations and every error path.

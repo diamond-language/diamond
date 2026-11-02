@@ -5,12 +5,12 @@ datagrams (`requests:1|c`, `queue_depth:7|g`, `latency:12.5|ms`); the server
 aggregates them and, on SIGTERM or Ctrl+C, prints what it collected and exits.
 
 ```text
-$ diamond metrics.d6 serve 8125 &
+$ d6 metrics.d6 serve 8125 &
 listening on udp/8125
-$ diamond metrics.d6 send 8125 'requests:1|c' 'latency:12.5|ms'
+$ d6 metrics.d6 send 8125 'requests:1|c' 'latency:12.5|ms'
 ok 1
 ok 1
-$ diamond metrics.d6 report 8125
+$ d6 metrics.d6 report 8125
 counters
   requests           1.00
 timers (ms)
@@ -69,7 +69,7 @@ bash smoke_test.sh
 ```
 
 Compares offline aggregation to a golden file, then starts a real server as a
-`diamond build` binary on UDP port 18100 (`METRICS_PORT` overrides it) and
+`d6 build` binary on UDP port 18100 (`METRICS_PORT` overrides it) and
 feeds it datagrams, queries and resets it, checks the occupied-port failure,
 and shuts it down once by SIGTERM and once by `!stop`, checking the final
 totals each time.

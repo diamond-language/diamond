@@ -6,7 +6,7 @@ machine written as nested `case` expressions, and it exists to put Diamond's
 pattern matching through its paces.
 
 ```text
-$ diamond vending.d6 testdata/session.txt
+$ d6 vending.d6 testdata/session.txt
 2: insert coins first
 3: credit $1.00
 4: dispensed A1 for $0.75
@@ -71,6 +71,6 @@ and 66 when the script can't be read.
 bash smoke_test.sh
 ```
 
-Runs the program interpreted and as a `diamond build` binary, compares a long
+Runs the program interpreted and as a `d6 build` binary, compares a long
 session and a malformed-command script to golden output, and checks the error
 messages, exit statuses, and every usage path.

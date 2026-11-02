@@ -78,7 +78,7 @@ request and finally falls back to the process's own stack.
 ### Builds for another target (checked by hand, not in CI)
 
 - **aarch64-linux-gnu cross build** -- `make aot-kit-cross` with clang and a
-  Fedora aarch64 sysroot, then `diamond build --target=...`; the resulting binaries
+  Fedora aarch64 sysroot, then `d6 build --target=...`; the resulting binaries
   ran under `qemu-aarch64` (classes, SQLite3, threads, Regexp, JSON, fibers, deep
   recursion, supervised workers). It reproduced an aarch64-only failure that CI
   later reported. See [deployment](deployment.md#cross-compilation).
@@ -440,7 +440,7 @@ tests/run.sh`):
 - `CPPFLAGS_EXTRA`/`LDFLAGS_EXTRA` (added for macOS, see above) needed one
   real `Makefile` fix to actually work everywhere: most link recipes
   (`gen_compiled_prelude` on) use `$(LDLIBS)` alone, never `$(LDFLAGS)` --
-  only the final `diamond` binary and the API test binaries link with
+  only the final `d6` binary and the API test binaries link with
   `$(LDFLAGS)`. `LDFLAGS_EXTRA`'s `-L` paths are now prepended into
   `LDLIBS` itself instead, reaching every recipe uniformly.
 - `tests/collection_relay_contracts.sh` uses a GNU sed extension (a

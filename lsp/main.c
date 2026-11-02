@@ -483,7 +483,7 @@ int main(void) {
         const char *read_error=nullptr;
         JsonValue *message=rpc_read_message(stdin,&read_error);
         if(message==nullptr) {
-            if(read_error!=nullptr)fprintf(stderr,"diamond-lsp: %s\n",read_error);
+            if(read_error!=nullptr)fprintf(stderr,"d6-lsp: %s\n",read_error);
             break;
         }
         const JsonValue *id=json_object_get(message,"id");

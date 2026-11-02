@@ -7,9 +7,9 @@ client certificates, ALPN negotiation, session resumption, and binary data
 framed behind a length on the same connection as text.
 
 ```text
-$ diamond tlsecho.d6 serve 8443 cert.pem key.pem &
+$ d6 tlsecho.d6 serve 8443 cert.pem key.pem &
 listening on tls/8443
-$ diamond tlsecho.d6 client localhost 8443 --ca cert.pem --alpn tlsecho/2,tlsecho/1 \
+$ d6 tlsecho.d6 client localhost 8443 --ca cert.pem --alpn tlsecho/2,tlsecho/1 \
     'ECHO hello' 'GZIP compress me'
 negotiated: tlsecho/2
 ECHO hello -> hello
@@ -87,7 +87,7 @@ bash smoke_test.sh
 ```
 
 Generates a throwaway certificate with `openssl` (which must be on the PATH),
-starts the server as a `diamond build` binary on port 18200 (`TLSECHO_PORT`
+starts the server as a `d6 build` binary on port 18200 (`TLSECHO_PORT`
 overrides it), and checks ALPN preference, the gzip frame, resumption, every
 verification refusal, that the server keeps serving afterwards, and that
 SIGTERM ends it with exit 0. A second run with `--client-ca` (on the next

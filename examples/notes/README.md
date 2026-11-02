@@ -5,16 +5,16 @@ builtin directly: no ORM, just SQL, bind parameters, and a few of SQLite's
 own features.
 
 ```text
-$ echo 'Pick up flour, eggs, and the good butter.' | diamond notes.d6 add Groceries home errands
+$ echo 'Pick up flour, eggs, and the good butter.' | d6 notes.d6 add Groceries home errands
 added 1
-$ echo 'Butter the pan before the eggs go in.' | diamond notes.d6 add Omelette cooking home
+$ echo 'Butter the pan before the eggs go in.' | d6 notes.d6 add Omelette cooking home
 added 2
-$ diamond notes.d6 search butter
+$ d6 notes.d6 search butter
    1  Groceries
       Pick up flour, eggs, and the good [butter].
    2  Omelette
       [Butter] the pan before the eggs go in.
-$ diamond notes.d6 list home
+$ d6 notes.d6 list home
    1  2026-08-14  Groceries  [errands, home]
    2  2026-09-20  Omelette  [cooking, home]
 ```
@@ -76,6 +76,6 @@ bash smoke_test.sh
 ```
 
 It runs a scripted session (`testdata/session.sh`) through the interpreter
-and as a `diamond build` binary, compares both against
+and as a `d6 build` binary, compares both against
 `testdata/session.expected`, and checks that a version-1 database is
 migrated on open.

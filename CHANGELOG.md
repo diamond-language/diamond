@@ -8,6 +8,10 @@ authoritative fine-grained record.
 
 ### Changed
 
+- **The commands are now `d6`, `d6-lsp` and `d6-dap`.** `make install` and the packages keep
+  `diamond`, `diamond-lsp` and `diamond-dap` as links to them, and a checkout builds both names, so
+  existing scripts keep working. `--version`, usage text and error messages say `d6`, so anything
+  matching `diamond 0.x` or a `diamond:` prefix needs updating. `d6` is now a reserved cut name.
 - **`Cutfile` replaces `diamond.cut`.** `Cutfile.dev` and `Cutfile.lock` likewise replace
   `diamond.dev.cut` and `facet.lock`, and `facet` creates only the new names. To move a project,
   rename the files. Projects and published cuts under the old names keep working, and `facet`

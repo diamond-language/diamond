@@ -5,9 +5,9 @@ non-blocking sockets and one `IO.poll` loop, with expiring keys, an
 append-only log that survives restarts, and a clean shutdown on SIGTERM.
 
 ```text
-$ diamond kvserver.d6 7000 data.log &
+$ d6 kvserver.d6 7000 data.log &
 kvserver: 0 key(s) loaded, listening on port 7000
-$ diamond kvclient.d6 7000 'SET greeting hello world' 'GET greeting' 'INCR hits' 'SETEX token 60 abc' 'TTL token' 'KEYS'
+$ d6 kvclient.d6 7000 'SET greeting hello world' 'GET greeting' 'INCR hits' 'SETEX token 60 abc' 'TTL token' 'KEYS'
 +OK
 $hello world
 :1
@@ -58,7 +58,7 @@ read timeouts, one request and one reply at a time.
 bash smoke_test.sh
 ```
 
-This builds both programs with `diamond build`, starts the server on a
+This builds both programs with `d6 build`, starts the server on a
 local port (`KV_PORT`, default 18000), and checks commands, expiry, a
 request split across packets, pipelined requests, twenty concurrent
 clients incrementing one counter, log compaction, SIGTERM shutdown, and
