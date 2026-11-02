@@ -62,9 +62,10 @@ setup and teardown, with room for runner and package-mirror variation:
 | Job | Observed maximum | Timeout |
 | --- | ---: | ---: |
 | Matrix builds | 15.2 min | 40 min |
-| Matrix integration | 7.6 min | 20 min |
+| Matrix integration | 12 min | 20 min |
 | Matrix fuzz | 9.2 min | 35 min |
-| ARM64 | 3.6 min | 20 min |
+| ARM64 (debug and release corpus) | 5.5 min | 30 min |
+| ARM64 integration | 11.4 min | 30 min |
 | ARM64 sanitizers | 10.5 min | 45 min |
 | Stress, threaded cases on two CPUs | 10.5 min | 40 min |
 | Stress under TSan | 14.8 min | 45 min |

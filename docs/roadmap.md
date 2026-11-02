@@ -198,8 +198,8 @@ Areas worth considering:
 
 Current coverage: [portability](portability.md).
 
-- TSan, Redis/external-database integration, and the remaining package suites are not
-  validated on Linux arm64. Widen them only as separate measured increments.
+- Linux arm64 runs only GCC on Ubuntu: Clang, Fedora and the fuzz targets are not run there.
+  Widen them only as separate measured increments.
 - The JIT is x86-64-only (see "Native-code execution").
 
 ### Stable public boundaries
