@@ -71,8 +71,8 @@ sudo -u diamond-registry REGISTRY_ROOT=/var/lib/diamond-registry /opt/diamond/bu
 Run the probe from outside the service host:
 
 ```sh
-diamond applications/registry/monitor.d6 https://cuts.example.com
-diamond applications/registry/monitor.d6 https://cuts.example.com --archive-sha256 DIGEST
+d6 applications/registry/monitor.d6 https://cuts.example.com
+d6 applications/registry/monitor.d6 https://cuts.example.com --archive-sha256 DIGEST
 ```
 
 For a private CA, use `--ca-file /path/to/ca.pem`. Certificate and hostname
@@ -80,7 +80,7 @@ verification stay enabled. Redirects are rejected. Exit 0 means success; exit 1
 and a JSON `ok: false` record indicate failure. The output contains elapsed time
 and an error class without endpoint or response contents. `--timeout` sets socket
 inactivity timeout (default 10 seconds); use a scheduler process deadline, such as
-`timeout 30s diamond ...`, to bound the whole job. A pinned archive check reads
+`timeout 30s d6 ...`, to bound the whole job. A pinned archive check reads
 and hashes up to the registry's 56 MiB maximum; choose a small retained canary cut.
 
 Health checks run `SELECT 1`; they do not prove disk writability, blob integrity,
@@ -132,7 +132,7 @@ target (default `HEAD`) and answers:
 - **REQUIRED** (exit 20): the registry app files, a cut it loads (the dependency
   closure of its `require_cut` lines), or the facet changed. Docs, tests, `deploy/`
   templates, and the launch seed never count: new cut versions go in through the API.
-- **OPTIONAL** (exit 10): only the Diamond runtime changed. Upgrade for a crash or
+- **OPTIONAL** (exit 10): only the d6 runtime changed. Upgrade for a crash or
   security fix that affects the registry; otherwise wait for the next REQUIRED change.
 - **NONE** (exit 0): nothing relevant changed.
 

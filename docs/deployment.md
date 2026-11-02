@@ -2,8 +2,8 @@
 
 `d6 build` compiles a `.d6` program into a standalone native executable:
 no `d6` interpreter, no `.d6` source file, and no recompilation step at
-run time. It exists for shipping a finished Diamond program to a machine
-that doesn't have (and shouldn't need) a Diamond checkout, alongside the
+run time. It exists for shipping a finished d6 program to a machine
+that doesn't have (and shouldn't need) a d6 checkout, alongside the
 ordinary `d6 program.d6` interpreter path.
 
 ```sh
@@ -11,7 +11,7 @@ ordinary `d6 program.d6` interpreter path.
 ./app arg1 arg2
 ```
 
-You can also invoke the Diamond binary from the application directory:
+You can also invoke the d6 binary from the application directory:
 
 ```sh
 cd ../skindicate.dia
@@ -49,7 +49,7 @@ d6 build SOURCE [-o OUTPUT] [--cc=COMPILER] [--target=TRIPLE] [--lto]
 - An installed `d6` (see "Installed AOT kit" below) links with a single
   compiler invocation against its prebuilt kit and needs neither this
   checkout nor `make`. Without a kit it uses the checkout, as follows.
-- The compiler finds its own build checkout from the Diamond executable,
+- The compiler finds its own build checkout from the d6 executable,
   while `SOURCE` and relative `OUTPUT` paths resolve from the caller's
   working directory. The checkout still supplies the C sources and
   Makefile used for linking.
@@ -70,7 +70,7 @@ d6 build SOURCE [-o OUTPUT] [--cc=COMPILER] [--target=TRIPLE] [--lto]
 `make aot-kit` collects everything `d6 build` needs to link into
 `build/aot-kit/`: the runtime archive `libdiamond-aot.a` (compiled at `-O2`),
 `libreginold.a`, and one-argument-per-line files recording the compiler,
-compile flags, link flags, and Diamond version. `make install` copies the
+compile flags, link flags, and d6 version. `make install` copies the
 built tools to `PREFIX/bin` and the kit to `PREFIX/lib/diamond/aot`:
 
 ```sh
@@ -80,10 +80,10 @@ make install PREFIX="$HOME/.local"
 
 An installed `d6 build` finds the kit at `<bin>/../lib/diamond/aot`
 (`DIAMOND_AOT_KIT` overrides the location), refuses a kit recorded for a
-different Diamond version, and runs one `cc` command: the generated program
+different d6 version, and runs one `cc` command: the generated program
 data plus the two archives and the recorded link flags. It still needs a C23
 compiler with `#embed` support (GCC 15+ or Clang 19+) and the development
-libraries named in the link flags, but not the Diamond sources, headers, or
+libraries named in the link flags, but not the d6 sources, headers, or
 `make`. The kit is specific to the platform and library versions it was built
 against.
 
@@ -134,11 +134,11 @@ the program writes, and honours `DIAMOND_PRINT_RESULT` the same way
   portable across machines as `d6` itself is, no more and no less.
 - **Cross-compilation needs a prepared kit.** Without `--target` the binary targets
   the machine `d6 build` ran on; see "Cross-compilation" below.
-- **The Diamond build checkout is still needed at build time.** `diamond
+- **The d6 build checkout is still needed at build time.** `diamond
   build` invokes its checkout's `make aot-build` target to link the binary;
   there is no separate installed runtime library yet. The finished binary
   has no dependency on the checkout at run time and can run from any
-  working directory, including on a machine with no Diamond checkout.
+  working directory, including on a machine with no d6 checkout.
 
 See [docs/roadmap.md](roadmap.md) for what's explicitly deferred here
 (static linking).
@@ -252,15 +252,15 @@ use. Production uses its VM build script, which also records the source
 revision required by `deploy_prebuilt.sh`.
 
 The example keeps AOT runtime objects in `skindicate.dia/dist/aot-cache/`,
-outside the disposable source copy. Diamond fingerprints the runtime inputs,
+outside the disposable source copy. d6 fingerprints the runtime inputs,
 so the cache remains safe when a new source copy has older timestamps. The
-Diamond CLI's `make release` step still rebuilds on each container run, while
+d6 CLI's `make release` step still rebuilds on each container run, while
 the AOT runtime compilation is reused. Delete `dist/aot-cache/` when that
 cache is no longer wanted.
 
 **One more thing a cross-build must override:** the Makefile's own `release`
 target defaults `CFLAGS_RELEASE` to `-march=native` (right for the common
-case -- no distro packaging exists yet, so whoever builds Diamond is
+case -- no distro packaging exists yet, so whoever builds d6 is
 building it for the machine they're going to run it on). A container only
 isolates the OS/libraries, not the CPU, so building inside one still runs on
 the *host's* actual CPU -- inheriting that default would bake the build
@@ -279,7 +279,7 @@ flags first (`ssh target grep flags /proc/cpuinfo`, checking for `avx2
 bmi2 fma`), don't just assume.
 
 `x86-64-v3` isn't an arbitrary choice of override for this one script --
-it's Diamond's stated practical minimum supported configuration (see the
+it's d6's stated practical minimum supported configuration (see the
 Makefile's own `CFLAGS_RELEASE` comment and the README's system
 dependencies section). A deploy target older than that is unsupported, not
 just slower.

@@ -1,6 +1,6 @@
 # Cuts
 
-`.d6` is Diamond's default and preferred source extension, including for new
+`.d6` is d6's default and preferred source extension, including for new
 cuts. Backward compatibility with `.di` source files and published cuts is
 retained. The loader prefers `lib/<name>.d6`, then
 `<name>.d6`, then the corresponding legacy `.di` paths. Facet accepts and
@@ -39,7 +39,7 @@ digest-addressed HTTPS archive, validates it with the same checks as
 `facet verify`, and stages every cut before replacing installed copies. It does
 not query an index or resolve registry versions yet.
 
-This document covers Diamond's package resolution — packages are called
+This document covers d6's package resolution — packages are called
 **cuts**, resolved from a `cuts/` directory via `require_cut`, a require
 form separate from and never competing with ordinary `require` — plus the
 optional manifest a cut can declare its identity with, and `facet`, the
@@ -124,7 +124,7 @@ nothing reads its value (see "What's deliberately out of scope so far"
 for why).
 
 A manifest must contain a single data-only Hash literal. The loader and
-`facet` parse it without compiling or running Diamond code. Expressions,
+`facet` parse it without compiling or running d6 code. Expressions,
 calls, interpolation, duplicate keys, and trailing code are rejected.
 `require` and `require_cut` are not supported inside metadata.
 
@@ -219,7 +219,7 @@ moved into place as-is (`rename`, not a re-copy that could rewrite
 anything), its manifest keeps the same fixed `Cutfile` filename it had at
 its own repository root — this is exactly why that filename isn't
 parameterized by the cut's own name. It writes `Cutfile.lock` alongside
-`Cutfile` — a Diamond `Hash` literal, same as a manifest. `facet` itself
+`Cutfile` — a d6 `Hash` literal, same as a manifest. `facet` itself
 always writes it compact/single-line (it's machine-generated, not
 something you're meant to hand-edit), but reads one back the same way it
 reads any manifest, so a hand-edited lockfile can be pretty-printed too
@@ -260,7 +260,7 @@ exact ref (`tag`/`branch`/`commit`) for the same cut name, `facet`
 reports both requesters by name and stops — it can never pick one over
 the other, because of the same flat-namespace constraint noted above:
 two versions of one cut name could never coexist in a single compiled
-Diamond program anyway, so there is no "resolve to whichever" fallback
+d6 program anyway, so there is no "resolve to whichever" fallback
 to fall back to. Two `version`-constrained requesters, by contrast,
 intersect (see "Dependencies" above) rather than conflicting outright,
 as long as some version satisfies both ranges. A cycle in the
@@ -436,11 +436,11 @@ with `facet` like any other cut.
 | `cookies` | Cookie parsing, signing, encryption, and session helpers |
 | `database_config` | Load JSON database configuration and open a connection |
 | `dials` | HTTP routing and controller responses |
-| `div` | Compile view templates into Diamond source |
+| `div` | Compile view templates into d6 source |
 | `graphql` | GraphQL schema and query execution |
 | `graphsql` | GraphQL-aware SQL selection and association preloading |
 | `gremlin` | Concurrent fiber-based HTTP server |
-| `http` | HTTP server and client for Diamond |
+| `http` | HTTP server and client for d6 |
 | `jobs` | Durable database-backed background jobs |
 | `log_viewer` | Format structured JSON log streams |
 | `logger` | Leveled text and structured JSON logging |
@@ -466,7 +466,7 @@ with `facet` like any other cut.
   git tags, never from a `Cutfile` string the requester would have
   to trust regardless.
 - **Two versions of the same cut coexisting** is architecturally
-  constrained, not just unbuilt: Diamond compiles every `require`/
+  constrained, not just unbuilt: d6 compiles every `require`/
   `require_cut`d file into *one* flat namespace with small, global,
   shared tables (`DIAMOND_MAX_FUNCTIONS`, `DIAMOND_MAX_CLASSES`,
   `DIAMOND_MAX_MODULES` in `src/vm.h`), so two versions of the same cut

@@ -2,7 +2,7 @@
 
 Record classes whose fields come from data: `Book` and `Author` are empty
 subclasses of `Model`, and every accessor they end up with is generated at
-run time from a JSON schema. A tour of Diamond's metaprogramming.
+run time from a JSON schema. A tour of d6's metaprogramming.
 
 ```text
 $ cat testdata/schema.json

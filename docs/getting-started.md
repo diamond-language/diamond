@@ -1,6 +1,6 @@
 # Getting started
 
-This guide goes from installing Diamond to a tested project built into a
+This guide goes from installing d6 to a tested project built into a
 standalone executable. Each step links to the topic guide that covers it in
 depth. To try the language before installing anything, use the REPL at
 [getdiamond.codes](https://getdiamond.codes).
@@ -34,7 +34,7 @@ didn't, `d6 build` prints the commands that install what it's missing.
 
 ### From source
 
-On other systems, or for an unreleased version, build from source. You need GCC 15+ or Clang 19+ (Diamond is C23),
+On other systems, or for an unreleased version, build from source. You need GCC 15+ or Clang 19+ (d6 is C23),
 `make`, `git`, and the development headers for OpenSSL, SQLite, PostgreSQL
 (libpq), MariaDB Connector/C, zlib and libcrypt. On Fedora and Ubuntu:
 

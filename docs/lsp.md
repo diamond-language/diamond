@@ -1,8 +1,8 @@
 # Language server
 
-`lsp/` is a Language Server Protocol implementation for Diamond — a
+`lsp/` is a Language Server Protocol implementation for d6 — a
 standalone binary (`build/d6-lsp`, built from `lsp/*.c` plus the
-same compiler/VM sources every other Diamond binary shares) that speaks
+same compiler/VM sources every other d6 binary shares) that speaks
 LSP's standard `Content-Length`-framed JSON-RPC over stdio, the transport
 every mainstream editor already knows how to launch a custom language
 server with.
@@ -40,7 +40,7 @@ search over a real (if scoped) lexical symbol table:
 - `textDocument/didOpen` / `didChange` / `didClose` — each recompiles the
   document's current full text (full sync only; there's no incremental
   edit application) and publishes a `textDocument/publishDiagnostics`
-  notification. Diamond's compiler stops at its first error, so there is
+  notification. d6's compiler stops at its first error, so there is
   never more than one diagnostic per publish — an empty array means the
   document currently compiles cleanly. If the one error is actually
   inside a `require`d file rather than the open document itself, a
@@ -346,7 +346,7 @@ search over a real (if scoped) lexical symbol table:
   (in the compiled buffer) it's valid for, taken directly from the
   compiler's own `Local` bookkeeping at the two points a scope actually
   closes (a function body finishing in `compile_definition`, a `rescue`
-  clause finishing in `compile_begin` — Diamond's `if`/`while`/`unless`/
+  clause finishing in `compile_begin` — d6's `if`/`while`/`unless`/
   `until` deliberately *don't* open their own scope, matching Ruby, so
   those needed no extra handling). Mapping the cursor's own line/column
   into that same compiled-buffer coordinate system needed a new inverse
@@ -433,7 +433,7 @@ search over a real (if scoped) lexical symbol table:
   against an existing same-named symbol at the rename's own target
   scope — same deliberately name-based, conservative-scope cut
   `textDocument/references` itself already makes, not a gap specific
-  to rename. Diamond enforces no class-vs-function naming-case
+  to rename. d6 enforces no class-vs-function naming-case
   convention at the language level, so neither does this: renaming a
   class to a lowercase name is accepted the same way declaring one
   with a lowercase name already is. No `textDocument/prepareRename` --
@@ -506,9 +506,9 @@ search over a real (if scoped) lexical symbol table:
 ## `.div` templates (diagnostics only)
 
 Any document whose path/uri ends in `.div` (`packages/div` — see its own
-README for the tag grammar) is not raw Diamond source, so it's never
+README for the tag grammar) is not raw d6 source, so it's never
 handed to `diamond_compile` as-is; `lsp/div.c`'s `div_translate` first
-turns it into an ordinary Diamond source buffer implementing the same
+turns it into an ordinary d6 source buffer implementing the same
 tag semantics `packages/div/lib/div/compiler.d6`'s own `Div.compile_source`
 does (a hand-ported C mirror, kept behaviorally in sync by hand — there's
 no shared implementation between the two, see that file's own header
@@ -528,9 +528,9 @@ generated code is a verbatim copy of the tag's own text.
 
 Only diagnostics work for `.div` documents — hover, go-to-definition,
 document symbols, completion, and workspace symbol search all still
-treat them as ordinary (non-)Diamond source and behave accordingly
+treat them as ordinary (non-)d6 source and behave accordingly
 (mostly: finding nothing, since the raw ERB-tag-mixed-HTML text they'd
-otherwise tokenize isn't valid Diamond syntax). Extending any of those to
+otherwise tokenize isn't valid d6 syntax). Extending any of those to
 work *inside* a tag's own embedded expression would need the same kind of
 position-mapping div_translate already does for diagnostics, threaded
 through each of those handlers separately — a larger, currently
@@ -539,7 +539,7 @@ unstarted slice.
 This is a server-side capability, so clients must send `.div` documents to
 the server. The bundled VS Code extension assigns `.div` and `.html.div` the
 `diamond-template` language id and sends their open, change, and close events.
-It deliberately does not apply Diamond's TextMate grammar to the surrounding
+It deliberately does not apply d6's TextMate grammar to the surrounding
 HTML. Other language providers remain registered only for ordinary `d6`
 documents, matching the diagnostics-only template support.
 
@@ -647,7 +647,7 @@ variadic, and block parameters, including singleton methods.
   `receiver.method(...)`, or for anything needing scope resolution
   beyond a single compiled program's own function/class/local tables.**
 - **Incremental sync** — `textDocumentSync` only ever advertises `Full`.
-  Diamond has no incremental-recompile story at all yet (every compile is
+  d6 has no incremental-recompile story at all yet (every compile is
   a fresh `diamond_compile` call over the whole combined buffer), so
   `Incremental` sync would only add bookkeeping for no benefit until that
   changes.

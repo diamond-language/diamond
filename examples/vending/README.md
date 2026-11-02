@@ -2,7 +2,7 @@
 
 A coin-operated vending machine driven by a script of JSON commands: coins,
 selections, refunds, restocking, and a keyed service mode. It is a state
-machine written as nested `case` expressions, and it exists to put Diamond's
+machine written as nested `case` expressions, and it exists to put d6's
 pattern matching through its paces.
 
 ```text

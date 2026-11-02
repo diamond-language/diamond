@@ -1,7 +1,7 @@
 # examples/agenda
 
 Recurring events expanded into a dated agenda or a month calendar -- a
-tour of Diamond's `Time` API.
+tour of d6's `Time` API.
 
 ```text
 $ cat events.txt

@@ -301,18 +301,18 @@ async function provideWorkspaceSymbols(query) {
 }
 
 function startServer() {
-    const serverPath = vscode.workspace.getConfiguration('diamond').get('languageServerPath', 'diamond-lsp');
+    const serverPath = vscode.workspace.getConfiguration('diamond').get('languageServerPath', 'd6-lsp');
     let spawned;
     try {
         spawned = cp.spawn(serverPath, [], { stdio: ['pipe', 'pipe', 'pipe'] });
     } catch (err) {
-        vscode.window.showErrorMessage(`Diamond: failed to start '${serverPath}': ${err.message}`);
+        vscode.window.showErrorMessage(`d6: failed to start '${serverPath}': ${err.message}`);
         return;
     }
     child = spawned;
     stdoutBuffer = Buffer.alloc(0);
     spawned.stdout.on('data', onStdout);
-    spawned.stderr.on('data', (data) => log(`[diamond-lsp stderr] ${data.toString('utf8')}`));
+    spawned.stderr.on('data', (data) => log(`[d6-lsp stderr] ${data.toString('utf8')}`));
     /* A spawn failure (e.g. ENOENT for a missing/misconfigured path)
      * surfaces asynchronously as an 'error' event, both on the child
      * itself below and, since stdin is already a live stream by the
@@ -333,13 +333,13 @@ function startServer() {
      * docs. */
     spawned.on('error', (err) => {
         vscode.window.showErrorMessage(
-            `Diamond: language server '${serverPath}' failed to start: ${err.message}. ` +
+            `d6: language server '${serverPath}' failed to start: ${err.message}. ` +
             'Build it with `make lsp`, or set "diamond.languageServerPath" to the built binary.',
         );
         if (child === spawned) child = null;
     });
     spawned.on('exit', (code, signal) => {
-        log(`diamond-lsp exited (code=${code}, signal=${signal})`);
+        log(`d6-lsp exited (code=${code}, signal=${signal})`);
         if (child === spawned) child = null;
     });
 
@@ -394,14 +394,14 @@ function registerDebugAdapter(context) {
     context.subscriptions.push(vscode.debug.registerDebugAdapterDescriptorFactory('diamond', {
         createDebugAdapterDescriptor() {
             const adapterPath = vscode.workspace.getConfiguration('diamond')
-                .get('debugAdapterPath', 'diamond-dap');
+                .get('debugAdapterPath', 'd6-dap');
             return new vscode.DebugAdapterExecutable(adapterPath, []);
         },
     }));
 }
 
 function activate(context) {
-    outputChannel = vscode.window.createOutputChannel('Diamond Language Server');
+    outputChannel = vscode.window.createOutputChannel('d6 Language Server');
     diagnosticCollection = vscode.languages.createDiagnosticCollection('diamond');
     context.subscriptions.push(outputChannel, diagnosticCollection);
 

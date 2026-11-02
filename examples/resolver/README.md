@@ -3,7 +3,7 @@
 A package version resolver: given an index of published releases and some
 root requirements, it picks one version of every package they transitively
 need, or reports exactly why it cannot. It is a small, real program built to
-exercise Diamond's type system: generics, union types, sealed hierarchies with
+exercise d6's type system: generics, union types, sealed hierarchies with
 exhaustive `case`, `Comparable`, and `freeze`.
 
 ```text
@@ -56,7 +56,7 @@ the same walk to a solution.
   class stores untyped members. The compiler checks calls it can prove wrong;
   anything else is checked as the call runs: `unique(5)` raises a `TypeError`
   (`expected Array[TypeVariable], got Int`).
-- **Hand-written `Set`.** Diamond has no built-in `Set`, so `lib/set.d6` builds
+- **Hand-written `Set`.** d6 has no built-in `Set`, so `lib/set.d6` builds
   one over a Hash. `--check` uses `unique` to report each missing dependency
   once, however many releases mention it.
 - **Union types.** `resolve` returns `Resolved | Conflict | Missing`, three
@@ -96,7 +96,7 @@ the same walk to a solution.
   `if problem != nil` / `return problem` / `end`. `pin` and `resolve` use the
   block form so their `Conflict | Missing | Nil` result narrows to the declared
   return type.
-- Diamond has no `catch`/`throw`, so non-local exits here are either exceptions
+- d6 has no `catch`/`throw`, so non-local exits here are either exceptions
   (`VersionError`, `IndexError`) or a result union like `Conflict | Missing | Nil`.
 - Destructuring (`[a, b] = text.split(":")`) requires exactly that many parts,
   or it raises `ArgumentError`, so the parsers check `parts.length()` first.

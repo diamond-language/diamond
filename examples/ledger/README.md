@@ -2,7 +2,7 @@
 
 Three months of personal finances in a double-entry ledger: every entry
 moves money between accounts and must balance to the cent. The bookkeeping
-is small; the point is a tour of Diamond's object model.
+is small; the point is a tour of d6's object model.
 
 ```text
 $ d6 ledger.d6

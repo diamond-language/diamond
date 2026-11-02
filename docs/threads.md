@@ -1,6 +1,6 @@
 # Threads
 
-`Thread` runs Diamond code concurrently on native OS threads. Threads can use
+`Thread` runs d6 code concurrently on native OS threads. Threads can use
 multiple CPU cores; [`Fiber`](fibers.md) instead provides cooperative
 concurrency within one OS thread.
 
@@ -25,13 +25,13 @@ right.join()  # => 49
 same thread again returns the cached result. `alive?()` reports whether the
 thread is still running without blocking.
 
-Diamond does not support detached or fire-and-forget threads. If an unjoined
+d6 does not support detached or fire-and-forget threads. If an unjoined
 Thread becomes unreachable, garbage collection waits for it to finish before
 reclaiming its resources.
 
 The one exception is a program that fails: if the main program ends with an
 uncaught exception while any spawned thread or supervised child is still
-running, Diamond reports the error and exits with status 70 immediately, the
+running, d6 reports the error and exits with status 70 immediately, the
 way `exit()` does, rather than waiting for workers that may never finish
 (for example, one blocked sending to a channel only the failed program
 would have drained).
@@ -86,7 +86,7 @@ for every restart.
 
 ## Results and exceptions
 
-If a worker raises an uncaught Diamond exception, `join()` re-raises that
+If a worker raises an uncaught d6 exception, `join()` re-raises that
 exception in the joining thread:
 
 ```ruby

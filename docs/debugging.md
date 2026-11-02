@@ -1,6 +1,6 @@
 # Debugging
 
-Diamond's only debugging primitive at the language level is the source
+d6's only debugging primitive at the language level is the source
 `debugger()`/`breakpoint()` call ([Runtime features and
 debugging](runtime-reference.md#debugging)): it pauses execution, prints
 the pause site and every currently-live local, then blocks on one line of
@@ -124,7 +124,7 @@ frame has targets.
 ## How it fits together
 
 ```text
-editor (DAP client)  <--stdio, DAP-->  diamond-dap  <--control socket-->  diamond (the debuggee)
+editor (DAP client)  <--stdio, DAP-->  d6-dap  <--control socket-->  d6 (the debuggee)
 ```
 
 - `d6-dap` (`dap/main.c`) speaks ordinary DAP over its own stdio

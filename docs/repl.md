@@ -42,7 +42,7 @@ kernel's line discipline via `getline`:
   line it's a no-op, matching common shell convention (not a forced
   submit, not a deletion).
 - **`exit`/`quit`**, typed as a whole line by itself, also exit the REPL —
-  not a language builtin (Diamond has none), recognized only here, only
+  not a language builtin (d6 has none), recognized only here, only
   when it's the first line of a fresh statement (so it can't misfire
   partway through a multi-line block, where it's just an ordinary,
   undefined identifier like any other word). Case-sensitive, matching the

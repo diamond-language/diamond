@@ -44,14 +44,14 @@ if [[ "$version_line" != "d6 $version" ]]; then
     exit 1
 fi
 
-description="Diamond is a gradually typed, object-oriented language with a register-based
+description="d6 is a gradually typed, object-oriented language with a register-based
 bytecode VM. This package provides the d6 interpreter and REPL, the facet
 package manager, the d6-lsp language server, the d6-dap debug adapter, and the
 runtime kit d6 build links standalone executables against. The former diamond,
 diamond-lsp and diamond-dap commands remain as links to them."
 
 if [[ "$format" == deb ]]; then
-    doc="$stage/usr/share/doc/diamond-lang"
+    doc="$stage/usr/share/doc/d6-lang"
     mkdir -p "$doc"
     cp LICENSE "$doc/copyright"
     cp README.md "$doc/README.md"
@@ -62,14 +62,18 @@ if [[ "$format" == deb ]]; then
     # dpkg-shlibdeps derives the runtime library packages from the binaries'
     # NEEDED entries; it insists on a debian/control in the working directory.
     mkdir -p "$work/shlibs/debian"
-    printf 'Source: diamond-lang\n\nPackage: diamond-lang\nArchitecture: any\n' > "$work/shlibs/debian/control"
+    printf 'Source: d6-lang\n\nPackage: d6-lang\nArchitecture: any\n' > "$work/shlibs/debian/control"
     depends="$(cd "$work/shlibs" && dpkg-shlibdeps -O "${binaries[@]}" | sed -n 's/^shlibs:Depends=//p')"
     mkdir -p "$stage/DEBIAN"
     {
-        printf 'Package: diamond-lang\n'
+        printf 'Package: d6-lang\n'
+        # The package was called diamond-lang until the rename; this one replaces it.
+        printf 'Provides: diamond-lang\n'
+        printf 'Replaces: diamond-lang\n'
+        printf 'Conflicts: diamond-lang\n'
         printf 'Version: %s-1\n' "$version"
         printf 'Architecture: %s\n' "$arch"
-        printf 'Maintainer: Diamond maintainers <https://github.com/diamond-language/diamond/issues>\n'
+        printf 'Maintainer: d6 maintainers <https://github.com/diamond-language/diamond/issues>\n'
         printf 'Installed-Size: %s\n' "$(du -sk "$stage/usr" | cut -f1)"
         # facet downloads cuts with curl and clones git sources with git.
         printf 'Depends: %s, curl, ca-certificates\n' "$depends"
@@ -77,20 +81,20 @@ if [[ "$format" == deb ]]; then
         printf 'Section: devel\n'
         printf 'Priority: optional\n'
         printf 'Homepage: https://getdiamond.codes\n'
-        printf 'Description: The Diamond programming language\n'
+        printf 'Description: The d6 programming language\n'
         sed 's/^/ /' <<<"$description"
     } > "$stage/DEBIAN/control"
-    dpkg-deb --root-owner-group --build "$stage" "$out/diamond-lang_${version}-1_${arch}.deb" >/dev/null
-    echo "$out/diamond-lang_${version}-1_${arch}.deb"
+    dpkg-deb --root-owner-group --build "$stage" "$out/d6-lang_${version}-1_${arch}.deb" >/dev/null
+    echo "$out/d6-lang_${version}-1_${arch}.deb"
 else
-    mkdir -p "$stage/usr/share/licenses/diamond-lang" "$stage/usr/share/doc/diamond-lang"
-    cp LICENSE "$stage/usr/share/licenses/diamond-lang/LICENSE"
-    cp README.md "$stage/usr/share/doc/diamond-lang/README.md"
-    rpmbuild -bb packaging/diamond-lang.spec \
+    mkdir -p "$stage/usr/share/licenses/d6-lang" "$stage/usr/share/doc/d6-lang"
+    cp LICENSE "$stage/usr/share/licenses/d6-lang/LICENSE"
+    cp README.md "$stage/usr/share/doc/d6-lang/README.md"
+    rpmbuild -bb packaging/d6-lang.spec \
         --define "_topdir $work/rpm" \
         --define "_rpmdir $out" \
         --define "_build_name_fmt %%{NAME}-%%{VERSION}-%%{RELEASE}.%%{ARCH}.rpm" \
         --define "diamond_version $version" \
         --define "diamond_stage $stage" >/dev/null
-    ls "$out"/diamond-lang-"$version"-*.rpm
+    ls "$out"/d6-lang-"$version"-*.rpm
 fi

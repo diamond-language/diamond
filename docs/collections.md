@@ -94,7 +94,7 @@ methods](#prelude-methods) below.
 Strings support `.length()`, `.index_of(needle)` (position or `nil`),
 `.slice(start, length)`, `.to_i()`/`.to_f()` (lenient decimal parsing —
 `.to_f()` additionally accepts exponent notation like `"1e3"` even
-though Diamond's own float literals don't, and overflows to `Infinity`
+though d6's own float literals don't, and overflows to `Infinity`
 rather than raising, unlike `.to_i()`; neither skips leading
 whitespace, and `"nan"`/`"inf"` parse as `0.0`, matching Ruby's
 `String#to_f`), and `.downcase()`/`.upcase()` (ASCII-only case
@@ -151,7 +151,7 @@ building a small, internally-chosen conversion string from the parsed
 flags/width/precision and handing it to a real `snprintf` alongside
 exactly one correctly-typed value — never your format string forwarded
 into a C varargs call directly, which would be a real format-string
-vulnerability given a Diamond value's runtime type has no fixed
+vulnerability given a d6 value's runtime type has no fixed
 relationship to what a positionally-matched C conversion expects.
 
 Strings also support `[]` with a single `Int` index, returning a new
@@ -236,7 +236,7 @@ See the [Regexp guide](runtime-reference.md#regexp) for pattern/option syntax.
 `.each(callback)`, and the `Enumerable` methods derived from it —
 `.select`/`.count`/`.any?`/`.all?`/`.reduce`/`.map` — work as receiver
 syntax on both arrays and hashes (a hash's Enumerable operates over
-*values*, discarding keys), forwarding at runtime to ordinary Diamond
+*values*, discarding keys), forwarding at runtime to ordinary d6
 functions in the prelude:
 
 ```ruby
@@ -245,7 +245,7 @@ functions in the prelude:
 [1, 2, 3].reduce(0, add)
 ```
 
-Native collections are extensible from Diamond source without VM changes.
+Native collections are extensible from d6 source without VM changes.
 Defining `array_name(values, ...)`, `hash_name(values, ...)`, or the shared
 fallback `enumerable_name(values, ...)` exposes `.name(...)` on the matching
 receiver. A trailing predicate `?` is omitted from the bridge function name,
@@ -355,7 +355,7 @@ same philosophy `Float` arithmetic already uses throughout.
 `Int`/`Float`), or `Tensor.random(rows, cols, seed)` (deterministic
 pseudorandom values in `[-1, 1)` from a plain LCG, filled directly in C —
 orders of magnitude faster than building the same values through
-`Tensor.from_array` and a Diamond-level loop, which matters once "rows x
+`Tensor.from_array` and a d6-level loop, which matters once "rows x
 cols" reaches real model-weight sizes). Instance methods: `#rows()`,
 `#cols()`, `#get(row, col)`, `#set(row, col, value)` (`IndexError` out of
 bounds, matching `Array#[]`), `#matmul(other)` (threaded, k-blocked; shape
@@ -374,13 +374,13 @@ helpers), and `#softmax_backward(grad_output)`/`#gelu_backward(grad_output)`
 `#layernorm_backward(gamma, grad_output, inv_std)` (called on
 `layernorm_forward`'s own `normalized` result; returns `[grad_x,
 grad_gamma, grad_beta]`) — see `examples/transformer/lib/tensor_ops.d6`
-for friendlier Diamond wrappers around these, and that example's own
+for friendlier d6 wrappers around these, and that example's own
 `gradcheck.d6` for every formula checked against numerical
 (finite-difference) gradients. Still deliberately
 narrow, not a general tensor library: no broadcasting, no non-2D shapes,
 and no autodiff built into `Tensor` itself — `examples/transformer`'s own
 reverse-mode autograd (`examples/transformer/lib/var.d6` and `autograd.d6`) is ordinary
-Diamond code layered on top of these primitives, not a VM feature. It
+d6 code layered on top of these primitives, not a VM feature. It
 exists to measure real `matmul`/elementwise throughput (`bench/`-style
 native code, not boxed `DiamondValue` arrays) before committing to a
 fuller API surface — see `examples/transformer/README.md`'s own "Scope"
@@ -392,7 +392,7 @@ provide (batching, a reshape/view story, anything beyond plain SGD).
 nothing (not a calendar timestamp, not comparable across processes),
 only the difference between two readings does, e.g. `elapsed =
 Time.monotonic() - start` for timing a request in a rack middleware.
-It is intentionally separate from Diamond's wall-clock/calendar `Time` values;
+It is intentionally separate from d6's wall-clock/calendar `Time` values;
 see the [Time guide](time.md) for those APIs.
 
 `BCrypt.hash(password: String, cost: Int)` and `BCrypt.verify(password:
@@ -418,7 +418,7 @@ BCrypt.verify("wrong", digest)        # => false
 ```
 
 `libxcrypt`'s bcrypt support is a Linux-specific fact about this system's
-`crypt(3)`, not something Diamond papers over — see `docs/roadmap.md`'s
+`crypt(3)`, not something d6 papers over — see `docs/roadmap.md`'s
 "Explicitly deferred" section on multi-platform portability. A password
 containing an embedded NUL byte is truncated at that point before
 hashing, the same inherent limitation every C-`crypt`-backed bcrypt
@@ -427,7 +427,7 @@ string).
 
 `SecureRandom.bytes(n: Int) -> String` returns `n` cryptographically
 random bytes (OpenSSL `RAND_bytes`, already linked for TLS) as a raw
-Diamond `String` — Diamond strings are already raw byte buffers, so no
+d6 `String` — d6 strings are already raw byte buffers, so no
 separate binary type is needed. `SecureRandom.hex(n: Int) -> String`
 returns the same `n` random bytes hex-encoded, as a `2*n`-character
 `String`. Both raise `ArgumentError` for a negative `n` (or one large
@@ -505,7 +505,7 @@ normal operation, the same "not a programmer error" reasoning
 `BCrypt.verify`/`HMAC.verify` already use, and there is no separate
 signature step to add: the tag check inside `EVP_DecryptFinal_ex`
 already provides both confidentiality and tamper-evidence in one pass,
-with no comparison of Diamond's own to expose a timing side-channel.
+with no comparison of d6's own to expose a timing side-channel.
 
 ```ruby
 key = SecureRandom.bytes(32)
@@ -571,7 +571,7 @@ sb.length()       # => 12
 ```
 
 `#append` returns `self`, so calls chain: `sb.append("a").append("b")`.
-It's a plain Diamond class, not a native object — `#append` pushes
+It's a plain d6 class, not a native object — `#append` pushes
 `"#{piece}"` onto an internal `Array` (already O(1) amortized) and
 `#to_s` calls the native `.join("")` above once, so the total cost of
 building a string this way is O(n), the same complexity `Array#join`
@@ -580,7 +580,7 @@ already has for a pre-collected array of pieces.
 ## Prelude methods
 
 Beyond the methods above, built-in values answer most of the everyday
-Enumerable-style methods. They're ordinary Diamond functions in the prelude
+Enumerable-style methods. They're ordinary d6 functions in the prelude
 (`lib/core.d6`, named `diamond_array_…`, `diamond_hash_…`, and so on) that
 the VM finds when a value has no native method of that name. A program can
 define its own `array_foo(values, ...)` (or `hash_`, `string_`, `integer_`,

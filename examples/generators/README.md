@@ -60,7 +60,7 @@ t=3 kettle: boiled
   Eratosthenes: a Hash maps each upcoming composite to the primes that
   produce it, and `Hash#delete` drops each entry once it's reached.
 - **Big integers.** The 150th Fibonacci number needs more than 64 bits, and
-  Diamond's `Int` promotes on its own.
+  d6's `Int` promotes on its own.
 
 Fibers are cooperative and share one OS thread; for parallel work see
 [`docs/threads.md`](../../docs/threads.md).

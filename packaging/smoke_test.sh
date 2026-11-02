@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Checks an installed diamond-lang package: the tools are on PATH under /usr,
+# Checks an installed d6-lang package: the tools are on PATH under /usr,
 # a script and -e run, a facet new project installs its test cut from the
 # registry and its tests pass, and d6 build
 # links that project into an executable with the packaged kit. Runs in a clean

@@ -9,11 +9,11 @@ From the repository root:
 ```sh
 make debug facet
 bash tools/install_local_cuts.sh .
-build/d6 examples/task_board/app.d6 project Diamond
+build/d6 examples/task_board/app.d6 project d6
 build/d6 examples/task_board/app.d6 add 1 "Ship a terminal board"
 build/d6 examples/task_board/app.d6 move 1 doing
 build/d6 examples/task_board/app.d6 list --project 1 --status doing
-# #1 [doing] Diamond / Ship a terminal board
+# #1 [doing] d6 / Ship a terminal board
 build/d6 examples/task_board/app.d6 edit 1 "Ship the board"
 build/d6 examples/task_board/app.d6 projects
 build/d6 examples/task_board/app.d6 notes 1 "Keep benchmark results here"

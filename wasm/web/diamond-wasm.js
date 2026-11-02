@@ -1,4 +1,4 @@
-// Diamond in the browser: loads build/wasm/diamond.wasm (wasm/build.sh) and drives it as a REPL.
+// d6 in the browser: loads build/wasm/diamond.wasm (wasm/build.sh) and drives it as a REPL.
 //
 // The module exports diamond_wasm_eval(source), which compiles and runs a complete program in a
 // fresh VM and prints the program's output, then 0x1E and the result value, to stdout (errors go

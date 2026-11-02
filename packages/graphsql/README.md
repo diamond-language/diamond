@@ -134,7 +134,7 @@ A GraphQL query names exactly the fields it wants. Without help, a resolver load
 
 ## Mappings
 
-A `Mapping` pairs one GraphQL object type with one repository, and says which GraphQL fields are columns and which are associations. Diamond types are runtime values rather than class declarations, so this is a separate fluent value.
+A `Mapping` pairs one GraphQL object type with one repository, and says which GraphQL fields are columns and which are associations. d6 types are runtime values rather than class declarations, so this is a separate fluent value.
 
 ```diamond
 player = GraphSQL::Mapping.new(Player.repository(), "Player")

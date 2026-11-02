@@ -1,7 +1,7 @@
-# Diamond platform report
+# d6 platform report
 
-This tries Diamond on your computer and writes a report file to send back. You
-don't need to know anything about Diamond. It takes about 30-60 minutes, mostly
+This tries d6 on your computer and writes a report file to send back. You
+don't need to know anything about d6. It takes about 30-60 minutes, mostly
 unattended.
 
 ## Before you start
@@ -29,7 +29,7 @@ caffeinate -i bash tools/platform_report/platform_report.sh
 `caffeinate -i` just keeps the Mac awake until it finishes.
 
 If it lists some Homebrew packages and asks **"Install them now with Homebrew?"**,
-type `y` and press Return. They're the libraries Diamond builds against
+type `y` and press Return. They're the libraries d6 builds against
 (OpenSSL, SQLite, and the PostgreSQL and MariaDB client libraries) plus a few
 standard command-line tools.
 
@@ -50,8 +50,8 @@ Send that file back. That's everything.
   install is the Homebrew packages above, and only after you type `y`.
 - It works in a temporary copy that it deletes afterwards. The `~/diamond`
   folder can be deleted when you're done (`rm -rf ~/diamond`).
-- It uses the network to download Diamond, the Homebrew packages, and one
-  package from Diamond's registry, cuts.dilang.tech, for an example app.
+- It uses the network to download d6, the Homebrew packages, and one
+  package from d6's registry, cuts.dilang.tech, for an example app.
 - The threaded-stress step runs one busy background process per core for a few
   minutes so the fans may spin up; they are stopped when it finishes.
 - The report contains your Mac's model, chip, core count, memory size, and

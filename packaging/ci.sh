@@ -28,10 +28,10 @@ version="$(sed -n 's/.*DIAMOND_VERSION\[\] = "\(.*\)";/\1/p' "$repo/src/main.c")
 
 if [[ "$format" == deb ]]; then
     build_deps='apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y gcc make git dpkg-dev libssl-dev libsqlite3-dev libpq-dev zlib1g-dev libmariadb-dev libcrypt-dev'
-    install_package='apt-get update && DEBIAN_FRONTEND=noninteractive apt-get upgrade -y && DEBIAN_FRONTEND=noninteractive apt-get install -y --install-recommends /packages/diamond-lang_*.deb'
+    install_package='apt-get update && DEBIAN_FRONTEND=noninteractive apt-get upgrade -y && DEBIAN_FRONTEND=noninteractive apt-get install -y --install-recommends /packages/d6-lang_*.deb'
 else
     build_deps='dnf install -y gcc make git rpm-build openssl-devel sqlite-devel libpq-devel mariadb-connector-c-devel libxcrypt-devel zlib-devel'
-    install_package='dnf upgrade -y && dnf install -y --setopt=install_weak_deps=True /packages/diamond-lang-*.rpm'
+    install_package='dnf upgrade -y && dnf install -y --setopt=install_weak_deps=True /packages/d6-lang-*.rpm'
 fi
 
 out="$repo/build/packages/$format"
@@ -45,3 +45,20 @@ mkdir -p "$out"
         bash /work/packaging/build.sh $format /out"
 "$runtime" run --rm --security-opt label=disable -v "$out:/packages:ro" -v "$repo/packaging:/packaging:ro" "$image" \
     bash -c "set -e; $install_package >/dev/null; bash /packaging/smoke_test.sh $version"
+
+# Until 0.22.0 the package was called diamond-lang. Installing d6-lang over the
+# last release under that name must replace it, not sit beside it. Only the
+# default images match those release files.
+former="https://github.com/diamond-language/diamond/releases/download/v0.22.0"
+if [[ "$format" == deb && "$image" == ubuntu:26.04 ]]; then
+    install_former="apt-get update && apt-get install -y curl && curl -fsSLo /tmp/former.deb $former/diamond-lang_0.22.0-1_amd64.deb && DEBIAN_FRONTEND=noninteractive apt-get upgrade -y && DEBIAN_FRONTEND=noninteractive apt-get install -y --install-recommends /tmp/former.deb"
+    former_gone='! dpkg-query -W -f="\${Status}" diamond-lang 2>/dev/null | grep -q "ok installed"'
+elif [[ "$format" == rpm && "$image" == fedora:44 ]]; then
+    install_former="dnf upgrade -y && dnf install -y --setopt=install_weak_deps=True $former/diamond-lang-0.22.0-1.fc44.x86_64.rpm"
+    former_gone='! rpm -q diamond-lang'
+else
+    exit 0
+fi
+"$runtime" run --rm --security-opt label=disable -v "$out:/packages:ro" -v "$repo/packaging:/packaging:ro" "$image" \
+    bash -c "set -e; $install_former >/dev/null; $install_package >/dev/null; $former_gone
+        bash /packaging/smoke_test.sh $version; echo 'replaced diamond-lang 0.22.0'"
