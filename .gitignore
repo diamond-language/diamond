@@ -11,5 +11,3 @@
 
 # Local verified cut installs used by tests
 /cuts/*/
-__pycache__/
-*.pyc
