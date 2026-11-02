@@ -12,7 +12,7 @@ arel 0.35.3, active_record 0.21.1, graphsql 0.2.3, mjolnir 0.4.0 and registry 0.
 `docs/registry-launch-inventory.json`). `tools/verify_registry_launch.d6` passed for all 20 public
 cuts before and after the upgrade. Startup backfilled `release_details` for all 128 served releases,
 and `scrub.d6` found no bad blobs. `REGISTRY_BLOB_REDIRECT` is not set: the service still sends blobs
-itself, and the host keeps `StateDirectoryMode=0700` until someone enables it (see OPERATIONS.md).
+itself. The upgrade installed the shipped unit (`StateDirectoryMode=0710`), which is harmless while nginx is outside the service group (see OPERATIONS.md).
 
 v0.21.0 (`43b640d06afefc5def1a3c5b2129e778a0296791`) was deployed
 2026-10-31 with `tools/deploy_registry.sh` after a verified snapshot. Before that upgrade,
