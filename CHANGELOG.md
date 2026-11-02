@@ -6,6 +6,8 @@ authoritative fine-grained record.
 
 ## Unreleased
 
+## 0.22.0 — 2026-11-01
+
 ### Added
 
 - `File.chmod(path, mode)` sets a file's permission bits. The sandbox denies it.
