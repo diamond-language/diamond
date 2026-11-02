@@ -21,6 +21,8 @@ authoritative fine-grained record.
 
 ### Fixed
 
+- REPL input longer than the terminal is wide now wraps properly. Each keystroke after the wrap used
+  to repeat the prompt and first row on a new line.
 - A failed `diamond build` from an installed kit now gives the commands that install the compiler
   and development packages. apt and dnf skip those recommendations on a machine behind on updates,
   which left only a linker error to go on.

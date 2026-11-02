@@ -49,13 +49,14 @@ kernel's line discipline via `getline`:
   exact spelling every other REPL with this convention (irb, pry, the
   Python REPL, ...) actually recognizes.
 
-Redrawing is whole-line-from-scratch on every edit (`\r\x1b[K` + prompt +
-buffer + a cursor-repositioning escape), not a diff against the
-previously drawn state. Simpler and always correct, at the cost of a few
-extra bytes written per keystroke. It does not account for the line
-wrapping past the terminal's width — a known, acceptable limitation,
-since the common "long input" case is already handled by multi-line
-continuation (separate physical lines), not one very long single line.
+Each edit redraws the prompt and input from scratch, not as a diff
+against what was drawn before. Input longer than the terminal is wide
+wraps onto further rows: the redraw moves back up to the prompt's row,
+clears to the end of the screen, rewrites everything and puts the cursor
+on the right row and column. The width is read from the terminal on each
+redraw (80 when it can't be read). Two limits remain: a wide character
+such as CJK text counts as one column, and resizing the terminal while a
+wrapped line is on screen can misplace redraws until the next prompt.
 
 CSI (arrow-key and similar) escape sequences are parsed generically —
 parameter bytes collected, then dispatched on the final byte — so any
