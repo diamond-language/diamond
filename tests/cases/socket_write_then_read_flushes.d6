@@ -1,0 +1,19 @@
+# A read sends what was written first, whatever its size: the peer has the request while the reader waits.
+server = TCPServer.listen(0, host: "127.0.0.1")
+client = TCPSocket.connect("127.0.0.1", server.port(), {"read_timeout_ms": 100})
+peer = server.accept()
+
+def request_arrives(client, peer, size: Int) -> String
+  client.write("ping\n")
+  begin
+    client.read(size)
+  rescue e: IOError
+  end
+  peer.gets()
+end
+
+result = [request_arrives(client, peer, 10), request_arrives(client, peer, 4096), request_arrives(client, peer, 65536)]
+client.close()
+peer.close()
+server.close()
+result

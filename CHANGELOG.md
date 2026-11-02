@@ -11,6 +11,8 @@ authoritative fine-grained record.
 - A failed `diamond build` from an installed kit now gives the commands that install the compiler
   and development packages. apt and dnf skip those recommendations on a machine behind on updates,
   which left only a linker error to go on.
+- `write` followed by a large `read(n)` on a socket no longer hangs. The write sat
+  unsent in the buffer while the read waited for the reply.
 
 ## 0.22.0 — 2026-11-01
 
