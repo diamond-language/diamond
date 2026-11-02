@@ -3407,6 +3407,11 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 registers[dest]=join_result;
                 break;
             }
+            case DIAMOND_OP_SEMVER: {
+                ip_slot=ip;const DiamondVmStatus helper_status=outlined_semver(vm,chunk,registers,&ip_slot);ip=ip_slot;
+                VM_PROPAGATE(helper_status);
+                break;
+            }
             case DIAMOND_OP_FILE_PATH: {
                 ip_slot=ip;const DiamondVmStatus helper_status=outlined_file_path(vm,chunk,registers,&ip_slot);ip=ip_slot;
                 VM_PROPAGATE(helper_status);

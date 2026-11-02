@@ -60,6 +60,7 @@ builtin_namespace_calls[]={
     {"BCrypt",parse_bcrypt_call},{"Cipher",parse_cipher_call},
     {"Gzip",parse_gzip_call},{"Base64",parse_base64_call},
     {"SecureRandom",parse_secure_random_call},{"Digest",parse_digest_call},
+    {"SemVer",parse_semver_call},
     {"HMAC",parse_hmac_call},{"ProgramBuilder",parse_program_builder_new_call},
     {"Thread",parse_thread_new_call},{"Channel",parse_channel_new_call},
     {"Supervisor",parse_supervisor_new_call},{"Array",parse_array_new_call},

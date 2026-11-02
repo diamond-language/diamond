@@ -22,7 +22,7 @@
 
 root = File.dirname(__dir__)
 RUNTIME_PATHS = ["src/", "lib/", "reginold/", "Makefile"]
-FACET_PATHS = ["tools/facet.c", "tools/semver.c", "tools/semver.h"]
+FACET_PATHS = ["tools/facet.c", "src/semver.c", "src/semver.h"]
 
 def fail_with(message)
   warn(message)

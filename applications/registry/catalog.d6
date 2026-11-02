@@ -23,14 +23,8 @@ def registry_cut_details(db, api, name)
     versions.push({"id": row["id"], "version": row["version"], "yanked": row["yanked"] == 1, "published_at": row["created_at"],
       "dependencies": JSON.parse(row["dependencies"]), "maintainers": JSON.parse(if row["maintainers"] == nil then "[]" else row["maintainers"] end),
       "sha256": row["sha256"], "size": row["size"]})
-    i = versions.length() - 1
-    while i > 0 && api.before?(versions[i - 1]["version"], versions[i]["version"])
-      previous = versions[i - 1]
-      versions[i - 1] = versions[i]
-      versions[i] = previous
-      i -= 1
-    end
   end
+  versions = versions.sort() do |a, b| SemVer.compare(b["version"], a["version"]) end
   latest = versions.find() do |version| !version["yanked"] end
   if latest == nil then latest = versions[0] end
   details = api.details(latest["id"])
@@ -93,7 +87,7 @@ def registry_catalog(request, db, base, api)
     releases.each() do |release|
       key = "#{release["id"]}"
       current = best[key]
-      if current == nil || (current["yanked"] == 1 && release["yanked"] == 0) || (current["yanked"] == release["yanked"] && api.before?(current["version"], release["version"]))
+      if current == nil || (current["yanked"] == 1 && release["yanked"] == 0) || (current["yanked"] == release["yanked"] && SemVer.compare(current["version"], release["version"]) < 0)
         best[key] = release
       end
     end

@@ -22,6 +22,7 @@
 #include <sys/stat.h>
 #include <time.h>
 #include <unistd.h>
+#include "semver.h"
 
 #ifndef DIAMOND_NO_SQLITE
 #include <sqlite3.h>
@@ -553,6 +554,60 @@ static DiamondVmStatus dir_mkdir_p_helper(DiamondVm *vm,const DiamondString *pat
         return DIAMOND_VM_IO_ERROR;
     }
     return DIAMOND_VM_OK;
+}
+
+/* A String argument of a SemVer method as C text. Embedded NUL is reported through
+ * `has_nul`, since no valid version or range contains one. */
+static bool semver_argument(DiamondVm *vm,DiamondValue value,const DiamondString **text,bool *has_nul) {
+    if(value.kind!=DIAMOND_VALUE_OBJECT||value.as.object->kind!=DIAMOND_OBJECT_STRING) {
+        snprintf(vm->error,sizeof vm->error,"SemVer arguments must be Strings");
+        return false;
+    }
+    *text=(const DiamondString *)value.as.object;
+    *has_nul=strlen((*text)->chars)!=(*text)->length;
+    return true;
+}
+
+static bool semver_parse_argument(DiamondVm *vm,const DiamondString *text,bool has_nul,Semver *out) {
+    if(!has_nul&&semver_parse(text->chars,out))return true;
+    snprintf(vm->error,sizeof vm->error,"invalid version '%.*s'",
+        (int)(text->length>64?64:text->length),text->chars);
+    return false;
+}
+
+/* DIAMOND_OP_SEMVER: the same grammar and precedence facet resolves with. */
+__attribute__((noinline))
+DiamondVmStatus outlined_semver(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t *ip_ref) {
+    size_t ip=*ip_ref;
+    uint16_t dest=0,first_register=0,second_register=0;uint8_t selector=0;
+    READ_SHORT(dest);READ_SHORT(first_register);READ_SHORT(second_register);READ_BYTE(selector);
+    const DiamondString *first=nullptr;
+    bool first_nul=false;
+    if(!semver_argument(vm,registers[first_register],&first,&first_nul))VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+    Semver version;
+    if(selector==DIAMOND_SEMVER_VALID) {
+        registers[dest]=DIAMOND_BOOL(!first_nul&&semver_parse(first->chars,&version));
+        HELPER_DONE;
+    }
+    const DiamondString *second=nullptr;
+    bool second_nul=false;
+    if(!semver_argument(vm,registers[second_register],&second,&second_nul))VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+    if(!semver_parse_argument(vm,first,first_nul,&version))VM_RETURN(DIAMOND_VM_ARITY_ERROR);
+    if(selector==DIAMOND_SEMVER_COMPARE) {
+        Semver other;
+        if(!semver_parse_argument(vm,second,second_nul,&other))VM_RETURN(DIAMOND_VM_ARITY_ERROR);
+        registers[dest]=DIAMOND_INT(semver_compare(&version,&other));
+        HELPER_DONE;
+    }
+    SemverConstraint constraint;
+    if(second_nul||!semver_constraint_parse(second->chars,&constraint)) {
+        snprintf(vm->error,sizeof vm->error,"invalid version range '%.*s'",
+            (int)(second->length>64?64:second->length),second->chars);
+        VM_RETURN(DIAMOND_VM_ARITY_ERROR);
+    }
+    registers[dest]=DIAMOND_BOOL(semver_satisfies(&version,&constraint));
+    HELPER_DONE;
 }
 
 /* DIAMOND_OP_FILE_PATH, moved out of run_chunk's switch (see HELPER_DONE below): the case body is

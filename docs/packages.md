@@ -173,7 +173,7 @@ naming both requesters and their own ranges; mixing an exact ref and a
 `version` constraint for the same cut is also a hard error, except when
 whichever side resolved first happens to already satisfy the other's
 own constraint too — that one is never resolved by backtracking (see
-below). See `tools/semver.h` for the exact range grammar and
+below). See `src/semver.h` for the exact range grammar and
 [`tools/facet_resolve.c`](../tools/facet_resolve.c) for the resolver implementation.
 
 Declaring a dependency here does **not** implicitly `require_cut` it —
@@ -373,7 +373,7 @@ or remove it first, rather than guessing you meant to replace it), and
 rewrites the file. Both validate what they write the same way `facet
 install` would reject it later: for a git dependency exactly one of `--tag`/`--branch`/
 `--commit`/`--version`, and a `--version` value that actually parses as a
-constraint (`tools/semver.h`'s own grammar) — so a mistake is caught
+constraint (`src/semver.h`'s own grammar) — so a mistake is caught
 immediately, not at the next `facet install`.
 
 `facet add` rewrites the **entire** `diamond.cut`, not just the one entry

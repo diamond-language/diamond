@@ -1,0 +1,26 @@
+true
+true
+true
+false
+false
+false
+false
+-1
+1
+0
+-1
+-1
+-1
+["1.2.0-rc.1", "1.2.0", "1.10.0"]
+true
+false
+true
+false
+true
+ArgumentError: invalid version '1.2'
+ArgumentError: invalid version 'nope'
+ArgumentError: invalid version 'nope'
+ArgumentError: invalid version range '^nope'
+TypeError: SemVer arguments must be Strings
+TypeError: SemVer arguments must be Strings
+nil

@@ -545,7 +545,56 @@ def diamond_sort_pick(values: Array, order: Array) -> Array
   result
 end
 
-def enumerable_sort(values: Array) -> Array = diamond_sort_pick(values, diamond_sort_order(values))
+def diamond_sort_compare(callback: Callable[2], left, right) -> Int
+  order = callback(left, right)
+  unless order is Int then raise TypeError.new("sort block must return an Int") end
+  order
+end
+
+# Stable merge sort for a two-argument block: negative keeps left first, positive puts right first.
+def diamond_sort_with(values: Array, callback: Callable[2]) -> Array
+  count = values.length()
+  items = values.dup()
+  width = 1
+  while width < count
+    merged = []
+    start = 0
+    while start < count
+      middle = start + width
+      if middle > count then middle = count end
+      stop = middle + width
+      if stop > count then stop = count end
+      left = start
+      right = middle
+      while left < middle && right < stop
+        if diamond_sort_compare(callback, items[left], items[right]) > 0
+          merged.push(items[right])
+          right += 1
+        else
+          merged.push(items[left])
+          left += 1
+        end
+      end
+      while left < middle
+        merged.push(items[left])
+        left += 1
+      end
+      while right < stop
+        merged.push(items[right])
+        right += 1
+      end
+      start = stop
+    end
+    items = merged
+    width *= 2
+  end
+  items
+end
+
+def enumerable_sort(values: Array, callback: Callable[2] | Nil = nil) -> Array
+  if callback != nil then return diamond_sort_with(values, callback) end
+  diamond_sort_pick(values, diamond_sort_order(values))
+end
 
 # Calls the block once per element, not once per comparison.
 def enumerable_sort_by(values: Array, callback: Callable[1]) -> Array
@@ -921,7 +970,7 @@ module Enumerable
     result
   end
 
-  def sort() -> Array = enumerable_sort(self.to_a())
+  def sort(callback: Callable[2] | Nil = nil) -> Array = enumerable_sort(self.to_a(), callback)
   def sort_by(callback: Callable[1]) -> Array = enumerable_sort_by(self.to_a(), callback)
   def min() = enumerable_min(self.to_a())
   def max() = enumerable_max(self.to_a())

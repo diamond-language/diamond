@@ -465,14 +465,10 @@ test-api: $(BUILD_DIR)/api_invalidation $(BUILD_DIR)/buffer_growth_test $(BUILD_
 	$(BUILD_DIR)/buffer_growth_test
 	$(BUILD_DIR)/aot_write_test
 
-# tools/semver.c is deliberately standalone -- no Diamond compiler/VM
-# dependency at all (see its own header comment), so this doesn't link
-# $(API_SOURCES)/$(REGINOLD_LIB) the way every other tools/tests target
-# above does. -Itools (not folded into the global CPPFLAGS) is scoped to
-# just this one rule since nothing else needs tools/semver.h.
-$(BUILD_DIR)/semver_test: tests/semver_test.c tools/semver.c tools/semver.h
+# src/semver.c has no compiler or VM dependency, so this test links only it.
+$(BUILD_DIR)/semver_test: tests/semver_test.c src/semver.c src/semver.h
 	@mkdir -p $(BUILD_DIR)
-	$(CC) $(CPPFLAGS) -Itools $(CFLAGS_COMMON) $(CFLAGS_DEBUG) tools/semver.c $< -o $@
+	$(CC) $(CPPFLAGS) $(CFLAGS_COMMON) $(CFLAGS_DEBUG) src/semver.c $< -o $@
 
 test-semver: $(BUILD_DIR)/semver_test
 	$(BUILD_DIR)/semver_test
@@ -540,9 +536,9 @@ FACET_SOURCES := tools/facet.c tools/facet_resolve.c tools/facet_package.c tools
 # facet_new.c #embeds these.
 FACET_TEMPLATES := $(wildcard tools/new_templates/*/*)
 
-$(BUILD_DIR)/facet: $(FACET_SOURCES) $(FACET_TEMPLATES) tools/facet_internal.h tools/semver.c tools/semver.h $(API_DBG_OBJECTS) $(REGINOLD_LIB) | $(PRELUDE_BIN)
+$(BUILD_DIR)/facet: $(FACET_SOURCES) $(FACET_TEMPLATES) tools/facet_internal.h $(API_DBG_OBJECTS) $(REGINOLD_LIB) | $(PRELUDE_BIN)
 	@mkdir -p $(BUILD_DIR)
-	$(CC) $(CPPFLAGS) $(CFLAGS_COMMON) $(CFLAGS_DEBUG) $(API_DBG_OBJECTS) tools/semver.c $(FACET_SOURCES) $(LDLIBS) -o $@
+	$(CC) $(CPPFLAGS) $(CFLAGS_COMMON) $(CFLAGS_DEBUG) $(API_DBG_OBJECTS) $(FACET_SOURCES) $(LDLIBS) -o $@
 
 facet: $(BUILD_DIR)/facet
 

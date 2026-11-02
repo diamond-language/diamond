@@ -71,7 +71,8 @@ Array's Enumerable-style methods: `.each`/`.select`/`.map`/`.reduce`/
 `.each_with_index`/`.sum`, and `.take(n)`/`.drop(n)`/`.flat_map`/
 `.partition`/`.group_by`/`.zip(other)`/`.each_slice(n)`/`.each_cons(n)`/
 `.tally`. `sort` and `sort_by` are stable merge sorts (O(n log n), and
-`sort_by` calls its block once per element). Arrays compare element by
+`sort_by` calls its block once per element). `sort() do |a, b| ... end` orders by a block
+that returns a negative, zero or positive Int. Arrays compare element by
 element and then by length when sorting or taking a min/max, so
 `words.sort_by() do |w| [w.length(), w] end` orders by length, then
 alphabetically. Calling `.lazy()` on an Array, Range, or other Enumerable
@@ -433,6 +434,25 @@ returns the same `n` random bytes hex-encoded, as a `2*n`-character
 enough to overflow the underlying `int`-sized call into OpenSSL).
 Suited to session/remember-me/password-reset tokens and similar —
 `SecureRandom.hex(32)` for a 256-bit token as a 64-character hex string.
+
+`SemVer` compares and checks version strings, with the same grammar and precedence
+`facet` resolves with. A version may start with `v`, as a git tag often does.
+
+- `SemVer.valid?(text: String) -> Bool`
+- `SemVer.compare(a: String, b: String) -> Int` is -1, 0 or 1. Numeric prerelease
+  identifiers compare as numbers, a prerelease sorts before its release, and build
+  metadata is ignored.
+- `SemVer.satisfies?(version: String, range: String) -> Bool` takes the ranges
+  `diamond.cut` does (`^1.2.0`, `~1.2.0`, `>=1.0.0 <2.0.0`). On 0.x a caret range
+  doesn't cross a minor.
+
+`compare` and `satisfies?` raise `ArgumentError` for a malformed version or range.
+
+```ruby
+["1.10.0", "1.2.0", "1.2.0-rc.1"].sort() do |a, b| SemVer.compare(a, b) end
+# ["1.2.0-rc.1", "1.2.0", "1.10.0"]
+SemVer.satisfies?("0.4.1", "^0.4.0") # true
+```
 
 `Digest.sha256(data: String) -> String` returns the lowercase hexadecimal
 SHA-256 digest of the string's raw bytes. `HMAC.sha256(key: String, data:

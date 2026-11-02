@@ -1204,6 +1204,15 @@ static bool disassemble_io_and_conversions(DisassemblyWalk *walk) {
                 checked_register_range(chunk,stream,read_operand(chunk,offset+3),
                     chunk->code[offset+5]==1?7:6,&valid),chunk->code[offset+5]);
             offset+=6;break;
+        case DIAMOND_OP_SEMVER: {
+            if(!require_bytes(stream,chunk,offset,8)){valid=false;offset=chunk->code_count;break;}
+            fprintf(stream,"%-18s r%u, r%u, r%u, %u\n","SEMVER",
+                checked_register(chunk,stream,read_operand(chunk,offset+1),&valid),
+                checked_register(chunk,stream,read_operand(chunk,offset+3),&valid),
+                checked_register(chunk,stream,read_operand(chunk,offset+5),&valid),
+                (unsigned)chunk->code[offset+7]);
+            offset+=8;break;
+        }
         case DIAMOND_OP_FILE_PATH: {
             if(!require_bytes(stream,chunk,offset,8)){valid=false;offset=chunk->code_count;break;}
             fprintf(stream,"%-18s r%u, r%u, r%u, %s\n","FILE_PATH",

@@ -2658,6 +2658,52 @@ uint16_t parse_crypto_call(Compiler *compiler,bool keyed) {
     return parse_digest_call(compiler,keyed,is_sha1);
 }
 
+/* `SemVer.valid?(text)`, `SemVer.compare(a, b)` and `SemVer.satisfies?(version, range)`. */
+uint16_t parse_semver_call(Compiler *compiler) {
+    advance_token(compiler); /* consume '.' */
+    const bool is_identifier=compiler->current.kind==DIAMOND_TOKEN_IDENTIFIER;
+    const bool is_valid=is_identifier&&name_equals(compiler,"valid?",compiler->current.span,false);
+    const bool is_compare=is_identifier&&name_equals(compiler,"compare",compiler->current.span,false);
+    const bool is_satisfies=is_identifier&&name_equals(compiler,"satisfies?",compiler->current.span,false);
+    if(!is_valid&&!is_compare&&!is_satisfies) {
+        fail(compiler,compiler->current.span,"expected 'valid?', 'compare' or 'satisfies?' after 'SemVer'");
+        return 0;
+    }
+    advance_token(compiler);
+    if(compiler->current.kind!=DIAMOND_TOKEN_LEFT_PAREN) {
+        fail(compiler,compiler->current.span,"expected '(' after SemVer method name");
+        return 0;
+    }
+    advance_token(compiler);skip_newlines(compiler);
+    const uint16_t first=parse_expression(compiler);
+    skip_newlines(compiler);
+    uint16_t second=0;
+    if(is_valid) {
+        second=allocate_register(compiler);
+        emit_instruction(compiler,DIAMOND_OP_NIL,second,0,0,1);
+    } else {
+        if(compiler->current.kind!=DIAMOND_TOKEN_COMMA) {
+            fail(compiler,compiler->current.span,"expected ',' between SemVer arguments");
+            return 0;
+        }
+        advance_token(compiler);skip_newlines(compiler);
+        second=parse_expression(compiler);
+        skip_newlines(compiler);
+    }
+    if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN) {
+        fail(compiler,compiler->current.span,"expected ')' after SemVer arguments");
+        return 0;
+    }
+    advance_token(compiler);
+    const uint16_t dest=allocate_register(compiler);
+    emit_opcode(compiler,DIAMOND_OP_SEMVER);
+    emit_register(compiler,dest);emit_register(compiler,first);emit_register(compiler,second);
+    emit_byte(compiler,(uint8_t)(is_valid?DIAMOND_SEMVER_VALID:
+        is_compare?DIAMOND_SEMVER_COMPARE:DIAMOND_SEMVER_SATISFIES));
+    compiler->known_types[dest]=is_compare?DIAMOND_TYPE_INT:DIAMOND_TYPE_BOOL;
+    return dest;
+}
+
 const DiamondFunction *constructor_signature(const Compiler *compiler,
         int class_index) {
     while(class_index>=0&&(size_t)class_index<compiler->program->class_count) {
