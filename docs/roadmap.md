@@ -270,9 +270,10 @@ Current coverage and the full inventory of checked platform assumptions:
   string into one capture-free method for `define_method` and is not a general `eval`);
 - a JIT without representative profiling evidence;
 - portability claims without continuous testing on the claimed platform;
-- runtime class *synthesis* (decided 2026-09): a class's identity is a `uint8_t
-  class_index` sharing the byte space the static type system uses, so new classes at
-  runtime would need a second, untyped object-model tier. Not worth it without a
+- runtime class *synthesis* (decided 2026-09): a class's identity is a 16-bit
+  `class_index` inside the type-tag space the static type system uses, from a table sized at
+  compile time (`DIAMOND_MAX_CLASSES`), so new classes at runtime would need a second, untyped
+  object-model tier. Not worth it without a
   type-tag redesign no concrete use case justifies; see
   [design](internal/design.md)'s `DIAMOND_VALUE_CLASS` section.
 

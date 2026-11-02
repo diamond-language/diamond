@@ -1006,7 +1006,7 @@ there defines the specific method directly.
 
 A `def self.x` method declared directly inside a class (not a module) also
 now gets real virtual dispatch for `self.foo(...)` written in its own body,
-via a new lightweight `DIAMOND_VALUE_CLASS` value kind: a 1-byte
+via a new lightweight `DIAMOND_VALUE_CLASS` value kind: a 16-bit
 `class_index` (into the ambient chunk's `classes[]`) carried directly in
 `DiamondValue`'s existing union, alongside `bool`/`int64_t`/etc. -- no struct
 growth, and no GC changes at all, since it owns no heap pointer for the
@@ -1024,7 +1024,7 @@ Mechanically, a class-owned singleton method now gets the same
 implicit-self treatment an ordinary instance method already has:
 `compile_definition` reserves register 0 and bumps `arity`/`required_arity`
 by one, and (new) gives the function a real `owner_class` (previously
-always `UINT8_MAX`, "not a method," for every singleton method regardless of
+always `DIAMOND_OWNER_NONE`, "not a method," for every singleton method regardless of
 class or module). An external call with a literal class name
 (`Author.find(db, 1)`) still resolves its *target function* exactly as
 before -- walking the literal class's own `singleton_methods` then its
