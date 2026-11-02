@@ -63,7 +63,8 @@ rescue error: IOError
   rejected = error.message() == "stored blob does not match digest"
 end
 unless rejected then raise "corrupt blob was returned" end
-if store.contains?(digest) then raise "corrupt blob reported present" end
+if store.intact?(digest) then raise "corrupt blob reported intact" end
+unless store.contains?(digest) then raise "corrupt blob reported absent" end
 "registry rejection and integrity tests passed"
 ')"
 [[ "$output" == "registry rejection and integrity tests passed" ]]
@@ -131,6 +132,8 @@ count')"
 echo "publication failure cleanup tests passed"
 
 export REGISTRY_PUBLISH_ROOT="$test_project/publish"
+export DIAMOND_BIN="$diamond"
+export REGISTRY_SCRUB="$source_root/applications/registry/scrub.d6"
 export REGISTRY_FACET="$source_root/build/facet"
 mkdir -p "$REGISTRY_PUBLISH_ROOT"/{blobs,staging,publish_test/lib}
 printf '%s\n' '{"name":"publish_test","version":"1.0.0","summary":"Publish test","license":"MIT","maintainers":[{"name":"Test","contact":"test@example.com"}],"dependencies":{"logger":"^0.1.0"}}' >"$REGISTRY_PUBLISH_ROOT/publish_test/diamond.cut"

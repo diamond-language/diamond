@@ -78,7 +78,8 @@ class Drill
     Harness.mkdir_p(@work + "/data/blobs")
     Dir.mkdir(@work + "/data/staging")
     @env = {"REGISTRY_ROOT": @work + "/data", "REGISTRY_FACET": @facet, "REGISTRY_PORT": @backend_port.to_s(),
-            "REGISTRY_BASE": "/registry", "REGISTRY_OPERATOR": "staging-test", "DIAMOND_NO_CACHE": "1"}
+            "REGISTRY_BASE": "/registry", "REGISTRY_BLOB_REDIRECT": "/_blobs/", "REGISTRY_OPERATOR": "staging-test",
+            "DIAMOND_NO_CACHE": "1"}
     run(["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "1",
       "-subj", "/CN=localhost", "-addext", "subjectAltName=DNS:localhost",
       "-keyout", @work + "/key.pem", "-out", @cert], nil, nil)
@@ -93,6 +94,7 @@ class Drill
       ["/var/log/nginx/registry-access.log", @work + "/access.log"],
       ["/var/log/nginx/registry-error.log", @work + "/error.log"],
       ["127.0.0.1:18120", "127.0.0.1:#{@backend_port}"],
+      ["/var/lib/diamond-registry/blobs/", @work + "/data/blobs/"],
     ].each() do |pair|
       check(template.include?(pair[0]), "the nginx template no longer contains #{pair[0].inspect()}")
       template = template.split(pair[0]).join(pair[1])
@@ -152,6 +154,21 @@ class Drill
     run([@facet, "update"], @env, consumer)
     loaded = run([@diamond, "-e", "require_cut \"canary\"\nputs(canary())\nexit(0)"], @env, consumer)
     check(loaded.stdout().strip() == "nginx staging passed", "the canary did not load: #{loaded.stdout()}")
+  end
+
+  # The install above already fetched this blob through nginx. Check how it came back.
+  def blob_redirect()
+    release = JSON.parse(self.request("/v1/cuts/canary/versions/1.0.0", "GET", nil, {})[2])
+    digest = release["archive"]["sha256"]
+    answer = self.request("/v1/blobs/sha256/" + digest, "GET", nil, {})
+    check(answer[0] == 200 && Digest.sha256(answer[2]) == digest, "the blob through nginx: #{answer[0]}")
+    check(answer[1]["x-accel-redirect"] == nil, "the internal redirect reached the client")
+    check(answer[1]["cache-control"] == "no-store", "blob cache policy #{answer[1]["cache-control"]}")
+    # The service itself sends no bytes, so what the client got came from nginx.
+    backend = Harness.http(@backend_port, "GET", "/registry/v1/blobs/sha256/" + digest, nil)
+    check(backend[0] == 200 && backend[1] == "", "the service sent the blob itself: #{backend[1].length()} bytes")
+    direct = Harness.https("localhost", @proxy_port, @cert, "GET", "/_blobs/" + digest, nil, {})
+    check(direct[0] == 404, "the internal blob location answered a client: #{direct[0]}")
   end
 
   def limits()
@@ -259,6 +276,7 @@ class Drill
     self.setup()
     self.start()
     self.publish_and_install()
+    self.blob_redirect()
     self.limits()
     self.seed_rehearsal() if ENV["REGISTRY_REHEARSE_SEED"] == "1"
     self.access_log()

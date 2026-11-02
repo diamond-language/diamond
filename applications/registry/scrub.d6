@@ -1,0 +1,23 @@
+# Checks every served blob against its recorded digest and size. Reads the
+# database and blob files only, so it can run while the service is up:
+#
+#   REGISTRY_ROOT=/var/lib/diamond-registry diamond scrub.d6
+#
+# Exits 1 and names each bad blob. A proxy serving blobs directly doesn't hash
+# them, so this is what notices damage on disk before a client does.
+root = ENV["REGISTRY_ROOT"]
+if root == nil then raise "REGISTRY_ROOT is required" end
+
+db = SQLite3.open(File.join(root, "registry.db"))
+rows = db.query("SELECT DISTINCT sha256, size FROM releases WHERE takedown_reason IS NULL")
+db.close()
+
+bad = []
+rows.each() do |row|
+  path = File.join(root, "blobs", row["sha256"])
+  intact = File.file?(path) && File.size(path) == row["size"] && File.sha256(path) == row["sha256"]
+  unless intact then bad.push(row["sha256"]) end
+end
+
+puts(JSON.stringify({"checked": rows.length(), "bad": bad}))
+if bad.length() > 0 then exit(1) end

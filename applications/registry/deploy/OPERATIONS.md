@@ -31,6 +31,41 @@ Proxy access JSON logs omit URLs, headers, client addresses, and bodies. Nginx
 error logs can include request URLs; restrict access and retention, never put
 credentials in URLs, and do not enable debug logging on live traffic.
 
+## Serving blobs from nginx
+
+By default the service reads each blob into memory, hashes it and sends it. Set
+`REGISTRY_BLOB_REDIRECT=/_blobs/` to have nginx send the file instead: the service
+still checks the digest, the takedown state and the file size, then answers with an
+`X-Accel-Redirect` to the internal location in `nginx.conf.example`. The service no
+longer hashes what is served, so damage on disk reaches a client unless the scrub
+below finds it first; `facet` still rejects a blob whose digest is wrong.
+
+To enable it on a host:
+
+1. Install the shipped `registry.service` (`StateDirectoryMode=0710`, so a group member
+   can enter the state directory but not list it) and add the `location /_blobs/` block.
+2. Give nginx the group: `usermod -aG diamond-registry www-data`.
+3. Add the setting to `registry.env`, then `systemctl daemon-reload`, restart
+   `diamond-registry` and restart nginx, which only picks up a new group on a restart.
+   The service makes `blobs/` mode 0750 and every blob 0640 when it starts.
+4. Check it: `curl -sD- -o /tmp/blob https://cuts.dilang.tech/v1/blobs/sha256/DIGEST`
+   returns 200 without an `X-Accel-Redirect` header, `sha256sum /tmp/blob` matches, and
+   `/_blobs/DIGEST` returns 404.
+
+To go back, remove the setting and restart the service. Modes can stay as they are.
+
+### Scrubbing blobs
+
+`scrub.d6` hashes every served blob and compares its digest and size with the database.
+It prints `{"checked": N, "bad": [...]}` and exits 1 when anything is wrong. It only reads,
+so it can run beside the service. Run it before taking a backup, and on a timer when blobs
+are served from nginx:
+
+```bash
+cd /opt/diamond/applications/registry
+sudo -u diamond-registry REGISTRY_ROOT=/var/lib/diamond-registry /opt/diamond/build/diamond scrub.d6
+```
+
 ## Monitoring
 
 Run the probe from outside the service host:

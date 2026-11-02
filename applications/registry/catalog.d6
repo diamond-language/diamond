@@ -10,43 +10,17 @@ def registry_catalog_page(file) =
 
 def registry_cut_name?(name) = Regexp.new("\\A[a-z][a-z0-9_]{0,63}\\z").match?(name)
 
-# Summary, license, links, and README of one immutable archive, read through
-# the trusted verifier. Cached per digest for the life of the worker.
-def registry_archive_details(context, digest)
-  cache = context["registry_archive_details"]
-  if cache == nil
-    cache = {}
-    context["registry_archive_details"] = cache
-  end
-  cached = cache[digest]
-  if cached != nil then return cached end
-  path = context["registry_store"].path(digest)
-  verifier = ENV["REGISTRY_FACET"]
-  details = {"readme": nil}
-  verified = Process.run([verifier, "verify", path, "--sha256", digest, "--json"])
-  if verified.success?()
-    metadata = JSON.parse(verified.stdout())
-    ["summary", "license", "homepage", "source", "documentation", "issues"].each() do |key|
-      if metadata[key] is String then details[key] = metadata[key] end
-    end
-  end
-  readme = Process.run([verifier, "verify", path, "--sha256", digest, "--readme"])
-  if readme.success?() then details["readme"] = readme.stdout() end
-  cache[digest] = details
-  details
-end
-
 # Every served release of one cut, newest first, plus the newest unyanked
-# release's (or newest release's) archive details for the show page.
-def registry_cut_details(context, db, api, name)
+# release's (or newest release's) details for the show page.
+def registry_cut_details(db, api, name)
   headers = {"Content-Type": "application/json", "Cache-Control": "no-store"}
   not_found = [404, headers, JSON.stringify({"protocol": 1, "error": "not_found", "message": "not_found"})]
   unless registry_cut_name?(name) then return not_found end
-  rows = db.query("SELECT releases.version, releases.dependencies, releases.maintainers, releases.yanked, releases.sha256, releases.size, releases.created_at FROM releases JOIN cuts ON cuts.id = releases.cut_id WHERE cuts.name = ? AND releases.takedown_reason IS NULL", [name])
+  rows = db.query("SELECT releases.id, releases.version, releases.dependencies, releases.maintainers, releases.yanked, releases.sha256, releases.size, releases.created_at FROM releases JOIN cuts ON cuts.id = releases.cut_id WHERE cuts.name = ? AND releases.takedown_reason IS NULL", [name])
   if rows.length() == 0 then return not_found end
   versions = []
   rows.each() do |row|
-    versions.push({"version": row["version"], "yanked": row["yanked"] == 1, "published_at": row["created_at"],
+    versions.push({"id": row["id"], "version": row["version"], "yanked": row["yanked"] == 1, "published_at": row["created_at"],
       "dependencies": JSON.parse(row["dependencies"]), "maintainers": JSON.parse(if row["maintainers"] == nil then "[]" else row["maintainers"] end),
       "sha256": row["sha256"], "size": row["size"]})
     i = versions.length() - 1
@@ -59,13 +33,14 @@ def registry_cut_details(context, db, api, name)
   end
   latest = versions.find() do |version| !version["yanked"] end
   if latest == nil then latest = versions[0] end
+  details = api.details(latest["id"])
+  versions.each() do |version| version.delete("id") end
   body = {"protocol": 1, "name": name, "latest": latest["version"], "versions": versions}
-  details = registry_archive_details(context, latest["sha256"])
   details.keys().each() do |key| body[key] = details[key] end
   [200, headers, JSON.stringify(body)]
 end
 
-def registry_catalog(request, db, base, api, context = {})
+def registry_catalog(request, db, base, api)
   path = request["path"]
   if request["method"] != "GET" then return nil end
   if path == base && base != ""
@@ -87,7 +62,7 @@ def registry_catalog(request, db, base, api, context = {})
   details_prefix = "#{base}/catalog/"
   if path.start_with?(details_prefix) && path.end_with?(".json")
     name = path.slice(details_prefix.length(), path.length() - details_prefix.length() - 5)
-    return registry_cut_details(context, db, api, name)
+    return registry_cut_details(db, api, name)
   end
   if path != "#{base}/catalog.json" && !path.start_with?("#{base}/catalog.json?after=") then return nil end
   after = 9223372036854775807

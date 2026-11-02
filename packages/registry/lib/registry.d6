@@ -1,7 +1,9 @@
-require_cut "active_record"
+require_cut "mjolnir"
+require "./registry/errors"
 require "./registry/schema"
 require "./registry/blob_store"
-
+require "./registry/archive"
+require "./registry/records"
 require "./registry/publisher"
 require "./registry/administration"
 require "./registry/api"

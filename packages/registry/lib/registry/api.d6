@@ -1,11 +1,29 @@
 module Registry
   class API
-    def initialize(db, store, publisher, base: String = "")
+    # `blob_redirect` is a proxy's internal location for blob files, such as "/_blobs/". With it,
+    # the proxy sends the bytes and this service only decides whether they may be served.
+    def initialize(db, store, publisher, base: String = "", blob_redirect: String = "")
       @db = db
       @store = store
       @publisher = publisher
       @base = base
+      @blob_redirect = blob_redirect
+      @records = Records.new(db)
       @administration = Administration.new(db)
+    end
+
+    def failure_status(failure: Failure) -> Int
+      case failure
+      when Unauthorized then 401
+      when Forbidden then 403
+      when NotFound then 404
+      when InvalidRequest then 400
+      when InvalidArchive then 422
+      when PayloadTooLarge then 413
+      when ReleaseExists then 409
+      when IdempotencyConflict then 409
+      when LastOwner then 409
+      end
     end
 
     def json(status, body)
@@ -100,12 +118,11 @@ module Registry
     end
 
     def index(name)
-      cuts = @db.query("SELECT id FROM cuts WHERE name = ?", [name])
-      if cuts.length() == 0 then return self.error(404, "not_found") end
-      rows = @db.query("SELECT version, yanked FROM releases WHERE cut_id = ? AND takedown_reason IS NULL", [cuts[0]["id"]])
+      cut = @records.cut(name)
+      if cut == nil then return self.error(404, "not_found") end
       keyed = []
-      rows.each() do |row|
-        keyed.push([self.version_key(row["version"]), {"version": row["version"], "yanked": row["yanked"] == 1}])
+      @records.served_releases(cut.id()).each() do |release|
+        keyed.push([self.version_key(release.version()), {"version": release.version(), "yanked": release.yanked?()}])
       end
       versions = []
       self.merge_sort(keyed).each() do |pair|
@@ -115,20 +132,28 @@ module Registry
     end
 
     def release(name, version)
-      rows = @db.query("SELECT releases.* FROM releases JOIN cuts ON cuts.id = releases.cut_id WHERE cuts.name = ? AND version = ? AND takedown_reason IS NULL", [name, version])
-      if rows.length() == 0 then return self.error(404, "not_found") end
-      row = rows[0]
-      self.json(200, {"protocol": 1, "name": name, "version": version, "dependencies": JSON.parse(row["dependencies"]), "yanked": row["yanked"] == 1,
-        "archive": {"path": "/v1/blobs/sha256/#{row["sha256"]}", "sha256": row["sha256"], "size": row["size"]}})
+      found = @records.served_release(name, version)
+      if found == nil then return self.error(404, "not_found") end
+      self.json(200, {"protocol": 1, "name": name, "version": version, "dependencies": JSON.parse(found.dependencies()), "yanked": found.yanked?(),
+        "archive": {"path": "/v1/blobs/sha256/#{found.sha256()}", "sha256": found.sha256(), "size": found.size()}})
     end
+
+    def details(release_id: Int) -> Hash = @records.details(release_id)
 
     def blob(digest)
       BlobStore.validate_digest(digest)
-      rows = @db.query("SELECT size FROM releases WHERE sha256 = ? AND takedown_reason IS NULL", [digest])
-      if rows.length() == 0 then return self.error(404, "not_found") end
+      found = @records.served_blob(digest)
+      if found == nil then return self.error(404, "not_found") end
+      headers = {"Content-Type": "application/octet-stream", "Cache-Control": "no-store"}
+      if @blob_redirect != ""
+        # The proxy doesn't hash what it sends: applications/registry/scrub.d6 covers that, and facet checks the digest.
+        if File.size(@store.path(digest)) != found.size() then raise IOError.new("blob size mismatch") end
+        headers["X-Accel-Redirect"] = @blob_redirect + digest
+        return [200, headers, ""]
+      end
       bytes = @store.read(digest)
-      if bytes.length() != rows[0]["size"] then raise IOError.new("blob size mismatch") end
-      [200, {"Content-Type": "application/octet-stream", "Cache-Control": "no-store"}, bytes]
+      if bytes.length() != found.size() then raise IOError.new("blob size mismatch") end
+      [200, headers, bytes]
     end
 
     def upload(name, request)
@@ -164,23 +189,23 @@ module Registry
 
     def bearer(request)
       authorization = request["headers"]["authorization"]
-      if authorization == nil || !authorization.start_with?("Bearer ") then raise RuntimeError.new("unauthorized") end
+      if authorization == nil || !authorization.start_with?("Bearer ") then raise Unauthorized.new() end
       authorization.slice(7, authorization.length() - 7)
     end
 
     def owner_request(name, action, request)
       token = self.bearer(request)
       if action == "list" then return self.json(200, @administration.owners(name, token)) end
-      if request["headers"]["content-type"] != "application/json" || request["body"].length() > 4096 then raise ArgumentError.new("invalid_request") end
+      if request["headers"]["content-type"] != "application/json" || request["body"].length() > 4096 then raise InvalidRequest.new() end
       begin
         payload = JSON.parse(request["body"])
       rescue error: StandardError
-        raise ArgumentError.new("invalid_request")
+        raise InvalidRequest.new()
       end
-      unless payload is Hash then raise ArgumentError.new("invalid_request") end
-      unless payload["owner"] is String then raise ArgumentError.new("invalid_request") end
-      unless payload["reason"] is String then raise ArgumentError.new("invalid_request") end
-      if payload.length() != 2 then raise ArgumentError.new("invalid_request") end
+      unless payload is Hash then raise InvalidRequest.new() end
+      unless payload["owner"] is String then raise InvalidRequest.new() end
+      unless payload["reason"] is String then raise InvalidRequest.new() end
+      if payload.length() != 2 then raise InvalidRequest.new() end
       self.json(200, @administration.change_owner(name, payload["owner"], action, payload["reason"], token))
     end
 
@@ -188,17 +213,17 @@ module Registry
       token = self.bearer(request)
       parameters = {"after": 0, "limit": 50}
       parts = path.split("?")
-      if parts.length() > 2 then raise ArgumentError.new("invalid_request") end
+      if parts.length() > 2 then raise InvalidRequest.new() end
       if parts.length() == 2
         seen = []
         parts[1].split("&").each() do |pair|
           values = pair.split("=")
-          if values.length() != 2 then raise ArgumentError.new("invalid_request") end
+          if values.length() != 2 then raise InvalidRequest.new() end
           key = values[0]
-          if !["after", "limit"].include?(key) || seen.include?(key) then raise ArgumentError.new("invalid_request") end
+          if !["after", "limit"].include?(key) || seen.include?(key) then raise InvalidRequest.new() end
           seen.push(key)
           value = values[1].to_i()
-          if "#{value}" != values[1] || value > 9223372036854775807 then raise ArgumentError.new("invalid_request") end
+          if "#{value}" != values[1] || value > 9223372036854775807 then raise InvalidRequest.new() end
           parameters[key] = value
         end
       end
@@ -241,18 +266,10 @@ module Registry
           end
         end
         self.error(404, "not_found")
+      rescue error: Failure
+        self.error(self.failure_status(error), error.message())
       rescue error: ArgumentError
-        code = error.message()
-        if code == "payload_too_large" then return self.error(413, code) end
-        if code == "invalid_archive" then return self.error(422, code) end
         self.error(400, "invalid_request")
-      rescue error: RuntimeError
-        code = error.message()
-        if code == "unauthorized" then return self.error(401, code) end
-        if code == "forbidden" then return self.error(403, code) end
-        if code == "not_found" then return self.error(404, code) end
-        if code == "release_exists" || code == "idempotency_conflict" || code == "last_owner" then return self.error(409, code) end
-        self.error(500, "internal_error")
       rescue error: StandardError
         self.error(500, "internal_error")
       end

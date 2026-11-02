@@ -312,6 +312,7 @@ Dir.delete("backup")               # rmdir: an empty directory only
   source must be a regular file.
 - `File.sha256(path)` is the lowercase hex SHA-256 of the file, read in chunks so a large file never has to fit in memory (`Digest.sha256(File.read(path))` gives the same digest).
 - `File.mode(path)` is the permission bits as an `Int` (`File.mode(p) & 0o077 == 0` for a private file).
+- `File.chmod(path, mode)` sets the permission bits and returns the path. It follows a symlink, and raises `IOError` when the file is missing or not yours.
 - `File.size` reads the size through a symlink and raises `IOError` when the
   path cannot be read. `File.file?` and `File.symlink?` read as `false`, not an
   error, for a missing path, like `File.exist?`. `File.file?(p) &&
