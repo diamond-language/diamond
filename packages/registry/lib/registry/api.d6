@@ -36,98 +36,11 @@ module Registry
       response
     end
 
-    def numeric?(text)
-      if text.length() == 0 then return false end
-      chars = text.chars()
-      index = 0
-      while index < chars.length()
-        code = chars[index].ord()
-        if code < 48 || code > 57 then return false end
-        index += 1
-      end
-      true
-    end
-
-    # Parses a canonical version once into [major, minor, patch, prerelease
-    # identifiers or nil], so sorting does not re-split strings per comparison.
-    def version_key(version)
-      parts = version.split("-")
-      core = parts[0].split(".")
-      pre = nil
-      if parts.length() > 1 then pre = version.slice(parts[0].length() + 1, version.length()).split(".") end
-      [core[0].to_i(), core[1].to_i(), core[2].to_i(), pre]
-    end
-
-    # SemVer precedence on parsed keys.
-    def key_before?(a, b)
-      i = 0
-      while i < 3
-        if a[i] != b[i] then return a[i] < b[i] end
-        i += 1
-      end
-      left = a[3]
-      right = b[3]
-      if left == nil then return false end
-      if right == nil then return true end
-      i = 0
-      while i < left.length() && i < right.length()
-        if left[i] != right[i]
-          an = self.numeric?(left[i])
-          bn = self.numeric?(right[i])
-          if an && bn then return left[i].to_i() < right[i].to_i() end
-          if an != bn then return an end
-          return left[i] < right[i]
-        end
-        i += 1
-      end
-      left.length() < right.length()
-    end
-
-    # SemVer precedence for the canonical versions emitted by facet verify.
-    def before?(left, right)
-      self.key_before?(self.version_key(left), self.version_key(right))
-    end
-
-    # Stable merge sort of [key, entry] pairs, O(n log n) comparisons.
-    def merge_sort(items)
-      if items.length() <= 1 then return items end
-      middle = items.length() / 2
-      left = self.merge_sort(items.slice(0, middle))
-      right = self.merge_sort(items.slice(middle, items.length() - middle))
-      merged = []
-      i = 0
-      j = 0
-      while i < left.length() && j < right.length()
-        if self.key_before?(right[j][0], left[i][0])
-          merged.push(right[j])
-          j += 1
-        else
-          merged.push(left[i])
-          i += 1
-        end
-      end
-      while i < left.length()
-        merged.push(left[i])
-        i += 1
-      end
-      while j < right.length()
-        merged.push(right[j])
-        j += 1
-      end
-      merged
-    end
-
     def index(name)
       cut = @records.cut(name)
       if cut == nil then return self.error(404, "not_found") end
-      keyed = []
-      @records.served_releases(cut.id()).each() do |release|
-        keyed.push([self.version_key(release.version()), {"version": release.version(), "yanked": release.yanked?()}])
-      end
-      versions = []
-      self.merge_sort(keyed).each() do |pair|
-        versions.push(pair[1])
-      end
+      releases = @records.served_releases(cut.id()).sort() do |a, b| SemVer.compare(a.version(), b.version()) end
+      versions = releases.map() do |release| {"version": release.version(), "yanked": release.yanked?()} end
       self.json(200, {"protocol": 1, "versions": versions})
     end
 
