@@ -2,7 +2,7 @@
 
 A Markdown-to-HTML converter for a practical subset: headings, paragraphs,
 bullet and numbered lists, fenced code, nested blockquotes, rules, and
-inline `code`, **strong**, *emphasis*, and links. It's a tour of Diamond's
+inline `code`, **strong**, *emphasis*, and links. It's a tour of d6's
 string and `Regexp` handling.
 
 ```text
@@ -14,8 +14,8 @@ $ d6 markdown.d6 --toc testdata/sample.md
     <li><a href="#things-to-try">Things to try</a></li>
 </ul>
 </nav>
-<h1 id="field-notes-diamond-friends">Field Notes: Diamond &amp; Friends</h1>
-<p>Diamond is a <em>gradually typed</em> language with <strong>Ruby-like</strong> syntax. ...
+<h1 id="field-notes-diamond-friends">Field Notes: d6 &amp; Friends</h1>
+<p>d6 is a <em>gradually typed</em> language with <strong>Ruby-like</strong> syntax. ...
 ```
 
 `testdata/sample.html` has the complete output.

@@ -1,8 +1,8 @@
 {
   "name": "diamond-language",
-  "displayName": "Diamond",
-  "description": "Syntax highlighting and language server diagnostics/hover/go-to-definition/outline for the Diamond programming language",
-  "version": "0.6.0",
+  "displayName": "d6",
+  "description": "Syntax highlighting and language server diagnostics/hover/go-to-definition/outline for the d6 programming language",
+  "version": "0.7.0",
   "engines": {
     "vscode": "^1.75.0"
   },
@@ -13,13 +13,13 @@
     "languages": [
       {
         "id": "diamond",
-        "aliases": ["Diamond", "diamond"],
+        "aliases": ["d6", "diamond"],
         "extensions": [".d6"],
         "configuration": "./language-configuration.json"
       },
       {
         "id": "diamond-template",
-        "aliases": ["Diamond Template"],
+        "aliases": ["d6 Template"],
         "extensions": [".div"]
       }
     ],
@@ -39,30 +39,30 @@
       }
     ],
     "configuration": {
-      "title": "Diamond",
+      "title": "d6",
       "properties": {
         "diamond.languageServerPath": {
           "type": "string",
-          "default": "diamond-lsp",
-          "description": "Path to the diamond-lsp binary (built via `make lsp`). Defaults to looking it up on PATH."
+          "default": "d6-lsp",
+          "description": "Path to the d6-lsp binary (built via `make lsp`). Defaults to looking it up on PATH."
         },
         "diamond.debugAdapterPath": {
           "type": "string",
-          "default": "diamond-dap",
-          "description": "Path to the diamond-dap binary (built via `make dap`). Defaults to looking it up on PATH."
+          "default": "d6-dap",
+          "description": "Path to the d6-dap binary (built via `make dap`). Defaults to looking it up on PATH."
         }
       }
     },
     "commands": [
       {
         "command": "diamond.restartLanguageServer",
-        "title": "Diamond: Restart Language Server"
+        "title": "d6: Restart Language Server"
       }
     ],
     "debuggers": [
       {
         "type": "diamond",
-        "label": "Diamond",
+        "label": "d6",
         "languages": ["diamond"],
         "configurationAttributes": {
           "launch": {
@@ -70,7 +70,7 @@
             "properties": {
               "program": {
                 "type": "string",
-                "description": "Absolute path to the Diamond (.d6) script to run.",
+                "description": "Absolute path to the d6 (.d6) script to run.",
                 "default": "${file}"
               },
               "args": {
@@ -91,18 +91,18 @@
           {
             "type": "diamond",
             "request": "launch",
-            "name": "Debug Diamond File",
+            "name": "Debug d6 File",
             "program": "${file}"
           }
         ],
         "configurationSnippets": [
           {
-            "label": "Diamond: Launch",
-            "description": "Launch and debug the currently open Diamond file",
+            "label": "d6: Launch",
+            "description": "Launch and debug the currently open d6 file",
             "body": {
               "type": "diamond",
               "request": "launch",
-              "name": "Debug Diamond File",
+              "name": "Debug d6 File",
               "program": "^\"${1:\\${file\\}}\""
             }
           }

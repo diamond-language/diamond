@@ -1,9 +1,9 @@
-# Diamond
+# d6
 
 [![Version](https://img.shields.io/github/v/tag/diamond-language/diamond?label=version&color=blue)](https://github.com/diamond-language/diamond/tags)
 [![Build status](https://github.com/diamond-language/diamond/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/diamond-language/diamond/actions/workflows/ci.yml)
 
-Diamond is an object-oriented language with gradual, checked static typing,
+d6, formerly Diamond, is an object-oriented language with gradual, checked static typing,
 compiled to a register-bytecode VM written in C23 (with an optional x86-64
 JIT). It builds to one standalone executable, and runs in your browser at
 [getdiamond.codes](https://getdiamond.codes).
@@ -64,12 +64,12 @@ package ecosystem are its own.
 
 ## Build and run
 
-New to Diamond? The [getting-started guide](docs/getting-started.md) goes from
+New to d6? The [getting-started guide](docs/getting-started.md) goes from
 installing it to a tested project built into a standalone executable. Each
 [release](https://github.com/diamond-language/diamond/releases) has `.deb`
 (Ubuntu 26.04) and `.rpm` (Fedora 44) packages for x86-64.
 
-`.d6` is the default and preferred extension for Diamond source files; compiled bytecode
+`.d6` is the default and preferred extension for d6 source files; compiled bytecode
 caches use `.d6c`. Backward compatibility with `.di` source files is retained
 for existing projects and published cuts. Use `.d6` for new files to avoid
 colliding with D interface files and to get automatic editor recognition.
@@ -104,12 +104,12 @@ sandbox.
 ## Repository layout
 
 - `src/`: loader, lexer, compiler, bytecode, VM, GC, and native primitives
-- `lib/core.d6`: embedded Diamond prelude
-- `selfhost/`: Diamond lexer/compiler and bootstrap programs
+- `lib/core.d6`: embedded d6 prelude
+- `selfhost/`: d6 lexer/compiler and bootstrap programs
 - `tests/`: executable cases and native/differential harnesses
 - `lsp/`: language server; `dap/`: Debug Adapter Protocol server
 - `editors/vscode/`: editor extension
-- `packages/`: independently consumable Diamond libraries (HTTP, Rack-style
+- `packages/`: independently consumable d6 libraries (HTTP, Rack-style
   middleware, Arel-style SQL builder, ActiveRecord-style ORM, GraphQL, ...)
 - [`examples/`](examples/README.md), `applications/`: runnable sample apps, from a two-table CRUD
   app and a WebSocket chat room to a standalone log-summary CLI and a
@@ -153,7 +153,7 @@ sandbox.
 
 Implementation notes and maintainer tooling (VM/GC internals, fuzzing) live
 under [`docs/internal/`](docs/internal/README.md) -- not needed to write or
-run Diamond programs, but useful background if you're contributing.
+run d6 programs, but useful background if you're contributing.
 
 ## Contributing
 

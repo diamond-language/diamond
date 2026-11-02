@@ -8,6 +8,10 @@ authoritative fine-grained record.
 
 ### Changed
 
+- **Diamond is now d6.** The `.deb` and `.rpm` packages are called `d6-lang` and replace an installed
+  `diamond-lang`. The guides, cut READMEs, registry pages and the VS Code extension say d6; the
+  extension's language id, `diamond.*` settings and `diamond` debug type are unchanged, so existing
+  settings and `launch.json` files keep working.
 - **The commands are now `d6`, `d6-lsp` and `d6-dap`.** `make install` and the packages keep
   `diamond`, `diamond-lsp` and `diamond-dap` as links to them, and a checkout builds both names, so
   existing scripts keep working. `--version`, usage text and error messages say `d6`, so anything

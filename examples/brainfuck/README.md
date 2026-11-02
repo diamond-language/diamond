@@ -1,7 +1,7 @@
 # examples/brainfuck
 
 A Brainfuck interpreter whose main loop is a self-recursive tail call, and a
-companion `depth.d6` that measures which recursion shapes Diamond optimizes.
+companion `depth.d6` that measures which recursion shapes d6 optimizes.
 
 ```text
 $ d6 brainfuck.d6 testdata/hello.bf --steps
@@ -11,7 +11,7 @@ Hello World!
 
 Every Brainfuck instruction is one more call of the same function, so even
 that hello world is 906 calls deep, and `testdata/busy.bf` (two nested
-255-iteration loops) is 326,765. Ordinary recursion in Diamond stops at 95
+255-iteration loops) is 326,765. Ordinary recursion in d6 stops at 95
 calls. This program never gets near it, because a function's own tail call
 reuses its frame.
 

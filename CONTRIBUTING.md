@@ -1,6 +1,6 @@
 # Contributing
 
-Diamond is a personal research language (see [README.md](README.md)). This
+d6 is a personal research language (see [README.md](README.md)). This
 file documents how work actually gets done in this repository -- for
 future-me as much as anyone else -- not a generic open-source intake process.
 
@@ -27,7 +27,7 @@ Required system dependencies:
 - POSIX threads and `ucontext`, provided by the target Linux environment;
 - On x86_64: a CPU supporting the `x86-64-v3` microarchitecture level
   (AVX2, BMI2, FMA -- roughly Intel Haswell/2013 or AMD Excavator/2015
-  onward). `make`/`make release` default to `-march=native`; Diamond's
+  onward). `make`/`make release` default to `-march=native`; d6's
   arbitrary-precision integers (`src/bignum.c`) lean on BMI2/ADX heavily
   enough that going without them is roughly a 7x slowdown, not a
   rounding error.
@@ -141,7 +141,7 @@ suites start HTTP and WebSocket servers, all bound only to
 targets outside any OS/container or agent sandbox that denies socket
 creation, binding, or loopback connections. An error such as
 `TCPServer.listen ... Operation not permitted` indicates outer sandbox
-policy, not a Diamond test failure -- independent of Diamond's own
+policy, not a d6 test failure -- independent of d6's own
 `--sandbox` mode, which the suite exercises separately.
 
 `make sanitize`/`test-sanitize` run with LeakSanitizer enabled
@@ -153,7 +153,7 @@ already-set `ASAN_OPTIONS` always wins over the Makefile's own default).
 ### Packages
 
 `packaging/build.sh deb` (on Ubuntu, with `dpkg-dev`) or `packaging/build.sh rpm`
-(on Fedora, with `rpm-build`) builds a `diamond-lang` package into
+(on Fedora, with `rpm-build`) builds a `d6-lang` package into
 `build/packages`. It holds `d6`, `facet`, `d6-lsp`, `d6-dap` and the AOT
 kit under `/usr`. The script runs `make clean` first and builds for `x86-64-v3` instead of
 the Makefile's `-march=native`, because the package runs on other machines. The runtime
@@ -188,7 +188,7 @@ not cosmetic -- see how often existing comments cite a specific empirical
 result, a specific prior bug, or a specific alternative considered and
 rejected.
 
-Diamond-language style (`lib/`, `packages/`, `selfhost/`) follows
+d6-language style (`lib/`, `packages/`, `selfhost/`) follows
 [docs/internal/di-modernization-audit.md](docs/internal/di-modernization-audit.md)'s
 findings: prefer receiver syntax (`values.map(f)`) over the equivalent
 free function (`array_map(values, f)`) at any call site being touched

@@ -26,7 +26,7 @@ CI is slow (about 15 minutes) because it runs two distros times two compilers ti
 
 - `make` builds `build/diamond`; `make facet` builds the package manager. Tests: `tests/cases/NAME.d6` with `.expected`, `.expected_error`, `.expected_contains` or `.expected_lastline`, optional `.env`/`.flags`; `tests/run.sh` holds the shell-driven tests; most packages have `packages/NAME/test.sh` and a `make test-NAME-package` target (Arel is covered by `tests/cases/arel_*` and `make test-database-dialects`).
 - Measure performance on a `make release` build with `perf stat -e instructions:u`, since wall time moves with the laptop's power mode. Run each program once first so a cold bytecode cache does not skew the count, check that every variant printed the same valid output, and remember the JIT is opt-in (`DIAMOND_JIT=1`).
-- Do not add Python to build or test paths; port such checks to Diamond, shell or C.
+- Do not add Python to build or test paths; port such checks to d6, shell or C.
 - Kill a stale `./pheint-server` before `make test-integration` (it holds port 18200 and the TLS echo test then fails).
 - Write tests so they do not pin source line numbers. A few do on purpose (backtrace and parse-error positions: `tests/run.sh`, `tests/parser_diff.sh`, `tests/multifile`, `tests/parser_*`, `jit_*backtrace*`); leave those files' line layout alone.
 - `tools/test_sanitize.sh` retries the sanitizer suite once for harness flakes but fails at once on any sanitizer report. Do not weaken that.

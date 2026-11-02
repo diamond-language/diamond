@@ -87,7 +87,7 @@ d6 cache clear               # every .d6c under the current directory
 d6 cache clear --dry-run     # list what would go, remove nothing
 ```
 
-It removes only files that start with a Diamond cache's magic bytes, so an unrelated file
+It removes only files that start with a d6 cache's magic bytes, so an unrelated file
 that happens to end in `.d6c` is left alone, and it never follows symbolic links or enters
 `.git`. A script whose cache was removed just recompiles and writes a new one on its next
 run, so clearing is always safe.

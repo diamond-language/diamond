@@ -1,6 +1,6 @@
 # active_record
 
-Repositories, associations, validation, migrations, and an optional model layer for SQL-backed Diamond applications.
+Repositories, associations, validation, migrations, and an optional model layer for SQL-backed d6 applications.
 
 ## Installation
 
@@ -163,7 +163,7 @@ Chain methods (each returns a new `Relation`): `where(hash_or_predicate)`, `orde
 
 ## Model
 
-A model is a class that subclasses `ActiveRecord::Model` and fills in a handful of explicit hooks. Diamond has no class-body macros, so there is a small amount of per-model boilerplate. It is the same shape for every model:
+A model is a class that subclasses `ActiveRecord::Model` and fills in a handful of explicit hooks. d6 has no class-body macros, so there is a small amount of per-model boilerplate. It is the same shape for every model:
 
 ```diamond
 class Game < ActiveRecord::Model

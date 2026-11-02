@@ -72,11 +72,11 @@ can't be opened.
   body, which calls `render_section` again for any section nested inside
   — as many levels deep as the template actually nests, with no
   size limit baked into the renderer itself.
-- **A JSON value is Diamond's own value**: `JSON.parse` already produces
+- **A JSON value is d6's own value**: `JSON.parse` already produces
   the `Hash`/`Array`/`String`/`Float`/`Bool`/`Nil` this needs, so the
   whole context-lookup layer (`lib/render.d6`) is under 20 lines, and
   `template_truthy?`'s three cases are exactly JSON's own falsy shapes
-  plus Diamond's own empty-`Array` convention.
+  plus d6's own empty-`Array` convention.
 - **`gsub` needs a `Regexp`, even for a literal string**: `template_
   escape_html` builds one per character it replaces, rather than a
   string-literal `gsub` overload that doesn't exist.

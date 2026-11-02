@@ -92,7 +92,7 @@ client. Configure the reverse proxy's limits and deadlines consistently.
 
 Run `make test-registry-http` from the repository root for the live integration
 suite. It uses OpenSSL, real curl, a temporary CA trusted only by the
-test, a local HTTPS proxy, and a running Diamond service. It publishes cuts with
+test, a local HTTPS proxy, and a running d6 service. It publishes cuts with
 transitive dependencies, resolves and executes installed code, reinstalls a
 yanked locked release, and checks takedown visibility.
 
@@ -155,12 +155,12 @@ fields and authorization rules.
 
 ## Backup and recovery
 
-Use the Diamond tool (`backup.d6`, run with the registry's own `diamond`) with trusted
+Use the d6 tool (`backup.d6`, run with the registry's own `diamond`) with trusted
 local source and destination parents. Run as the storage owner. Both commands require a **new destination**:
 
 ```sh
-diamond backup.d6 backup /var/lib/diamond-registry /srv/backups/registry-20260923
-diamond backup.d6 restore /srv/backups/registry-20260923 /srv/recovery/registry
+d6 backup.d6 backup /var/lib/diamond-registry /srv/backups/registry-20260923
+d6 backup.d6 restore /srv/backups/registry-20260923 /srv/recovery/registry
 ```
 
 Backup may run while the service publishes. `VACUUM INTO` captures a

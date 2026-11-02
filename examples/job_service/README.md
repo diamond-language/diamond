@@ -15,7 +15,7 @@ build/d6 examples/job_service/service.d6 18090 /tmp/diamond-jobs.sqlite
 ```
 
 The demo listens on loopback and checks Host/Origin for a single-user local
-session. All browser assets are served by Diamond. An optional third argument
+session. All browser assets are served by d6. An optional third argument
 selects the asset directory (default `examples/job_service/web`, relative to
 the working directory).
 

@@ -1,6 +1,6 @@
 # graphql
 
-Define GraphQL schemas and execute queries in Diamond.
+Define GraphQL schemas and execute queries in d6.
 
 ## Installation
 

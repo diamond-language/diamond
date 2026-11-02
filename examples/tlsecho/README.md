@@ -1,7 +1,7 @@
 # examples/tlsecho
 
 A small line service over TLS, and a client that will not talk to a server it
-can't verify. Together they exercise most of Diamond's TLS surface:
+can't verify. Together they exercise most of d6's TLS surface:
 certificate verification, a caller-supplied trust anchor, mutual TLS with
 client certificates, ALPN negotiation, session resumption, and binary data
 framed behind a length on the same connection as text.

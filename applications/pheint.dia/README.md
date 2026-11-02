@@ -1,6 +1,6 @@
 # pheint.dia
 
-A GraphQL-only Diamond API built on Gremlin, Rack, Dials, `graphql`, and the
+A GraphQL-only d6 API built on Gremlin, Rack, Dials, `graphql`, and the
 structured logger. The browser application will be a separate React frontend;
 this project does not render HTML or own frontend assets.
 

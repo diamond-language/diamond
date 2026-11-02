@@ -38,7 +38,7 @@ mode)` opens via `sqlite3_open_v2` instead, with `mode` a `String`: `"r"`
 (read-only, error if missing), `"rw"` (read-write, error if missing), or
 `"rwc"` (read-write, created if missing — spelling out `sqlite3_open`'s
 own default explicitly). An unrecognized or non-`String` `mode` raises
-`TypeError` (a Diamond-level call-shape mistake, checked at runtime since
+`TypeError` (a d6-level call-shape mistake, checked at runtime since
 `mode` is an arbitrary expression, not a compile-time literal) — this is
 the same "string mode, runtime-validated" shape `File.open`'s own `mode`
 argument already uses, not a new mechanism. A failed open raises a
@@ -56,7 +56,7 @@ any other operation) and the same "sweeping an unreached-but-still-open
 handle closes it as a safety net" GC behavior. `#close()` closes via
 `sqlite3_close_v2`, not plain `sqlite3_close`: a `Statement` prepared
 from this connection (`#prepare`, below) is an independent GC object
-that can outlive the connection's own Diamond-level reachability, and
+that can outlive the connection's own d6-level reachability, and
 plain `sqlite3_close` fails (leaving the real OS-level connection open
 and leaked, since this call site never checked its return code) with
 any unfinalized statement still outstanding. `_v2` never fails: it
@@ -64,7 +64,7 @@ closes immediately if nothing is outstanding, or defers the actual close
 until every associated `Statement` is itself finalized — sqlite3's own
 documented idiom for exactly this ownership shape, and the reason a
 `Statement` can keep being used (see below) after its owning connection
-is already Diamond-level `#close()`d.
+is already d6-level `#close()`d.
 
 `SQLite3.open` is recognized in the compiler the same way `File.open`
 is, compiling to a single `DIAMOND_OP_SQLITE3_OPEN dest, path, mode`
@@ -99,24 +99,24 @@ methods use:
 *positionally* to a statement's `?` placeholders (1-indexed, sqlite3's
 own convention), or a `Hash` bound *by name* to `:name` placeholders
 (`sqlite3_bind_parameter_index`, looked up with the `:` sigil prepended
-to each Diamond `String` key — only the `:name` spelling is recognized
-at the Diamond level, not `@name`/`$name`, matching the bare-name-key
+to each d6 `String` key — only the `:name` spelling is recognized
+at the d6 level, not `@name`/`$name`, matching the bare-name-key
 convention most host-language sqlite3 drivers already use). Either form
 is the injection-safe way to include a value in a query; never
 interpolate a value directly into the SQL string. In both forms, a
 parameter-count mismatch raises `ArgumentError`; for named binds, a Hash
 key with no matching `:name` placeholder in the statement also raises
 `ArgumentError`, and a non-`String` Hash key raises `TypeError`. An
-unsupported Diamond value anywhere in `params` (anything but
+unsupported d6 value anywhere in `params` (anything but
 `Int`/`Float`/`String`/`Bool`/`Nil`) raises `TypeError`. Anything other
 than `Array`/`Hash`/omitted for `params` itself is `TypeError`. Bind/
 column type mapping:
 
-| Diamond → sqlite3 (`params`) | sqlite3 → Diamond (`query` results) |
+| d6 → sqlite3 (`params`) | sqlite3 → d6 (`query` results) |
 |---|---|
 | `Int` → `sqlite3_bind_int64` | `INTEGER` → `Int` |
 | `Float` → `sqlite3_bind_double` | `FLOAT` → `Float` |
-| `String` → `sqlite3_bind_text` | `TEXT`/`BLOB` → `String` (a Diamond `String` is already a raw byte buffer, so a blob's raw bytes need no separate representation) |
+| `String` → `sqlite3_bind_text` | `TEXT`/`BLOB` → `String` (a d6 `String` is already a raw byte buffer, so a blob's raw bytes need no separate representation) |
 | `Bool` → bound as `Int` 0/1 | `NULL` → `Nil` |
 | `Nil` → `sqlite3_bind_null` | |
 
@@ -152,7 +152,7 @@ A `Statement` holds no back-reference to its owning `SQLite3` connection
 value (`sqlite3_db_handle(stmt)` recovers the real `sqlite3*` for error
 messages when needed) — its lifetime is independent, per the `#close()`
 `_v2` note above: preparing a statement, letting the `SQLite3` connection
-value itself go out of Diamond-level scope (or explicitly `#close()`ing
+value itself go out of d6-level scope (or explicitly `#close()`ing
 it) while the `Statement` is still reachable and in use, is well-defined
 and worked out via `sqlite3_close_v2`'s deferred-close semantics, not
 merely untested.
@@ -213,7 +213,7 @@ same mechanism `SQLite3`'s own methods use:
 `params`, when given, is an `Array` bound *positionally* — but unlike
 `SQLite3`, which binds directly to sqlite3's own native `?` placeholders,
 Postgres's C API (`PQexecParams`) requires numbered `$1`/`$2`/...
-placeholders. `SQLite3`'s `?` spelling is kept at the Diamond level anyway,
+placeholders. `SQLite3`'s `?` spelling is kept at the d6 level anyway,
 for API consistency between the two drivers and so either is a drop-in
 target for the same `#query(sql, params)` contract (see
 [`packages/arel/README.md`](../packages/arel/README.md)): the driver
@@ -223,12 +223,12 @@ standard SQL escaped quote). A `?` used outside a string literal always
 counts as a placeholder — Postgres's own JSONB "key exists" `?` operator,
 for instance, isn't distinguishable from one here and isn't usable through
 the params-array call form. A parameter-count mismatch raises
-`ArgumentError`; an unsupported Diamond value in `params` (anything but
+`ArgumentError`; an unsupported d6 value in `params` (anything but
 `Int`/`Float`/`String`/`Bool`/`Nil` — notably including a bignum-promoted
 `Int`, matching `SQLite3`'s own same restriction) raises `TypeError`. Bind/
 column type mapping:
 
-| Diamond → Postgres (`params`, text format) | Postgres → Diamond (`query` results, by OID) |
+| d6 → Postgres (`params`, text format) | Postgres → d6 (`query` results, by OID) |
 |---|---|
 | `Int` → decimal text | `int2`/`int4`/`int8` → `Int` |
 | `Float` → `%.17g`, or `Infinity`/`-Infinity`/`NaN` | `float4`/`float8`/`numeric` → `Float` (lossy for a `numeric` outside `Float` precision) |
@@ -316,11 +316,11 @@ prepared-statement parameter binding — MySQL's own placeholder spelling is
 already `?`, the same as `SQLite3`'s, so (unlike `PostgreSQL`) no
 translation step is needed. A parameter-count mismatch (checked against
 `mysql_stmt_param_count` after preparing) raises `ArgumentError`; an
-unsupported Diamond value in `params` (anything but
+unsupported d6 value in `params` (anything but
 `Int`/`Float`/`String`/`Bool`/`Nil`, matching both other drivers' same
 restriction) raises `TypeError`. Bind/column type mapping:
 
-| Diamond → MySQL (`params`, prepared-statement binary protocol) | MySQL → Diamond (`query` results, by field type) |
+| d6 → MySQL (`params`, prepared-statement binary protocol) | MySQL → d6 (`query` results, by field type) |
 |---|---|
 | `Int` → `MYSQL_TYPE_LONGLONG` | `TINY`/`SHORT`/`LONG`/`LONGLONG`/`INT24`/`YEAR` → `Int` |
 | `Float` → `MYSQL_TYPE_DOUBLE` | `FLOAT`/`DOUBLE`/`DECIMAL`/`NEWDECIMAL` → `Float` |

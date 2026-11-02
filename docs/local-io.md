@@ -165,7 +165,7 @@ A `File` value is a new GC-managed heap object kind
 (`DIAMOND_OBJECT_FILE`), a thin wrapper around a `FILE *` — the same
 shape as `Fiber`'s `DiamondFiberHandle` around a `DiamondFiber *`.
 Unlike `Fiber`, nothing inside a `DiamondFileHandle` references another
-Diamond value, so `mark_object` needs no dedicated branch for it; sweeping
+d6 value, so `mark_object` needs no dedicated branch for it; sweeping
 an unreached handle whose stream is still open calls `fclose` on it as a
 safety net, the same role sweep-time cleanup plays for an unclosed
 `Fiber`'s native stack.

@@ -80,7 +80,7 @@ Instance methods on the result, all ordinary `.method()` calls:
   feeds it data.
 - Fully blocking/synchronous — no way to run a child in the background,
   poll it, or kill it early (`Process.spawn`, below, is exactly that).
-  A long-running or hung child blocks the calling Diamond program for as
+  A long-running or hung child blocks the calling d6 program for as
   long as it runs.
 - A trapped `Signal` (see `Signal.trap` above) does not get to run while
   a `Process.run` call is blocked waiting on the child — it runs once the
@@ -176,7 +176,7 @@ waiting for exit:
   it with a non-blocking `waitpid` if it has already exited (so it
   doesn't sit around as a zombie forever), but never blocks the sweep
   waiting for a still-running child — that child is left running,
-  detached from any Diamond-level handle from that point on, the same
+  detached from any d6-level handle from that point on, the same
   way a shell backgrounding a job and then exiting leaves it running.
 
 ## What's deliberately out of scope so far
@@ -185,13 +185,13 @@ waiting for exit:
   line per argument) is not supported — exactly one argument, matching
   the narrowest useful slice.
 - **File mode validation**: `File.open` passes `mode` straight through
-  to `fopen` with no Diamond-level checking.
+  to `fopen` with no d6-level checking.
 - **Transactions as a dedicated *native* API**: no `.transaction { ... }`-
   style block helper built into `SQLite3`/`PostgreSQL`/`MySQL` themselves
   — `db.execute("BEGIN")`/`"COMMIT"`/`"ROLLBACK"` already work today
   through plain SQL, and `packages/active_record`'s
   `ActiveRecord::Transaction.run`/`.run_nested` already builds exactly
-  this convenience layer in pure Diamond code on top of it (including
+  this convenience layer in pure d6 code on top of it (including
   `SAVEPOINT`-based nesting), so there's no native gap here to close.
 - **Named timezones and a separate `Date`-only type**: no named IANA timezone
   selection (`Time.parse` and `.localtime` support explicit fixed UTC offsets;

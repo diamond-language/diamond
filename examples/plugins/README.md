@@ -1,10 +1,10 @@
 # examples/plugins
 
-A host that runs untrusted Diamond scripts as sandboxed plugins, each in its
+A host that runs untrusted d6 scripts as sandboxed plugins, each in its
 own subprocess, with the host deciding per plugin what it's allowed to touch.
 
 ```text
-$ d6 host.d6 $(which diamond)
+$ d6 host.d6 $(which d6)
 wordcount
   ok             words=9 vowels=11 longest=quick
 peek (untrusted)
