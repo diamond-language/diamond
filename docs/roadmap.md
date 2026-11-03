@@ -23,6 +23,10 @@ The user-facing name becomes **d6**, which remains a reference to Diamond. The n
 leans into the dice: rewriting in d6 is a saving throw.
 
 - **Logo:** the site still uses the gem mark; a dice mark is the owner's call.
+- **Brand capitalization (low priority):** the brand is **D6**, capitalized: the site's headings
+  and page titles, the README title, the logo wordmark and the GitHub release titles
+  (`packaging/publish_release.sh` still titles them "Diamond X.Y.Z"). Commands, file names and
+  running text in the guides stay lowercase `d6`.
 - **GitHub:** the org becomes `roll1d6` or `rolld6` (not yet chosen). Rename it last.
 - **Domain:** to be chosen later. `cuts.dilang.tech` stays as the registry address.
 - **Unchanged:** the **cut** and **facet** names, and `DIAMOND_` constants, environment
