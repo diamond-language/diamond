@@ -1,0 +1,60 @@
+# `if value`, `unless value`, ternaries, `&&` and trailing modifiers narrow a
+# `T | Nil` local the same way a `!= nil` guard does.
+def find(id: Int) -> String | Nil
+  id > 0 ? "Ada" : nil
+end
+
+def greet(name: String) -> String = "hello, #{name}"
+
+def block_if(id: Int) -> String
+  name = find(id)
+  if name
+    greet(name)
+  else
+    "nobody"
+  end
+end
+
+def early_return(id: Int) -> String
+  name = find(id)
+  return "nobody" unless name
+  greet(name)
+end
+
+def modifier(id: Int) -> String
+  name = find(id)
+  return greet(name) if name
+  "nobody"
+end
+
+def ternary(id: Int) -> String
+  name = find(id)
+  name ? greet(name) : "nobody"
+end
+
+def conjunction(id: Int) -> String | Nil
+  name = find(id)
+  name && greet(name)
+end
+
+def flag(value: Bool | Nil) -> String
+  if value
+    "set"
+  else
+    "unset"
+  end
+end
+
+puts(block_if(1))
+puts(block_if(0))
+puts(early_return(1))
+puts(early_return(0))
+puts(modifier(1))
+puts(modifier(0))
+puts(ternary(1))
+puts(ternary(0))
+p(conjunction(1))
+p(conjunction(0))
+puts(flag(true))
+puts(flag(false))
+puts(flag(nil))

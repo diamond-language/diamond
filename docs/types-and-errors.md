@@ -357,6 +357,15 @@ A one-line guard that exits narrows everything after it:
 `break`, `next`, `redo`, and `retry` guards, and for the block form of
 `if`.
 
+A plain truthiness test narrows too. Only `nil` and `false` are falsy, so
+for `name: String | Nil`, `if name` sees a `String` in its body and `Nil`
+in its `else`. That holds for `unless name`, `return "none" unless name`,
+`name ? greet(name) : "nobody"`, `name && greet(name)`, and the trailing
+`greet(name) if name`. A `Bool` member stays in both views, since `Bool`
+covers both `true` and `false`. A trailing modifier's or ternary's guard
+narrows only its own body or branches; the local has its declared type
+again on the next line.
+
 Native values can be named too: `Time`, `Fiber`, `Channel`, `Thread`,
 `Supervisor`, `File`, `Socket`, `Listener`, `UDPSocket`, `TLSSocket`,
 `Regexp`, `Tensor`, `SQLite3`, `Statement`, `PostgreSQL`, `MySQL`,

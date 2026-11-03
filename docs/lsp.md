@@ -176,11 +176,12 @@ search over a real (if scoped) lexical symbol table:
     and reassignment restore their own facts; a nullable or mixed primitive/class
     local does not silently drop the unresolved alternatives. Truthiness guards
     (`if pet`, `unless pet`, negation, and `return unless pet`) also publish
-    editor-only branch facts. Nil is removed from the truthy view; Bool stays
+    branch facts. Nil is removed from the truthy view; Bool stays
     in both views because it includes true and false. The falsey view retains
     only Nil and Bool, so a mixed `Pet | Bool | Nil` does not resolve as Pet
-    inside `if pet`. These guards do not alter checked compiler types or return
-    checks. An imported factory
+    inside `if pet`. On a declared type these are checked compiler facts, as
+    with a `!= nil` guard (see docs/types-and-errors.md); on an inferred one
+    they stay editor-only. An imported factory
     such as `def make_pets() = {"name": Pet.new()}` needs no return annotation:
     `pet = make_pets()["name"]` retains `Pet | Nil` for the editor, and the
     explicit nil guard resolves its non-nil receiver. Hash literals can also
@@ -189,12 +190,13 @@ search over a real (if scoped) lexical symbol table:
     types or remove runtime return checks. Unchanged non-nil/nil branch views
     rejoin the original nullable editor graph, so repeated guards still work;
     reassignment, unknown paths, and tracked alias writes discard stale graphs.
-    Short-circuit expressions also publish editor-only facts while compiling
+    Short-circuit expressions also publish facts while compiling
     the right operand: `pet && pet.bark()` uses the truthy view, and
     `pet == nil || pet.bark()` uses the non-nil view. Nested expressions follow
     the same rules. The surrounding facts are restored afterward; tracked
     writes discard invalidated graphs instead of restoring stale proofs.
-    Checked compiler types and return checks are unchanged.
+    As with branch guards, a declared type gets checked facts for the right
+    operand and an inferred one only editor facts.
     Indexing an inferred Array call result, directly or through a local, also
     preserves its element graph when assigned to another local, including
     repeated indexing through nested Arrays. These facts stay editor-only;
