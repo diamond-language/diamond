@@ -24,6 +24,7 @@
  * (register-index-0-based) body wrote into those slots. */
 typedef struct EnclosingScope {
     DiamondFunction *function;
+    size_t capture_record;
     Local locals[DIAMOND_MAX_LOCALS];
     size_t local_count;
     uint16_t next_register;
@@ -66,6 +67,11 @@ typedef struct EnclosingScope {
 
 /* False (after reporting the error) when the register facts cannot be saved. */
 static bool enclosing_scope_save(Compiler *compiler,EnclosingScope *scope) {
+    /* A nested block or def captures every local of this scope by
+     * register, so for a block being discovered they all count as used. */
+    note_capture_use(compiler,SIZE_MAX);
+    scope->capture_record=compiler->capture_record;
+    compiler->capture_record=SIZE_MAX;
     scope->function=compiler->function;
     scope->local_count=compiler->local_count;
     for(size_t index=0;index<scope->local_count;index++)
@@ -147,6 +153,7 @@ static void enclosing_scope_restore(Compiler *compiler,EnclosingScope *scope,
     }
     compiler->function = scope->function;
     compiler->begin_depth=scope->begin_depth;
+    compiler->capture_record=scope->capture_record;
     compiler->local_count = scope->local_count;
     for (size_t index = 0; index < scope->local_count; index++) {
         compiler->locals[index] = scope->locals[index];
@@ -219,8 +226,9 @@ static void enclosing_scope_restore(Compiler *compiler,EnclosingScope *scope,
  * `captured_fact_registers[i]` records the cell register for enclosing local i so that
  * enclosing_scope_restore can hand the facts the body ends with back to the enclosing scope. */
 static void bind_captured_cells(Compiler *compiler,const EnclosingScope *scope,
-        uint16_t *captured_fact_registers) {
+        uint16_t *captured_fact_registers,const BlockCaptureUse *use) {
     for(size_t i=0;i<compiler->enclosing_local_count;i++) {
+        if(use!=nullptr&&(i>=256||(use->used[i/64]>>(i%64)&1u)==0))continue;
         if(find_local(compiler,compiler->enclosing_locals[i].name)>=0)continue;
         if(compiler->local_count==DIAMOND_MAX_LOCALS) {
             fail(compiler,compiler->enclosing_locals[i].name,"too many lexical bindings");break;
@@ -229,6 +237,7 @@ static void bind_captured_cells(Compiler *compiler,const EnclosingScope *scope,
         emit_instruction(compiler,DIAMOND_OP_GET_CAPTURE_CELL,cell,(uint8_t)i,0,2);
         compiler->locals[compiler->local_count++]=(Local){
             .name=compiler->enclosing_locals[i].name,.reg=cell,.captured=true,.bound_cell=true,
+            .capture_index=(uint8_t)i,
             .alias_identity=compiler->enclosing_locals[i].alias_identity};
         captured_fact_registers[i]=cell;
         const uint16_t source=compiler->enclosing_locals[i].reg;
@@ -273,6 +282,28 @@ static size_t append_inferred_type_set(DiamondFunction *function,uint16_t type) 
     for(size_t parameter=0;parameter<16;parameter++)
         set->members[0].callable_parameter_sets[parameter]=DIAMOND_NO_TYPE_SET;
     return index;
+}
+
+/* The capture-use record for the block `function` (see BlockCaptureUse):
+ * opened and made current in the discovery pass, looked up in the real one.
+ * nullptr binds every capture, as in the discovery pass itself, in debug
+ * mode (every statement's breakpoint check reads every local's register),
+ * and for a block the discovery pass saw with a different set of
+ * enclosing locals. */
+static const BlockCaptureUse *block_capture_use(Compiler *compiler,
+        const DiamondFunction *function) {
+    if(compiler->capture_uses==nullptr||compiler->debug_mode||compiler->failed)
+        return nullptr;
+    const size_t start=function->declaration_start;
+    if(compiler->discovery_pass) {
+        if(open_block_capture_use(compiler->capture_uses,start,
+               compiler->enclosing_local_count))
+            compiler->capture_record=start;
+        return nullptr;
+    }
+    const BlockCaptureUse *use=find_block_capture_use(compiler->capture_uses,start);
+    if(use==nullptr||use->enclosing_count!=compiler->enclosing_local_count)return nullptr;
+    return use;
 }
 
 /* Parses a block's `|x, y|` parameters, if it has any: bare identifiers, each given the type the
@@ -631,9 +662,13 @@ uint16_t compile_block(Compiler *compiler) {
     /* Eager capture materialization: every enclosing local not shadowed
      * by a block parameter of the same name becomes a directly-accessible
      * local right away, same as compile_definition's own nested-def
-     * handling below. */
+     * handling below -- except, in the real pass, one the discovery pass
+     * found the body never names (block_capture_use), which would only
+     * cost a load per call. A reference the discovery pass missed still
+     * works through parse_identifier's GET_CAPTURE fallback. */
     if(!compiler->failed)
-        bind_captured_cells(compiler,&scope,captured_fact_registers);
+        bind_captured_cells(compiler,&scope,captured_fact_registers,
+            block_capture_use(compiler,function));
 
     if(!compiler->failed&&scope.has_current_block)
         retarget_block_yield(compiler,&scope);
@@ -1898,7 +1933,7 @@ uint16_t compile_definition(Compiler *compiler, bool captures_self) {
     const bool module_function_singleton_registered_early=register_module_function_early(
         compiler,function,function_index,name,module_singleton,at_top_level);
     if(!compiler->failed && !at_top_level)
-        bind_captured_cells(compiler,&scope,captured_fact_registers);
+        bind_captured_cells(compiler,&scope,captured_fact_registers,nullptr);
     DiamondSpan return_type_span = {};
     const int return_type=parse_definition_return_type(compiler,function,
         direct_class_member||direct_class_singleton_member,&return_type_span);

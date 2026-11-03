@@ -1757,9 +1757,58 @@ bool spans_equal(const Compiler *compiler, DiamondSpan left,
     return true;
 }
 
+/* The record for the block starting at `block_start`, or nullptr. */
+BlockCaptureUse *find_block_capture_use(const BlockCaptureUses *uses,size_t block_start) {
+    size_t low=0,high=uses->count;
+    while(low<high) {
+        const size_t middle=low+(high-low)/2;
+        if(uses->items[middle].block_start<block_start)low=middle+1;
+        else high=middle;
+    }
+    if(low<uses->count&&uses->items[low].block_start==block_start)return &uses->items[low];
+    return nullptr;
+}
+
+/* The discovery pass's record for the block starting at `block_start`,
+ * created (kept in start order) the first time that block is compiled. */
+bool open_block_capture_use(BlockCaptureUses *uses,size_t block_start,
+        size_t enclosing_count) {
+    if(find_block_capture_use(uses,block_start)!=nullptr)return true;
+    if(uses->count==uses->capacity) {
+        const size_t capacity=uses->capacity<16?16:uses->capacity*2;
+        BlockCaptureUse *items=realloc(uses->items,capacity*sizeof *items);
+        if(items==nullptr)return false;
+        uses->items=items;uses->capacity=capacity;
+    }
+    size_t at=uses->count;
+    while(at>0&&uses->items[at-1].block_start>block_start)at--;
+    memmove(&uses->items[at+1],&uses->items[at],(uses->count-at)*sizeof uses->items[0]);
+    uses->items[at]=(BlockCaptureUse){.block_start=block_start,.enclosing_count=enclosing_count};
+    uses->count++;
+    return true;
+}
+
+/* Marks capture `index` (SIZE_MAX: every capture) used by the discovery
+ * pass's current block, if there is one. */
+void note_capture_use(const Compiler *compiler,size_t index) {
+    if(!compiler->discovery_pass||compiler->capture_uses==nullptr||
+       compiler->capture_record==SIZE_MAX)return;
+    BlockCaptureUse *use=find_block_capture_use(compiler->capture_uses,compiler->capture_record);
+    if(use==nullptr)return;
+    if(index==SIZE_MAX) {
+        for(size_t word=0;word<4;word++)use->used[word]=UINT64_MAX;
+        return;
+    }
+    if(index<256)use->used[index/64]|=UINT64_C(1)<<(index%64);
+}
+
 int find_local(const Compiler *compiler, DiamondSpan name) {
     for (size_t index = compiler->local_count; index > 0; index--) {
         if (spans_equal(compiler, compiler->locals[index - 1].name, name)) {
+            /* Any lookup that resolves to a captured local counts as a use
+             * for the discovery pass (BlockCaptureUse). */
+            if (compiler->locals[index - 1].bound_cell)
+                note_capture_use(compiler, compiler->locals[index - 1].capture_index);
             return (int)(index - 1);
         }
     }

@@ -44,6 +44,11 @@ authoritative fine-grained record.
   else (a block, Floats, big integers, an endless range, overflow) works as before. The
   block-heavy benchmark went from 208 ms to 123 ms.
 
+- **Blocks load only the outer variables they use.** A block used to fetch every local variable
+  of the method around it on every call, whether it used them or not. It now fetches only the
+  ones its body names, unless it creates another block or `def` or calls `debugger()`. Debug
+  sessions still see every variable. The block-heavy benchmark went from 127 ms to 109 ms.
+
 ## 0.24.0 — 2026-11-02
 
 ### Added

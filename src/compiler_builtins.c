@@ -1799,6 +1799,8 @@ uint16_t parse_exit_call(Compiler *compiler) {
  * allocate_local), so no separate bounds check is needed before the
  * uint8_t cast below. */
 uint16_t emit_debugger_pause(Compiler *compiler) {
+    /* It reads every local's register, captured ones included. */
+    note_capture_use(compiler,SIZE_MAX);
     const uint16_t dest=allocate_register(compiler);
     emit_opcode(compiler,DIAMOND_OP_DEBUGGER);
     emit_register(compiler,dest);
