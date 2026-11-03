@@ -6,6 +6,7 @@
 
 #include <errno.h>
 #include <inttypes.h>
+#include <stdckdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -399,6 +400,46 @@ static bool trivial_getter_result(DiamondVm *vm,const DiamondFunction *fn,
     return true;
 }
 
+/* Range#to_a for a bounded Int range, filled here instead of by the prelude's
+ * push loop (lib/core.d6), which costs a push call per element. Only an exact
+ * Range (a subclass may override to_a) with Int bounds and a Bool `exclusive`
+ * qualifies; Range's own methods cannot be redefined. Everything else (an
+ * endless range, which raises there, an inclusive end at the largest Int,
+ * where the prelude's `@end + 1` becomes a big integer, or a range of more
+ * than 2^26 values, whose allocation is left to the prelude's own growth)
+ * returns false and the prelude method runs. Returns true with *status set
+ * when it answered. */
+static bool native_range_to_a(DiamondVm *vm,const DiamondChunk *owner_chunk,
+        const DiamondMethod *method,DiamondValue self_value,
+        DiamondValue *result,DiamondVmStatus *status) {
+    /* The class test comes first: it is one comparison, and every other
+     * method call with no arguments passes through here. */
+    if(vm->range_class_index==DIAMOND_NO_CLASS||
+       (size_t)vm->range_class_index>=owner_chunk->class_count||
+       self_value.kind!=DIAMOND_VALUE_OBJECT||
+       self_value.as.object->kind!=DIAMOND_OBJECT_INSTANCE)
+        return false;
+    const DiamondInstance *range=(const DiamondInstance *)self_value.as.object;
+    if(range->class!=owner_chunk->classes[vm->range_class_index]||
+       strcmp(method->name,"to_a")!=0||range->field_count<3||
+       range->fields[0].kind!=DIAMOND_VALUE_INT||range->fields[1].kind!=DIAMOND_VALUE_INT||
+       range->fields[2].kind!=DIAMOND_VALUE_BOOL)
+        return false;
+    const int64_t start=range->fields[0].as.integer;
+    int64_t stop=range->fields[1].as.integer;
+    if(!range->fields[2].as.boolean&&ckd_add(&stop,stop,1))return false;
+    uint64_t count=0;
+    if(stop>start)count=(uint64_t)stop-(uint64_t)start;
+    if(count>(UINT64_C(1)<<26))return false;
+    DiamondArray *values=allocate_array_uninitialized(vm,(size_t)count);
+    if(values==nullptr) {*status=DIAMOND_VM_OUT_OF_MEMORY;return true;}
+    for(size_t index=0;index<(size_t)count;index++)
+        values->values[index]=DIAMOND_INT(start+(int64_t)index);
+    *result=DIAMOND_OBJECT(values);
+    *status=DIAMOND_VM_OK;
+    return true;
+}
+
 DiamondVmStatus invoke_resolved_method_helper(DiamondVm *vm,
         const DiamondChunk *owner_chunk,const DiamondMethod *method,
         DiamondValue self_value,const DiamondValue *registers,uint16_t base,
@@ -418,6 +459,11 @@ DiamondVmStatus invoke_resolved_method_helper(DiamondVm *vm,
         if(trivial_getter_result(vm,getter_chunk->functions[method->function_index],
                self_value,result))
             return DIAMOND_VM_OK;
+        if(method->source_chunk==nullptr) {
+            DiamondVmStatus range_status;
+            if(native_range_to_a(vm,owner_chunk,method,self_value,result,&range_status))
+                return range_status;
+        }
     }
     DiamondValue args[DIAMOND_MAX_ARGUMENTS+1];args[0]=self_value;
     for(size_t i=0;i<argc;i++)args[i+1]=registers[(size_t)base+i];

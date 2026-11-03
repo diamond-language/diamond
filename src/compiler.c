@@ -2190,9 +2190,10 @@ uint16_t parse_identifier(Compiler *compiler) {
      * actually be boxed yet on this runtime path. BOX_LOCAL is idempotent
      * (a no-op once the register already holds a Cell), so re-emitting it
      * here guarantees GET_CELL is always safe, regardless of which branch
-     * ran. */
-    emit_instruction(compiler,DIAMOND_OP_BOX_LOCAL,
-                     compiler->locals[(size_t)local].reg,0,0,1);
+     * ran. A local bound from a capture cell is a cell on every path. */
+    if(!compiler->locals[(size_t)local].bound_cell)
+        emit_instruction(compiler,DIAMOND_OP_BOX_LOCAL,
+                         compiler->locals[(size_t)local].reg,0,0,1);
     const uint16_t destination=allocate_register(compiler);
     emit_instruction(compiler,DIAMOND_OP_GET_CELL,destination,
                      compiler->locals[(size_t)local].reg,0,2);

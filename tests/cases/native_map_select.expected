@@ -29,4 +29,14 @@ sum: Int does not support '+' with String
 1
 [1, 2]
 frozen: frozen object cannot be modified
+[1, 2, 3, 4, 5]
+[1, 2, 3, 4]
+[]
+[]
+[-2, -1, 0, 1, 2]
+[9223372036854775805, 9223372036854775806, 9223372036854775807]
+[9223372036854775805, 9223372036854775806]
+endless: cannot convert an endless range to an Array
+[overridden]
+[1, 2]
 nil

@@ -60,6 +60,10 @@ typedef struct Local {
     DiamondSpan name;
     uint16_t reg;
     bool captured;
+    /* The register holds a cell from the function's first instructions on
+     * (a block or nested def's GET_CAPTURE_CELL prologue), so a read or
+     * write needs no BOX_LOCAL first. */
+    bool bound_cell;
     uint32_t alias_identity;
 } Local;
 
