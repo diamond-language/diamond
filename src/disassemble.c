@@ -5,15 +5,35 @@
 #define __BSD_VISIBLE 1
 #define _DARWIN_C_SOURCE
 #include "disassemble.h"
+#include <stdarg.h>
 #include <stdlib.h>
 #include <string.h>
+
+/* Every line of text goes through these three. A null stream walks and
+ * validates the bytecode without formatting anything, which is what
+ * diamond_verify_bytecode wants: it runs on every bytecode cache load,
+ * where printing the whole prelude into /dev/null was most of startup. */
+[[gnu::format(printf, 2, 3)]]
+static void out_printf(FILE *stream, const char *format, ...) {
+    if (stream == nullptr) return;
+    va_list arguments;
+    va_start(arguments, format);
+    vfprintf(stream, format, arguments);
+    va_end(arguments);
+}
+static void out_puts(const char *text, FILE *stream) {
+    if (stream != nullptr) fputs(text, stream);
+}
+static void out_putc(int character, FILE *stream) {
+    if (stream != nullptr) fputc(character, stream);
+}
 
 static bool require_bytes(FILE *stream, const DiamondChunk *chunk,
                           size_t offset, size_t count) {
     if (offset + count <= chunk->code_count) {
         return true;
     }
-    fprintf(stream, "%04zu <truncated instruction>\n", offset);
+    out_printf(stream, "%04zu <truncated instruction>\n", offset);
     return false;
 }
 
@@ -76,7 +96,7 @@ static bool register_in_range(const DiamondChunk *chunk, uint16_t value) {
 static uint16_t checked_register(const DiamondChunk *chunk, FILE *stream,
                                  uint16_t value, bool *valid) {
     if (!register_in_range(chunk, value)) {
-        fprintf(stream, "<register r%u out of range> ", value);
+        out_printf(stream, "<register r%u out of range> ", value);
         *valid = false;
     }
     return value;
@@ -93,7 +113,7 @@ static uint16_t checked_register_range(const DiamondChunk *chunk, FILE *stream,
     const size_t effective = chunk->register_count == 0
         ? DIAMOND_REGISTER_COUNT : chunk->register_count;
     if ((size_t)base + count > effective) {
-        fprintf(stream, "<register range r%u..%zu out of range> ",
+        out_printf(stream, "<register range r%u..%zu out of range> ",
                 base, (size_t)base + count);
         *valid = false;
     }
@@ -105,7 +125,7 @@ static size_t one_register(FILE *stream, const DiamondChunk *chunk,
     if (!require_bytes(stream, chunk, offset, 3)) return chunk->code_count;
     const uint16_t reg = checked_register(chunk, stream,
         read_operand(chunk, offset + 1), valid);
-    fprintf(stream, "%-18s r%u\n", name, reg);
+    out_printf(stream, "%-18s r%u\n", name, reg);
     return offset + 3;
 }
 
@@ -116,7 +136,7 @@ static size_t two_registers(FILE *stream, const DiamondChunk *chunk,
         read_operand(chunk, offset + 1), valid);
     const uint16_t second = checked_register(chunk, stream,
         read_operand(chunk, offset + 3), valid);
-    fprintf(stream, "%-18s r%u, r%u\n", name, first, second);
+    out_printf(stream, "%-18s r%u, r%u\n", name, first, second);
     return offset + 5;
 }
 
@@ -129,7 +149,7 @@ static size_t three_registers(FILE *stream, const DiamondChunk *chunk,
         read_operand(chunk, offset + 3), valid);
     const uint16_t third = checked_register(chunk, stream,
         read_operand(chunk, offset + 5), valid);
-    fprintf(stream, "%-18s r%u, r%u, r%u\n", name, first, second, third);
+    out_printf(stream, "%-18s r%u, r%u, r%u\n", name, first, second, third);
     return offset + 7;
 }
 
@@ -144,7 +164,7 @@ static size_t four_registers(FILE *stream, const DiamondChunk *chunk,
         read_operand(chunk, offset + 5), valid);
     const uint16_t fourth = checked_register(chunk, stream,
         read_operand(chunk, offset + 7), valid);
-    fprintf(stream, "%-18s r%u, r%u, r%u, r%u\n", name, first, second, third, fourth);
+    out_printf(stream, "%-18s r%u, r%u, r%u, r%u\n", name, first, second, third, fourth);
     return offset + 9;
 }
 
@@ -162,7 +182,7 @@ static size_t five_registers(FILE *stream, const DiamondChunk *chunk,
         read_operand(chunk, offset + 7), valid);
     const uint16_t fifth = checked_register(chunk, stream,
         read_operand(chunk, offset + 9), valid);
-    fprintf(stream, "%-18s r%u, r%u, r%u, r%u, r%u\n", name,
+    out_printf(stream, "%-18s r%u, r%u, r%u, r%u, r%u\n", name,
         first, second, third, fourth, fifth);
     return offset + 11;
 }
@@ -186,68 +206,68 @@ static size_t six_registers(FILE *stream, const DiamondChunk *chunk,
         read_operand(chunk, offset + 9), valid);
     const uint16_t sixth = checked_register(chunk, stream,
         read_operand(chunk, offset + 11), valid);
-    fprintf(stream, "%-18s r%u, r%u, r%u, r%u, r%u, r%u", name,
+    out_printf(stream, "%-18s r%u, r%u, r%u, r%u, r%u, r%u", name,
         first, second, third, fourth, fifth, sixth);
-    fputc('\n', stream);
+    out_putc('\n', stream);
     return offset + 13;
 }
 
 static bool print_type_set(FILE *stream,const DiamondChunk *chunk,
                            uint16_t set_index) {
     if((size_t)set_index>=chunk->type_set_count) {
-        fputs("<invalid type set>",stream);return false;
+        out_puts("<invalid type set>",stream);return false;
     }
     bool valid=true;const DiamondTypeSet *set=&chunk->type_sets[set_index];
     for(size_t index=0;index<set->count;index++) {
-        if(index>0)fputs(" | ",stream);
+        if(index>0)out_puts(" | ",stream);
         const DiamondTypeMember member=set->members[index];
         const uint16_t type=member.id;
-        if(type==DIAMOND_TYPE_INT) fputs("Int",stream);
-        else if(type==DIAMOND_TYPE_FLOAT) fputs("Float",stream);
-        else if(type==DIAMOND_TYPE_STRING) fputs("String",stream);
-        else if(type==DIAMOND_TYPE_BOOL) fputs("Bool",stream);
-        else if(type==DIAMOND_TYPE_NIL) fputs("Nil",stream);
-        else if(type==DIAMOND_TYPE_ARRAY) fputs("Array",stream);
-        else if(type==DIAMOND_TYPE_HASH) fputs("Hash",stream);
-        else if(type==DIAMOND_TYPE_CALLABLE) fputs("Callable",stream);
-        else if(type==DIAMOND_TYPE_SIZED) fputs("Sized",stream);
-        else if(type==DIAMOND_TYPE_SYMBOL) fputs("Symbol",stream);
+        if(type==DIAMOND_TYPE_INT) out_puts("Int",stream);
+        else if(type==DIAMOND_TYPE_FLOAT) out_puts("Float",stream);
+        else if(type==DIAMOND_TYPE_STRING) out_puts("String",stream);
+        else if(type==DIAMOND_TYPE_BOOL) out_puts("Bool",stream);
+        else if(type==DIAMOND_TYPE_NIL) out_puts("Nil",stream);
+        else if(type==DIAMOND_TYPE_ARRAY) out_puts("Array",stream);
+        else if(type==DIAMOND_TYPE_HASH) out_puts("Hash",stream);
+        else if(type==DIAMOND_TYPE_CALLABLE) out_puts("Callable",stream);
+        else if(type==DIAMOND_TYPE_SIZED) out_puts("Sized",stream);
+        else if(type==DIAMOND_TYPE_SYMBOL) out_puts("Symbol",stream);
         /* For a native type, callable_arity holds the object kind. */
         else if(type==DIAMOND_TYPE_NATIVE)
-            fputs(diamond_native_type_name(member.callable_arity),stream);
+            out_puts(diamond_native_type_name(member.callable_arity),stream);
         else if(type>=DIAMOND_TYPE_VARIABLE_BASE&&type<DIAMOND_TYPE_INTERFACE_BASE)
-            fprintf(stream,"T%u",type-DIAMOND_TYPE_VARIABLE_BASE);
+            out_printf(stream,"T%u",type-DIAMOND_TYPE_VARIABLE_BASE);
         else if(type>=DIAMOND_TYPE_INTERFACE_BASE&&
                 (size_t)(type-DIAMOND_TYPE_INTERFACE_BASE)<chunk->interface_count)
-            fputs(chunk->interfaces[type-DIAMOND_TYPE_INTERFACE_BASE]->name,stream);
+            out_puts(chunk->interfaces[type-DIAMOND_TYPE_INTERFACE_BASE]->name,stream);
         else if((size_t)(type-DIAMOND_TYPE_CLASS_BASE)<chunk->class_count)
-            fputs(chunk->classes[type-DIAMOND_TYPE_CLASS_BASE]->name,stream);
-        else {fputs("<invalid type>",stream);valid=false;}
+            out_puts(chunk->classes[type-DIAMOND_TYPE_CLASS_BASE]->name,stream);
+        else {out_puts("<invalid type>",stream);valid=false;}
         if(member.argument_set!=DIAMOND_NO_TYPE_SET) {
-            fputc('[',stream);
+            out_putc('[',stream);
             valid=print_type_set(stream,chunk,member.argument_set)&&valid;
             if(member.second_argument_set!=DIAMOND_NO_TYPE_SET) {
-                fputs(", ",stream);
+                out_puts(", ",stream);
                 valid=print_type_set(stream,chunk,member.second_argument_set)&&valid;
             }
-            fputc(']',stream);
+            out_putc(']',stream);
         } else if(member.id==DIAMOND_TYPE_CALLABLE&&
                   member.callable_arity!=UINT8_MAX) {
-            fputc('[',stream);
+            out_putc('[',stream);
             if(member.callable_parameters_typed) {
-                fputc('[',stream);
+                out_putc('[',stream);
                 for(size_t parameter=0;parameter<member.callable_arity;parameter++) {
-                    if(parameter>0)fputs(", ",stream);
+                    if(parameter>0)out_puts(", ",stream);
                     valid=print_type_set(stream,chunk,
                         member.callable_parameter_sets[parameter])&&valid;
                 }
-                fputc(']',stream);
-            } else fprintf(stream,"%u",member.callable_arity);
+                out_putc(']',stream);
+            } else out_printf(stream,"%u",member.callable_arity);
             if(member.callable_return_set!=DIAMOND_NO_TYPE_SET) {
-                fputs(", ",stream);
+                out_puts(", ",stream);
                 valid=print_type_set(stream,chunk,member.callable_return_set)&&valid;
             }
-            fputc(']',stream);
+            out_putc(']',stream);
         }
     }
     return valid;
@@ -288,17 +308,17 @@ static bool disassemble_loads(DisassemblyWalk *walk) {
             const uint16_t destination =
                 checked_register(chunk, stream, read_operand(chunk, offset + 1), &valid);
             const uint16_t constant = read_operand(chunk, offset + 3);
-            fprintf(stream, "%-18s r%u, k%u", "CONSTANT", destination,
+            out_printf(stream, "%-18s r%u, k%u", "CONSTANT", destination,
                     constant);
             if ((size_t)constant < chunk->constant_count) {
-                fputs(" (", stream);
-                diamond_value_fprint(stream, chunk->constants[constant]);
-                fputc(')', stream);
+                out_puts(" (", stream);
+                if (stream != nullptr) diamond_value_fprint(stream, chunk->constants[constant]);
+                out_putc(')', stream);
             } else {
-                fputs(" <invalid constant>", stream);
+                out_puts(" <invalid constant>", stream);
                 valid = false;
             }
-            fputc('\n', stream);
+            out_putc('\n', stream);
             offset += 5;
             break;
         }
@@ -311,16 +331,16 @@ static bool disassemble_loads(DisassemblyWalk *walk) {
             const uint16_t destination =
                 checked_register(chunk, stream, read_operand(chunk, offset + 1), &valid);
             const uint16_t string = read_operand(chunk, offset + 3);
-            fprintf(stream, "%-18s r%u, s%u", "STRING", destination, string);
+            out_printf(stream, "%-18s r%u, s%u", "STRING", destination, string);
             if ((size_t)string < chunk->string_count) {
                 const DiamondStringConstant *constant = &chunk->strings[string];
-                fprintf(stream, " (\"%.*s\")", (int)constant->length,
+                out_printf(stream, " (\"%.*s\")", (int)constant->length,
                         constant->chars);
             } else {
-                fputs(" <invalid string>", stream);
+                out_puts(" <invalid string>", stream);
                 valid = false;
             }
-            fputc('\n', stream);
+            out_putc('\n', stream);
             offset += 5;
             break;
         }
@@ -335,16 +355,16 @@ static bool disassemble_loads(DisassemblyWalk *walk) {
             const uint16_t receiver =
                 checked_register(chunk, stream, read_operand(chunk, offset + 3), &valid);
             const uint16_t string = read_operand(chunk, offset + 5);
-            fprintf(stream, "%-18s r%u, r%u, s%u", "INDEX_GET_STRING", destination,
+            out_printf(stream, "%-18s r%u, r%u, s%u", "INDEX_GET_STRING", destination,
                     receiver, string);
             if ((size_t)string < chunk->string_count) {
                 const DiamondStringConstant *constant = &chunk->strings[string];
-                fprintf(stream, " (\"%.*s\")", (int)constant->length, constant->chars);
+                out_printf(stream, " (\"%.*s\")", (int)constant->length, constant->chars);
             } else {
-                fputs(" <invalid string>", stream);
+                out_puts(" <invalid string>", stream);
                 valid = false;
             }
-            fputc('\n', stream);
+            out_putc('\n', stream);
             offset += 7;
             break;
         }
@@ -357,16 +377,16 @@ static bool disassemble_loads(DisassemblyWalk *walk) {
             const uint16_t destination =
                 checked_register(chunk, stream, read_operand(chunk, offset + 1), &valid);
             const uint16_t string = read_operand(chunk, offset + 3);
-            fprintf(stream, "%-18s r%u, s%u", "SYMBOL", destination, string);
+            out_printf(stream, "%-18s r%u, s%u", "SYMBOL", destination, string);
             if ((size_t)string < chunk->string_count) {
                 const DiamondStringConstant *constant = &chunk->strings[string];
-                fprintf(stream, " (:%.*s)", (int)constant->length,
+                out_printf(stream, " (:%.*s)", (int)constant->length,
                         constant->chars);
             } else {
-                fputs(" <invalid string>", stream);
+                out_puts(" <invalid string>", stream);
                 valid = false;
             }
-            fputc('\n', stream);
+            out_putc('\n', stream);
             offset += 5;
             break;
         }
@@ -379,7 +399,7 @@ static bool disassemble_loads(DisassemblyWalk *walk) {
                 offset = chunk->code_count;
                 break;
             }
-            fprintf(stream, "%-18s r%u, %s\n", "BOOL",
+            out_printf(stream, "%-18s r%u, %s\n", "BOOL",
                     checked_register(chunk, stream, read_operand(chunk, offset + 1), &valid),
                     read_operand(chunk, offset + 3) ? "true" : "false");
             offset += 5;
@@ -392,7 +412,7 @@ static bool disassemble_loads(DisassemblyWalk *walk) {
              * width per emit_instruction, see read_operand's own
              * comment), it isn't bounded by register_count. */
             if(!require_bytes(stream,chunk,offset,5)){valid=false;offset=chunk->code_count;break;}
-            fprintf(stream,"%-18s r%u, %u\n","ARGUMENT_PROVIDED",
+            out_printf(stream,"%-18s r%u, %u\n","ARGUMENT_PROVIDED",
                 checked_register(chunk,stream,read_operand(chunk,offset+1),&valid),
                 read_operand(chunk,offset+3));
             offset+=5;
@@ -402,7 +422,7 @@ static bool disassemble_loads(DisassemblyWalk *walk) {
              * parameter counts, not registers -- same reasoning as
              * ARGUMENT_PROVIDED just above. */
             if(!require_bytes(stream,chunk,offset,7)){valid=false;offset=chunk->code_count;break;}
-            fprintf(stream,"%-18s r%u, fixed=%u, trailing=%u\n","COLLECT_VARIADIC",
+            out_printf(stream,"%-18s r%u, fixed=%u, trailing=%u\n","COLLECT_VARIADIC",
                 checked_register(chunk,stream,read_operand(chunk,offset+1),&valid),
                 read_operand(chunk,offset+3),read_operand(chunk,offset+5));
             offset+=7;
@@ -519,7 +539,7 @@ static bool disassemble_jumps(DisassemblyWalk *walk) {
             }
             const size_t target = ((size_t)chunk->code[offset + 1] << 8) |
                                   chunk->code[offset + 2];
-            fprintf(stream, "%-18s -> %04zu\n", "JUMP", target);
+            out_printf(stream, "%-18s -> %04zu\n", "JUMP", target);
             if (target > chunk->code_count) valid = false;
             else pending_targets[pending_count++] = target;
             offset += 3;
@@ -533,7 +553,7 @@ static bool disassemble_jumps(DisassemblyWalk *walk) {
             }
             const size_t target = ((size_t)chunk->code[offset + 3] << 8) |
                                   chunk->code[offset + 4];
-            fprintf(stream, "%-18s r%u -> %04zu\n", "JUMP_IF_FALSE",
+            out_printf(stream, "%-18s r%u -> %04zu\n", "JUMP_IF_FALSE",
                     checked_register(chunk, stream, read_operand(chunk, offset + 1), &valid),
                     target);
             if (target > chunk->code_count) valid = false;
@@ -544,7 +564,7 @@ static bool disassemble_jumps(DisassemblyWalk *walk) {
         case DIAMOND_OP_JUMP_IF_TRUE: {
             if(!require_bytes(stream,chunk,offset,5)){valid=false;offset=chunk->code_count;break;}
             const size_t target=((size_t)chunk->code[offset+3]<<8)|chunk->code[offset+4];
-            fprintf(stream,"%-18s r%u -> %04zu\n","JUMP_IF_TRUE",
+            out_printf(stream,"%-18s r%u -> %04zu\n","JUMP_IF_TRUE",
                 checked_register(chunk, stream, read_operand(chunk, offset+1), &valid),target);
             if(target>chunk->code_count) valid=false;
             else pending_targets[pending_count++] = target;
@@ -577,7 +597,7 @@ static bool disassemble_calls(DisassemblyWalk *walk) {
             }
             const size_t function_index=
                 ((size_t)chunk->code[offset+3]<<8)|chunk->code[offset+4];
-            fprintf(stream, "%-18s r%u, f%zu, r%u, %u args\n", "CALL",
+            out_printf(stream, "%-18s r%u, f%zu, r%u, %u args\n", "CALL",
                     checked_register(chunk, stream, read_operand(chunk, offset + 1), &valid),
                     function_index,
                     checked_register_range(chunk, stream, read_operand(chunk, offset + 5),
@@ -597,7 +617,7 @@ static bool disassemble_calls(DisassemblyWalk *walk) {
             }
             const size_t function_index=
                 ((size_t)chunk->code[offset+3]<<8)|chunk->code[offset+4];
-            fprintf(stream, "%-18s r%u, f%zu, r%u, %u args\n", "TAIL_CALL",
+            out_printf(stream, "%-18s r%u, f%zu, r%u, %u args\n", "TAIL_CALL",
                     checked_register(chunk, stream, read_operand(chunk, offset + 1), &valid),
                     function_index,
                     checked_register_range(chunk, stream, read_operand(chunk, offset + 5),
@@ -619,7 +639,7 @@ static bool disassemble_calls(DisassemblyWalk *walk) {
             }
             const size_t function_index=
                 ((size_t)chunk->code[offset+3]<<8)|chunk->code[offset+4];
-            fprintf(stream,"%-18s r%u, f%zu, r%u, %u args, [",
+            out_printf(stream,"%-18s r%u, f%zu, r%u, %u args, [",
                 "CALL_TYPED",
                 checked_register(chunk,stream,read_operand(chunk,offset+1),&valid),
                 function_index,
@@ -627,11 +647,11 @@ static bool disassemble_calls(DisassemblyWalk *walk) {
                     chunk->code[offset+7],&valid),
                 chunk->code[offset+7]);
             for(size_t index=0;index<count;index++) {
-                if(index>0)fputs(", ",stream);
+                if(index>0)out_puts(", ",stream);
                 const uint16_t set=read_operand(chunk,offset+9+index*2);
                 valid=print_type_set(stream,chunk,set)&&valid;
             }
-            fputs("]\n",stream);
+            out_puts("]\n",stream);
             if(function_index>=chunk->function_count)
                 valid=false;
             offset+=(size_t)9+count*2;
@@ -639,7 +659,7 @@ static bool disassemble_calls(DisassemblyWalk *walk) {
         }
         case DIAMOND_OP_CALL_CLOSURE:
             if(!require_bytes(stream,chunk,offset,8)){valid=false;offset=chunk->code_count;break;}
-            fprintf(stream,"%-18s r%u, r%u, r%u, %u args\n","CALL_CLOSURE",
+            out_printf(stream,"%-18s r%u, r%u, r%u, %u args\n","CALL_CLOSURE",
                 checked_register(chunk,stream,read_operand(chunk,offset+1),&valid),
                 checked_register(chunk,stream,read_operand(chunk,offset+3),&valid),
                 checked_register_range(chunk,stream,read_operand(chunk,offset+5),
@@ -679,7 +699,7 @@ static bool disassemble_spread_calls(DisassemblyWalk *walk) {
             }
             const size_t function_index=
                 ((size_t)chunk->code[offset+3]<<8)|chunk->code[offset+4];
-            fprintf(stream,"%-18s r%u, f%zu, r%u\n","CALL_SPREAD",
+            out_printf(stream,"%-18s r%u, f%zu, r%u\n","CALL_SPREAD",
                     checked_register(chunk,stream,read_operand(chunk,offset+1),&valid),
                     function_index,
                     checked_register(chunk,stream,read_operand(chunk,offset+5),&valid));
@@ -697,7 +717,7 @@ static bool disassemble_spread_calls(DisassemblyWalk *walk) {
             if(!require_bytes(stream,chunk,offset,(size_t)8+type_count*2)) {
                 valid=false;offset=chunk->code_count;break;
             }
-            fprintf(stream,"%-18s r%u, f%zu, r%u, %u types\n",
+            out_printf(stream,"%-18s r%u, f%zu, r%u, %u types\n",
                 "CALL_TYPED_SPREAD",
                 checked_register(chunk,stream,read_operand(chunk,offset+1),&valid),
                 function_index,
@@ -724,7 +744,7 @@ static bool disassemble_spread_calls(DisassemblyWalk *walk) {
                !require_bytes(stream,chunk,offset,keyword_end+(typed?1:0))) {
                 valid=false;offset=chunk->code_count;break;
             }
-            fprintf(stream,"%-18s r%u, f%zu, r%u, %u keywords\n",
+            out_printf(stream,"%-18s r%u, f%zu, r%u, %u keywords\n",
                 typed?"CALL_TYPED_KW_SPREAD":"CALL_KW_SPREAD",
                 checked_register(chunk,stream,read_operand(chunk,offset+1),&valid),
                 function_index,
@@ -736,7 +756,7 @@ static bool disassemble_spread_calls(DisassemblyWalk *walk) {
                 const uint8_t slot=chunk->code[entry];
                 const uint16_t value=checked_register(chunk,stream,
                     read_operand(chunk,entry+1),&valid);
-                fprintf(stream,"                     slot %u <- r%u\n",slot,value);
+                out_printf(stream,"                     slot %u <- r%u\n",slot,value);
             }
             if(!typed) {offset+=keyword_end;break;}
             const uint8_t type_count=chunk->code[offset+keyword_end];
@@ -753,7 +773,7 @@ static bool disassemble_spread_calls(DisassemblyWalk *walk) {
             if(!require_bytes(stream,chunk,offset,7)) {
                 valid=false;offset=chunk->code_count;break;
             }
-            fprintf(stream,"%-18s r%u, r%u, r%u\n","CALL_CLOSURE_SPREAD",
+            out_printf(stream,"%-18s r%u, r%u, r%u\n","CALL_CLOSURE_SPREAD",
                 checked_register(chunk,stream,read_operand(chunk,offset+1),&valid),
                 checked_register(chunk,stream,read_operand(chunk,offset+3),&valid),
                 checked_register(chunk,stream,read_operand(chunk,offset+5),&valid));
@@ -771,7 +791,7 @@ static bool disassemble_spread_calls(DisassemblyWalk *walk) {
                !require_bytes(stream,chunk,offset,total)) {
                 valid=false;offset=chunk->code_count;break;
             }
-            fprintf(stream,"%-18s r%u, r%u, r%u, %u keywords\n",
+            out_printf(stream,"%-18s r%u, r%u, r%u, %u keywords\n",
                 "CALL_CLOSURE_KW",
                 checked_register(chunk,stream,read_operand(chunk,offset+1),&valid),
                 checked_register(chunk,stream,read_operand(chunk,offset+3),&valid),
@@ -796,7 +816,7 @@ static bool disassemble_spread_calls(DisassemblyWalk *walk) {
             const uint8_t suffix_count=encoded_suffix_count&0x7fu;
             const bool optional_block=(encoded_suffix_count&0x80u)!=0;
             if(optional_block&&suffix_count==0)valid=false;
-            fprintf(stream,"%-18s r%u, r%u/%u, *r%u, r%u/%u%s\n",
+            out_printf(stream,"%-18s r%u, r%u/%u, *r%u, r%u/%u%s\n",
                 "BUILD_SPREAD_ARGS",
                 checked_register(chunk,stream,read_operand(chunk,offset+1),&valid),
                 checked_register_range(chunk,stream,read_operand(chunk,offset+3),
@@ -829,7 +849,7 @@ static bool disassemble_spread_invokes(DisassemblyWalk *walk) {
                 valid=false;offset=chunk->code_count;break;
             }
             const uint16_t method_name=read_operand(chunk,offset+5);
-            fprintf(stream,"%-18s r%u, r%u, s%u, r%u\n","INVOKE_SPREAD",
+            out_printf(stream,"%-18s r%u, r%u, s%u, r%u\n","INVOKE_SPREAD",
                 checked_register(chunk,stream,read_operand(chunk,offset+1),&valid),
                 checked_register(chunk,stream,read_operand(chunk,offset+3),&valid),
                 method_name,
@@ -854,7 +874,7 @@ static bool disassemble_spread_invokes(DisassemblyWalk *walk) {
                !require_bytes(stream,chunk,offset,keyword_end+(typed?1:0))) {
                 valid=false;offset=chunk->code_count;break;
             }
-            fprintf(stream,"%-18s r%u, r%u, s%u, r%u, %u keywords\n",
+            out_printf(stream,"%-18s r%u, r%u, s%u, r%u, %u keywords\n",
                 typed?"INVOKE_TYPED_KW":"INVOKE_KEYWORDS",
                 checked_register(chunk,stream,read_operand(chunk,offset+1),&valid),
                 checked_register(chunk,stream,read_operand(chunk,offset+3),&valid),
@@ -890,7 +910,7 @@ static bool disassemble_spread_invokes(DisassemblyWalk *walk) {
             if(!require_bytes(stream,chunk,offset,(size_t)10+type_count*2)) {
                 valid=false;offset=chunk->code_count;break;
             }
-            fprintf(stream,"%-18s r%u, r%u, s%u, r%u, %u types\n",
+            out_printf(stream,"%-18s r%u, r%u, s%u, r%u, %u types\n",
                 "INVOKE_TYPED_SPREAD",
                 checked_register(chunk,stream,read_operand(chunk,offset+1),&valid),
                 checked_register(chunk,stream,read_operand(chunk,offset+3),&valid),
@@ -926,7 +946,7 @@ static bool disassemble_spread_constructors(DisassemblyWalk *walk) {
                 valid=false;offset=chunk->code_count;break;
             }
             const uint16_t class_index=(uint16_t)read_operand(chunk,offset+3);
-            fprintf(stream,"%-18s r%u, c%u, r%u\n","NEW_SPREAD",
+            out_printf(stream,"%-18s r%u, c%u, r%u\n","NEW_SPREAD",
                 checked_register(chunk,stream,read_operand(chunk,offset+1),&valid),
                 class_index,
                 checked_register(chunk,stream,read_operand(chunk,offset+5),&valid));
@@ -946,7 +966,7 @@ static bool disassemble_spread_constructors(DisassemblyWalk *walk) {
             if((!typed&&!keyword_trailer_count_valid(encoded_keyword_count))||
                keyword_count>DIAMOND_MAX_DECLARED_PARAMETERS||
                !require_bytes(stream,chunk,offset,total)) {valid=false;offset=chunk->code_count;break;}
-            fprintf(stream,"%-18s r%u, c%u, r%u, %u keywords\n",typed?"NEW_TYPED":"NEW_KEYWORDS",
+            out_printf(stream,"%-18s r%u, c%u, r%u, %u keywords\n",typed?"NEW_TYPED":"NEW_KEYWORDS",
                 checked_register(chunk,stream,read_operand(chunk,offset+1),&valid),class_index,
                 checked_register(chunk,stream,read_operand(chunk,offset+5+extra),&valid),keyword_count);
             if((size_t)class_index>=chunk->class_count)valid=false;
@@ -969,7 +989,7 @@ static bool disassemble_spread_constructors(DisassemblyWalk *walk) {
                 ((size_t)chunk->code[offset+3]<<8)|chunk->code[offset+4];
             const uint16_t class_index=(uint16_t)read_operand(chunk,offset+7);
             const uint8_t needs_receiver=chunk->code[offset+9];
-            fprintf(stream,"%-18s r%u, f%zu, r%u, c%u, self=%u\n",
+            out_printf(stream,"%-18s r%u, f%zu, r%u, c%u, self=%u\n",
                 "CALL_SINGLETON_SPREAD",
                 checked_register(chunk,stream,read_operand(chunk,offset+1),&valid),
                 function_index,
@@ -992,7 +1012,7 @@ static bool disassemble_spread_constructors(DisassemblyWalk *walk) {
             if(!require_bytes(stream,chunk,offset,(size_t)11+type_count*2)) {
                 valid=false;offset=chunk->code_count;break;
             }
-            fprintf(stream,"%-18s r%u, f%zu, r%u, c%u, self=%u, %u types\n",
+            out_printf(stream,"%-18s r%u, f%zu, r%u, c%u, self=%u, %u types\n",
                 "CALL_TYPED_SINGLETON_SPREAD",
                 checked_register(chunk,stream,read_operand(chunk,offset+1),&valid),
                 function_index,
@@ -1020,7 +1040,7 @@ static bool disassemble_spread_constructors(DisassemblyWalk *walk) {
                !require_bytes(stream,chunk,offset,keyword_end+(typed?1:0))) {
                 valid=false;offset=chunk->code_count;break;
             }
-            fprintf(stream,"%-18s r%u, f%zu, r%u, %u keywords\n",
+            out_printf(stream,"%-18s r%u, f%zu, r%u, %u keywords\n",
                 typed?"CALL_TYPED_SINGLE_KW":"CALL_SINGLETON_KW",
                 checked_register(chunk,stream,read_operand(chunk,offset+1),&valid),
                 function_index,
@@ -1067,7 +1087,7 @@ static bool disassemble_closures_and_classes(DisassemblyWalk *walk) {
         case DIAMOND_OP_GET_CAPTURE:
         case DIAMOND_OP_GET_CAPTURE_CELL:
             if(!require_bytes(stream,chunk,offset,5)){valid=false;offset=chunk->code_count;break;}
-            fprintf(stream,"%-18s r%u, c%u\n",
+            out_printf(stream,"%-18s r%u, c%u\n",
                 chunk->code[offset]==DIAMOND_OP_GET_CAPTURE
                     ? "GET_CAPTURE" : "GET_CAPTURE_CELL",
                 checked_register(chunk,stream,read_operand(chunk,offset+1),&valid),
@@ -1075,7 +1095,7 @@ static bool disassemble_closures_and_classes(DisassemblyWalk *walk) {
             offset+=5;break;
         case DIAMOND_OP_SET_CAPTURE:
             if(!require_bytes(stream,chunk,offset,5)){valid=false;offset=chunk->code_count;break;}
-            fprintf(stream,"%-18s c%u, r%u\n","SET_CAPTURE",
+            out_printf(stream,"%-18s c%u, r%u\n","SET_CAPTURE",
                 read_operand(chunk,offset+1),
                 checked_register(chunk,stream,read_operand(chunk,offset+3),&valid));
             offset+=5;break;
@@ -1091,7 +1111,7 @@ static bool disassemble_closures_and_classes(DisassemblyWalk *walk) {
             if(!require_bytes(stream,chunk,offset,6+count*2)){valid=false;offset=chunk->code_count;break;}
             const size_t function_index=
                 ((size_t)chunk->code[offset+3]<<8)|chunk->code[offset+4];
-            fprintf(stream,"%-18s r%u, f%zu, %zu captures\n","CLOSURE",
+            out_printf(stream,"%-18s r%u, f%zu, %zu captures\n","CLOSURE",
                 checked_register(chunk,stream,read_operand(chunk,offset+1),&valid),
                 function_index,count);
             for(size_t index=0;index<count;index++)
@@ -1100,7 +1120,7 @@ static bool disassemble_closures_and_classes(DisassemblyWalk *walk) {
         }
         case DIAMOND_OP_NEW:
             if(!require_bytes(stream,chunk,offset,8)){valid=false;offset=chunk->code_count;break;}
-            fprintf(stream,"%-18s r%u, class%u, r%u, %u args\n","NEW",
+            out_printf(stream,"%-18s r%u, class%u, r%u, %u args\n","NEW",
                 checked_register(chunk,stream,read_operand(chunk,offset+1),&valid),
                 read_operand(chunk,offset+3),
                 checked_register_range(chunk,stream,read_operand(chunk,offset+5),
@@ -1109,7 +1129,7 @@ static bool disassemble_closures_and_classes(DisassemblyWalk *walk) {
             offset+=8;break;
         case DIAMOND_OP_REDEFINE_METHOD:
             if(!require_bytes(stream,chunk,offset,9)){valid=false;offset=chunk->code_count;break;}
-            fprintf(stream,"%-18s r%u, class%u, r%u, r%u\n","REDEFINE_METHOD",
+            out_printf(stream,"%-18s r%u, class%u, r%u, r%u\n","REDEFINE_METHOD",
                 checked_register(chunk,stream,read_operand(chunk,offset+1),&valid),
                 read_operand(chunk,offset+3),
                 checked_register(chunk,stream,read_operand(chunk,offset+5),&valid),
@@ -1117,7 +1137,7 @@ static bool disassemble_closures_and_classes(DisassemblyWalk *walk) {
             offset+=9;break;
         case DIAMOND_OP_DEFINE_METHOD:
             if(!require_bytes(stream,chunk,offset,9)){valid=false;offset=chunk->code_count;break;}
-            fprintf(stream,"%-18s r%u, class%u, r%u, r%u\n","DEFINE_METHOD",
+            out_printf(stream,"%-18s r%u, class%u, r%u, r%u\n","DEFINE_METHOD",
                 checked_register(chunk,stream,read_operand(chunk,offset+1),&valid),
                 read_operand(chunk,offset+3),
                 checked_register(chunk,stream,read_operand(chunk,offset+5),&valid),
@@ -1125,7 +1145,7 @@ static bool disassemble_closures_and_classes(DisassemblyWalk *walk) {
             offset+=9;break;
         case DIAMOND_OP_COMPILE_METHOD:
             if(!require_bytes(stream,chunk,offset,13)){valid=false;offset=chunk->code_count;break;}
-            fprintf(stream,"%-18s r%u, class%u, r%u, r%u, r%u, r%u\n","COMPILE_METHOD",
+            out_printf(stream,"%-18s r%u, class%u, r%u, r%u, r%u, r%u\n","COMPILE_METHOD",
                 checked_register(chunk,stream,read_operand(chunk,offset+1),&valid),
                 read_operand(chunk,offset+3),
                 checked_register(chunk,stream,read_operand(chunk,offset+5),&valid),
@@ -1135,7 +1155,7 @@ static bool disassemble_closures_and_classes(DisassemblyWalk *walk) {
             offset+=13;break;
         case DIAMOND_OP_LOAD_CLASS:
             if(!require_bytes(stream,chunk,offset,5)){valid=false;offset=chunk->code_count;break;}
-            fprintf(stream,"%-18s r%u, class%u\n","LOAD_CLASS",
+            out_printf(stream,"%-18s r%u, class%u\n","LOAD_CLASS",
                 checked_register(chunk,stream,read_operand(chunk,offset+1),&valid),
                 read_operand(chunk,offset+3));
             offset+=5;break;
@@ -1143,7 +1163,7 @@ static bool disassemble_closures_and_classes(DisassemblyWalk *walk) {
             if(!require_bytes(stream,chunk,offset,8)){valid=false;offset=chunk->code_count;break;}
             if((size_t)read_operand(chunk,offset+3)>=chunk->string_count)
                 valid=false;
-            fprintf(stream,"%-18s r%u, s%u, r%u, %u args\n","INVOKE_SELF_METHOD",
+            out_printf(stream,"%-18s r%u, s%u, r%u, %u args\n","INVOKE_SELF_METHOD",
                 checked_register(chunk,stream,read_operand(chunk,offset+1),&valid),
                 read_operand(chunk,offset+3),
                 checked_register(chunk,stream,read_operand(chunk,offset+5),&valid),
@@ -1155,7 +1175,7 @@ static bool disassemble_closures_and_classes(DisassemblyWalk *walk) {
             offset=two_registers(stream,chunk,"FIBER_NEW",offset, &valid);break;
         case DIAMOND_OP_THREAD_NEW:
             if(!require_bytes(stream,chunk,offset,8)){valid=false;offset=chunk->code_count;break;}
-            fprintf(stream,"%-18s r%u, r%u, r%u, %u args\n","THREAD_NEW",
+            out_printf(stream,"%-18s r%u, r%u, r%u, %u args\n","THREAD_NEW",
                 checked_register(chunk,stream,read_operand(chunk,offset+1),&valid),
                 checked_register(chunk,stream,read_operand(chunk,offset+3),&valid),
                 checked_register_range(chunk,stream,read_operand(chunk,offset+5),
@@ -1181,7 +1201,7 @@ static bool disassemble_io_and_conversions(DisassemblyWalk *walk) {
     switch (opcode) {
         case DIAMOND_OP_PRINT:
             if(!require_bytes(stream,chunk,offset,6)){valid=false;offset=chunk->code_count;break;}
-            fprintf(stream,"%-18s r%u, r%u, newline=%u stderr=%u\n","PRINT",
+            out_printf(stream,"%-18s r%u, r%u, newline=%u stderr=%u\n","PRINT",
                 checked_register(chunk,stream,read_operand(chunk,offset+1),&valid),
                 checked_register(chunk,stream,read_operand(chunk,offset+3),&valid),
                 (chunk->code[offset+5]&DIAMOND_PRINT_NEWLINE)!=0?1u:0u,
@@ -1189,7 +1209,7 @@ static bool disassemble_io_and_conversions(DisassemblyWalk *walk) {
             offset+=6;break;
         case DIAMOND_OP_FILE_JOIN:
             if(!require_bytes(stream,chunk,offset,6)){valid=false;offset=chunk->code_count;break;}
-            fprintf(stream,"%-18s r%u, r%u, %u args\n","FILE_JOIN",
+            out_printf(stream,"%-18s r%u, r%u, %u args\n","FILE_JOIN",
                 checked_register(chunk,stream,read_operand(chunk,offset+1),&valid),
                 checked_register_range(chunk,stream,read_operand(chunk,offset+3),
                     chunk->code[offset+5],&valid),
@@ -1199,14 +1219,14 @@ static bool disassemble_io_and_conversions(DisassemblyWalk *walk) {
             offset=two_registers(stream,chunk,"TIME_PARSE",offset,&valid);break;
         case DIAMOND_OP_TIME_BUILD:
             if(!require_bytes(stream,chunk,offset,6)){valid=false;offset=chunk->code_count;break;}
-            fprintf(stream,"%-18s r%u, r%u, mode=%u\n","TIME_BUILD",
+            out_printf(stream,"%-18s r%u, r%u, mode=%u\n","TIME_BUILD",
                 checked_register(chunk,stream,read_operand(chunk,offset+1),&valid),
                 checked_register_range(chunk,stream,read_operand(chunk,offset+3),
                     chunk->code[offset+5]==1?7:6,&valid),chunk->code[offset+5]);
             offset+=6;break;
         case DIAMOND_OP_SEMVER: {
             if(!require_bytes(stream,chunk,offset,8)){valid=false;offset=chunk->code_count;break;}
-            fprintf(stream,"%-18s r%u, r%u, r%u, %u\n","SEMVER",
+            out_printf(stream,"%-18s r%u, r%u, r%u, %u\n","SEMVER",
                 checked_register(chunk,stream,read_operand(chunk,offset+1),&valid),
                 checked_register(chunk,stream,read_operand(chunk,offset+3),&valid),
                 checked_register(chunk,stream,read_operand(chunk,offset+5),&valid),
@@ -1215,7 +1235,7 @@ static bool disassemble_io_and_conversions(DisassemblyWalk *walk) {
         }
         case DIAMOND_OP_FILE_PATH: {
             if(!require_bytes(stream,chunk,offset,8)){valid=false;offset=chunk->code_count;break;}
-            fprintf(stream,"%-18s r%u, r%u, r%u, %s\n","FILE_PATH",
+            out_printf(stream,"%-18s r%u, r%u, r%u, %s\n","FILE_PATH",
                 checked_register(chunk,stream,read_operand(chunk,offset+1),&valid),
                 checked_register(chunk,stream,read_operand(chunk,offset+3),&valid),
                 checked_register(chunk,stream,read_operand(chunk,offset+5),&valid),
@@ -1240,7 +1260,7 @@ static bool disassemble_io_and_conversions(DisassemblyWalk *walk) {
             offset=three_registers(stream,chunk,"TCP_LISTEN_NONBLOCK",offset, &valid);break;
         case DIAMOND_OP_IO_POLL:
             if(!require_bytes(stream,chunk,offset,9)){valid=false;offset=chunk->code_count;break;}
-            fprintf(stream,"%-18s r%u, r%u, r%u, r%u\n","IO_POLL",
+            out_printf(stream,"%-18s r%u, r%u, r%u, r%u\n","IO_POLL",
                 checked_register(chunk,stream,read_operand(chunk,offset+1),&valid),
                 checked_register(chunk,stream,read_operand(chunk,offset+3),&valid),
                 checked_register(chunk,stream,read_operand(chunk,offset+5),&valid),
@@ -1272,7 +1292,7 @@ static bool disassemble_io_and_conversions(DisassemblyWalk *walk) {
             offset=two_registers(stream,chunk,"JSON_STRINGIFY",offset, &valid);break;
         case DIAMOND_OP_MATH_UNARY: {
             if(!require_bytes(stream,chunk,offset,6)){valid=false;offset=chunk->code_count;break;}
-            fprintf(stream,"%-18s r%u, r%u, %s\n","MATH_UNARY",
+            out_printf(stream,"%-18s r%u, r%u, %s\n","MATH_UNARY",
                 checked_register(chunk,stream,read_operand(chunk,offset+1),&valid),
                 checked_register(chunk,stream,read_operand(chunk,offset+3),&valid),
                 math_function_name((uint8_t)chunk->code[offset+5]));
@@ -1280,7 +1300,7 @@ static bool disassemble_io_and_conversions(DisassemblyWalk *walk) {
         }
         case DIAMOND_OP_MATH_BINARY: {
             if(!require_bytes(stream,chunk,offset,8)){valid=false;offset=chunk->code_count;break;}
-            fprintf(stream,"%-18s r%u, r%u, r%u, %s\n","MATH_BINARY",
+            out_printf(stream,"%-18s r%u, r%u, r%u, %s\n","MATH_BINARY",
                 checked_register(chunk,stream,read_operand(chunk,offset+1),&valid),
                 checked_register(chunk,stream,read_operand(chunk,offset+3),&valid),
                 checked_register(chunk,stream,read_operand(chunk,offset+5),&valid),
@@ -1313,7 +1333,7 @@ static bool disassemble_invokes_and_variables(DisassemblyWalk *walk) {
             if(!require_bytes(stream,chunk,offset,10)){valid=false;offset=chunk->code_count;break;}
             if((size_t)read_operand(chunk,offset+5)>=chunk->string_count)
                 valid=false;
-            fprintf(stream,"%-18s r%u, r%u, s%u, r%u, %u args\n",
+            out_printf(stream,"%-18s r%u, r%u, s%u, r%u, %u args\n",
                 (DiamondOpCode)opcode==DIAMOND_OP_INVOKE?"INVOKE":"INVOKE_MONO",
                 checked_register(chunk,stream,read_operand(chunk,offset+1),&valid),
                 checked_register(chunk,stream,read_operand(chunk,offset+3),&valid),
@@ -1331,7 +1351,7 @@ static bool disassemble_invokes_and_variables(DisassemblyWalk *walk) {
             }
             if((size_t)read_operand(chunk,offset+5)>=chunk->string_count)
                 valid=false;
-            fprintf(stream,"%-18s r%u, r%u, s%u, r%u, %u args, [",
+            out_printf(stream,"%-18s r%u, r%u, s%u, r%u, %u args, [",
                 "INVOKE_TYPED",
                 checked_register(chunk,stream,read_operand(chunk,offset+1),&valid),
                 checked_register(chunk,stream,read_operand(chunk,offset+3),&valid),
@@ -1340,18 +1360,18 @@ static bool disassemble_invokes_and_variables(DisassemblyWalk *walk) {
                     chunk->code[offset+9],&valid),
                 chunk->code[offset+9]);
             for(size_t index=0;index<count;index++) {
-                if(index>0)fputs(", ",stream);
+                if(index>0)out_puts(", ",stream);
                 valid=print_type_set(stream,chunk,
                     read_operand(chunk,offset+11+index*2))&&valid;
             }
-            fputs("]\n",stream);offset+=(size_t)11+count*2;break;
+            out_puts("]\n",stream);offset+=(size_t)11+count*2;break;
         }
         case DIAMOND_OP_SUPER:
             if(!require_bytes(stream,chunk,offset,10)){valid=false;offset=chunk->code_count;break;}
             if((size_t)read_operand(chunk,offset+3)>=chunk->class_count||
                (size_t)read_operand(chunk,offset+5)>=chunk->string_count)
                 valid=false;
-            fprintf(stream,"%-18s r%u, class%u, s%u, r%u, %u args\n","SUPER",
+            out_printf(stream,"%-18s r%u, class%u, s%u, r%u, %u args\n","SUPER",
                 checked_register(chunk,stream,read_operand(chunk,offset+1),&valid),
                 read_operand(chunk,offset+3),read_operand(chunk,offset+5),
                 checked_register_range(chunk,stream,read_operand(chunk,offset+7),
@@ -1364,14 +1384,14 @@ static bool disassemble_invokes_and_variables(DisassemblyWalk *walk) {
          * register despite the uniform 2-byte width. */
         case DIAMOND_OP_GET_IVAR:
             if(!require_bytes(stream,chunk,offset,7)){valid=false;offset=chunk->code_count;break;}
-            fprintf(stream,"%-18s r%u, r%u, field%u\n","GET_IVAR",
+            out_printf(stream,"%-18s r%u, r%u, field%u\n","GET_IVAR",
                 checked_register(chunk,stream,read_operand(chunk,offset+1),&valid),
                 checked_register(chunk,stream,read_operand(chunk,offset+3),&valid),
                 read_operand(chunk,offset+5));
             offset+=7;break;
         case DIAMOND_OP_SET_IVAR:
             if(!require_bytes(stream,chunk,offset,7)){valid=false;offset=chunk->code_count;break;}
-            fprintf(stream,"%-18s r%u, field%u, r%u\n","SET_IVAR",
+            out_printf(stream,"%-18s r%u, field%u, r%u\n","SET_IVAR",
                 checked_register(chunk,stream,read_operand(chunk,offset+1),&valid),
                 read_operand(chunk,offset+3),
                 checked_register(chunk,stream,read_operand(chunk,offset+5),&valid));
@@ -1384,14 +1404,14 @@ static bool disassemble_invokes_and_variables(DisassemblyWalk *walk) {
          * operand-role split this mirrors. */
         case DIAMOND_OP_GET_IVAR_NAME:
             if(!require_bytes(stream,chunk,offset,7)){valid=false;offset=chunk->code_count;break;}
-            fprintf(stream,"%-18s r%u, r%u, s%u\n","GET_IVAR_NAME",
+            out_printf(stream,"%-18s r%u, r%u, s%u\n","GET_IVAR_NAME",
                 checked_register(chunk,stream,read_operand(chunk,offset+1),&valid),
                 checked_register(chunk,stream,read_operand(chunk,offset+3),&valid),
                 read_operand(chunk,offset+5));
             offset+=7;break;
         case DIAMOND_OP_SET_IVAR_NAME:
             if(!require_bytes(stream,chunk,offset,7)){valid=false;offset=chunk->code_count;break;}
-            fprintf(stream,"%-18s r%u, s%u, r%u\n","SET_IVAR_NAME",
+            out_printf(stream,"%-18s r%u, s%u, r%u\n","SET_IVAR_NAME",
                 checked_register(chunk,stream,read_operand(chunk,offset+1),&valid),
                 read_operand(chunk,offset+3),
                 checked_register(chunk,stream,read_operand(chunk,offset+5),&valid));
@@ -1401,13 +1421,13 @@ static bool disassemble_invokes_and_variables(DisassemblyWalk *walk) {
          * runtime, not a register. */
         case DIAMOND_OP_GET_NAMESPACE_CONSTANT:
             if(!require_bytes(stream,chunk,offset,5)){valid=false;offset=chunk->code_count;break;}
-            fprintf(stream,"%-18s r%u, ns%u\n","GET_NAMESPACE_CONST",
+            out_printf(stream,"%-18s r%u, ns%u\n","GET_NAMESPACE_CONST",
                 checked_register(chunk,stream,read_operand(chunk,offset+1),&valid),
                 read_operand(chunk,offset+3));
             offset+=5;break;
         case DIAMOND_OP_SET_NAMESPACE_CONSTANT:
             if(!require_bytes(stream,chunk,offset,5)){valid=false;offset=chunk->code_count;break;}
-            fprintf(stream,"%-18s ns%u, r%u\n","SET_NAMESPACE_CONST",
+            out_printf(stream,"%-18s ns%u, r%u\n","SET_NAMESPACE_CONST",
                 read_operand(chunk,offset+1),
                 checked_register(chunk,stream,read_operand(chunk,offset+3),&valid));
             offset+=5;break;
@@ -1417,14 +1437,14 @@ static bool disassemble_invokes_and_variables(DisassemblyWalk *walk) {
          * as GET_IVAR's own field operand just above. */
         case DIAMOND_OP_GET_CVAR:
             if(!require_bytes(stream,chunk,offset,7)){valid=false;offset=chunk->code_count;break;}
-            fprintf(stream,"%-18s r%u, c%u, cv%u\n","GET_CVAR",
+            out_printf(stream,"%-18s r%u, c%u, cv%u\n","GET_CVAR",
                 checked_register(chunk,stream,read_operand(chunk,offset+1),&valid),
                 read_operand(chunk,offset+3),
                 read_operand(chunk,offset+5));
             offset+=7;break;
         case DIAMOND_OP_SET_CVAR:
             if(!require_bytes(stream,chunk,offset,7)){valid=false;offset=chunk->code_count;break;}
-            fprintf(stream,"%-18s c%u, cv%u, r%u\n","SET_CVAR",
+            out_printf(stream,"%-18s c%u, cv%u, r%u\n","SET_CVAR",
                 read_operand(chunk,offset+1),
                 read_operand(chunk,offset+3),
                 checked_register(chunk,stream,read_operand(chunk,offset+5),&valid));
@@ -1450,7 +1470,7 @@ static bool disassemble_natives_and_debugging(DisassemblyWalk *walk) {
             offset=three_registers(stream,chunk,"SQLITE3_OPEN",offset, &valid);break;
         case DIAMOND_OP_CHECK_DESTRUCTURE_COUNT:
             if(!require_bytes(stream,chunk,offset,5)){valid=false;offset=chunk->code_count;break;}
-            fprintf(stream,"%-18s r%u, %u\n","CHECK_DESTRUCTURE_COUNT",
+            out_printf(stream,"%-18s r%u, %u\n","CHECK_DESTRUCTURE_COUNT",
                 checked_register(chunk,stream,read_operand(chunk,offset+1),&valid),
                 read_operand(chunk,offset+3)&0x7fffu);
             offset+=5;break;
@@ -1458,7 +1478,7 @@ static bool disassemble_natives_and_debugging(DisassemblyWalk *walk) {
             offset=one_register(stream,chunk,"TIME_MONOTONIC",offset, &valid);break;
         case DIAMOND_OP_TIME_NOW:
             if(!require_bytes(stream,chunk,offset,4)){valid=false;offset=chunk->code_count;break;}
-            fprintf(stream,"%-18s r%u, utc=%u\n","TIME_NOW",
+            out_printf(stream,"%-18s r%u, utc=%u\n","TIME_NOW",
                 checked_register(chunk,stream,read_operand(chunk,offset+1),&valid),
                 chunk->code[offset+3]);
             offset+=4;break;
@@ -1549,7 +1569,7 @@ static bool disassemble_natives_and_debugging(DisassemblyWalk *walk) {
             const uint8_t local_count=chunk->code[offset+3];
             const size_t total=4+(size_t)local_count*4;
             if(!require_bytes(stream,chunk,offset,total)){valid=false;offset=chunk->code_count;break;}
-            fprintf(stream,"%-18s r%u, %u locals\n","DEBUGGER",dest,local_count);
+            out_printf(stream,"%-18s r%u, %u locals\n","DEBUGGER",dest,local_count);
             for(size_t index=0;index<local_count;index++) {
                 const size_t entry_offset=offset+4+index*4;
                 const uint16_t name_index=read_operand(chunk,entry_offset);
@@ -1560,7 +1580,7 @@ static bool disassemble_natives_and_debugging(DisassemblyWalk *walk) {
                     local_name=chunk->strings[name_index].chars;
                     local_name_length=chunk->strings[name_index].length;
                 }
-                fprintf(stream,"                     %.*s -> r%u\n",
+                out_printf(stream,"                     %.*s -> r%u\n",
                     (int)local_name_length,local_name,local_register);
             }
             offset+=total;break;
@@ -1572,7 +1592,7 @@ static bool disassemble_natives_and_debugging(DisassemblyWalk *walk) {
             const uint8_t local_count=chunk->code[offset+3];
             const size_t total=12+(size_t)local_count*4;
             if(!require_bytes(stream,chunk,offset,total)){valid=false;offset=chunk->code_count;break;}
-            fprintf(stream,"%-18s r%u, %u locals\n","BREAKPOINT_CHECK",dest,local_count);
+            out_printf(stream,"%-18s r%u, %u locals\n","BREAKPOINT_CHECK",dest,local_count);
             for(size_t index=0;index<local_count;index++) {
                 const size_t entry_offset=offset+12+index*4;
                 const uint16_t name_index=read_operand(chunk,entry_offset);
@@ -1583,7 +1603,7 @@ static bool disassemble_natives_and_debugging(DisassemblyWalk *walk) {
                     local_name=chunk->strings[name_index].chars;
                     local_name_length=chunk->strings[name_index].length;
                 }
-                fprintf(stream,"                     %.*s -> r%u\n",
+                out_printf(stream,"                     %.*s -> r%u\n",
                     (int)local_name_length,local_name,local_register);
             }
             offset+=total;break;
@@ -1617,14 +1637,14 @@ static bool disassemble_patterns_and_types(DisassemblyWalk *walk) {
             offset=three_registers(stream,chunk,"CASE_MATCH",offset,&valid);break;
         case DIAMOND_OP_CASE_ARRAY_SHAPE:
             if(!require_bytes(stream,chunk,offset,7)){valid=false;offset=chunk->code_count;break;}
-            fprintf(stream,"%-18s r%u, r%u, %u elements\n","CASE_ARRAY_SHAPE",
+            out_printf(stream,"%-18s r%u, r%u, %u elements\n","CASE_ARRAY_SHAPE",
                 checked_register(chunk,stream,read_operand(chunk,offset+1),&valid),
                 checked_register(chunk,stream,read_operand(chunk,offset+3),&valid),
                 read_operand(chunk,offset+5)&0x7fffu);
             offset+=7;break;
         case DIAMOND_OP_ARRAY_REST:
             if(!require_bytes(stream,chunk,offset,7)){valid=false;offset=chunk->code_count;break;}
-            fprintf(stream,"%-18s r%u, r%u, start=%u\n","ARRAY_REST",
+            out_printf(stream,"%-18s r%u, r%u, start=%u\n","ARRAY_REST",
                 checked_register(chunk,stream,read_operand(chunk,offset+1),&valid),
                 checked_register(chunk,stream,read_operand(chunk,offset+3),&valid),
                 read_operand(chunk,offset+5));offset+=7;break;
@@ -1638,7 +1658,7 @@ static bool disassemble_patterns_and_types(DisassemblyWalk *walk) {
             if(!require_bytes(stream,chunk,offset,7)){valid=false;offset=chunk->code_count;break;}
             {
                 const uint16_t bounds=read_operand(chunk,offset+5);
-                fprintf(stream,"%-18s r%u, r%u, prefix=%u, suffix=%u\n",
+                out_printf(stream,"%-18s r%u, r%u, prefix=%u, suffix=%u\n",
                     "ARRAY_MIDDLE",
                     checked_register(chunk,stream,read_operand(chunk,offset+1),&valid),
                     checked_register(chunk,stream,read_operand(chunk,offset+3),&valid),
@@ -1648,7 +1668,7 @@ static bool disassemble_patterns_and_types(DisassemblyWalk *walk) {
             break;
         case DIAMOND_OP_ARRAY_SUFFIX:
             if(!require_bytes(stream,chunk,offset,7)){valid=false;offset=chunk->code_count;break;}
-            fprintf(stream,"%-18s r%u, r%u, reverse=%u\n","ARRAY_SUFFIX",
+            out_printf(stream,"%-18s r%u, r%u, reverse=%u\n","ARRAY_SUFFIX",
                 checked_register(chunk,stream,read_operand(chunk,offset+1),&valid),
                 checked_register(chunk,stream,read_operand(chunk,offset+3),&valid),
                 read_operand(chunk,offset+5));offset+=7;break;
@@ -1660,48 +1680,48 @@ static bool disassemble_patterns_and_types(DisassemblyWalk *walk) {
             offset=six_registers(stream,chunk,"MYSQL_OPEN",offset, &valid);break;
         case DIAMOND_OP_CHECK_TYPE:
             if(!require_bytes(stream,chunk,offset,5)){valid=false;offset=chunk->code_count;break;}
-            fprintf(stream,"%-18s r%u, ","CHECK_TYPE",
+            out_printf(stream,"%-18s r%u, ","CHECK_TYPE",
                 checked_register(chunk,stream,read_operand(chunk,offset+1),&valid));
             const uint16_t set_index=read_operand(chunk,offset+3);
             valid=print_type_set(stream,chunk,set_index)&&valid;
-            fputc('\n',stream);offset+=5;break;
+            out_putc('\n',stream);offset+=5;break;
         case DIAMOND_OP_CHECK_SELF_RETURN: {
             if(!require_bytes(stream,chunk,offset,7)){valid=false;offset=chunk->code_count;break;}
-            fprintf(stream,"%-18s r%u, ","CHECK_SELF_RETURN",
+            out_printf(stream,"%-18s r%u, ","CHECK_SELF_RETURN",
                 checked_register(chunk,stream,read_operand(chunk,offset+1),&valid));
             const uint16_t others=read_operand(chunk,offset+3);
-            if(others==DIAMOND_NO_TYPE_SET)fputs("Self",stream);
+            if(others==DIAMOND_NO_TYPE_SET)out_puts("Self",stream);
             else valid=print_type_set(stream,chunk,others)&&valid;
-            fprintf(stream,", r%u\n",
+            out_printf(stream,", r%u\n",
                 checked_register(chunk,stream,read_operand(chunk,offset+5),&valid));
             offset+=7;break;
         }
         case DIAMOND_OP_IS_TYPE: {
             if(!require_bytes(stream,chunk,offset,7)){valid=false;offset=chunk->code_count;break;}
-            fprintf(stream,"%-18s r%u, r%u, ","IS_TYPE",
+            out_printf(stream,"%-18s r%u, r%u, ","IS_TYPE",
                     checked_register(chunk,stream,read_operand(chunk,offset+1),&valid),
                     checked_register(chunk,stream,read_operand(chunk,offset+3),&valid));
             const uint16_t type=(uint8_t)read_operand(chunk,offset+5);
-            if(type==DIAMOND_TYPE_INT) fputs("Int",stream);
-            else if(type==DIAMOND_TYPE_FLOAT) fputs("Float",stream);
-            else if(type==DIAMOND_TYPE_STRING) fputs("String",stream);
-            else if(type==DIAMOND_TYPE_BOOL) fputs("Bool",stream);
-            else if(type==DIAMOND_TYPE_NIL) fputs("Nil",stream);
-            else if(type==DIAMOND_TYPE_ARRAY) fputs("Array",stream);
-            else if(type==DIAMOND_TYPE_HASH) fputs("Hash",stream);
-            else if(type==DIAMOND_TYPE_CALLABLE) fputs("Callable",stream);
-            else if(type==DIAMOND_TYPE_SIZED) fputs("Sized",stream);
-    else if(type==DIAMOND_TYPE_SYMBOL) fputs("Symbol",stream);
+            if(type==DIAMOND_TYPE_INT) out_puts("Int",stream);
+            else if(type==DIAMOND_TYPE_FLOAT) out_puts("Float",stream);
+            else if(type==DIAMOND_TYPE_STRING) out_puts("String",stream);
+            else if(type==DIAMOND_TYPE_BOOL) out_puts("Bool",stream);
+            else if(type==DIAMOND_TYPE_NIL) out_puts("Nil",stream);
+            else if(type==DIAMOND_TYPE_ARRAY) out_puts("Array",stream);
+            else if(type==DIAMOND_TYPE_HASH) out_puts("Hash",stream);
+            else if(type==DIAMOND_TYPE_CALLABLE) out_puts("Callable",stream);
+            else if(type==DIAMOND_TYPE_SIZED) out_puts("Sized",stream);
+    else if(type==DIAMOND_TYPE_SYMBOL) out_puts("Symbol",stream);
             else if(type>=DIAMOND_TYPE_VARIABLE_BASE&&
                     type<DIAMOND_TYPE_INTERFACE_BASE)
-                fprintf(stream,"T%u",type-DIAMOND_TYPE_VARIABLE_BASE);
+                out_printf(stream,"T%u",type-DIAMOND_TYPE_VARIABLE_BASE);
             else if(type>=DIAMOND_TYPE_INTERFACE_BASE&&
                     (size_t)(type-DIAMOND_TYPE_INTERFACE_BASE)<chunk->interface_count)
-                fputs(chunk->interfaces[type-DIAMOND_TYPE_INTERFACE_BASE]->name,stream);
+                out_puts(chunk->interfaces[type-DIAMOND_TYPE_INTERFACE_BASE]->name,stream);
             else if((size_t)(type-DIAMOND_TYPE_CLASS_BASE)<chunk->class_count)
-                fputs(chunk->classes[type-DIAMOND_TYPE_CLASS_BASE]->name,stream);
-            else {fputs("<invalid type>",stream);valid=false;}
-            fputc('\n',stream);offset+=7;break;
+                out_puts(chunk->classes[type-DIAMOND_TYPE_CLASS_BASE]->name,stream);
+            else {out_puts("<invalid type>",stream);valid=false;}
+            out_putc('\n',stream);offset+=7;break;
         }
         case DIAMOND_OP_SAME_CLASS:
             offset=three_registers(stream,chunk,"SAME_CLASS",offset,&valid);break;
@@ -1710,7 +1730,7 @@ static bool disassemble_patterns_and_types(DisassemblyWalk *walk) {
         case DIAMOND_OP_ARRAY: {
             if(!require_bytes(stream,chunk,offset,7)){valid=false;offset=chunk->code_count;break;}
             const uint16_t items=read_operand(chunk,offset+5);
-            fprintf(stream,"%-18s r%u, r%u, %u items\n","ARRAY",
+            out_printf(stream,"%-18s r%u, r%u, %u items\n","ARRAY",
                 checked_register(chunk,stream,read_operand(chunk,offset+1),&valid),
                 checked_register_range(chunk,stream,read_operand(chunk,offset+3),items,&valid),
                 items);
@@ -1723,7 +1743,7 @@ static bool disassemble_patterns_and_types(DisassemblyWalk *walk) {
         case DIAMOND_OP_HASH: {
             if(!require_bytes(stream,chunk,offset,7)){valid=false;offset=chunk->code_count;break;}
             const uint16_t pairs=read_operand(chunk,offset+5);
-            fprintf(stream,"%-18s r%u, r%u, %u pairs\n","HASH",
+            out_printf(stream,"%-18s r%u, r%u, %u pairs\n","HASH",
                 checked_register(chunk,stream,read_operand(chunk,offset+1),&valid),
                 checked_register_range(chunk,stream,read_operand(chunk,offset+3),
                     (size_t)pairs*2,&valid),
@@ -1766,7 +1786,7 @@ static bool disassemble_exception_flow(DisassemblyWalk *walk) {
         case DIAMOND_OP_PUSH_RESCUE: {
             if(!require_bytes(stream,chunk,offset,14)){valid=false;offset=chunk->code_count;break;}
             const size_t target=((size_t)chunk->code[offset+12]<<8)|chunk->code[offset+13];
-            fprintf(stream,"%-18s r%u, %u types -> %04zu\n","PUSH_RESCUE",
+            out_printf(stream,"%-18s r%u, %u types -> %04zu\n","PUSH_RESCUE",
                     checked_register(chunk,stream,read_operand(chunk,offset+1),&valid),
                     chunk->code[offset+3],target);
             if(target>chunk->code_count) valid=false;
@@ -1774,14 +1794,14 @@ static bool disassemble_exception_flow(DisassemblyWalk *walk) {
             offset+=14;break;
         }
         case DIAMOND_OP_POP_RESCUE:
-            fprintf(stream,"%-18s\n","POP_RESCUE");offset++;break;
+            out_printf(stream,"%-18s\n","POP_RESCUE");offset++;break;
         case DIAMOND_OP_PUSH_ENSURE:
         case DIAMOND_OP_RUN_ENSURE: {
             if(!require_bytes(stream,chunk,offset,3)){valid=false;offset=chunk->code_count;break;}
             const size_t target=((size_t)chunk->code[offset+1]<<8)|chunk->code[offset+2];
             if(target>chunk->code_count) valid=false;
             else pending_targets[pending_count++]=target;
-            fprintf(stream,"%-18s -> %04zu\n",
+            out_printf(stream,"%-18s -> %04zu\n",
                 chunk->code[offset]==DIAMOND_OP_PUSH_ENSURE
                     ? "PUSH_ENSURE" : "RUN_ENSURE",target);
             offset+=3;break;
@@ -1791,11 +1811,11 @@ static bool disassemble_exception_flow(DisassemblyWalk *walk) {
             const size_t target=((size_t)chunk->code[offset+2]<<8)|chunk->code[offset+3];
             if(target>chunk->code_count) valid=false;
             else pending_targets[pending_count++]=target;
-            fprintf(stream,"%-18s %u levels -> %04zu\n","UNWIND_JUMP",chunk->code[offset+1],target);
+            out_printf(stream,"%-18s %u levels -> %04zu\n","UNWIND_JUMP",chunk->code[offset+1],target);
             offset+=4;break;
         }
         case DIAMOND_OP_END_ENSURE:
-            fprintf(stream,"%-18s\n","END_ENSURE");offset++;break;
+            out_printf(stream,"%-18s\n","END_ENSURE");offset++;break;
         default:
             return false;
     }
@@ -1809,13 +1829,20 @@ static bool disassemble_chunk_with_scratch(FILE *stream, const char *name,
         const DiamondChunk *chunk, size_t source_start, bool *starts,
         size_t *pending_targets);
 
-/* The two DIAMOND_MAX_CODE-sized scratch arrays (about 580 KB together) live
- * on the heap: this walk also runs from the debugger's pause path, which can
- * be deep inside a thread or fiber with a small native stack. */
+/* The two scratch arrays live on the heap: this walk also runs from the
+ * debugger's pause path, which can be deep inside a thread or fiber with a
+ * small native stack. Both are sized to the chunk, not DIAMOND_MAX_CODE:
+ * `starts` is indexed by instruction offsets (< code_count) and by jump
+ * targets (<= code_count, checked before they are recorded), and every
+ * instruction that records a target is at least three bytes long, so
+ * there are never more than code_count of them. Sizing them to the
+ * maximum cost about 580 KB of allocation and zeroing per function, on
+ * every bytecode cache load. */
 static bool disassemble_chunk(FILE *stream, const char *name,
                               const DiamondChunk *chunk, size_t source_start) {
-    bool *starts = calloc(DIAMOND_MAX_CODE, sizeof *starts);
-    size_t *pending_targets = malloc(DIAMOND_MAX_CODE * sizeof *pending_targets);
+    const size_t scratch_count = chunk->code_count + 1;
+    bool *starts = calloc(scratch_count, sizeof *starts);
+    size_t *pending_targets = malloc(scratch_count * sizeof *pending_targets);
     if (starts == nullptr || pending_targets == nullptr) {
         free(starts);
         free(pending_targets);
@@ -1831,7 +1858,7 @@ static bool disassemble_chunk(FILE *stream, const char *name,
 static bool disassemble_chunk_with_scratch(FILE *stream, const char *name,
         const DiamondChunk *chunk, size_t source_start, bool *starts,
         size_t *pending_targets) {
-    fprintf(stream, "== %s ==\n", name);
+    out_printf(stream, "== %s ==\n", name);
     FILE *output=stream;
     FILE *hidden=source_start==0?nullptr:fopen("/dev/null","w");
     if(source_start!=0&&hidden==nullptr)return false;
@@ -1865,10 +1892,10 @@ static bool disassemble_chunk_with_scratch(FILE *stream, const char *name,
             stream=position>=source_start?output:hidden;
         }
         if (chunk->lines != nullptr && chunk->lines[offset] != 0) {
-            fprintf(stream, "%04zu %4u:%-3u ", offset, chunk->lines[offset],
+            out_printf(stream, "%04zu %4u:%-3u ", offset, chunk->lines[offset],
                     chunk->columns[offset]);
         } else {
-            fprintf(stream, "%04zu          ", offset);
+            out_printf(stream, "%04zu          ", offset);
         }
         walk.stream = stream;
         if (!(disassemble_loads(&walk) ||
@@ -1879,7 +1906,7 @@ static bool disassemble_chunk_with_scratch(FILE *stream, const char *name,
               disassemble_closures_and_classes(&walk) || disassemble_io_and_conversions(&walk) ||
               disassemble_natives_and_debugging(&walk) || disassemble_patterns_and_types(&walk) ||
               disassemble_exception_flow(&walk))) {
-            fprintf(stream, "<unknown opcode %u>\n", chunk->code[offset]);
+            out_printf(stream, "<unknown opcode %u>\n", chunk->code[offset]);
             walk.valid = false;
             walk.offset++;
         }
@@ -1896,7 +1923,7 @@ static bool disassemble_chunk_with_scratch(FILE *stream, const char *name,
     for (size_t index = 0; index < walk.pending_count; index++) {
         const size_t target = pending_targets[index];
         if (target != chunk->code_count && !starts[target]) {
-            fprintf(stream, "<jump target %04zu is not an instruction boundary>\n", target);
+            out_printf(stream, "<jump target %04zu is not an instruction boundary>\n", target);
             walk.valid = false;
         }
     }
@@ -1943,11 +1970,9 @@ bool diamond_disassemble(FILE *stream, const char *name,
 }
 
 bool diamond_verify_bytecode(const DiamondChunk *chunk) {
-    FILE *sink = diamond_env_flag("DIAMOND_DEBUG_VERIFY") ? stderr : fopen("/dev/null", "w");
-    if (sink == nullptr) return false;
-    const bool valid = diamond_disassemble(sink, chunk->name, chunk);
-    if (sink != stderr) fclose(sink);
-    return valid;
+    /* No stream: the walk checks everything without formatting a line. */
+    FILE *sink = diamond_env_flag("DIAMOND_DEBUG_VERIFY") ? stderr : nullptr;
+    return diamond_disassemble(sink, chunk->name, chunk);
 }
 
 /* Walks the chunk with the disassembler itself (the one authority on
