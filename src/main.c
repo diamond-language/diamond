@@ -117,6 +117,21 @@ static char *derive_output_path(const char *source_path) {
     return output;
 }
 
+/* Plain `d6 build` (no SOURCE, no `-o`) names the binary after the current
+ * directory: `cd greeter && d6 build` -> `greeter`. At the filesystem root,
+ * which has no name, it falls back to "app". Caller owns the buffer. */
+static char *directory_output_path(void) {
+    char *cwd = getcwd(nullptr, 0);
+    if (cwd == nullptr) return nullptr;
+    size_t length = strlen(cwd);
+    while (length > 1 && cwd[length - 1] == '/') cwd[--length] = '\0';
+    const char *slash = strrchr(cwd, '/');
+    const char *base = slash != nullptr ? slash + 1 : cwd;
+    char *output = strdup(base[0] != '\0' ? base : "app");
+    free(cwd);
+    return output;
+}
+
 /* Serializes `program` (diamond_program_write_compiled, src/compiled_
  * prelude.h -- the same function tools/gen_compiled_prelude.c already
  * uses for the prelude itself) to a fresh temp file, writing its path
@@ -578,7 +593,7 @@ done:
     return result;
 }
 
-/* `diamond build SOURCE [-o OUTPUT] [--cc=COMPILER]` -- compiles SOURCE
+/* `diamond build [SOURCE] [-o OUTPUT] [--cc=COMPILER]` -- compiles SOURCE
  * exactly the way ordinary execution would (diamond_compile_source,
  * src/run_source.h), serializes the result, generates a temp embed-data
  * file for it, and links that plus tools/aot_runtime_main.c into a
@@ -586,17 +601,15 @@ done:
  * docs/deployment.md for the full contract and its current limitations
  * (still dynamically links whatever `diamond` itself does). */
 static int handle_build_command(int argc, char **argv) {
-    if (argc < 3) {
-        fprintf(stderr, "usage: d6 build SOURCE [-o OUTPUT] [--cc=COMPILER] [--target=TRIPLE] [--lto]\n");
-        return 64;
-    }
-    const char *source_path = argv[2];
+    const char *source_path = nullptr;
     const char *output_path = nullptr;
     const char *cc = nullptr;
     const char *target = nullptr;
     bool lto = false;
-    for (int index = 3; index < argc; index++) {
-        if (strcmp(argv[index], "-o") == 0 && index + 1 < argc) {
+    for (int index = 2; index < argc; index++) {
+        if (argv[index][0] != '-' && source_path == nullptr) {
+            source_path = argv[index];
+        } else if (strcmp(argv[index], "-o") == 0 && index + 1 < argc) {
             output_path = argv[++index];
         } else if (strcmp(argv[index], "--lto") == 0) {
             lto = true;
@@ -613,14 +626,34 @@ static int handle_build_command(int argc, char **argv) {
             return 64;
         }
     }
+    /* No SOURCE: the project's app.d6 (or legacy app.di) in the current
+     * directory, and the binary is named after that directory. */
+    const bool default_source = source_path == nullptr;
+    if (default_source) {
+        source_path = access("app.d6", F_OK) == 0 || access("app.di", F_OK) != 0
+            ? "app.d6" : "app.di";
+        if (access(source_path, F_OK) != 0) {
+            fprintf(stderr, "d6: no app.d6 in the current directory; "
+                "name the program to build: d6 build SOURCE [-o OUTPUT]\n");
+            return 64;
+        }
+    }
     char *derived_output = nullptr;
     if (output_path == nullptr) {
-        derived_output = derive_output_path(source_path);
+        derived_output = default_source ? directory_output_path()
+                                        : derive_output_path(source_path);
         if (derived_output == nullptr) {
             fprintf(stderr, "d6: out of memory\n");
             return 74;
         }
         output_path = derived_output;
+    }
+    struct stat output_status;
+    if (stat(output_path, &output_status) == 0 && S_ISDIR(output_status.st_mode)) {
+        fprintf(stderr, "d6: output '%s' is a directory; choose another name with -o\n",
+            output_path);
+        free(derived_output);
+        return 64;
     }
 
     char *source = read_file(source_path);
@@ -818,7 +851,7 @@ static void print_usage(FILE *stream) {
     fputs("Usage: d6 [OPTIONS] [FILE [ARGS...]]\n"
           "       d6 -e CODE [ARGS...]\n"
           "       d6 --dump-bytecode[=user|all] [-e CODE | FILE] [ARGS...]\n"
-          "       d6 build SOURCE [-o OUTPUT] [--cc=COMPILER] [--target=TRIPLE] [--lto]\n"
+          "       d6 build [SOURCE] [-o OUTPUT] [--cc=COMPILER] [--target=TRIPLE] [--lto]\n"
           "       d6 cache clear [--dry-run] [PATH...]\n"
           "       d6 cache warm SOURCE...\n"
           "\n"
@@ -836,7 +869,8 @@ static void print_usage(FILE *stream) {
           "\n"
           "'d6 build' compiles SOURCE into a standalone executable (default\n"
           "output: SOURCE's own basename with its extension stripped) -- see\n"
-          "docs/deployment.md. It links with a C compiler against the installed\n"
+          "docs/deployment.md. Without SOURCE it builds app.d6 in the current\n"
+          "directory, named after that directory. It links with a C compiler against the installed\n"
           "AOT kit, or against the d6 source checkout when there is no kit.\n"
           "\n"
           "'d6 cache clear' removes the bytecode caches (.d6c files) next to\n"

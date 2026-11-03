@@ -15,6 +15,11 @@ authoritative fine-grained record.
   them in the browser with the homepage's WebAssembly build, and every `# =>` claim in the guide
   is checked by `make test-docs`. `make test-docsite` builds the site and checks every link.
 
+- **Plain `d6 build`.** With no source file, `d6 build` builds `app.d6` in the current
+  directory (or a legacy `app.di`) and, unless `-o` says otherwise, names the binary after the
+  directory: `cd greeter && d6 build` produces `./greeter`. `d6 build tool.d6` still produces
+  `tool`.
+
 ## 0.25.0 — 2026-11-03
 
 ### Changed

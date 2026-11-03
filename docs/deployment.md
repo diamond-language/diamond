@@ -11,26 +11,30 @@ ordinary `d6 program.d6` interpreter path.
 ./app arg1 arg2
 ```
 
-You can also invoke the d6 binary from the application directory:
+From an application directory, plain `d6 build` builds its `app.d6` and names the binary
+after the directory:
 
 ```sh
 cd ../skindicate.dia
-../diamond/build/d6 build app.d6
+../diamond/build/d6 build      # builds app.d6 into ./skindicate.dia
 ```
 
 ## CLI contract
 
 ```text
-d6 build SOURCE [-o OUTPUT] [--cc=COMPILER] [--target=TRIPLE] [--lto]
+d6 build [SOURCE] [-o OUTPUT] [--cc=COMPILER] [--target=TRIPLE] [--lto]
 ```
 
-- `SOURCE` is compiled exactly the way `d6 program.d6` compiles it --
+- `SOURCE` defaults to `app.d6` in the current directory (legacy `app.di` when
+  there is no `app.d6`); with neither, `d6 build` exits 64. It is compiled exactly the way `d6 program.d6` compiles it --
   identical `require` resolution, identical embedded-prelude-template fast
   path -- so anything that runs correctly under the interpreter compiles
   identically under `build`.
 - `-o OUTPUT` names the produced binary. Defaults to `SOURCE`'s own basename
   with its final extension stripped (`app.d6` -> `app`, and legacy
-  `app.di` -> `app`). A basename without an extension is unchanged.
+  `app.di` -> `app`). A basename without an extension is unchanged. When `SOURCE`
+  is left out too, the binary is named after the current directory (`cd greeter && d6
+  build` -> `greeter`). An output path that is an existing directory exits 64.
 - `--cc=COMPILER` overrides the C compiler used to link the binary (`gcc`,
   `clang`, a full path, ...). Defaults to the compiler recorded in the
   installed AOT kit, or to whatever `$(CC)` resolves to for an ordinary
