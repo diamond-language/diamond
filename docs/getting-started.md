@@ -367,7 +367,7 @@ and [debugging](debugging.md) with breakpoints through `d6-dap`.
 neither `d6` nor the source at run time:
 
 ```sh
-d6 build main.d6 -o greeter
+d6 build                  # in greeter/: builds main.d6 into ./greeter
 ./greeter Grace           # Hello, Grace!
 ```
 

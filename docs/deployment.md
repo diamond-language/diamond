@@ -11,12 +11,12 @@ ordinary `d6 program.d6` interpreter path.
 ./app arg1 arg2
 ```
 
-From an application directory, plain `d6 build` builds its `app.d6` and names the binary
+From a project directory, plain `d6 build` builds its entry file and names the binary
 after the directory:
 
 ```sh
-cd ../skindicate.dia
-../diamond/build/d6 build      # builds app.d6 into ./skindicate.dia
+cd greeter          # made by `facet new cli greeter`
+d6 build            # builds main.d6 into ./greeter
 ```
 
 ## CLI contract
@@ -25,8 +25,9 @@ cd ../skindicate.dia
 d6 build [SOURCE] [-o OUTPUT] [--cc=COMPILER] [--target=TRIPLE] [--lto]
 ```
 
-- `SOURCE` defaults to `app.d6` in the current directory (legacy `app.di` when
-  there is no `app.d6`); with neither, `d6 build` exits 64. It is compiled exactly the way `d6 program.d6` compiles it --
+- `SOURCE` defaults to the first of `main.d6` (what `facet new` generates),
+  `app.d6` and legacy `app.di` in the current directory; with none of them,
+  `d6 build` exits 64. It is compiled exactly the way `d6 program.d6` compiles it --
   identical `require` resolution, identical embedded-prelude-template fast
   path -- so anything that runs correctly under the interpreter compiles
   identically under `build`.

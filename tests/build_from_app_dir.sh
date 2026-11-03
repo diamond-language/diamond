@@ -83,7 +83,14 @@ cd "$test_dir/empty"
 status=0
 "$diamond_bin" build 2> "$test_dir/missing.err" || status=$?
 test "$status" = 64
-grep -q "no app.d6 in the current directory" "$test_dir/missing.err"
+grep -q "no main.d6 or app.d6 in the current directory" "$test_dir/missing.err"
+# main.d6 (what `facet new` generates) comes first when both exist.
+mkdir "$test_dir/both"
+cp "$test_dir/app.d6" "$test_dir/both/app.d6"
+printf '%s\n' 'puts("from main")' > "$test_dir/both/main.d6"
+cd "$test_dir/both"
+"$diamond_bin" build > /dev/null
+test "$(./both)" = "from main"
 # The directory name taken by a subdirectory: refuse instead of failing to link.
 mkdir -p "$test_dir/clash/clash"
 cp "$test_dir/app.d6" "$test_dir/clash/app.d6"

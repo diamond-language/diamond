@@ -626,14 +626,20 @@ static int handle_build_command(int argc, char **argv) {
             return 64;
         }
     }
-    /* No SOURCE: the project's app.d6 (or legacy app.di) in the current
-     * directory, and the binary is named after that directory. */
+    /* No SOURCE: the project's entry file in the current directory --
+     * main.d6 (what `facet new` generates), else app.d6, else legacy
+     * app.di -- and the binary is named after that directory. */
     const bool default_source = source_path == nullptr;
     if (default_source) {
-        source_path = access("app.d6", F_OK) == 0 || access("app.di", F_OK) != 0
-            ? "app.d6" : "app.di";
-        if (access(source_path, F_OK) != 0) {
-            fprintf(stderr, "d6: no app.d6 in the current directory; "
+        static const char *const entry_files[] = {"main.d6", "app.d6", "app.di"};
+        for (size_t index = 0; index < sizeof entry_files / sizeof *entry_files; index++) {
+            if (access(entry_files[index], F_OK) == 0) {
+                source_path = entry_files[index];
+                break;
+            }
+        }
+        if (source_path == nullptr) {
+            fprintf(stderr, "d6: no main.d6 or app.d6 in the current directory; "
                 "name the program to build: d6 build SOURCE [-o OUTPUT]\n");
             return 64;
         }
@@ -869,9 +875,10 @@ static void print_usage(FILE *stream) {
           "\n"
           "'d6 build' compiles SOURCE into a standalone executable (default\n"
           "output: SOURCE's own basename with its extension stripped) -- see\n"
-          "docs/deployment.md. Without SOURCE it builds app.d6 in the current\n"
-          "directory, named after that directory. It links with a C compiler against the installed\n"
-          "AOT kit, or against the d6 source checkout when there is no kit.\n"
+          "docs/deployment.md. Without SOURCE it builds main.d6 (or app.d6) in the\n"
+          "current directory, named after that directory. It links with a C\n"
+          "compiler against the installed AOT kit, or against the d6 source\n"
+          "checkout when there is no kit.\n"
           "\n"
           "'d6 cache clear' removes the bytecode caches (.d6c files) next to\n"
           "scripts: those of the given files, every one under the given\n"
