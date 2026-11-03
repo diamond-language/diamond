@@ -1106,12 +1106,15 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     vm->deoptimized_sites++;
                     opcode=(DiamondOpCode)code[instruction_offset];
                 }
-                if ((opcode == DIAMOND_OP_EQUAL_INT ||
-                     opcode == DIAMOND_OP_NOT_EQUAL_INT) && integer_operands) {
+                /* Two plain Ints compare the same way whichever form this is:
+                 * the general path below only reaches values_equal for them,
+                 * so the untyped EQUAL/NOT_EQUAL take this shortcut too. */
+                if (integer_operands) {
                     const bool equal = registers[left].as.integer ==
                         registers[right].as.integer;
-                    registers[destination] = DIAMOND_BOOL(
-                        opcode == DIAMOND_OP_EQUAL_INT ? equal : !equal);
+                    const bool negate = opcode == DIAMOND_OP_NOT_EQUAL_INT ||
+                        opcode == DIAMOND_OP_NOT_EQUAL;
+                    registers[destination] = DIAMOND_BOOL(negate ? !equal : equal);
                     break;
                 }
                 /* By this point opcode is guaranteed plain EQUAL/NOT_EQUAL

@@ -1384,7 +1384,10 @@ end
 
 # What Array#select, any?, all? and reduce call (Array#map calls array_map).
 # enumerable_* wraps the block in a closure for values.each to call; a direct
-# loop costs a fraction of that per element.
+# loop costs a fraction of that per element. Array#select and #map usually
+# skip this and array_map: native_array_map_select (src/vm_collections.c)
+# runs the same loop in C, and calls these only when their parameter checks
+# would reject the arguments, or with a debugger attached.
 def diamond_array_select(values: Array, callback: Callable[1]) -> Array
   result = []
   index = 0
