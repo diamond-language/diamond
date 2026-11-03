@@ -10,6 +10,20 @@ authoritative fine-grained record.
 
 - **Packages for 64-bit ARM Linux.** Each release now has an arm64 `.deb` for Ubuntu 26.04 and an
   aarch64 `.rpm` for Fedora 44 beside the x86-64 ones, built and smoke-tested on arm64 hardware.
+- **Truthiness narrows checked types.** For `name: String | Nil`, `if name`, `unless name`,
+  `return ... unless name`, `name ? a : b` and `name && f(name)` now give `name` the type `String`
+  where it's truthy, the way `name != nil` already did. Trailing modifiers (`f(name) if name`) and
+  the right side of `&&`/`||` now narrow for every guard, `!= nil` and `is T` included.
+
+### Fixed
+
+- **A ternary's guard no longer leaks past it.** After `x == nil ? a : b`, the checker treated `x`
+  as non-nil for the rest of the function, and after `x != nil ? a : b` as always nil.
+- **REPL.** The browser REPL compiled forward class-method calls (`def self.a = C.b` before
+  `def self.b`) to the wrong function, so programs like a Mjolnir app failed with invalid bytecode.
+  The terminal REPL now keeps prompting when a class typed line by line calls a method whose line
+  hasn't arrived yet. Both REPLs run trailing-modifier statements (`puts(x) if ready`), and the
+  terminal REPL accepts `struct` and `sealed class` entries.
 
 ## 0.23.0 — 2026-11-02
 

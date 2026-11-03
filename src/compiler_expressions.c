@@ -255,16 +255,11 @@ void apply_type_set_fact(Compiler *compiler,uint16_t reg,int32_t set_index) {
     compiler->known_types[reg]=set->count==1?set->members[0].id:TYPE_UNKNOWN;
 }
 
-/* Bool includes both true and false, so it belongs to both views. These
- * proofs describe editor receivers only, never checked compiler types. */
-Narrowing condition_narrowing(Compiler *compiler,uint16_t condition) {
-    if(compiler->narrowing.valid&&compiler->narrowing.condition==condition)
-        return compiler->narrowing;
-    Narrowing result={.condition=condition};
-    if(!register_is_local(compiler,condition))return result;
-    int32_t source_index=compiler->tooling_type_sets[condition];
-    if(source_index<0)source_index=compiler->known_type_sets[condition];
-    if(source_index<0)return result;
+/* Splits a type set by truthiness: only nil and false are falsy, so a truthy value
+ * drops Nil and a falsy one keeps only Nil and Bool. Bool includes both true and
+ * false, so it belongs to both views. False when the split proves nothing. */
+static bool split_truthy_type_set(Compiler *compiler,int32_t source_index,
+                                  int32_t *truthy,int32_t *falsy) {
     const DiamondTypeSet source=compiler->function->type_sets[source_index];
     DiamondTypeSet yes={},no={};
     for(size_t index=0;index<source.count;index++) {
@@ -275,15 +270,41 @@ Narrowing condition_narrowing(Compiler *compiler,uint16_t condition) {
     }
     if(yes.count==0||no.count==0||
        (yes.count==source.count&&no.count==source.count)||
-       !grow_type_sets(compiler->function,2))return result;
-    const int32_t yes_index=(int32_t)compiler->function->type_set_count;
+       !grow_type_sets(compiler->function,2))return false;
+    *truthy=(int32_t)compiler->function->type_set_count;
     compiler->function->type_sets[compiler->function->type_set_count++]=yes;
-    const int32_t no_index=(int32_t)compiler->function->type_set_count;
+    *falsy=(int32_t)compiler->function->type_set_count;
     compiler->function->type_sets[compiler->function->type_set_count++]=no;
-    result.when_true[0]=(NarrowingFact){.reg=condition,.type_set=yes_index,
-        .tooling_only=true};
-    result.when_false[0]=(NarrowingFact){.reg=condition,.type_set=no_index,
-        .tooling_only=true};
+    return true;
+}
+
+/* `if value` narrows a local: `String | Nil` is String when truthy and Nil when not.
+ * The checked type set gives compiler facts, as a `!= nil` guard does; an editor-only
+ * (inferred) set gives tooling facts alongside them, or alone when nothing is declared. */
+Narrowing condition_narrowing(Compiler *compiler,uint16_t condition) {
+    if(compiler->narrowing.valid&&compiler->narrowing.condition==condition)
+        return compiler->narrowing;
+    Narrowing result={.condition=condition};
+    if(!register_is_local(compiler,condition))return result;
+    NarrowingFact yes={.reg=condition},no={.reg=condition};
+    bool have_fact=false;
+    for(size_t source=0;source<2;source++) {
+        const int32_t set=source==0?compiler->known_type_sets[condition]:
+            compiler->tooling_type_sets[condition];
+        if(set<0)continue;
+        int32_t truthy=-1,falsy=-1;
+        if(!split_truthy_type_set(compiler,set,&truthy,&falsy))continue;
+        if(source==0||!have_fact) {
+            yes.type_set=truthy;no.type_set=falsy;
+            yes.tooling_only=no.tooling_only=source!=0;
+        } else {
+            yes.has_tooling=no.has_tooling=true;
+            yes.tooling_type_set=truthy;no.tooling_type_set=falsy;
+        }
+        have_fact=true;
+    }
+    if(!have_fact)return result;
+    result.when_true[0]=yes;result.when_false[0]=no;
     result.when_true_count=result.when_false_count=1;
     result.valid=true;
     return result;
@@ -1280,8 +1301,35 @@ uint16_t parse_precedence(Compiler *compiler, Precedence precedence) {
                 is_and?left_narrowing.when_true:left_narrowing.when_false,
                 is_and?left_narrowing.when_true_count:left_narrowing.when_false_count,
                 guards);
+            /* The right operand runs only when the left one let it (truthy for
+             * `&&`, falsy for `||`), so the checker narrows it the same way,
+             * for that operand only. */
+            const NarrowingFact *rhs_facts=is_and?left_narrowing.when_true:left_narrowing.when_false;
+            const size_t rhs_fact_count=is_and?left_narrowing.when_true_count:
+                left_narrowing.when_false_count;
+            uint16_t rhs_saved_types[DIAMOND_MAX_NARROWING_FACTS];
+            int32_t rhs_saved_sets[DIAMOND_MAX_NARROWING_FACTS];
+            for(size_t index=0;index<rhs_fact_count;index++) {
+                rhs_saved_types[index]=compiler->known_types[rhs_facts[index].reg];
+                rhs_saved_sets[index]=compiler->known_type_sets[rhs_facts[index].reg];
+            }
+            apply_narrowing_facts(compiler,rhs_facts,rhs_fact_count);
+            uint16_t rhs_narrowed_types[DIAMOND_MAX_NARROWING_FACTS];
+            int32_t rhs_narrowed_sets[DIAMOND_MAX_NARROWING_FACTS];
+            for(size_t index=0;index<rhs_fact_count;index++) {
+                rhs_narrowed_types[index]=compiler->known_types[rhs_facts[index].reg];
+                rhs_narrowed_sets[index]=compiler->known_type_sets[rhs_facts[index].reg];
+            }
             const uint16_t right=parse_precedence(
                 compiler,(Precedence)(operator_precedence+1));
+            /* A local the right operand reassigned keeps what it now holds. */
+            for(size_t index=rhs_fact_count;index>0;index--) {
+                const uint16_t reg=rhs_facts[index-1].reg;
+                if(compiler->known_types[reg]!=rhs_narrowed_types[index-1]||
+                   compiler->known_type_sets[reg]!=rhs_narrowed_sets[index-1])continue;
+                compiler->known_types[reg]=rhs_saved_types[index-1];
+                compiler->known_type_sets[reg]=rhs_saved_sets[index-1];
+            }
             Narrowing right_narrowing=condition_narrowing(compiler,right);
             end_rhs_tooling(compiler,guards,guard_count,&left_narrowing,&right_narrowing);
             emit_instruction(compiler,DIAMOND_OP_MOVE,destination,right,0,2);
@@ -1389,9 +1437,25 @@ static uint16_t parse_ternary(Compiler *compiler) {
      * de-optimizing an elidable CHECK_TYPE back on) before catching it
      * in tests/run.sh's existing diagnostic-only-on-failure assertion. */
     if(compiler->current.kind!=DIAMOND_TOKEN_QUESTION) return condition;
-    const Narrowing narrowing=compiler->narrowing.condition==condition
-        ? compiler->narrowing:(Narrowing){};
+    const Narrowing narrowing=condition_narrowing(compiler,condition);
     compiler->narrowing=(Narrowing){};
+    /* Each branch's facts hold only inside it: snapshot every narrowed register so the
+     * types from before the ternary come back after it. */
+    NarrowingFact touched[2*DIAMOND_MAX_NARROWING_FACTS];size_t touched_count=0;
+    uint16_t saved_types[2*DIAMOND_MAX_NARROWING_FACTS];
+    int32_t saved_sets[2*DIAMOND_MAX_NARROWING_FACTS];
+    if(narrowing.valid) {
+        for(size_t side=0;side<2;side++) {
+            const NarrowingFact *facts=side==0?narrowing.when_true:narrowing.when_false;
+            const size_t count=side==0?narrowing.when_true_count:narrowing.when_false_count;
+            for(size_t index=0;index<count;index++) {
+                touched[touched_count]=facts[index];
+                saved_types[touched_count]=compiler->known_types[facts[index].reg];
+                saved_sets[touched_count]=compiler->known_type_sets[facts[index].reg];
+                touched_count++;
+            }
+        }
+    }
     advance_token(compiler);
     skip_newlines(compiler);
     const size_t false_jump=
@@ -1419,6 +1483,11 @@ static uint16_t parse_ternary(Compiler *compiler) {
     const int32_t false_set=compiler->known_type_sets[false_result];
     emit_instruction(compiler,DIAMOND_OP_MOVE,destination,false_result,0,2);
     patch_jump(compiler,end_jump,compiler->function->code_count);
+    for(size_t index=touched_count;index>0;index--) {
+        const uint16_t reg=touched[index-1].reg;
+        compiler->known_types[reg]=saved_types[index-1];
+        compiler->known_type_sets[reg]=saved_sets[index-1];
+    }
     merge_flow_types(compiler,true_type,true_set,false_type,false_set,
         &compiler->known_types[destination],
         &compiler->known_type_sets[destination]);

@@ -300,4 +300,20 @@ stdin_response="$(printf 'gets()\nhello stdin\nexit\n' | timeout 10 "$diamond")"
 [[ "$stdin_response" == *$'{> hello stdin\n{> ' ]]
 count=$((count + 1))
 
+# A class typed one line at a time may call a singleton whose line hasn't
+# arrived yet: the REPL keeps prompting instead of reporting it undefined.
+# Redefining a function changes later calls only.
+forward_response="$(printf 'class C\n  def self.a(x) = C.b(x)\n  def self.b(x) = x + 1\nend\nC.a(1)\ndef f() = 1\nf()\ndef f() = 2\nf()\nexit\n' |
+    timeout 10 "$diamond")"
+[[ "$forward_response" == *$'{> ... ... ... nil\n{> 2\n{> nil\n{> 1\n{> nil\n{> 2\n'* ]]
+count=$((count + 1))
+
+# A trailing modifier isn't an expression inside `_ = (...)`; the REPL runs it
+# as an `if true ... end` body, keeping its value. `struct` and `sealed` lines
+# are declarations, like `class`.
+modifier_response="$(printf 'puts(1) if true\n3 unless false\n4 if false\nz = 1\nz += 1 if z > 0\nstruct P(x: Int)\nend\nP.new(1).x()\nsealed class S\nend\nexit\n' |
+    timeout 10 "$diamond")"
+[[ "$modifier_response" == *$'{> 1\nnil\n{> 3\n{> nil\n{> 1\n{> 2\n{> ... nil\n{> 1\n{> ... nil\n'* ]]
+count=$((count + 1))
+
 echo "$count repl tests passed"

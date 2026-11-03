@@ -1247,7 +1247,7 @@ bool diamond_compile_impl(const char *source, DiamondProgram *program,
      * seed_program_from_template above -- re-copying them here would
      * append duplicates rather than harmlessly overwrite, unlike the
      * fixed-size class/interface/module arrays just above. */
-    if(!allow_top_level_redefinition) {
+    {
         for(size_t index=function_claim_start;index<discovery->function_count;index++) {
             const DiamondFunction *discovered_function=discovery->functions[index];
             DiamondFunction *reserved=diamond_program_add_function(program);

@@ -96,6 +96,12 @@ completes('completes a name from an unfinished entry', ['class Dog', '  def spea
 completes('no candidates for a name nothing starts with', [], 'qqqzzz', (r) => r.labels.length === 0);
 completes('a dangling operator is not an error', [], '1 +', (r) => Array.isArray(r.labels));
 expect('still evaluates after completing', ['x = 20', 'x * 2'], equals('40'));
+expect('forward singleton call', ['class C', '  def self.a(x) = C.b(x)', '  def self.b(x) = x + 1', 'end', 'C.a(1)'],
+  equals('2'));
+expect('call before a redefinition keeps its meaning', ['def f() = 1', 'first = f()', 'def f() = 2', 'first * 10 + f()'],
+  equals('12'));
+expect('trailing modifier statement', ['puts("ran") if true'], equals('ran\nnil'));
+expect('trailing modifier keeps its value', ['3 unless false'], equals('3'));
 
 // The session survives every failure above.
 expect('still alive', ['TCPSocket.connect("example.com", 80)', '1 + 1'], equals('2'));

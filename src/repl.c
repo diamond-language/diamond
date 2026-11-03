@@ -579,7 +579,8 @@ static bool repl_pending_is_declaration(const char *source) {
     while (*source == ' ' || *source == '\t' || *source == '\r' || *source == '\n')
         source++;
     return strncmp(source, "def ", 4) == 0 || strncmp(source, "class ", 6) == 0 ||
-        strncmp(source, "module ", 7) == 0 || strncmp(source, "interface ", 10) == 0;
+        strncmp(source, "module ", 7) == 0 || strncmp(source, "interface ", 10) == 0 ||
+        strncmp(source, "struct ", 7) == 0 || strncmp(source, "sealed ", 7) == 0;
 }
 
 static bool append_repl_assignment(ReplBuffer *destination, const ReplBuffer *pending) {
@@ -737,12 +738,58 @@ typedef enum ReplRetry {
     REPL_RETRY_REPORT,
     REPL_RETRY_INCOMPLETE,
     REPL_RETRY_OUT_OF_MEMORY,
+    REPL_RETRY_COMPILED,
 } ReplRetry;
 
+/* A statement that compiles on its own but not inside `_ = (...)` -- a trailing modifier
+ * such as `puts(x) if ready` -- becomes an expression as the body of `if true ... end`.
+ * On success *pending holds that form, so the session replays exactly what ran, and
+ * *out_program holds the compiled entry. Part of diamond_repl_run. */
+static ReplRetry recompile_as_block(const ReplBuffer *session, ReplBuffer *pending,
+        DiamondProgram **out_program) {
+    ReplBuffer block;
+    buffer_init(&block);
+    const bool newline = pending->length > 0 && pending->data[pending->length - 1] == '\n';
+    ReplBuffer source;
+    buffer_init(&source);
+    if (!buffer_append(&block, "if true\n", 8) ||
+        !buffer_append(&block, pending->data, pending->length) ||
+        (!newline && !buffer_append(&block, "\n", 1)) ||
+        !buffer_append(&block, "end\n", 4) ||
+        !buffer_append(&source, session->data, session->length) ||
+        !append_repl_pending(&source, &block)) {
+        buffer_free(&block);
+        buffer_free(&source);
+        return REPL_RETRY_OUT_OF_MEMORY;
+    }
+    DiamondProgram *candidate = calloc(1, sizeof *candidate);
+    if (candidate == nullptr) {
+        buffer_free(&block);
+        buffer_free(&source);
+        return REPL_RETRY_OUT_OF_MEMORY;
+    }
+    bool incomplete = false;
+    char block_error[1152];
+    const bool ok = try_compile(source.data, candidate, &incomplete, block_error,
+                                sizeof block_error);
+    buffer_free(&source);
+    if (!ok) {
+        diamond_program_free(candidate);
+        free(candidate);
+        buffer_free(&block);
+        return REPL_RETRY_REPORT;
+    }
+    *out_program = candidate;
+    buffer_free(pending);
+    *pending = block;
+    return REPL_RETRY_COMPILED;
+}
+
 /* After pending input that is not a declaration fails to compile as an entry, tries it as plain
- * source: still-incomplete input asks for another line, and otherwise *program is left holding
- * the entry compile whose error the caller reports. Part of diamond_repl_run. */
-static ReplRetry recompile_as_statement(const ReplBuffer *session, const ReplBuffer *pending,
+ * source: still-incomplete input asks for another line, a statement that compiles on its own
+ * is retried as a block (recompile_as_block), and otherwise *program is left holding the entry
+ * compile whose error the caller reports. Part of diamond_repl_run. */
+static ReplRetry recompile_as_statement(const ReplBuffer *session, ReplBuffer *pending,
         DiamondProgram **program, char *error_message, size_t error_message_size) {
     bool incomplete = false;
     diamond_program_free(*program);
@@ -767,6 +814,17 @@ static ReplRetry recompile_as_statement(const ReplBuffer *session, const ReplBuf
         }
         if (raw_ok) {
             diamond_program_free(*program);
+            DiamondProgram *block = nullptr;
+            const ReplRetry retry = recompile_as_block(session, pending, &block);
+            if (retry == REPL_RETRY_COMPILED) {
+                free(*program);
+                *program = block;
+                return retry;
+            }
+            if (retry == REPL_RETRY_OUT_OF_MEMORY) {
+                fprintf(stderr, "d6: out of memory compiling input\n");
+                return retry;
+            }
         }
     }
     if (*program == nullptr) {
@@ -1026,6 +1084,10 @@ int diamond_repl_run(void) {
                 if (retry == REPL_RETRY_INCOMPLETE) {
                     prompt = "... ";
                     continue;
+                }
+                if (retry == REPL_RETRY_COMPILED) {
+                    have_candidate = true;
+                    break;
                 }
                 if (retry == REPL_RETRY_OUT_OF_MEMORY) {
                     eof = true;

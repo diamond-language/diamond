@@ -1547,7 +1547,7 @@ int main(void) {
         }
     }
     if(!found_inferred_hash_fact)failed=1;
-    bool found_truthiness_fact=false;
+    bool found_truthiness_fact=false,found_declared_truthiness_narrowing=false;
     for(size_t index=0;index<chunk.function_count;index++) {
         const DiamondFunction *function=chunk.functions[index];
         if(strcmp(function->name,"truthiness_guards")!=0)continue;
@@ -1559,21 +1559,24 @@ int main(void) {
                 const DiamondScopeTypeFact *fact=&function->scope_type_facts[fact_index];
                 if(fact->reg!=entry->reg)continue;
                 if(fact->tooling_type_set>=0)found_truthiness_fact=true;
-                bool checked_unchanged=fact->known_type==DIAMOND_TYPE_NONE;
-                if(inferred)checked_unchanged&=fact->known_type_set<0;
-                else {
-                    checked_unchanged&=fact->known_type_set>=0;
-                    if(fact->known_type_set>=0)
-                        checked_unchanged&=function->type_sets[fact->known_type_set].count==2;
-                }
-                if(!checked_unchanged) {
-                    fprintf(stderr,"truthiness guard changed checked facts\n");
+                /* An inferred local's guard stays editor-only; a declared
+                 * `Pet | Nil` one is checked too, so its truthy branch
+                 * narrows to Pet. */
+                if(inferred&&(fact->known_type!=DIAMOND_TYPE_NONE||fact->known_type_set>=0)) {
+                    fprintf(stderr,"truthiness guard on an inferred local entered checked facts\n");
                     failed=1;
                 }
+                if(!inferred&&fact->known_type_set>=0&&
+                   function->type_sets[fact->known_type_set].count==1)
+                    found_declared_truthiness_narrowing=true;
             }
         }
     }
     if(!found_truthiness_fact)failed=1;
+    if(!found_declared_truthiness_narrowing) {
+        fprintf(stderr,"truthiness guard did not narrow a declared Pet | Nil local\n");
+        failed=1;
+    }
     failed|=check_receiver_after(program,&chunk,combined,"# inferred_repeat_guard\n",
         "inferred_pet.","Pet",false);
     failed|=check_receiver_after(program,&chunk,combined,"# inferred_repeat_unless\n",

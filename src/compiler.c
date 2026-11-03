@@ -2223,6 +2223,11 @@ static bool function_belongs_to_other_module(const Compiler *compiler,
 }
 
 int find_function(const Compiler *compiler, DiamondSpan name) {
+    /* A slot the discovery pass reserved but the real pass hasn't reached yet is a
+     * forward definition. When an earlier definition of the same name exists (a REPL
+     * redefinition), a call here means that earlier one, so the forward slot is only
+     * the fallback. */
+    int forward = -1;
     for (size_t index = compiler->program->function_count; index > 0; index--) {
         const size_t function_index = index - 1;
         const char *candidate = compiler->program->functions[function_index]->name;
@@ -2238,10 +2243,16 @@ int find_function(const Compiler *compiler, DiamondSpan name) {
                 break;
             }
         }
-        if (equal && !function_belongs_to_other_module(compiler, function_index))
+        if (equal && !function_belongs_to_other_module(compiler, function_index)) {
+            if (!compiler->discovery_pass && function_index >= compiler->next_function_claim &&
+                compiler->program->functions[function_index]->declared_by_discovery) {
+                forward = (int)function_index;
+                continue;
+            }
             return (int)function_index;
+        }
     }
-    return -1;
+    return forward;
 }
 
 bool name_equals(const Compiler *compiler, const char *candidate,
@@ -3124,10 +3135,57 @@ uint16_t compile_sequence(Compiler *compiler) {
         const uint16_t postfix_result = has_postfix
             ? allocate_register(compiler)
             : body_result_slot;
-        const size_t condition_jump = has_postfix
-            ? emit_jump(compiler, DIAMOND_OP_JUMP, 0)
-            : SIZE_MAX;
-        const size_t body_start = compiler->function->code_count;
+        /* `body if condition`: compile the condition first (from just past the
+         * modifier, the way parse_postfix_while does), so its facts narrow the
+         * body -- `puts(greet(name)) if name` sees a String -- then come back
+         * for the body and finally skip to the end of the condition. */
+        Narrowing postfix_narrowing={};
+        size_t skip_jump=SIZE_MAX;
+        DiamondLexer condition_end={};
+        DiamondToken condition_end_current={},condition_end_previous={};
+        const NarrowingFact *body_facts=nullptr;size_t body_fact_count=0;
+        uint16_t saved_types[DIAMOND_MAX_NARROWING_FACTS];
+        int32_t saved_sets[DIAMOND_MAX_NARROWING_FACTS];
+        int32_t saved_tooling[DIAMOND_MAX_NARROWING_FACTS];
+        if (has_postfix) {
+            const DiamondLexer body_lexer=compiler->lexer;
+            const DiamondToken body_current=compiler->current;
+            const DiamondToken body_previous=compiler->previous;
+            compiler->lexer=modifier_end;
+            compiler->current=diamond_lexer_next(&compiler->lexer);
+            compiler->narrowing=(Narrowing){};
+            const uint16_t condition = parse_expression(compiler);
+            postfix_narrowing=condition_narrowing(compiler,condition);
+            compiler->narrowing=(Narrowing){};
+            condition_end=compiler->lexer;condition_end_current=compiler->current;
+            condition_end_previous=compiler->previous;
+            compiler->lexer=body_lexer;compiler->current=body_current;
+            compiler->previous=body_previous;
+            skip_jump=emit_jump(compiler,postfix==DIAMOND_TOKEN_IF?
+                DIAMOND_OP_JUMP_IF_FALSE:DIAMOND_OP_JUMP_IF_TRUE,condition);
+            if(postfix_narrowing.valid) {
+                body_facts=postfix==DIAMOND_TOKEN_IF?postfix_narrowing.when_true:
+                    postfix_narrowing.when_false;
+                body_fact_count=postfix==DIAMOND_TOKEN_IF?postfix_narrowing.when_true_count:
+                    postfix_narrowing.when_false_count;
+                for(size_t index=0;index<body_fact_count;index++) {
+                    const uint16_t reg=body_facts[index].reg;
+                    saved_types[index]=compiler->known_types[reg];
+                    saved_sets[index]=compiler->known_type_sets[reg];
+                    saved_tooling[index]=compiler->tooling_type_sets[reg];
+                }
+                apply_scope_narrowing_facts(compiler,body_facts,body_fact_count);
+            }
+        }
+        uint16_t narrowed_types[DIAMOND_MAX_NARROWING_FACTS];
+        int32_t narrowed_sets[DIAMOND_MAX_NARROWING_FACTS];
+        int32_t narrowed_tooling[DIAMOND_MAX_NARROWING_FACTS];
+        for(size_t index=0;index<body_fact_count;index++) {
+            const uint16_t reg=body_facts[index].reg;
+            narrowed_types[index]=compiler->known_types[reg];
+            narrowed_sets[index]=compiler->known_type_sets[reg];
+            narrowed_tooling[index]=compiler->tooling_type_sets[reg];
+        }
         const bool declaration_statement =
             compiler->current.kind == DIAMOND_TOKEN_DEF ||
             compiler->current.kind == DIAMOND_TOKEN_CLOSURE ||
@@ -3175,26 +3233,28 @@ uint16_t compile_sequence(Compiler *compiler) {
                      "expected postfix condition");
                 break;
             }
-            advance_token(compiler);
             emit_instruction(compiler, DIAMOND_OP_MOVE, postfix_result,
                              result, 0, 2);
             const size_t body_exit = emit_jump(compiler, DIAMOND_OP_JUMP, 0);
-            const size_t condition_start = compiler->function->code_count;
-            compiler->narrowing=(Narrowing){};
-            const uint16_t condition = parse_expression(compiler);
-            const Narrowing postfix_narrowing=condition_narrowing(compiler,condition);
-            compiler->narrowing=(Narrowing){};
-            const size_t body_jump = emit_jump(
-                compiler,
-                postfix == DIAMOND_TOKEN_IF
-                    ? DIAMOND_OP_JUMP_IF_TRUE
-                    : DIAMOND_OP_JUMP_IF_FALSE,
-                condition);
+            patch_jump(compiler, skip_jump, compiler->function->code_count);
             emit_instruction(compiler, DIAMOND_OP_NIL, postfix_result,
                              0, 0, 1);
-            patch_jump(compiler, condition_jump, condition_start);
             patch_jump(compiler, body_exit, compiler->function->code_count);
-            patch_jump(compiler, body_jump, body_start);
+            compiler->lexer=condition_end;compiler->current=condition_end_current;
+            compiler->previous=condition_end_previous;
+            /* The body's narrowing holds only inside it: a local the body didn't
+             * reassign gets its type from before the statement back. */
+            for(size_t index=0;index<body_fact_count;index++) {
+                const uint16_t reg=body_facts[index].reg;
+                if(compiler->known_types[reg]!=narrowed_types[index]||
+                   compiler->known_type_sets[reg]!=narrowed_sets[index]||
+                   compiler->tooling_type_sets[reg]!=narrowed_tooling[index])continue;
+                compiler->known_types[reg]=saved_types[index];
+                compiler->known_type_sets[reg]=saved_sets[index];
+                compiler->tooling_type_sets[reg]=saved_tooling[index];
+                if(register_is_local(compiler,reg))
+                    record_scope_type_fact(compiler,reg,compiler->current.span.start);
+            }
             result = postfix_result;
             /* `return "none" if x == nil`: past this line x isn't nil.
              * `raise ... unless x is String`: past it, x is a String. */

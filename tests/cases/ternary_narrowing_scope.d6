@@ -1,0 +1,14 @@
+# A ternary's guard narrows only its own branches: after it, the local has
+# its declared type again (it used to keep the false branch's view).
+def find(id: Int) -> String | Nil
+  id > 0 ? "Ada" : nil
+end
+
+def len(text: String) -> Int = text.length()
+
+name = find(1)
+a = name != nil ? 1 : 2
+b = name == nil ? 1 : 2
+c = name ? len(name) : 0
+p([a, b, c])
+name != nil ? len(name) : 0

@@ -1,0 +1,9 @@
+# After `x == nil ? ... : ...` the local may still be nil, so a String-only
+# call on it is rejected (the else branch's non-nil view used to leak out).
+def find(id: Int) -> String | Nil
+  id > 0 ? "Ada" : nil
+end
+def len(text: String) -> Int = text.length()
+name = find(1)
+b = name == nil ? 1 : 2
+len(name)

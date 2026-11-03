@@ -150,7 +150,7 @@ export class DiamondRepl {
   }
 
   static #isDeclaration(text) {
-    return /^\s*(def|class|module|interface|struct)\s/.test(text);
+    return /^\s*(def|class|module|interface|struct|sealed)\s/.test(text);
   }
 
   // The expression/assignment wrapping src/repl.c applies to a pending entry.
@@ -244,19 +244,30 @@ export class DiamondRepl {
   // { kind: 'ok' | 'error', text }.
   submit(line) {
     this.#pending += line + '\n';
-    const wrapped = DiamondRepl.#wrap(this.#pending);
-    const candidate = this.#session + wrapped;
-    const attempt = this.run(candidate);
+    let candidate = this.#session + DiamondRepl.#wrap(this.#pending);
+    let attempt = this.run(candidate);
     if (attempt.status === 65) {
       if (DiamondRepl.#incomplete(attempt.error, candidate)) return { kind: 'continue' };
+      let block = null;
       if (!DiamondRepl.#isDeclaration(this.#pending)) {
         const raw = this.#session + this.#pending;
         const rawAttempt = this.run(raw);
         if (rawAttempt.status === 65 && DiamondRepl.#incomplete(rawAttempt.error, raw))
           return { kind: 'continue' };
+        // A statement that only fails inside `_ = (...)`, such as a trailing `if` modifier,
+        // runs as the body of `if true ... end` -- the same fallback src/repl.c uses.
+        if (rawAttempt.status !== 65) {
+          const body = `if true\n${this.#pending}end\n`;
+          const blockCandidate = this.#session + DiamondRepl.#wrap(body);
+          const blockAttempt = this.run(blockCandidate);
+          if (blockAttempt.status !== 65) block = { candidate: blockCandidate, attempt: blockAttempt };
+        }
       }
-      this.#pending = '';
-      return { kind: 'error', text: attempt.error.replace(/^\d+:\d+: /, '') };
+      if (block === null) {
+        this.#pending = '';
+        return { kind: 'error', text: attempt.error.replace(/^\d+:\d+: /, '') };
+      }
+      ({ candidate, attempt } = block);
     }
     if (attempt.status !== 0) {
       this.#pending = '';

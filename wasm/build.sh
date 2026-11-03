@@ -50,10 +50,12 @@ if [ "$(cat "$out/obj/.flags" 2>/dev/null)" != "$stamp" ]; then
     printf '%s\n' "$stamp" > "$out/obj/.flags"
 fi
 
-# The module embeds the prelude the host build compiled, so that must be newer than what it was
-# generated from. Compiling it here would need the host's build flags, so ask for it instead.
+# The module embeds the prelude the host build compiled, so that must be current. Compiling it
+# here would need the host's build flags, so ask for it instead. `make -q` answers from the
+# Makefile's own dependencies (header depfiles included), so a change to a file the prelude
+# doesn't depend on, such as src/main.c, doesn't mark it stale.
 prelude="$root/build/compiled_prelude.bin"
-if [ ! -f "$prelude" ] || [ -n "$(find "$root/lib" "$root/src" -type f -newer "$prelude" -print -quit)" ]; then
+if [ ! -f "$prelude" ] || ! make -C "$root" -q build/compiled_prelude.bin >/dev/null 2>&1; then
     echo "wasm/build.sh: build/compiled_prelude.bin is missing or stale; run: make build/compiled_prelude.bin" >&2
     exit 1
 fi

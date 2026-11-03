@@ -212,6 +212,38 @@ int main(void) {
         fprintf(stderr, "  old=%s new=%s\n", old_rendered, new_rendered);
     }
 
+    /* Scenario 7: REPL mode (allow_top_level_redefinition, what the
+     * browser REPL compiles with) still reserves discovery-pass function
+     * slots, so a singleton calling one defined later in its class lands
+     * on the right function rather than corrupt bytecode. */
+    {
+        static const char source[] =
+            "class C\n  def self.a(x) = C.b(x) * 10\n  def self.b(x) = x + 1\nend\nC.a(1)\n";
+        program->allow_top_level_redefinition = true;
+        const bool compiled = diamond_compile_incremental(
+            source, program, template_program, &diagnostic);
+        check(compiled, "scenario 7: REPL-mode forward singleton call compiles");
+        char rendered[64] = {0};
+        if (compiled) run_and_get_string(program, rendered, sizeof rendered);
+        else fprintf(stderr, "  diagnostic: %s\n", diagnostic.message);
+        check(strcmp(rendered, "20") == 0, "scenario 7: C.a(1) == 20");
+    }
+
+    /* Scenario 8: with those slots reserved, a call made before a REPL
+     * redefinition still means the definition in effect at that point. */
+    {
+        static const char source[] =
+            "def f() = 1\nfirst = f()\ndef f() = 2\nfirst * 10 + f()\n";
+        program->allow_top_level_redefinition = true;
+        const bool compiled = diamond_compile_incremental(
+            source, program, template_program, &diagnostic);
+        check(compiled, "scenario 8: REPL-mode redefinition compiles");
+        char rendered[64] = {0};
+        if (compiled) run_and_get_string(program, rendered, sizeof rendered);
+        else fprintf(stderr, "  diagnostic: %s\n", diagnostic.message);
+        check(strcmp(rendered, "12") == 0, "scenario 8: f() before and after redefinition == 1, 2");
+    }
+
     diamond_program_free(program);
     free(program);
     diamond_program_free(template_program);
