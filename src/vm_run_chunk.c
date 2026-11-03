@@ -1342,11 +1342,12 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                      !function->has_variadic)) {
                     VM_RETURN(DIAMOND_VM_ARITY_ERROR);
                 }
-                const DiamondChunk called_chunk =
-                    plain_call_chunk(function, chunk);
+                DiamondChunk called_storage;
+                const DiamondChunk *called_chunk =
+                    plain_call_chunk_for(function, chunk, &called_storage);
                 DiamondValue call_result = DIAMOND_NIL;
                 const DiamondVmStatus status = jit_call_or_interpret(vm, function,
-                    &called_chunk, &registers[argument_base], call_argument_count,
+                    called_chunk, &registers[argument_base], call_argument_count,
                     depth, nullptr, &call_result);
                 VM_PROPAGATE(status);
                 registers[destination] = call_result;

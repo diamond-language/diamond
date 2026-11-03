@@ -808,6 +808,23 @@ static inline DiamondChunk plain_call_chunk(const DiamondFunction *function,
     };
 }
 
+/* The chunk a plain CALL of `function` runs in. A function calling itself
+ * (recursion) already runs in exactly that chunk: every builder takes the
+ * function's own fields from the function, and the tables come from the
+ * caller either way, so the caller's chunk is reused instead of building
+ * the same 200-byte struct again on every call. Only a chunk carrying
+ * something plain_call_chunk leaves out (modules, a Range class index,
+ * generic bindings) is rebuilt into `storage`. Callees never write
+ * through their chunk pointer, and nothing compares chunk pointers. */
+static inline const DiamondChunk *plain_call_chunk_for(const DiamondFunction *function,
+        const DiamondChunk *caller, DiamondChunk *storage) {
+    if (caller->code == function->code && caller->modules == nullptr &&
+        caller->range_class_index == 0 && caller->type_variable_bindings == nullptr)
+        return caller;
+    *storage = plain_call_chunk(function, caller);
+    return storage;
+}
+
 /* A supervised attempt's VM carries DiamondVm.interrupt_flag, which another
  * thread sets to stop it (Supervisor#stop(timeout_ms), a sibling restart).
  * The per-instruction check cannot run while the VM sits in the kernel, so

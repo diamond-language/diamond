@@ -17,6 +17,12 @@ authoritative fine-grained record.
   as native SSE2 code. A tight Int loop with `%` runs about 6x faster under `DIAMOND_JIT=1`, and a
   Mandelbrot loop about 4x.
 
+- **Faster startup and recursive calls.** Loading a cached program no longer formats its whole
+  bytecode while checking it, which halves the work a short script does at startup. A function
+  calling itself reuses its call context instead of rebuilding it, and under `DIAMOND_JIT=1` a
+  compiled function's call to itself skips checks that can't change; recursive `fib` runs about
+  19% faster with the JIT and 4% faster without.
+
 ## 0.24.0 — 2026-11-02
 
 ### Added

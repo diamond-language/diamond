@@ -485,6 +485,14 @@ DiamondVmStatus diamond_jit_new_instance(DiamondVm *vm, const DiamondChunk *chun
 DiamondVmStatus diamond_jit_call_function(DiamondVm *vm, const DiamondChunk *chunk,
         DiamondValue *registers, uint16_t function_index, uint16_t base,
         uint8_t argc, size_t depth, DiamondValue *out);
+/* The same call when the target is the compiled function itself, with the
+ * index and argument count already checked at compile time: skips the
+ * validation and tier-up checks that cannot change for a function that is
+ * running its own native code (see src/vm_calls.c). Same signature, so
+ * compile_call_function only swaps the target. */
+DiamondVmStatus diamond_jit_call_self(DiamondVm *vm, const DiamondChunk *chunk,
+        DiamondValue *registers, uint16_t function_index, uint16_t base,
+        uint8_t argc, size_t depth, DiamondValue *out);
 /* DIAMOND_OP_TAIL_CALL to another function: DIAMOND_JIT_TAIL (callee and
  * arguments staged in vm->jit_tail_*) or the status of an ordinary call. */
 uint8_t diamond_jit_tail_call_function(DiamondVm *vm, const DiamondChunk *chunk,

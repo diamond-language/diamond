@@ -1,0 +1,22 @@
+# Compiled self-calls: plain recursion, an exception raised several levels
+# down and rescued by the outermost caller, and a default argument filled
+# in on the recursive calls.
+def fib(n: Int) -> Int = n < 2 ? n : fib(n - 1) + fib(n - 2)
+
+def countdown(n: Int) -> Int
+  raise ArgumentError.new("bottom at #{n}") if n == 0
+  countdown(n - 1) + 1
+end
+
+def sum_to(n: Int, total: Int = 0) -> Int
+  return total if n == 0
+  sum_to(n - 1) + n
+end
+
+puts(fib(20))
+begin
+  countdown(30)
+rescue error: ArgumentError
+  puts(error.message())
+end
+puts(sum_to(40))

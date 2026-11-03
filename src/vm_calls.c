@@ -128,6 +128,67 @@ DiamondVmStatus forward_to_top_level_helper(DiamondVm *vm,
     return run_chunk(&child,vm,forward_args,total_argc,depth+1,nullptr,result);
 }
 
+/* Runs `function`'s compiled code with `arguments` copied into a fresh
+ * register file. Shared by jit_call_core and diamond_jit_call_self, so the
+ * two enter native code identically. Returns DIAMOND_VM_OK (*result
+ * written), DIAMOND_JIT_TAIL (a staged cross-function tail call, for
+ * jit_tail_loop), DIAMOND_JIT_RETRY (counted as a bailout: the caller
+ * interprets the call instead, which is always correct), or a real status
+ * to propagate as-is. The no_sanitize attribute is explained at
+ * jit_call_core below. */
+#if defined(__clang__)
+__attribute__((no_sanitize("function")))
+#endif
+static inline uint8_t jit_run_native(DiamondVm *vm, const DiamondFunction *function,
+        const DiamondChunk *chunk_to_interpret, const DiamondValue *arguments,
+        size_t argument_count, size_t depth, DiamondValue *result) {
+    DiamondValue jit_registers[DIAMOND_JIT_MAX_REGISTERS];
+    const size_t jit_register_count = function->register_count == 0
+        ? DIAMOND_JIT_MAX_REGISTERS : function->register_count;
+    memset(jit_registers, 0, jit_register_count * sizeof(DiamondValue));
+    const size_t copy_count = argument_count < jit_register_count
+        ? argument_count : jit_register_count;
+    for (size_t index = 0; index < copy_count; index++) jit_registers[index] = arguments[index];
+    DiamondValue jit_result = DIAMOND_NIL;
+    /* ISO C has no portable object-pointer-to-function-pointer
+     * conversion, but POSIX explicitly requires it to work on any
+     * platform with dlsym (the same cast dlsym's own callers
+     * need) -- unavoidable for calling into mmap'd JIT code, not
+     * a real portability gap on any platform this VM targets. */
+    #if defined(__GNUC__)
+    #pragma GCC diagnostic push
+    #pragma GCC diagnostic ignored "-Wpedantic"
+    #endif
+    const DiamondJitFn jit_fn = (DiamondJitFn)function->jit_code;
+    #if defined(__GNUC__)
+    #pragma GCC diagnostic pop
+    #endif
+    /* Phase 2d: DiamondJitFn's own return convention is now 3-way,
+     * not a plain bool -- see jit.h's own comment. DIAMOND_VM_OK
+     * (0) means success (*result written); DIAMOND_JIT_RETRY means
+     * the existing "discard this attempt, fall back to run_chunk"
+     * behavior every phase before this one relied on exclusively;
+     * anything else is a real DiamondVmStatus (most notably
+     * DIAMOND_VM_EXCEPTION from a SUPER call that itself raised)
+     * that must be returned exactly as-is -- NOT retried, since a
+     * real, already-executed side effect (the SUPER call) may be
+     * why this status exists at all, and re-running the whole
+     * function from scratch would invoke it a second time. */
+    const uint8_t jit_status = jit_fn(vm, jit_registers, &jit_result,
+            argument_count, chunk_to_interpret, depth + 1);
+    if (jit_status == DIAMOND_VM_OK) {
+        *result = jit_result;
+        return DIAMOND_VM_OK;
+    }
+    if (jit_status == DIAMOND_JIT_TAIL) return DIAMOND_JIT_TAIL;
+    if (jit_status != DIAMOND_JIT_RETRY) {
+        vm->jit_hard_propagations++;
+        return (DiamondVmStatus)jit_status;
+    }
+    vm->jit_bailouts++;
+    return DIAMOND_JIT_RETRY;
+}
+
 /* Phase 2b baseline JIT (docs/internal/jit-design.md) -- shared by every
  * call site that invokes a DiamondFunction with an already-assembled
  * arguments buffer: DIAMOND_OP_CALL below, and invoke_resolved_method_
@@ -210,53 +271,12 @@ static uint8_t jit_call_core(DiamondVm *vm, const DiamondFunction *function,
             }
         }
         if (mutable_function->jit_code != nullptr) {
-            DiamondValue jit_registers[DIAMOND_JIT_MAX_REGISTERS];
-            const size_t jit_register_count = function->register_count == 0
-                ? DIAMOND_JIT_MAX_REGISTERS : function->register_count;
-            memset(jit_registers, 0, jit_register_count * sizeof(DiamondValue));
-            const size_t copy_count = argument_count < jit_register_count
-                ? argument_count : jit_register_count;
-            for (size_t index = 0; index < copy_count; index++) jit_registers[index] = arguments[index];
-            DiamondValue jit_result = DIAMOND_NIL;
-            /* ISO C has no portable object-pointer-to-function-pointer
-             * conversion, but POSIX explicitly requires it to work on any
-             * platform with dlsym (the same cast dlsym's own callers
-             * need) -- unavoidable for calling into mmap'd JIT code, not
-             * a real portability gap on any platform this VM targets. */
-            #if defined(__GNUC__)
-            #pragma GCC diagnostic push
-            #pragma GCC diagnostic ignored "-Wpedantic"
-            #endif
-            const DiamondJitFn jit_fn = (DiamondJitFn)mutable_function->jit_code;
-            #if defined(__GNUC__)
-            #pragma GCC diagnostic pop
-            #endif
-            /* Phase 2d: DiamondJitFn's own return convention is now 3-way,
-             * not a plain bool -- see jit.h's own comment. DIAMOND_VM_OK
-             * (0) means success (*result written); DIAMOND_JIT_RETRY means
-             * the existing "discard this attempt, fall back to run_chunk"
-             * behavior every phase before this one relied on exclusively;
-             * anything else is a real DiamondVmStatus (most notably
-             * DIAMOND_VM_EXCEPTION from a SUPER call that itself raised)
-             * that must be returned exactly as-is -- NOT retried, since a
-             * real, already-executed side effect (the SUPER call) may be
-             * why this status exists at all, and re-running the whole
-             * function from scratch would invoke it a second time. */
-            const uint8_t jit_status = jit_fn(vm, jit_registers, &jit_result,
-                    argument_count, chunk_to_interpret, depth + 1);
-            if (jit_status == DIAMOND_VM_OK) {
-                *result = jit_result;
-                return DIAMOND_VM_OK;
-            }
-            if (jit_status == DIAMOND_JIT_TAIL) return DIAMOND_JIT_TAIL;
-            if (jit_status != DIAMOND_JIT_RETRY) {
-                vm->jit_hard_propagations++;
-                return (DiamondVmStatus)jit_status;
-            }
-            vm->jit_bailouts++;
-            /* falls through to the ordinary interpreted call below --
-             * always fully correct regardless of why the compiled
-             * attempt bailed. */
+            const uint8_t jit_status = jit_run_native(vm, function, chunk_to_interpret,
+                arguments, argument_count, depth, result);
+            /* A retry falls through to the ordinary interpreted call below --
+             * always fully correct regardless of why the compiled attempt
+             * bailed. */
+            if (jit_status != DIAMOND_JIT_RETRY) return jit_status;
         }
     }
     return (uint8_t)run_chunk(chunk_to_interpret, vm, arguments, argument_count, depth + 1, closure, result);
@@ -396,9 +416,40 @@ DiamondVmStatus diamond_jit_call_function(DiamondVm *vm, const DiamondChunk *chu
     if (argc < function->required_arity ||
         (argc > function->arity && !function->has_variadic))
         return DIAMOND_VM_ARITY_ERROR;
-    const DiamondChunk called_chunk = plain_call_chunk(function, chunk);
-    return jit_call_or_interpret(vm, function, &called_chunk, &registers[base],
+    DiamondChunk called_storage;
+    const DiamondChunk *called_chunk = plain_call_chunk_for(function, chunk, &called_storage);
+    return jit_call_or_interpret(vm, function, called_chunk, &registers[base],
         argc, depth, nullptr, out);
+}
+
+/* A compiled function's plain CALL of itself (recursion). jit.c emits this
+ * instead of diamond_jit_call_function only once it has checked, at compile
+ * time, that the index is the function's own and the argument count fits
+ * its arity and the register file. What is left to do at run time is what
+ * jit_call_core would find unchanged: the caller is running this function's
+ * native code, so the VM has the JIT on and no instruction or wall-clock
+ * budget (either keeps a VM on the interpreter from the start). That leaves
+ * the depth limit, then straight into the native code, with every other
+ * outcome handed to the same paths jit_call_or_interpret uses. */
+DiamondVmStatus diamond_jit_call_self(DiamondVm *vm, const DiamondChunk *chunk,
+        DiamondValue *registers, uint16_t function_index, uint16_t base,
+        uint8_t argc, size_t depth, DiamondValue *out) {
+    /* The index was this function's own in the table it was compiled
+     * against; anything else (another table, not compiled) takes the
+     * general path. */
+    const DiamondFunction *function = (size_t)function_index < chunk->function_count
+        ? chunk->functions[function_index] : nullptr;
+    if (function == nullptr || function->code != chunk->code || function->jit_code == nullptr)
+        return diamond_jit_call_function(vm, chunk, registers, function_index, base, argc, depth, out);
+    if (depth + 1 >= diamond_call_depth_limit(vm)) return DIAMOND_VM_STACK_OVERFLOW;
+    DiamondChunk called_storage;
+    const DiamondChunk *called_chunk = plain_call_chunk_for(function, chunk, &called_storage);
+    const uint8_t status = jit_run_native(vm, function, called_chunk, &registers[base], argc,
+        depth, out);
+    if (status == DIAMOND_JIT_TAIL) return jit_tail_loop(vm, called_chunk, depth, out);
+    if (status == DIAMOND_JIT_RETRY)
+        return run_chunk(called_chunk, vm, &registers[base], argc, depth + 1, nullptr, out);
+    return (DiamondVmStatus)status;
 }
 
 /* JIT trampoline for DIAMOND_OP_TAIL_CALL to a function other than the

@@ -1,0 +1,5 @@
+# A compiled function calling itself goes through the JIT's self-call path,
+# which keeps the call-depth limit: endless recursion stops with the same
+# clean error as the interpreter.
+def recurse_forever(n: Int) -> Int = 1 + recurse_forever(n + 1)
+recurse_forever(0)
