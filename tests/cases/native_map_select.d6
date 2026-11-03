@@ -1,0 +1,89 @@
+# Array#map and #select run their loop natively and call the block directly.
+# Everything the prelude loop did must still happen: these are the edges.
+
+# Plain use, and select keeping the elements (not the block's values).
+puts([1, 2, 3].map() do |n| n * 10 end)
+puts([1, 2, 3, 4].select() do |n| n % 2 == 0 end)
+puts([1, nil, false, 0, ""].select() do |n| n end.length())
+
+# A block that allocates on every call (garbage collection runs mid-loop).
+words = (0...2000).to_a().map() do |n| "word#{n}" end
+puts(words.length())
+puts(words[1999])
+
+# A block that grows the array sees the elements added: the length is re-read.
+grown = [1, 2]
+seen = grown.map() do |n|
+  grown.push(n + 10) if grown.length() < 4
+  n
+end
+puts(seen)
+
+# break leaves map with its value; next gives the element's result.
+puts([1, 2, 3].map() do |n|
+  break "stopped at #{n}" if n == 2
+  n
+end)
+puts([1, 2, 3].map() do |n|
+  next 0 if n == 2
+  n
+end)
+puts([1, 2, 3].select() do |n|
+  break [] if n == 3
+  true
+end)
+
+# return inside the block returns from the enclosing method.
+def first_big(values: Array) -> Int
+  values.map() do |n|
+    return n if n > 5
+    n
+  end
+  -1
+end
+puts(first_big([1, 7, 9]))
+puts(first_big([1, 2]))
+
+# An exception from the block reaches the caller's rescue.
+begin
+  [1, 2, 3].map() do |n|
+    raise ArgumentError.new("bad #{n}") if n == 2
+    n
+  end
+rescue error: ArgumentError
+  puts(error.message())
+end
+
+# Nested maps, and a typed array.
+puts([[1, 2], [3]].map() do |row| row.map() do |n| n + 1 end end)
+def doubled(typed: Array[Int]) -> Array[Int]
+  typed.map() do |n| n * 2 end
+end
+puts(doubled([4, 5]))
+
+# A frozen array can still be mapped.
+puts([1, 2].freeze().map() do |n| n + 1 end)
+
+# Something that isn't a block is the same TypeError as before.
+begin
+  [1].map(5)
+rescue error: TypeError
+  puts("type: #{error.message()}")
+end
+
+# Wrong argument counts are the same errors as before.
+begin
+  [1].map()
+rescue error
+  puts("none: #{error.message()}")
+end
+
+# select keeps an element the block removed from the array, even when the
+# block's own allocations make a collection run before it is kept.
+held = ["kept#{1}", "other"]
+kept = held.select() do |item|
+  held.clear()
+  (0...20000).to_a().map() do |n| "garbage#{n}" end
+  true
+end
+puts(kept)

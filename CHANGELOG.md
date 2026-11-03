@@ -29,6 +29,13 @@ authoritative fine-grained record.
   on values the compiler can't prove are Ints no longer take the big-integer path. An
   object-heavy benchmark went from 457 ms to 339 ms and a block-heavy one from 378 ms to 349 ms.
 
+- **`Array#map` and `Array#select` run natively.** Their loop now runs in C and calls the block
+  directly, instead of through a d6 loop that paid for its own length, index and push calls on
+  every element. `break`, `next`, `return` and exceptions inside the block behave as before, and
+  so do the error messages for a wrong argument. `==` and `!=` on two Ints that the compiler
+  couldn't prove were Ints no longer take the general comparison path. The block-heavy benchmark
+  went from 349 ms to 199 ms.
+
 ## 0.24.0 — 2026-11-02
 
 ### Added

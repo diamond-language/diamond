@@ -137,6 +137,89 @@ static const char *collection_bridge_target(DiamondObjectKind receiver_kind,
     return nullptr;
 }
 
+/* Array#map and Array#select, run here instead of in their prelude functions
+ * (array_map, diamond_array_select in lib/core.d6). The prelude loop spends
+ * about as much per element on its own length/index/push calls as the block
+ * itself costs, so this repeats that loop in C: the same length re-read each
+ * pass (a block that grows or shrinks the array sees the same elements), the
+ * same block call as CALL_CLOSURE makes, the same push. The block runs one
+ * frame shallower, so a break, next, return or raise inside it reaches the
+ * caller exactly as it did through the prelude frame.
+ *
+ * The prelude functions open with CHECK_TYPE r0 and CHECK_TYPE r1; both are
+ * evaluated here first with the function's own type sets. Anything they
+ * would reject, any other argument count, a compile_method callable and an
+ * attached debugger take the prelude call instead, so errors and messages
+ * are its own. Returns true when it handled the call, with the status in
+ * *status. */
+static inline uint16_t bridge_operand(const uint8_t *code) {
+    return (uint16_t)((uint16_t)code[0]<<8|code[1]);
+}
+
+static bool native_array_map_select(DiamondVm *vm,const DiamondChunk *chunk,
+        const DiamondFunction *target,const DiamondValue *registers,
+        uint16_t recv,uint16_t base,uint8_t argc,size_t depth,
+        DiamondValue *result,DiamondVmStatus *status) {
+    bool select;
+    if(strcmp(target->name,"array_map")==0)select=false;
+    else if(strcmp(target->name,"diamond_array_select")==0)select=true;
+    else return false;
+    if(argc!=1||vm->debug_fd>=0||target->code_count<10)return false;
+    const uint8_t *code=target->code;
+    if(code[0]!=DIAMOND_OP_CHECK_TYPE||bridge_operand(code+1)!=0||
+       code[5]!=DIAMOND_OP_CHECK_TYPE||bridge_operand(code+6)!=1)
+        return false;
+    const DiamondValue callback=registers[base];
+    if(callback.kind!=DIAMOND_VALUE_OBJECT||
+       callback.as.object->kind!=DIAMOND_OBJECT_CLOSURE)
+        return false;
+    const DiamondClosure *called=(const DiamondClosure *)callback.as.object;
+    if(called->foreign_chunk!=nullptr||called->function_index>=chunk->function_count)
+        return false;
+    /* The type sets are the prelude function's, read against the same
+     * program tables forward_to_top_level_helper would give its frame. */
+    const DiamondChunk checks={.name=target->name,
+      .type_sets=target->type_sets,.type_set_count=target->type_set_count,
+      .functions=chunk->functions,.function_count=chunk->function_count,
+      .classes=chunk->classes,.class_count=chunk->class_count,
+      .interfaces=chunk->interfaces,.interface_count=chunk->interface_count};
+    const uint16_t values_set=bridge_operand(code+3);
+    const uint16_t callback_set=bridge_operand(code+8);
+    if(values_set>=target->type_set_count||callback_set>=target->type_set_count||
+       !value_matches_set(&checks,registers[recv],values_set,true)||
+       !value_matches_set(&checks,callback,callback_set,true))
+        return false;
+    const DiamondFunction *fn=chunk->functions[called->function_index];
+    const DiamondArray *values=(const DiamondArray *)registers[recv].as.object;
+    DiamondArray *collected=allocate_array(vm,nullptr,0);
+    if(collected==nullptr) {*status=DIAMOND_VM_OUT_OF_MEMORY;return true;}
+    const size_t mark=vm->gc_protected_count;
+    if(!gc_protect(vm,DIAMOND_OBJECT(collected))) {
+        *status=DIAMOND_VM_OUT_OF_MEMORY;return true;
+    }
+    *status=DIAMOND_VM_OK;
+    for(size_t index=0;index<values->count;index++) {
+        const DiamondValue item[1]={values->values[index]};
+        DiamondValue value=DIAMOND_NIL;
+        /* select keeps the element after the block returns, and a block
+         * that removes it from the array could leave it otherwise
+         * unreachable when a collection runs (array_push never collects). */
+        if(select&&!gc_protect(vm,item[0])) {
+            *status=DIAMOND_VM_OUT_OF_MEMORY;break;
+        }
+        *status=call_closure_helper(vm,chunk,fn,called,item,0,1,depth,&value);
+        if(select)gc_unprotect(vm,mark+1);
+        if(*status!=DIAMOND_VM_OK)break;
+        if(select&&!is_truthy(value))continue;
+        if(!array_push(vm,collected,select?item[0]:value)) {
+            *status=DIAMOND_VM_OUT_OF_MEMORY;break;
+        }
+    }
+    gc_unprotect(vm,mark);
+    if(*status==DIAMOND_VM_OK)*result=DIAMOND_OBJECT(collected);
+    return true;
+}
+
 /* Hash#key_at / Hash#value_at, and the undefined-method error for any other
  * Hash method that reached the end of collection_invoke_helper. */
 __attribute__((noinline))
@@ -384,9 +467,13 @@ DiamondVmStatus collection_invoke_helper(DiamondVm *vm,const DiamondChunk *chunk
         }
         if(target!=nullptr) {
             DiamondValue call_result=DIAMOND_NIL;
-            const DiamondVmStatus status=forward_to_top_level_helper(
-                vm,chunk,target,registers,recv,base,argc,depth,
-                &call_result);
+            DiamondVmStatus status;
+            if(receiver_kind!=DIAMOND_OBJECT_ARRAY||
+               !native_array_map_select(vm,chunk,target,registers,recv,base,
+                   argc,depth,&call_result,&status))
+                status=forward_to_top_level_helper(
+                    vm,chunk,target,registers,recv,base,argc,depth,
+                    &call_result);
             if(status!=DIAMOND_VM_OK)return status;
             registers[dest]=call_result;return DIAMOND_VM_OK;
         }

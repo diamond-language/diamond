@@ -1,0 +1,19 @@
+[10, 20, 30]
+[2, 4]
+3
+2000
+word1999
+[1, 2, 11, 12]
+stopped at 2
+[1, 0, 3]
+[]
+7
+-1
+bad 2
+[[2, 3], [4]]
+[8, 10]
+[2, 3]
+type: expected Callable[1], got Int
+none: wrong number of arguments
+[kept1]
+nil
