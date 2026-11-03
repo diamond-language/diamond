@@ -570,7 +570,7 @@ promotion rule as the other arithmetic operators); `Int % 0` raises
 `ZeroDivisionError`, `Float % 0.0` is `NaN` like IEEE-754 division above.
 User-overloadable like `+`/`-`/`*`/`/` (see "Operator overloading"
 below). Arbitrary-precision `Int`s work on either side, with the same
-floored result (`-(10 ** 30) % 7` is `3`, not `-3`).
+floored result (`-(10 ** 30) % 7` is `6`, not `-1`).
 
 `to_f`/`to_i` convert explicitly between the two. `to_i` rejects `NaN` and
 `Infinity` with a rescuable `RangeError` (there's no finite integer to
