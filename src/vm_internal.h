@@ -1321,6 +1321,9 @@ static inline bool value_quickly_matches_set(const DiamondChunk *chunk,
     const DiamondTypeMember *member=&set->members[0];
     if(member->argument_set!=DIAMOND_NO_TYPE_SET||
        member->second_argument_set!=DIAMOND_NO_TYPE_SET)return false;
+    /* The two commonest parameter types, without the out-of-line switch. */
+    if(member->id==DIAMOND_TYPE_INT&&value.kind==DIAMOND_VALUE_INT)return true;
+    if(member->id==DIAMOND_TYPE_FLOAT&&value.kind==DIAMOND_VALUE_FLOAT)return true;
     if(diamond_plain_type_match(value,member->id)==1)return true;
     if(member->id<DIAMOND_TYPE_CLASS_BASE||member->id>=DIAMOND_TYPE_VARIABLE_BASE||
        value.kind!=DIAMOND_VALUE_OBJECT||value.as.object->kind!=DIAMOND_OBJECT_INSTANCE)
