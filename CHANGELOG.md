@@ -49,6 +49,14 @@ authoritative fine-grained record.
   ones its body names, unless it creates another block or `def` or calls `debugger()`. Debug
   sessions still see every variable. The block-heavy benchmark went from 127 ms to 109 ms.
 
+- **Cheaper method calls.** A warm call site that keeps seeing one class now goes straight to
+  the method it cached, without first testing the name against `tap`, `to_s`, `dup` and the other
+  methods every object answers. A class that defines its own `tap` or `to_s` still gets its own.
+  A typed parameter is checked without a function call when its value is exactly the declared
+  type or class. A plain method call (no type arguments, at most seven arguments) also goes
+  through fewer nested calls before reaching the method body. A loop of a million one-argument
+  method calls runs about 11% fewer instructions, and the object-heavy benchmark about 9%.
+
 ## 0.24.0 — 2026-11-02
 
 ### Added

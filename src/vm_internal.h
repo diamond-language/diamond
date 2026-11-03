@@ -1306,6 +1306,29 @@ DIAMOND_INTERNAL bool value_matches_type(const DiamondChunk *chunk, DiamondValue
 DIAMOND_INTERNAL bool value_matches_set(const DiamondChunk *chunk,DiamondValue value,
                               uint16_t set_index,bool attach);
 DIAMOND_INTERNAL bool value_plainly_matches_set(const DiamondTypeSet *set,DiamondValue value);
+/* A yes that value_matches_set would also give, found without a call: the
+ * set's first member is a plain type `value` has, or a non-generic class
+ * `value` is exactly an instance of. value_matches_set returns true at that
+ * same first member either way, and neither attaches anything. false means
+ * only "ask value_matches_set" -- every parameter and return-type check runs
+ * through here first, and almost all of them pass on their first member. */
+__attribute__((always_inline))
+static inline bool value_quickly_matches_set(const DiamondChunk *chunk,
+        DiamondValue value,uint16_t set_index) {
+    if((size_t)set_index>=chunk->type_set_count)return false;
+    const DiamondTypeSet *set=&chunk->type_sets[set_index];
+    if(set->count==0)return false;
+    const DiamondTypeMember *member=&set->members[0];
+    if(member->argument_set!=DIAMOND_NO_TYPE_SET||
+       member->second_argument_set!=DIAMOND_NO_TYPE_SET)return false;
+    if(diamond_plain_type_match(value,member->id)==1)return true;
+    if(member->id<DIAMOND_TYPE_CLASS_BASE||member->id>=DIAMOND_TYPE_VARIABLE_BASE||
+       value.kind!=DIAMOND_VALUE_OBJECT||value.as.object->kind!=DIAMOND_OBJECT_INSTANCE)
+        return false;
+    const size_t class_index=(size_t)(member->id-DIAMOND_TYPE_CLASS_BASE);
+    return class_index<chunk->class_count&&
+        ((const DiamondInstance *)value.as.object)->class==chunk->classes[class_index];
+}
 
 DIAMOND_INTERNAL bool array_value_satisfies_constraints(DiamondArray *array,
                                                DiamondValue value);
