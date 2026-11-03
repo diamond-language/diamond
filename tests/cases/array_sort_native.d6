@@ -1,0 +1,26 @@
+# A blockless sort of all-Int or all-String arrays runs natively; everything else
+# (mixed kinds, Floats, big integers, nested Arrays, a block) keeps the prelude sort.
+# Both return a new, stably sorted Array and leave the receiver alone.
+original = [3, -1, 2, 9223372036854775807, -9223372036854775807, 0, 2]
+sorted = original.sort()
+p(sorted)
+p(original)
+p(["pear", "apple", "fig", "Apple", "", "apple"].sort())
+p([].sort())
+p([42].sort())
+p([2, 1.5, 1].sort())
+p([5, 10**20, 1].sort())
+p([[2, 1], [1, 5]].sort())
+descending = [3, 1, 2].sort() do |a, b|
+  b - a
+end
+p(descending)
+p([2, 1].freeze().sort().frozen?())
+
+def mixed() -> String
+  [1, "a"].sort()
+  "sorted"
+rescue error: StandardError
+  "raised"
+end
+mixed()
