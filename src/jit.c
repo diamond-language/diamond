@@ -314,7 +314,7 @@ static void emit_alu_rr(JitBuffer *buf, uint8_t opcode, int dst, int src) {
     emit_u8(buf, opcode);
     emit_u8(buf, (uint8_t)(0xC0 | ((src & 7) << 3) | (dst & 7)));
 }
-enum { ALU_ADD = 0x01, ALU_SUB = 0x29, ALU_CMP = 0x39 };
+enum { ALU_ADD = 0x01, ALU_SUB = 0x29, ALU_XOR = 0x31, ALU_CMP = 0x39 };
 
 /* imul dst64, src64 (two-operand form; sets OF/CF on signed 64-bit overflow) */
 static void emit_imul_rr(JitBuffer *buf, int dst, int src) {
@@ -348,6 +348,8 @@ enum {
     SETCC_GE = 0x9D,
     SETCC_LE = 0x9E,
     SETCC_G = 0x9F,
+    SETCC_A = 0x97,
+    SETCC_AE = 0x93,
 };
 static void emit_setcc_al(JitBuffer *buf, uint8_t condition) {
     emit_u8(buf, 0x0F);
@@ -567,6 +569,7 @@ enum {
     JCC_O = 0x80,
     JCC_E = 0x84,
     JCC_NE = 0x85,
+    JCC_NS = 0x89,
 };
 static size_t emit_jcc_placeholder(JitBuffer *buf, uint8_t condition) {
     emit_u8(buf, 0x0F);
@@ -806,18 +809,122 @@ static void emit_compare_slow_call(JitCompiler *jc, size_t instruction_start, ui
  * at compile time (an untyped parameter, a Hash/Array element) no
  * longer disables the JIT for its entire containing function the moment
  * it's used in arithmetic. */
+/* SSE2 scalar-double forms used by the Float fast path below. Every
+ * memory operand is [base + disp32] with base RBX (see emit_rex), and
+ * only xmm0/xmm1 are used, so a REX byte is only emitted for a base of
+ * R8-R15. */
+enum { SSE_ADDSD = 0x58, SSE_MULSD = 0x59, SSE_SUBSD = 0x5C, SSE_DIVSD = 0x5E };
+static void emit_sse_mem(JitBuffer *buf, uint8_t prefix, uint8_t opcode, int xmm, int base,
+                         int32_t disp) {
+    emit_u8(buf, prefix);
+    if (base >= 8) emit_u8(buf, emit_rex(false, xmm, base));
+    emit_u8(buf, 0x0F);
+    emit_u8(buf, opcode);
+    emit_u8(buf, (uint8_t)(0x80 | ((xmm & 7) << 3) | (base & 7)));
+    emit_u32_le(buf, (uint32_t)disp);
+}
+/* movsd xmm, [base + disp32] */
+static void emit_movsd_load(JitBuffer *buf, int xmm, int base, int32_t disp) {
+    emit_sse_mem(buf, 0xF2, 0x10, xmm, base, disp);
+}
+/* movsd [base + disp32], xmm */
+static void emit_movsd_store(JitBuffer *buf, int base, int32_t disp, int xmm) {
+    emit_sse_mem(buf, 0xF2, 0x11, xmm, base, disp);
+}
+/* ucomisd xmm_a, xmm_b (xmm0-xmm7 only) */
+static void emit_ucomisd_rr(JitBuffer *buf, int a, int b) {
+    emit_u8(buf, 0x66);
+    emit_u8(buf, 0x0F);
+    emit_u8(buf, 0x2E);
+    emit_u8(buf, (uint8_t)(0xC0 | ((a & 7) << 3) | (b & 7)));
+}
+
+static bool binary_op_is_comparison(DiamondOpCode op) {
+    return op == DIAMOND_OP_LESS || op == DIAMOND_OP_LESS_INT ||
+        op == DIAMOND_OP_LESS_EQUAL || op == DIAMOND_OP_LESS_EQUAL_INT ||
+        op == DIAMOND_OP_GREATER || op == DIAMOND_OP_GREATER_INT ||
+        op == DIAMOND_OP_GREATER_EQUAL || op == DIAMOND_OP_GREATER_EQUAL_INT;
+}
+
+/* Both operands Float: the arithmetic or comparison done with SSE2, the
+ * same IEEE double operation the interpreter's C code does (so 1.0 / 0.0
+ * is Infinity and every comparison with NaN is false). Emitted where the
+ * Int path's kind checks land; any other kind pair (Int with Float
+ * included) jumps to the slow call through `slow_jumps`. Returns the
+ * placeholder of the jump past the slow call. Comparisons compare with the
+ * operands ordered so the answer is "above" or "above or equal", the two
+ * conditions an unordered (NaN) result never sets. */
+static size_t emit_float_binary(JitCompiler *jc, uint16_t dest, uint16_t left, uint16_t right,
+                                DiamondOpCode op, size_t *slow_jumps, size_t *slow_jump_count) {
+    JitBuffer *buf = &jc->buf;
+    emit_load_byte_zx(buf, REG_RAX, JIT_REGISTERS_BASE, reg_disp(left, KIND_OFF));
+    emit_cmp_imm32_32(buf, REG_RAX, DIAMOND_VALUE_FLOAT);
+    slow_jumps[(*slow_jump_count)++] = emit_jcc_placeholder(buf, JCC_NE);
+    emit_load_byte_zx(buf, REG_RAX, JIT_REGISTERS_BASE, reg_disp(right, KIND_OFF));
+    emit_cmp_imm32_32(buf, REG_RAX, DIAMOND_VALUE_FLOAT);
+    slow_jumps[(*slow_jump_count)++] = emit_jcc_placeholder(buf, JCC_NE);
+    if (binary_op_is_comparison(op)) {
+        const bool less = op == DIAMOND_OP_LESS || op == DIAMOND_OP_LESS_INT ||
+            op == DIAMOND_OP_LESS_EQUAL || op == DIAMOND_OP_LESS_EQUAL_INT;
+        const bool or_equal = op == DIAMOND_OP_LESS_EQUAL || op == DIAMOND_OP_LESS_EQUAL_INT ||
+            op == DIAMOND_OP_GREATER_EQUAL || op == DIAMOND_OP_GREATER_EQUAL_INT;
+        /* left < right is right above left; left > right is left above right. */
+        emit_movsd_load(buf, 0, JIT_REGISTERS_BASE, reg_disp(less ? right : left, AS_OFF));
+        emit_movsd_load(buf, 1, JIT_REGISTERS_BASE, reg_disp(less ? left : right, AS_OFF));
+        emit_ucomisd_rr(buf, 0, 1);
+        emit_setcc_al(buf, or_equal ? SETCC_AE : SETCC_A);
+        emit_store_kind_imm(buf, JIT_REGISTERS_BASE, reg_disp(dest, KIND_OFF), DIAMOND_VALUE_BOOL);
+        emit_store_byte_reg(buf, JIT_REGISTERS_BASE, reg_disp(dest, AS_OFF), REG_RAX);
+        return emit_jmp_placeholder(buf);
+    }
+    const uint8_t sse_op =
+        (op == DIAMOND_OP_ADD || op == DIAMOND_OP_ADD_INT) ? SSE_ADDSD :
+        (op == DIAMOND_OP_SUBTRACT || op == DIAMOND_OP_SUBTRACT_INT) ? SSE_SUBSD :
+        (op == DIAMOND_OP_MULTIPLY || op == DIAMOND_OP_MULTIPLY_INT) ? SSE_MULSD : SSE_DIVSD;
+    emit_movsd_load(buf, 0, JIT_REGISTERS_BASE, reg_disp(left, AS_OFF));
+    emit_sse_mem(buf, 0xF2, sse_op, 0, JIT_REGISTERS_BASE, reg_disp(right, AS_OFF));
+    emit_movsd_store(buf, JIT_REGISTERS_BASE, reg_disp(dest, AS_OFF), 0);
+    emit_store_kind_imm(buf, JIT_REGISTERS_BASE, reg_disp(dest, KIND_OFF), DIAMOND_VALUE_FLOAT);
+    return emit_jmp_placeholder(buf);
+}
+
+/* The tail every compile_binary_int_op branch shares: `done_int` is the
+ * Int path's jump past everything else. A kind mismatch (`kind_jumps`)
+ * tries the Float path first unless `float_capable` is false (MODULO);
+ * every remaining edge case reaches the slow call. */
+static void finish_binary_op(JitCompiler *jc, size_t instruction_start, uint16_t dest,
+                             uint16_t left, uint16_t right, DiamondOpCode op, size_t done_int,
+                             const size_t *kind_jumps, size_t *slow_jumps, size_t slow_jump_count,
+                             bool float_capable) {
+    JitBuffer *buf = &jc->buf;
+    size_t done_float = 0;
+    bool has_float = false;
+    if (float_capable) {
+        for (size_t i = 0; i < 2; i++) patch_rel32_to_here(buf, kind_jumps[i]);
+        done_float = emit_float_binary(jc, dest, left, right, op, slow_jumps, &slow_jump_count);
+        has_float = true;
+    } else {
+        for (size_t i = 0; i < 2; i++) slow_jumps[slow_jump_count++] = kind_jumps[i];
+    }
+    for (size_t i = 0; i < slow_jump_count; i++) patch_rel32_to_here(buf, slow_jumps[i]);
+    if (binary_op_is_comparison(op))
+        emit_compare_slow_call(jc, instruction_start, dest, left, right, op);
+    else
+        emit_arith_slow_call(jc, instruction_start, dest, left, right, op);
+    patch_rel32_to_here(buf, done_int);
+    if (has_float) patch_rel32_to_here(buf, done_float);
+}
+
 static void compile_binary_int_op(JitCompiler *jc, size_t instruction_start, uint16_t dest,
                                    uint16_t left, uint16_t right, DiamondOpCode op) {
     JitBuffer *buf = &jc->buf;
     jc->has_called = true;
-    size_t slow_jumps[4];
+    size_t kind_jumps[2];
+    size_t slow_jumps[8];
     size_t slow_jump_count = 0;
-    slow_jumps[slow_jump_count++] = emit_check_kind_int_or_jump(jc, left, REG_RAX);
-    slow_jumps[slow_jump_count++] = emit_check_kind_int_or_jump(jc, right, REG_RAX);
-    if (op == DIAMOND_OP_LESS || op == DIAMOND_OP_LESS_INT ||
-        op == DIAMOND_OP_LESS_EQUAL || op == DIAMOND_OP_LESS_EQUAL_INT ||
-        op == DIAMOND_OP_GREATER || op == DIAMOND_OP_GREATER_INT ||
-        op == DIAMOND_OP_GREATER_EQUAL || op == DIAMOND_OP_GREATER_EQUAL_INT) {
+    kind_jumps[0] = emit_check_kind_int_or_jump(jc, left, REG_RAX);
+    kind_jumps[1] = emit_check_kind_int_or_jump(jc, right, REG_RAX);
+    if (binary_op_is_comparison(op)) {
         const uint8_t condition =
             (op == DIAMOND_OP_LESS || op == DIAMOND_OP_LESS_INT) ? SETCC_L :
             (op == DIAMOND_OP_LESS_EQUAL || op == DIAMOND_OP_LESS_EQUAL_INT) ? SETCC_LE :
@@ -829,9 +936,37 @@ static void compile_binary_int_op(JitCompiler *jc, size_t instruction_start, uin
         emit_store_kind_imm(buf, JIT_REGISTERS_BASE, reg_disp(dest, KIND_OFF), DIAMOND_VALUE_BOOL);
         emit_store_byte_reg(buf, JIT_REGISTERS_BASE, reg_disp(dest, AS_OFF), REG_RAX);
         size_t done = emit_jmp_placeholder(buf);
-        for (size_t i = 0; i < slow_jump_count; i++) patch_rel32_to_here(buf, slow_jumps[i]);
-        emit_compare_slow_call(jc, instruction_start, dest, left, right, op);
-        patch_rel32_to_here(buf, done);
+        finish_binary_op(jc, instruction_start, dest, left, right, op, done, kind_jumps,
+                         slow_jumps, slow_jump_count, true);
+        return;
+    }
+    if (op == DIAMOND_OP_MODULO) {
+        /* Floored, like the interpreter's MODULO case: idiv leaves C's
+         * truncated remainder in RDX, and a nonzero remainder whose sign
+         * differs from the divisor's gets the divisor added. A divisor of
+         * 0 (division by zero) or -1 (INT64_MIN % -1 traps in idiv) goes
+         * to the slow call, which answers 0 for -1. */
+        emit_load_r64(buf, REG_RAX, JIT_REGISTERS_BASE, reg_disp(left, AS_OFF));
+        emit_load_r64(buf, REG_RCX, JIT_REGISTERS_BASE, reg_disp(right, AS_OFF));
+        emit_test_r64(buf, REG_RCX, REG_RCX);
+        slow_jumps[slow_jump_count++] = emit_jcc_placeholder(buf, JCC_E);
+        emit_cmp_imm8(buf, REG_RCX, -1);
+        slow_jumps[slow_jump_count++] = emit_jcc_placeholder(buf, JCC_E);
+        emit_cqo(buf);
+        emit_idiv(buf, REG_RCX);
+        emit_test_r64(buf, REG_RDX, REG_RDX);
+        size_t exact = emit_jcc_placeholder(buf, JCC_E);
+        emit_mov_rr(buf, REG_RAX, REG_RDX);
+        emit_alu_rr(buf, ALU_XOR, REG_RAX, REG_RCX);
+        size_t same_sign = emit_jcc_placeholder(buf, JCC_NS);
+        emit_alu_rr(buf, ALU_ADD, REG_RDX, REG_RCX);
+        patch_rel32_to_here(buf, exact);
+        patch_rel32_to_here(buf, same_sign);
+        emit_store_kind_imm(buf, JIT_REGISTERS_BASE, reg_disp(dest, KIND_OFF), DIAMOND_VALUE_INT);
+        emit_store_r64(buf, JIT_REGISTERS_BASE, reg_disp(dest, AS_OFF), REG_RDX);
+        size_t done = emit_jmp_placeholder(buf);
+        finish_binary_op(jc, instruction_start, dest, left, right, op, done, kind_jumps,
+                         slow_jumps, slow_jump_count, false);
         return;
     }
     if (op == DIAMOND_OP_DIVIDE_INT || op == DIAMOND_OP_DIVIDE) {
@@ -853,9 +988,8 @@ static void compile_binary_int_op(JitCompiler *jc, size_t instruction_start, uin
         emit_store_kind_imm(buf, JIT_REGISTERS_BASE, reg_disp(dest, KIND_OFF), DIAMOND_VALUE_INT);
         emit_store_r64(buf, JIT_REGISTERS_BASE, reg_disp(dest, AS_OFF), REG_RAX);
         size_t done = emit_jmp_placeholder(buf);
-        for (size_t i = 0; i < slow_jump_count; i++) patch_rel32_to_here(buf, slow_jumps[i]);
-        emit_arith_slow_call(jc, instruction_start, dest, left, right, op);
-        patch_rel32_to_here(buf, done);
+        finish_binary_op(jc, instruction_start, dest, left, right, op, done, kind_jumps,
+                         slow_jumps, slow_jump_count, true);
         return;
     }
     emit_load_r64(buf, REG_RAX, JIT_REGISTERS_BASE, reg_disp(left, AS_OFF));
@@ -871,9 +1005,8 @@ static void compile_binary_int_op(JitCompiler *jc, size_t instruction_start, uin
     emit_store_kind_imm(buf, JIT_REGISTERS_BASE, reg_disp(dest, KIND_OFF), DIAMOND_VALUE_INT);
     emit_store_r64(buf, JIT_REGISTERS_BASE, reg_disp(dest, AS_OFF), REG_RAX);
     size_t done = emit_jmp_placeholder(buf);
-    for (size_t i = 0; i < slow_jump_count; i++) patch_rel32_to_here(buf, slow_jumps[i]);
-    emit_arith_slow_call(jc, instruction_start, dest, left, right, op);
-    patch_rel32_to_here(buf, done);
+    finish_binary_op(jc, instruction_start, dest, left, right, op, done, kind_jumps,
+                     slow_jumps, slow_jump_count, true);
 }
 
 /* EQUAL/NOT_EQUAL. A fast CPU-comparison path handles both operands NIL,
@@ -1552,6 +1685,7 @@ static bool opcode_dest_is_first_u16(DiamondOpCode opcode) {
         case DIAMOND_OP_SUBTRACT:
         case DIAMOND_OP_MULTIPLY:
         case DIAMOND_OP_DIVIDE:
+        case DIAMOND_OP_MODULO:
         case DIAMOND_OP_LESS:
         case DIAMOND_OP_LESS_EQUAL:
         case DIAMOND_OP_LESS_EQUAL_INT:
@@ -1639,7 +1773,7 @@ static bool decode_instruction_operands(const DiamondFunction *fn, size_t *pc,
         }
         case DIAMOND_OP_ADD_INT: case DIAMOND_OP_SUBTRACT_INT: case DIAMOND_OP_MULTIPLY_INT:
         case DIAMOND_OP_DIVIDE_INT: case DIAMOND_OP_LESS_INT: case DIAMOND_OP_ADD:
-        case DIAMOND_OP_SUBTRACT: case DIAMOND_OP_MULTIPLY: case DIAMOND_OP_DIVIDE:
+        case DIAMOND_OP_SUBTRACT: case DIAMOND_OP_MULTIPLY: case DIAMOND_OP_DIVIDE: case DIAMOND_OP_MODULO:
         case DIAMOND_OP_LESS: case DIAMOND_OP_LESS_EQUAL: case DIAMOND_OP_LESS_EQUAL_INT:
         case DIAMOND_OP_GREATER: case DIAMOND_OP_GREATER_INT: case DIAMOND_OP_GREATER_EQUAL:
         case DIAMOND_OP_GREATER_EQUAL_INT: case DIAMOND_OP_EQUAL: case DIAMOND_OP_NOT_EQUAL:
@@ -1798,7 +1932,7 @@ static int32_t register_new_class_or_move_src(const DiamondFunction *fn,
             }
             case DIAMOND_OP_ADD_INT: case DIAMOND_OP_SUBTRACT_INT: case DIAMOND_OP_MULTIPLY_INT:
             case DIAMOND_OP_DIVIDE_INT: case DIAMOND_OP_LESS_INT: case DIAMOND_OP_ADD:
-            case DIAMOND_OP_SUBTRACT: case DIAMOND_OP_MULTIPLY: case DIAMOND_OP_DIVIDE:
+            case DIAMOND_OP_SUBTRACT: case DIAMOND_OP_MULTIPLY: case DIAMOND_OP_DIVIDE: case DIAMOND_OP_MODULO:
             case DIAMOND_OP_LESS: case DIAMOND_OP_LESS_EQUAL: case DIAMOND_OP_LESS_EQUAL_INT:
             case DIAMOND_OP_GREATER: case DIAMOND_OP_GREATER_INT: case DIAMOND_OP_GREATER_EQUAL:
             case DIAMOND_OP_GREATER_EQUAL_INT: case DIAMOND_OP_EQUAL: case DIAMOND_OP_NOT_EQUAL:
@@ -2225,9 +2359,17 @@ static bool compile_value_instruction(JitCompiler *jc, DiamondOpCode opcode, siz
             if (!decode_u16(fn, &pc, &dest) || !decode_u16(fn, &pc, &index)) { jc->bailed = true; return true; }
             if (index >= fn->constant_count) { jc->bailed = true; return true; }
             DiamondValue constant = fn->constants[index];
-            if (constant.kind != DIAMOND_VALUE_INT) { jc->bailed = true; return true; }
-            emit_store_kind_imm(&jc->buf, JIT_REGISTERS_BASE, reg_disp(dest, KIND_OFF), DIAMOND_VALUE_INT);
-            emit_mov_imm64(&jc->buf, REG_RAX, (uint64_t)constant.as.integer);
+            /* Int and Float constants are plain 64-bit payloads, so
+             * they're stored inline; any other kind keeps the function
+             * in the interpreter. */
+            if (constant.kind != DIAMOND_VALUE_INT && constant.kind != DIAMOND_VALUE_FLOAT) {
+                jc->bailed = true; return true;
+            }
+            uint64_t payload = 0;
+            if (constant.kind == DIAMOND_VALUE_INT) payload = (uint64_t)constant.as.integer;
+            else memcpy(&payload, &constant.as.real, sizeof payload);
+            emit_store_kind_imm(&jc->buf, JIT_REGISTERS_BASE, reg_disp(dest, KIND_OFF), (uint8_t)constant.kind);
+            emit_mov_imm64(&jc->buf, REG_RAX, payload);
             emit_store_r64(&jc->buf, JIT_REGISTERS_BASE, reg_disp(dest, AS_OFF), REG_RAX);
             break;
         }
@@ -2246,6 +2388,7 @@ static bool compile_value_instruction(JitCompiler *jc, DiamondOpCode opcode, siz
         case DIAMOND_OP_SUBTRACT:
         case DIAMOND_OP_MULTIPLY:
         case DIAMOND_OP_DIVIDE:
+        case DIAMOND_OP_MODULO:
         case DIAMOND_OP_LESS:
         case DIAMOND_OP_LESS_EQUAL:
         case DIAMOND_OP_LESS_EQUAL_INT:

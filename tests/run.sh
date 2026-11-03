@@ -73,6 +73,18 @@ jit_control_count="$(jit_compiled_count "Array | Nil" nil)"
 jit_array_count="$(jit_compiled_count Array '[]')"
 [[ -n "$jit_control_count" && "$jit_array_count" == "$jit_control_count" ]]
 
+# `%` and Float constants used to keep a whole function out of the JIT. A loop
+# using each must compile exactly as much as the same loop using `+` and Ints.
+jit_loop_count() {
+    DIAMOND_JIT=1 DIAMOND_JIT_THRESHOLD=1 DIAMOND_TRACE_JIT=1 "$diamond" -e \
+        $'def run(n)\n  i = 0\n  t = '"$1"$'\n  while i < n\n  t = '"$2"$'\n  i += 1\n  end\n  t\nend\nputs(run(100))' 2>&1 |
+        sed -n 's/^jit: \([0-9]*\) compiled function(s), 0 bailout(s), 0 hard propagation(s)$/\1/p'
+}
+jit_loop_control="$(jit_loop_count 0 't + i')"
+[[ -n "$jit_loop_control" ]]
+[[ "$(jit_loop_count 0 '(t + i) % 7')" == "$jit_loop_control" ]]
+[[ "$(jit_loop_count 0.5 't * 1.5 - 0.25')" == "$jit_loop_control" ]]
+
 # A function with a loop compiles on its first call (there is no on-stack
 # replacement, so a loop in a function called once would otherwise run
 # interpreted to completion); one without a loop waits for the threshold, and a
