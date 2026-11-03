@@ -37,6 +37,26 @@ typedef struct ImplicitBegins {
     size_t capacity;
 } ImplicitBegins;
 
+/* Which captured enclosing locals each block's body names, found by the
+ * discovery pass and read by the real one so a block's prologue loads only
+ * those (bind_captured_cells). A block that creates another closure or calls
+ * debugger() reads every capture's register, so it marks them all. One
+ * record per block, keyed by the block's declaration_start and appended in
+ * source order of the block's start, so the real pass finds one by binary
+ * search. A block with no record, or whose enclosing local count differs,
+ * binds every capture as before. */
+typedef struct BlockCaptureUse {
+    size_t block_start;
+    size_t enclosing_count;
+    uint64_t used[4];
+} BlockCaptureUse;
+
+typedef struct BlockCaptureUses {
+    BlockCaptureUse *items;
+    size_t count;
+    size_t capacity;
+} BlockCaptureUses;
+
 typedef enum Precedence {
     PREC_NONE,
     /* Looser than every other binary operator (including ||/&&), matching
@@ -64,6 +84,8 @@ typedef struct Local {
      * (a block or nested def's GET_CAPTURE_CELL prologue), so a read or
      * write needs no BOX_LOCAL first. */
     bool bound_cell;
+    /* For a bound_cell local, its index in the closure's captures. */
+    uint8_t capture_index;
     uint32_t alias_identity;
 } Local;
 
@@ -353,6 +375,11 @@ typedef struct Compiler {
     const DiamondProgram *tooling_returns;
     ToolingDependencies *tooling_forward_calls;
     ImplicitBegins *implicit_begins;
+    /* Shared by both passes (see BlockCaptureUse). capture_record is the
+     * index of the block being compiled in the discovery pass whose
+     * captures find_local marks, SIZE_MAX outside one. */
+    BlockCaptureUses *capture_uses;
+    size_t capture_record;
     bool return_flow_seen;
     uint16_t return_flow_type;
     int32_t return_flow_set;
@@ -692,6 +719,9 @@ DIAMOND_INTERNAL void emit_absolute_jump(Compiler *compiler, size_t target);
 DIAMOND_INTERNAL bool spans_equal(const Compiler *compiler, DiamondSpan left,
                         DiamondSpan right);
 DIAMOND_INTERNAL int find_local(const Compiler *compiler, DiamondSpan name);
+DIAMOND_INTERNAL BlockCaptureUse *find_block_capture_use(const BlockCaptureUses *uses,size_t block_start);
+DIAMOND_INTERNAL bool open_block_capture_use(BlockCaptureUses *uses,size_t block_start,size_t enclosing_count);
+DIAMOND_INTERNAL void note_capture_use(const Compiler *compiler,size_t index);
 DIAMOND_INTERNAL bool register_is_named(const Compiler *compiler, uint16_t reg);
 DIAMOND_INTERNAL bool try_rewrite_producer_destination(Compiler *compiler, uint16_t value,
                                               uint16_t destination);

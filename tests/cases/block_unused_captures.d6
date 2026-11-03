@@ -1,0 +1,63 @@
+# A block loads only the enclosing locals its body names. Every way a body
+# can name one must still find it: these are the edges.
+def run(items: Array) -> Array
+  base = 10
+  label = "n"
+  count = 0
+  unused = "never read"
+  results = []
+
+  # Read directly, and only inside string interpolation.
+  results.push(items.map() do |n| n + base end)
+  results.push(items.map() do |n| "#{label}#{n}" end)
+
+  # Written, compound-assigned, then read after the block.
+  items.each() do |n|
+    count += n
+  end
+  results.push(count)
+
+  # Only a nested block or a nested def names it.
+  results.push(items.map() do |n|
+    [n].map() do |m| m * base end
+  end)
+  results.push(items.map() do |n|
+    def scaled(value) = value * 3
+    scaled(n) + base
+  end)
+
+  # Only one branch, a rescue, or a case names it.
+  results.push(items.map() do |n|
+    if n > 1
+      n + base
+    else
+      n
+    end
+  end)
+  results.push(items.map() do |n|
+    begin
+      raise "odd" if n % 2 == 1
+      n
+    rescue
+      label
+    end
+  end)
+  results.push(items.map() do |n|
+    case n
+    when 1 then label
+    else base
+    end
+  end)
+
+  # A block parameter shadows the enclosing name.
+  results.push(items.map() do |base| base * 2 end)
+  results
+end
+
+puts(run([1, 2, 3]))
+
+# yield inside a block calls the enclosing method's block.
+def twice_each(items: Array, &step) -> Array
+  items.map() do |n| yield(yield(n)) end
+end
+puts(twice_each([1, 2]) do |n| n * 10 end)
