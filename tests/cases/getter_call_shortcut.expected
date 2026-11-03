@@ -1,0 +1,12 @@
+3
+p
+nil
+nil
+100
+boxed
+42
+7
+expected Int, got String
+arity: wrong number of arguments
+private: private method 'code' called with an explicit receiver
+nil

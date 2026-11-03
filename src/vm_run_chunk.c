@@ -798,36 +798,37 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     opcode=specialized;
                     vm->quickened_sites++;
                 }
-                /* Fast path: one of the seven opcodes above with both
-                 * operands already confirmed plain (non-bignum) Int and
-                 * no overflow/zero/INT64_MIN edge case -- everything
-                 * else (a mismatched or bignum operand, or a genuine
-                 * overflow/div-zero/INT64_MIN case) goes through the
-                 * shared slow path below (Phase 3, docs/internal/
-                 * jit-design.md), shared with the JIT's own compile_
-                 * binary_int_op (src/jit.c) so the two can never drift
-                 * apart -- the same standing rule Phase 2e already
-                 * established for EQUAL/INDEX_GET/SET. */
-                if ((opcode==DIAMOND_OP_ADD_INT||opcode==DIAMOND_OP_SUBTRACT_INT||
-                     opcode==DIAMOND_OP_MULTIPLY_INT||opcode==DIAMOND_OP_DIVIDE_INT)&&
-                    registers[left].kind==DIAMOND_VALUE_INT&&
+                /* Fast path: both operands plain (non-bignum) Int, for the
+                 * generic forms as much as the _INT ones -- quickening is
+                 * off by default (DIAMOND_QUICKEN), so an operand the
+                 * compiler could not prove Int (a block parameter, an
+                 * untyped argument) arrives here as generic SUBTRACT/
+                 * MULTIPLY/DIVIDE. The slow path below treats two plain Ints
+                 * as an overflow and works the answer out with the bignum
+                 * code, so those must not reach it. Only a mismatched or
+                 * bignum operand, or a genuine overflow/div-zero/INT64_MIN
+                 * case, goes to the shared slow path (Phase 3, docs/
+                 * internal/jit-design.md), shared with the JIT's own
+                 * compile_binary_int_op (src/jit.c) so the two can never
+                 * drift apart. */
+                if (registers[left].kind==DIAMOND_VALUE_INT&&
                     registers[right].kind==DIAMOND_VALUE_INT) {
                     const int64_t left_value=registers[left].as.integer;
                     const int64_t right_value=registers[right].as.integer;
                     int64_t result_value=0;
                     bool overflow=false;
+                    const bool divide=opcode==DIAMOND_OP_DIVIDE_INT||opcode==DIAMOND_OP_DIVIDE;
                     if(opcode==DIAMOND_OP_ADD_INT)
                         overflow=ckd_add(&result_value,left_value,right_value);
-                    else if(opcode==DIAMOND_OP_SUBTRACT_INT)
+                    else if(opcode==DIAMOND_OP_SUBTRACT_INT||opcode==DIAMOND_OP_SUBTRACT)
                         overflow=ckd_sub(&result_value,left_value,right_value);
-                    else if(opcode==DIAMOND_OP_MULTIPLY_INT)
+                    else if(opcode==DIAMOND_OP_MULTIPLY_INT||opcode==DIAMOND_OP_MULTIPLY)
                         overflow=ckd_mul(&result_value,left_value,right_value);
-                    if(opcode!=DIAMOND_OP_DIVIDE_INT&&!overflow) {
+                    if(!divide&&!overflow) {
                         registers[destination]=DIAMOND_INT(result_value);
                         break;
                     }
-                    if(opcode==DIAMOND_OP_DIVIDE_INT&&right_value!=0&&
-                       !(left_value==INT64_MIN&&right_value==-1)) {
+                    if(divide&&right_value!=0&&!(left_value==INT64_MIN&&right_value==-1)) {
                         registers[destination]=DIAMOND_INT(left_value/right_value);
                         break;
                     }

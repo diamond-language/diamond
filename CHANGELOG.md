@@ -23,6 +23,12 @@ authoritative fine-grained record.
   compiled function's call to itself skips checks that can't change; recursive `fib` runs about
   19% faster with the JIT and 4% faster without.
 
+- **Method calls and untyped arithmetic are cheaper.** A method whose body only returns an
+  instance variable (`def x() -> Int = @x`) is now answered by reading the field, without setting
+  up a call; return-type checks, arity, privacy and overrides behave as before. Int `-`, `*` and `/`
+  on values the compiler can't prove are Ints no longer take the big-integer path. An
+  object-heavy benchmark went from 457 ms to 339 ms and a block-heavy one from 378 ms to 349 ms.
+
 ## 0.24.0 — 2026-11-02
 
 ### Added

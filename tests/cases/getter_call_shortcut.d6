@@ -1,0 +1,71 @@
+# A method whose whole body returns one instance variable is answered by
+# reading the field, without a call. Everything a real call would do
+# differently must still happen: these are the edges.
+class Point
+  def initialize(x, label)
+    @x = x
+    @label = label
+  end
+
+  def x() -> Int = @x
+  def label() = @label
+  def typed_label() -> Int = @label
+  def maybe() -> Int | Nil = @unset
+  def unset() = @unset
+  def needs_argument(a) = @x
+end
+
+class Shifted < Point
+  def x() -> Int = 100
+end
+
+class Box[T]
+  def initialize(value: T)
+    @value = value
+  end
+
+  def value() -> T = @value
+end
+
+class Secret
+  def initialize()
+    @code = 7
+  end
+
+  def reveal() = self.code()
+
+  private
+
+  def code() = @code
+end
+
+point = Point.new(3, "p")
+puts(point.x())
+puts(point.label())
+puts(point.maybe())
+puts(point.unset())
+puts(Shifted.new(1, "s").x())
+puts(Box.new("boxed").value())
+puts(Box.new(41).value() + 1)
+puts(Secret.new().reveal())
+
+# The declared return type still rejects a wrong value, with the usual message.
+begin
+  point.typed_label()
+rescue error: TypeError
+  puts(error.message())
+end
+
+# A no-argument call of a getter that takes one is still an arity error.
+begin
+  point.needs_argument()
+rescue error: ArgumentError
+  puts("arity: #{error.message()}")
+end
+
+# A private getter is still private from outside.
+begin
+  Secret.new().code()
+rescue error
+  puts("private: #{error.message()}")
+end
