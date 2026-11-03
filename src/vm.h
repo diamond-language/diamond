@@ -647,6 +647,25 @@ typedef enum DiamondOpCode : uint8_t {
     DIAMOND_OP_CHECK_SELF_RETURN,
     /* dest, first, second, selector: `SemVer.*`, see DiamondSemverFunction. */
     DIAMOND_OP_SEMVER,
+    /* dest, left, scratch, constant: an Int `+ - * %` or comparison whose right
+     * operand is an Int literal. Exactly a CONSTANT into `scratch` followed by
+     * the register form, in one dispatch: both the interpreter and the JIT
+     * store the constant into `scratch`, so register state matches the
+     * two-instruction form and the JIT's slow paths have a register to
+     * point at. Any operand kind still works (the slow path is the generic op's),
+     * and a divisor of 0 or -1 takes the slow path. The compiler emits these
+     * only after a left operand it knows is an Int (see compile_binary_op);
+     * selfhost/parser.d6 does not. */
+    DIAMOND_OP_ADD_INT_K,
+    DIAMOND_OP_SUBTRACT_INT_K,
+    DIAMOND_OP_MULTIPLY_INT_K,
+    DIAMOND_OP_MODULO_INT_K,
+    DIAMOND_OP_LESS_INT_K,
+    DIAMOND_OP_LESS_EQUAL_INT_K,
+    DIAMOND_OP_GREATER_INT_K,
+    DIAMOND_OP_GREATER_EQUAL_INT_K,
+    DIAMOND_OP_EQUAL_INT_K,
+    DIAMOND_OP_NOT_EQUAL_INT_K,
     DIAMOND_OP_COUNT,
 } DiamondOpCode;
 

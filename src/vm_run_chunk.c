@@ -697,6 +697,16 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
         [DIAMOND_OP_NEW_TYPED] = &&op_NEW_TYPED,
         [DIAMOND_OP_CHECK_SELF_RETURN] = &&op_CHECK_SELF_RETURN,
         [DIAMOND_OP_SEMVER] = &&op_SEMVER,
+        [DIAMOND_OP_NOT_EQUAL_INT_K] = &&op_NOT_EQUAL_INT_K,
+        [DIAMOND_OP_EQUAL_INT_K] = &&op_EQUAL_INT_K,
+        [DIAMOND_OP_GREATER_EQUAL_INT_K] = &&op_GREATER_EQUAL_INT_K,
+        [DIAMOND_OP_GREATER_INT_K] = &&op_GREATER_INT_K,
+        [DIAMOND_OP_LESS_EQUAL_INT_K] = &&op_LESS_EQUAL_INT_K,
+        [DIAMOND_OP_LESS_INT_K] = &&op_LESS_INT_K,
+        [DIAMOND_OP_MODULO_INT_K] = &&op_MODULO_INT_K,
+        [DIAMOND_OP_MULTIPLY_INT_K] = &&op_MULTIPLY_INT_K,
+        [DIAMOND_OP_SUBTRACT_INT_K] = &&op_SUBTRACT_INT_K,
+        [DIAMOND_OP_ADD_INT_K] = &&op_ADD_INT_K,
         [DIAMOND_OP_COUNT ... 255] = &&op_default,
     };
 #pragma GCC diagnostic pop
@@ -4058,6 +4068,96 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     default: VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
                 }
                 registers[dest]=DIAMOND_FLOAT(math_result);
+                break;
+            }
+            /* dest, left, scratch, constant (see the opcode's comment in
+             * src/vm.h): a CONSTANT into `scratch` and the register form in
+             * one dispatch. Anything but two
+             * plain Ints (with a divisor other than 0 and -1 for `%`), and
+             * any overflow, takes the generic opcode's slow path, which
+             * never rewrites the instruction. */
+            case DIAMOND_OP_ADD_INT_K: op_ADD_INT_K:
+            case DIAMOND_OP_SUBTRACT_INT_K: op_SUBTRACT_INT_K:
+            case DIAMOND_OP_MULTIPLY_INT_K: op_MULTIPLY_INT_K:
+            case DIAMOND_OP_MODULO_INT_K: op_MODULO_INT_K:
+            case DIAMOND_OP_LESS_INT_K: op_LESS_INT_K:
+            case DIAMOND_OP_LESS_EQUAL_INT_K: op_LESS_EQUAL_INT_K:
+            case DIAMOND_OP_GREATER_INT_K: op_GREATER_INT_K:
+            case DIAMOND_OP_GREATER_EQUAL_INT_K: op_GREATER_EQUAL_INT_K:
+            case DIAMOND_OP_EQUAL_INT_K: op_EQUAL_INT_K:
+            case DIAMOND_OP_NOT_EQUAL_INT_K: op_NOT_EQUAL_INT_K: {
+                const DiamondOpCode opcode=(DiamondOpCode)instruction;
+                READ_OPERANDS(8);
+                const uint16_t destination=OPERAND_SHORT(0);
+                const uint16_t left=OPERAND_SHORT(2);
+                const uint16_t scratch=OPERAND_SHORT(4);
+                const uint16_t constant=OPERAND_SHORT(6);
+                if((size_t)constant>=chunk->constant_count)
+                    VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
+                /* The CONSTANT's store comes first: `scratch` can be `left` itself
+                 * (`x = 1` then `x + x` fuses the first statement's CONSTANT). */
+                const DiamondValue right_value=chunk->constants[constant];
+                registers[scratch]=right_value;
+                const DiamondValue left_value=registers[left];
+                if(left_value.kind==DIAMOND_VALUE_INT&&right_value.kind==DIAMOND_VALUE_INT) {
+                    const int64_t a=left_value.as.integer,b=right_value.as.integer;
+                    int64_t value=0;
+                    bool handled=true,comparison=false,boolean=false;
+                    switch(opcode) {
+                        case DIAMOND_OP_ADD_INT_K: handled=!ckd_add(&value,a,b); break;
+                        case DIAMOND_OP_SUBTRACT_INT_K: handled=!ckd_sub(&value,a,b); break;
+                        case DIAMOND_OP_MULTIPLY_INT_K: handled=!ckd_mul(&value,a,b); break;
+                        case DIAMOND_OP_MODULO_INT_K:
+                            handled=b!=0&&b!=-1;
+                            if(handled) {
+                                value=a%b;
+                                if(value!=0&&((value<0)!=(b<0)))value+=b;
+                            }
+                            break;
+                        case DIAMOND_OP_LESS_INT_K: comparison=true; boolean=a<b; break;
+                        case DIAMOND_OP_LESS_EQUAL_INT_K: comparison=true; boolean=a<=b; break;
+                        case DIAMOND_OP_GREATER_INT_K: comparison=true; boolean=a>b; break;
+                        case DIAMOND_OP_GREATER_EQUAL_INT_K: comparison=true; boolean=a>=b; break;
+                        case DIAMOND_OP_EQUAL_INT_K: comparison=true; boolean=a==b; break;
+                        default: comparison=true; boolean=a!=b; break;
+                    }
+                    if(handled) {
+                        registers[destination]=comparison?DIAMOND_BOOL(boolean):DIAMOND_INT(value);
+                        DISPATCH_NEXT();
+                    }
+                }
+                DiamondValue slow_result=DIAMOND_NIL;
+                DiamondVmStatus slow_status=DIAMOND_VM_OK;
+                switch(opcode) {
+                    case DIAMOND_OP_ADD_INT_K: case DIAMOND_OP_SUBTRACT_INT_K:
+                    case DIAMOND_OP_MULTIPLY_INT_K: case DIAMOND_OP_MODULO_INT_K: {
+                        const DiamondOpCode generic=
+                            opcode==DIAMOND_OP_ADD_INT_K?DIAMOND_OP_ADD:
+                            opcode==DIAMOND_OP_SUBTRACT_INT_K?DIAMOND_OP_SUBTRACT:
+                            opcode==DIAMOND_OP_MULTIPLY_INT_K?DIAMOND_OP_MULTIPLY:
+                            DIAMOND_OP_MODULO;
+                        slow_status=int_arith_slow(vm,chunk,depth,instruction_offset,
+                            generic,left_value,right_value,&slow_result);
+                        break;
+                    }
+                    case DIAMOND_OP_EQUAL_INT_K: case DIAMOND_OP_NOT_EQUAL_INT_K:
+                        slow_status=diamond_jit_equal_general(vm,chunk,depth,
+                            bytecode+instruction_offset,&left_value,&right_value,
+                            opcode==DIAMOND_OP_NOT_EQUAL_INT_K,&slow_result);
+                        break;
+                    default: {
+                        const DiamondOpCode generic=
+                            opcode==DIAMOND_OP_LESS_INT_K?DIAMOND_OP_LESS:
+                            opcode==DIAMOND_OP_LESS_EQUAL_INT_K?DIAMOND_OP_LESS_EQUAL:
+                            opcode==DIAMOND_OP_GREATER_INT_K?DIAMOND_OP_GREATER:
+                            DIAMOND_OP_GREATER_EQUAL;
+                        slow_status=compare_int_slow(vm,chunk,depth,instruction_offset,
+                            generic,left_value,right_value,&slow_result);
+                        break;
+                    }
+                }
+                VM_PROPAGATE(slow_status);
+                registers[destination]=slow_result;
                 break;
             }
             default: op_default:

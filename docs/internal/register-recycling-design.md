@@ -168,7 +168,9 @@ temporary to `destination` in place (`try_rewrite_producer_destination`,
   state -- **not a blanket rule.** Vetted and included: the plain
   arithmetic family `compile_binary_op` can emit (`ADD`, `SUBTRACT`,
   `MULTIPLY`, `DIVIDE`, `MODULO`, `SHIFT_LEFT`, `SHIFT_RIGHT`,
-  `BITWISE_AND`/`_OR`/`_XOR`, and their `_INT` fast-path forms) --
+  `BITWISE_AND`/`_OR`/`_XOR`, their `_INT` fast-path forms, and the
+  constant-operand `ADD_INT_K`/`SUBTRACT_INT_K`/`MULTIPLY_INT_K`/
+  `MODULO_INT_K`, whose destination is also the first operand) --
   confirmed none of these touch `compiler->narrowing` (only `EQUAL`/
   `NOT_EQUAL`/`EQUAL_INT`/`NOT_EQUAL_INT` do, and only conditionally; the
   full comparison family is excluded from the allowlist for this reason,
