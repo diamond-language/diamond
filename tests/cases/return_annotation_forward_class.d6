@@ -1,0 +1,27 @@
+# A return annotation may name a class declared later in the file, and a
+# caller declared after that class may check against it (issue #438).
+class Starter
+  def start(a) -> Result = Result.new(a)
+  def plain() -> Plain = Plain.new()
+end
+
+class Result
+  def initialize(a)
+    @a = a
+  end
+
+  def a() -> Int = @a
+end
+
+class Plain
+end
+
+def started() -> Result = Starter.new().start(1)
+
+def plain() -> Plain
+  Starter.new().plain()
+end
+
+puts(started().class())
+puts(plain().class())
+puts(Starter.new().start(41).a() + 1)

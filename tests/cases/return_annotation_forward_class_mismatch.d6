@@ -1,0 +1,13 @@
+# A real mismatch against a class declared later is still a compile error.
+class Starter
+  def start() -> Result = Result.new()
+end
+
+class Result
+end
+
+class Other
+end
+
+def other() -> Other = Starter.new().start()
+puts(other())

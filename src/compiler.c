@@ -852,6 +852,12 @@ void emit_type_check(Compiler *compiler, uint16_t reg, uint16_t set_index,
         emit_instruction(compiler,DIAMOND_OP_CHECK_TYPE,reg,set_index,0,2);
         return;
     case TYPE_CHECK_VIOLATED:
+        /* Discovery types an annotation naming a class declared later as
+         * Nil (see resolve_type_name), so a call's published return type
+         * can be that placeholder there. The real pass checks this again
+         * with every declaration known, as check_call_argument_types
+         * already relies on. */
+        if(compiler->discovery_pass)return;
         fail_type_mismatch(compiler,span,reg,set_index);
         return;
     }
