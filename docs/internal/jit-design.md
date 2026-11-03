@@ -2223,3 +2223,25 @@ from memory, or `ucomisd` with the operands ordered so the condition is "above" 
 equal", which an unordered NaN result never sets). Int with Float and every other pair go on to
 the slow call as before. On the fistfight benchmarks this took `loop` from 1.13s to 0.18s and
 `mandelbrot` from 0.31s to 0.08s under `DIAMOND_JIT=1`.
+
+## Self-calls
+
+A plain `CALL` whose function index is the compiled function's own (`self_function_index`), with
+an argument count inside its arity, calls `diamond_jit_call_self` instead of
+`diamond_jit_call_function`. The arity and register bounds are checked once at compile time. At
+run time the trampoline confirms the index still names the running function (else it takes the
+general path), checks the depth limit, and enters the native code through `jit_run_native`, the
+block `jit_call_core` also uses. The tier-up and budget checks are skipped because they cannot
+have changed: the caller is already running this function's native code. Tail, retry and
+propagated outcomes go to `jit_tail_loop`, `run_chunk` and the caller, as in
+`jit_call_or_interpret`.
+
+Both this path and the interpreter's `CALL` use `plain_call_chunk_for`, which reuses the caller's
+chunk when the caller is the same function (recursion) instead of building the 200-byte
+`DiamondChunk` again.
+
+What is left per recursive call is the C round trip (about 175 instructions on `fib` against
+about 113 in the native body). Removing it would mean calling the native entry directly, with the
+callee's register file on the native stack. The obstacle is the depth limit, which is
+thread-local and depends on whether a fiber is running, so native code cannot read it without a
+new slot in the JIT calling convention.

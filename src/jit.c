@@ -1418,7 +1418,14 @@ static void compile_call_function(JitCompiler *jc, uint16_t dest,
     emit_mov_imm64(buf, REG_RCX, function_index);
     emit_mov_imm64(buf, REG_R8, base);
     emit_mov_imm64(buf, REG_R9, argc);
-    emit_body_call(jc, (void *)(uintptr_t)diamond_jit_call_function);
+    /* Recursion: the target is this function, so its arity and the
+     * register bound are checked here once, not on every call. */
+    const DiamondFunction *self = jc->function;
+    const bool calls_self = function_index == jc->self_function_index &&
+        argc >= self->required_arity && argc <= self->arity && !self->has_variadic &&
+        (size_t)base + argc <= DIAMOND_REGISTER_COUNT;
+    emit_body_call(jc, calls_self ? (void *)(uintptr_t)diamond_jit_call_self
+                                  : (void *)(uintptr_t)diamond_jit_call_function);
     emit_add_rsp_imm32(buf, 16); /* reclaim the 2 pushed stack slots */
     emit_bail_if_al_nonzero(jc);
 }
