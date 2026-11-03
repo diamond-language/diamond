@@ -6,6 +6,7 @@
 
 #include <errno.h>
 #include <inttypes.h>
+#include <stdckdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -39,10 +40,9 @@
  * cost real margin against DIAMOND_MAX_CALL_DEPTH's stack-depth guard
  * if it lived directly in a run_chunk case, and CALL_CLOSURE is itself
  * on run_chunk's own recursive call path. */
-DiamondVmStatus call_closure_helper(DiamondVm *vm,const DiamondChunk *chunk,
-        const DiamondFunction *fn,const DiamondClosure *called,
-        const DiamondValue *registers,uint16_t base,uint8_t argc,size_t depth,
-        DiamondValue *result) {
+DiamondVmStatus block_call_prepare(const DiamondChunk *chunk,
+        const DiamondFunction *fn,const DiamondClosure *called,uint8_t argc,
+        DiamondBlockCall *call) {
     if(diamond_block_ignores_arguments(called,fn))argc=0;
     const bool needs_self_slot=fn->owner_class!=DIAMOND_OWNER_NONE;
     /* A `closure` (compiler.c's UINT8_MAX-2 owner_class sentinel) also
@@ -56,25 +56,12 @@ DiamondVmStatus call_closure_helper(DiamondVm *vm,const DiamondChunk *chunk,
      * must compare against the real, un-inflated argc, not the padded
      * argument_count used only to place real arguments correctly. */
     const bool self_via_capture=fn->owner_class==DIAMOND_OWNER_CAPTURED_SELF;
-    /* No argc>DIAMOND_MAX_ARGUMENTS guard needed here: argc is a plain
-     * uint8_t (the wire format's own argument-count width), so it can
-     * never exceed DIAMOND_MAX_ARGUMENTS (255) in the first place --
-     * call_arguments[DIAMOND_MAX_ARGUMENTS+1] below always has room. */
-    DiamondValue call_arguments[DIAMOND_MAX_ARGUMENTS+1];
-    const DiamondValue *arguments=&registers[base];
-    size_t argument_count=argc;
-    if(needs_self_slot) {
-        call_arguments[0]=DIAMOND_NIL;
-        for(size_t index=0;index<argc;index++)
-            call_arguments[index+1]=registers[(size_t)base+index];
-        arguments=call_arguments;
-        argument_count=(size_t)argc+1;
-    }
+    const size_t argument_count=needs_self_slot?(size_t)argc+1:argc;
     const size_t arity_check_count=self_via_capture?(size_t)argc:argument_count;
     if(arity_check_count<fn->required_arity||
        (arity_check_count>fn->arity && !fn->has_variadic))
         return DIAMOND_VM_ARITY_ERROR;
-    const DiamondChunk child={.name=fn->name,.code=fn->code,.lines=fn->lines,
+    call->child=(DiamondChunk){.name=fn->name,.code=fn->code,.lines=fn->lines,
       .columns=fn->columns,.code_count=fn->code_count,.constants=fn->constants,
       .constant_count=fn->constant_count,.strings=fn->strings,.string_count=fn->string_count,
       .type_sets=fn->type_sets,.type_set_count=fn->type_set_count,
@@ -87,7 +74,37 @@ DiamondVmStatus call_closure_helper(DiamondVm *vm,const DiamondChunk *chunk,
         .binding_owner_plus_one=(uint16_t)(fn->owner_class+1u),
       .parameter_offset=fn->owner_class==DIAMOND_OWNER_NONE?0:1,
       .register_count=fn->register_count,.has_variadic=fn->has_variadic};
-    return run_chunk(&child,vm,arguments,argument_count,depth+1,called,result);
+    call->called=called;
+    call->argc=argc;
+    call->self_slot=needs_self_slot;
+    return DIAMOND_VM_OK;
+}
+
+DiamondVmStatus block_call_run(DiamondVm *vm,const DiamondBlockCall *call,
+        const DiamondValue *arguments,size_t depth,DiamondValue *result) {
+    if(!call->self_slot)
+        return run_chunk(&call->child,vm,arguments,call->argc,depth+1,
+            call->called,result);
+    /* No argc>DIAMOND_MAX_ARGUMENTS guard needed here: argc is a plain
+     * uint8_t (the wire format's own argument-count width), so it can
+     * never exceed DIAMOND_MAX_ARGUMENTS (255) in the first place --
+     * call_arguments[DIAMOND_MAX_ARGUMENTS+1] below always has room. */
+    DiamondValue call_arguments[DIAMOND_MAX_ARGUMENTS+1];
+    call_arguments[0]=DIAMOND_NIL;
+    for(size_t index=0;index<call->argc;index++)
+        call_arguments[index+1]=arguments[index];
+    return run_chunk(&call->child,vm,call_arguments,(size_t)call->argc+1,
+        depth+1,call->called,result);
+}
+
+DiamondVmStatus call_closure_helper(DiamondVm *vm,const DiamondChunk *chunk,
+        const DiamondFunction *fn,const DiamondClosure *called,
+        const DiamondValue *registers,uint16_t base,uint8_t argc,size_t depth,
+        DiamondValue *result) {
+    DiamondBlockCall call;
+    const DiamondVmStatus prepared=block_call_prepare(chunk,fn,called,argc,&call);
+    if(prepared!=DIAMOND_VM_OK)return prepared;
+    return block_call_run(vm,&call,&registers[base],depth,result);
 }
 
 /* Shared by DIAMOND_OP_INVOKE's Int-primitive (times/upto/downto) and
@@ -383,6 +400,46 @@ static bool trivial_getter_result(DiamondVm *vm,const DiamondFunction *fn,
     return true;
 }
 
+/* Range#to_a for a bounded Int range, filled here instead of by the prelude's
+ * push loop (lib/core.d6), which costs a push call per element. Only an exact
+ * Range (a subclass may override to_a) with Int bounds and a Bool `exclusive`
+ * qualifies; Range's own methods cannot be redefined. Everything else (an
+ * endless range, which raises there, an inclusive end at the largest Int,
+ * where the prelude's `@end + 1` becomes a big integer, or a range of more
+ * than 2^26 values, whose allocation is left to the prelude's own growth)
+ * returns false and the prelude method runs. Returns true with *status set
+ * when it answered. */
+static bool native_range_to_a(DiamondVm *vm,const DiamondChunk *owner_chunk,
+        const DiamondMethod *method,DiamondValue self_value,
+        DiamondValue *result,DiamondVmStatus *status) {
+    /* The class test comes first: it is one comparison, and every other
+     * method call with no arguments passes through here. */
+    if(vm->range_class_index==DIAMOND_NO_CLASS||
+       (size_t)vm->range_class_index>=owner_chunk->class_count||
+       self_value.kind!=DIAMOND_VALUE_OBJECT||
+       self_value.as.object->kind!=DIAMOND_OBJECT_INSTANCE)
+        return false;
+    const DiamondInstance *range=(const DiamondInstance *)self_value.as.object;
+    if(range->class!=owner_chunk->classes[vm->range_class_index]||
+       strcmp(method->name,"to_a")!=0||range->field_count<3||
+       range->fields[0].kind!=DIAMOND_VALUE_INT||range->fields[1].kind!=DIAMOND_VALUE_INT||
+       range->fields[2].kind!=DIAMOND_VALUE_BOOL)
+        return false;
+    const int64_t start=range->fields[0].as.integer;
+    int64_t stop=range->fields[1].as.integer;
+    if(!range->fields[2].as.boolean&&ckd_add(&stop,stop,1))return false;
+    uint64_t count=0;
+    if(stop>start)count=(uint64_t)stop-(uint64_t)start;
+    if(count>(UINT64_C(1)<<26))return false;
+    DiamondArray *values=allocate_array_uninitialized(vm,(size_t)count);
+    if(values==nullptr) {*status=DIAMOND_VM_OUT_OF_MEMORY;return true;}
+    for(size_t index=0;index<(size_t)count;index++)
+        values->values[index]=DIAMOND_INT(start+(int64_t)index);
+    *result=DIAMOND_OBJECT(values);
+    *status=DIAMOND_VM_OK;
+    return true;
+}
+
 DiamondVmStatus invoke_resolved_method_helper(DiamondVm *vm,
         const DiamondChunk *owner_chunk,const DiamondMethod *method,
         DiamondValue self_value,const DiamondValue *registers,uint16_t base,
@@ -402,6 +459,11 @@ DiamondVmStatus invoke_resolved_method_helper(DiamondVm *vm,
         if(trivial_getter_result(vm,getter_chunk->functions[method->function_index],
                self_value,result))
             return DIAMOND_VM_OK;
+        if(method->source_chunk==nullptr) {
+            DiamondVmStatus range_status;
+            if(native_range_to_a(vm,owner_chunk,method,self_value,result,&range_status))
+                return range_status;
+        }
     }
     DiamondValue args[DIAMOND_MAX_ARGUMENTS+1];args[0]=self_value;
     for(size_t i=0;i<argc;i++)args[i+1]=registers[(size_t)base+i];

@@ -414,6 +414,8 @@ end
 
 # sum() adds the elements; with a block, it adds what the block returns
 # for each one.
+# A blockless sum of plain Ints that cannot overflow is added natively by
+# native_array_int_sum (src/vm_collections.c) and never reaches this loop.
 def array_sum(values: Array, callback = nil)
   total = 0
   index = 0
@@ -1049,6 +1051,8 @@ class Range
   # the whole range (to_a, length, step, reverse_each, last) raises RangeError.
   def endless?() -> Bool = @end == nil
 
+  # A bounded Int range usually skips this loop: native_range_to_a
+  # (src/vm_calls.c) fills the same array in C.
   def to_a() -> Array
     raise RangeError.new("cannot convert an endless range to an Array") if @end == nil
     values = []

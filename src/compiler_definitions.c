@@ -228,7 +228,7 @@ static void bind_captured_cells(Compiler *compiler,const EnclosingScope *scope,
         const uint16_t cell=allocate_register(compiler);
         emit_instruction(compiler,DIAMOND_OP_GET_CAPTURE_CELL,cell,(uint8_t)i,0,2);
         compiler->locals[compiler->local_count++]=(Local){
-            .name=compiler->enclosing_locals[i].name,.reg=cell,.captured=true,
+            .name=compiler->enclosing_locals[i].name,.reg=cell,.captured=true,.bound_cell=true,
             .alias_identity=compiler->enclosing_locals[i].alias_identity};
         captured_fact_registers[i]=cell;
         const uint16_t source=compiler->enclosing_locals[i].reg;

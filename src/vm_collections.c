@@ -197,8 +197,14 @@ static bool native_array_map_select(DiamondVm *vm,const DiamondChunk *chunk,
     if(!gc_protect(vm,DIAMOND_OBJECT(collected))) {
         *status=DIAMOND_VM_OUT_OF_MEMORY;return true;
     }
+    /* Prepared once for the whole loop; a block whose arity rejects one
+     * argument fails on the first element, as the prelude loop's first call
+     * did, and an empty array never calls it at all. */
+    DiamondBlockCall call;
+    const DiamondVmStatus prepared=block_call_prepare(chunk,fn,called,1,&call);
     *status=DIAMOND_VM_OK;
     for(size_t index=0;index<values->count;index++) {
+        if(prepared!=DIAMOND_VM_OK) {*status=prepared;break;}
         const DiamondValue item[1]={values->values[index]};
         DiamondValue value=DIAMOND_NIL;
         /* select keeps the element after the block returns, and a block
@@ -207,7 +213,7 @@ static bool native_array_map_select(DiamondVm *vm,const DiamondChunk *chunk,
         if(select&&!gc_protect(vm,item[0])) {
             *status=DIAMOND_VM_OUT_OF_MEMORY;break;
         }
-        *status=call_closure_helper(vm,chunk,fn,called,item,0,1,depth,&value);
+        *status=block_call_run(vm,&call,item,depth,&value);
         if(select)gc_unprotect(vm,mark+1);
         if(*status!=DIAMOND_VM_OK)break;
         if(select&&!is_truthy(value))continue;
@@ -217,6 +223,29 @@ static bool native_array_map_select(DiamondVm *vm,const DiamondChunk *chunk,
     }
     gc_unprotect(vm,mark);
     if(*status==DIAMOND_VM_OK)*result=DIAMOND_OBJECT(collected);
+    return true;
+}
+
+/* A blockless Array#sum of plain Ints, added here instead of by array_sum's
+ * prelude loop (lib/core.d6), which pays for a length, index and generic add
+ * call per element. Anything else -- a block, any element that is not a plain
+ * Int (a Float, a big integer, a String, an instance with its own `+`), or a
+ * total that overflows Int -- returns false before anything is called, and the
+ * prelude function computes the sum from the start, so results and errors are
+ * its own. */
+static bool native_array_int_sum(const DiamondFunction *target,
+        const DiamondValue *registers,uint16_t recv,uint8_t argc,
+        DiamondValue *result,DiamondVmStatus *status) {
+    if(argc!=0||strcmp(target->name,"array_sum")!=0)return false;
+    const DiamondArray *values=(const DiamondArray *)registers[recv].as.object;
+    int64_t total=0;
+    for(size_t index=0;index<values->count;index++) {
+        const DiamondValue item=values->values[index];
+        if(item.kind!=DIAMOND_VALUE_INT||ckd_add(&total,total,item.as.integer))
+            return false;
+    }
+    *result=DIAMOND_INT(total);
+    *status=DIAMOND_VM_OK;
     return true;
 }
 
@@ -469,8 +498,9 @@ DiamondVmStatus collection_invoke_helper(DiamondVm *vm,const DiamondChunk *chunk
             DiamondValue call_result=DIAMOND_NIL;
             DiamondVmStatus status;
             if(receiver_kind!=DIAMOND_OBJECT_ARRAY||
-               !native_array_map_select(vm,chunk,target,registers,recv,base,
-                   argc,depth,&call_result,&status))
+               (!native_array_int_sum(target,registers,recv,argc,&call_result,&status)&&
+                !native_array_map_select(vm,chunk,target,registers,recv,base,
+                    argc,depth,&call_result,&status)))
                 status=forward_to_top_level_helper(
                     vm,chunk,target,registers,recv,base,argc,depth,
                     &call_result);

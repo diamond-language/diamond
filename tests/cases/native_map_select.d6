@@ -87,3 +87,62 @@ kept = held.select() do |item|
   true
 end
 puts(kept)
+
+# Blocks whose own parameter count differs from the one argument passed.
+puts([1, 2].map() do 7 end)
+begin
+  puts([1, 2].map() do |a, b| a end)
+rescue error
+  puts("two: #{error.message()}")
+end
+def grab(&block) = block
+pair = grab() do |a, b| a end
+begin
+  puts([1].select(pair))
+rescue error
+  puts("lambda: #{error.message()}")
+end
+
+# Array#sum adds plain Ints natively; everything else is the prelude's sum.
+puts([].sum())
+puts([1, 2, 3].sum())
+puts([9223372036854775807, 1].sum())
+puts([1, 2.5].sum())
+puts([1, 2, 3].sum() do |n| n * 2 end)
+begin
+  puts([1, "a"].sum())
+rescue error
+  puts("sum: #{error.message()}")
+end
+
+# length and push still answer for every receiver kind, and push still
+# refuses a frozen array.
+puts("abc".length())
+puts({"a" => 1}.length())
+puts([1].push(2))
+begin
+  [1].freeze().push(2)
+rescue error
+  puts("frozen: #{error.message()}")
+end
+
+# Range#to_a fills Int ranges natively; the rest is the prelude's to_a.
+puts((1..5).to_a())
+puts((1...5).to_a())
+puts((5..1).to_a())
+puts((3...3).to_a())
+puts((-2..2).to_a())
+puts((9223372036854775805..9223372036854775807).to_a())
+puts((9223372036854775805...9223372036854775807).to_a())
+begin
+  (1..).to_a()
+rescue error: RangeError
+  puts("endless: #{error.message()}")
+end
+class Countdown < Range
+  def to_a() -> Array
+    ["overridden"]
+  end
+end
+puts(Countdown.new(1, 3, false).to_a())
+puts((1..4).first(2))

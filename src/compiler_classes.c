@@ -2968,9 +2968,11 @@ uint16_t compile_assignment_store(Compiler *compiler, DiamondSpan name,
     if(local>=0 && compiler->locals[(size_t)local].captured) {
         /* See parse_identifier's own BOX_LOCAL re-emission for why this
          * defensive re-box is needed: `captured` doesn't imply this
-         * control-flow path actually ran the boxing site. */
-        emit_instruction(compiler,DIAMOND_OP_BOX_LOCAL,
-                         compiler->locals[(size_t)local].reg,0,0,1);
+         * control-flow path actually ran the boxing site. A local bound
+         * from a capture cell is a cell on every path. */
+        if(!compiler->locals[(size_t)local].bound_cell)
+            emit_instruction(compiler,DIAMOND_OP_BOX_LOCAL,
+                             compiler->locals[(size_t)local].reg,0,0,1);
         emit_instruction(compiler,DIAMOND_OP_SET_CELL,
                          compiler->locals[(size_t)local].reg,value,0,2);
         const uint16_t local_register=compiler->locals[(size_t)local].reg;

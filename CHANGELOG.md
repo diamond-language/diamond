@@ -36,6 +36,14 @@ authoritative fine-grained record.
   couldn't prove were Ints no longer take the general comparison path. The block-heavy benchmark
   went from 349 ms to 199 ms.
 
+- **Cheaper block calls, `push`, `length`, `sum` and `Range#to_a`.** `map` and `select` set up
+  their block's call once rather than once per element, and a block reads or assigns a variable
+  it captured without first re-checking that the variable is shared. Calls to `push` and
+  `length` skip about ten other method-name tests that used to come first. A blockless `sum` of
+  plain Ints adds them in C, and `to_a` on a bounded Int range fills the array in C. Anything
+  else (a block, Floats, big integers, an endless range, overflow) works as before. The
+  block-heavy benchmark went from 208 ms to 123 ms.
+
 ## 0.24.0 — 2026-11-02
 
 ### Added
