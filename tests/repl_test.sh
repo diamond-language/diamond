@@ -316,4 +316,10 @@ modifier_response="$(printf 'puts(1) if true\n3 unless false\n4 if false\nz = 1\
 [[ "$modifier_response" == *$'{> 1\nnil\n{> 3\n{> nil\n{> 1\n{> 2\n{> ... nil\n{> 1\n{> ... nil\n'* ]]
 count=$((count + 1))
 
+# A require line goes to the loader as written, so a missing cut reports
+# the loader's own message rather than an expression parse error.
+require_response="$(printf 'require_cut "nope"\n1\nexit\n' | timeout 10 "$diamond")"
+[[ "$require_response" == *"cannot require_cut 'nope'"* && "$require_response" == *$'{> 1\n'* ]]
+count=$((count + 1))
+
 echo "$count repl tests passed"

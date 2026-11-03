@@ -2,7 +2,8 @@
 // and checks the REPL behaves: results, session state, continuation lines, ordinary errors for
 // the features the browser build lacks, and known answers for the portable crypto.
 // Build first: WASI_SDK=/path/to/wasi-sdk wasm/build.sh
-import { readFile } from 'node:fs/promises';
+import { readFile, readdir } from 'node:fs/promises';
+import { join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { DiamondRepl } from '../wasm/web/diamond-wasm.js';
 
@@ -102,6 +103,42 @@ expect('call before a redefinition keeps its meaning', ['def f() = 1', 'first = 
   equals('12'));
 expect('trailing modifier statement', ['puts("ran") if true'], equals('ran\nnil'));
 expect('trailing modifier keeps its value', ['3 unless false'], equals('3'));
+
+// Files the page adds: require, require_cut (Mjolnir and Arel straight from packages/), errors
+// naming the file they come from, and File.read. Mounted once; files outlive reset().
+async function mountCut(name) {
+  const root = fileURLToPath(new URL(`../packages/${name}/`, import.meta.url));
+  for (const entry of await readdir(root, { recursive: true, withFileTypes: true })) {
+    if (!entry.isFile() || !/\.d6$|^Cutfile$/.test(entry.name)) continue;
+    const path = join(entry.parentPath, entry.name);
+    repl.addFile(`/cuts/${name}/${relative(root, path)}`, await readFile(path));
+  }
+}
+await mountCut('mjolnir');
+await mountCut('arel');
+repl.addFile('/helper.d6', 'def helper() = 41\n');
+repl.addFile('/broken.d6', 'def broken(\n');
+expect('require a page file', ['require "./helper"', 'helper() + 1'], equals('42'));
+expect('require_cut a missing cut', 'require_cut "nope"', errorContaining("cannot require_cut 'nope'"));
+expect('an error in a required file names it', 'require "./broken"', errorContaining('/broken.d6:1:'));
+expect('File.read sees page files', 'File.read("/helper.d6")', equals('def helper() = 41\n'));
+{
+  const mjolnir = [
+    'require_cut "mjolnir"',
+    'struct User(id: Int, name: String, email: String)',
+    'end',
+    'def build_user(row) = User.new(row["id"], row["name"], row["email"])',
+    'users = Mjolnir::Schema.new("users", {"id": :int, "name": :string, "email": :string}, build_user)',
+    'db = SQLite3.open(":memory:")',
+    'db.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT NOT NULL, email TEXT NOT NULL)")',
+    'repo = Mjolnir::Repo.new(db)',
+    'repo.insert(Mjolnir::Changeset.cast(users, nil, {"name": "Ada", "email": "ada@example.com"}, ["name", "email"]))',
+    'repo.all(users.query()).map() do |user|',
+    '  user.name()',
+    'end',
+  ];
+  expect('Mjolnir through require_cut', mjolnir, equals('[Ada]'));
+}
 
 // The session survives every failure above.
 expect('still alive', ['TCPSocket.connect("example.com", 80)', '1 + 1'], equals('2'));

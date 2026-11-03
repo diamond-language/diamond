@@ -15,8 +15,15 @@ authoritative fine-grained record.
   where it's truthy, the way `name != nil` already did. Trailing modifiers (`f(name) if name`) and
   the right side of `&&`/`||` now narrow for every guard, `!= nil` and `is T` included.
 
+- **`require` and `require_cut` in the browser REPL.** A page adds read-only files with
+  `DiamondRepl.addFile(path, text)`; `require_cut "mjolnir"` then loads `/cuts/mjolnir/lib/mjolnir.d6`
+  and its dependencies through the same loader as the CLI, and `File.read` sees the same files.
+  Mjolnir with an in-memory SQLite database runs in the browser this way.
+
 ### Fixed
 
+- **REPL `require` lines report the loader's error.** A missing cut said "expected ')' after
+  expression"; both REPLs now pass `require`/`require_cut` lines through as written.
 - **A ternary's guard no longer leaks past it.** After `x == nil ? a : b`, the checker treated `x`
   as non-nil for the rest of the function, and after `x != nil ? a : b` as always nil.
 - **REPL.** The browser REPL compiled forward class-method calls (`def self.a = C.b` before

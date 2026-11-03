@@ -15,7 +15,9 @@ The runtime sources (built as `MINIMAL=1`), minus `src/main.c` and `src/repl.c`,
 `wasm/repl_driver.c`, which exports
 `diamond_wasm_eval(source)`: compile the candidate against a prelude template built once, run it in
 a fresh VM, print the output, then a `0x1E` separator and the result value, or print a
-`line:column: error: message` to stderr. `wasm/web/diamond-wasm.js` keeps the REPL session as text
+`line:column: error: message` to stderr. The candidate first goes through the CLI's loader, so
+`require` and `require_cut` lines expand from the page's files (below); an error inside a required
+file is printed as `path:line:column: error: message` instead. `wasm/web/diamond-wasm.js` keeps the REPL session as text
 and replays it for every line, as the terminal REPL does (`src/repl.c`): only output beyond what the
 previous run printed is shown. An entry is unfinished when the parser's error lies past the last
 newline-terminated line of the candidate.
@@ -36,8 +38,8 @@ pause in typing before asking.
 
 `make test-wasm WASI_SDK=/path/to/wasi-sdk` (or `wasm/build.sh` then `node tests/wasm_repl_test.mjs`)
 builds the module (it fetches the SQLite source, so it needs network access the first time) and drives it through `wasm/web/diamond-wasm.js`: results, session state,
-continuation lines, the portable crypto's known answers, and an ordinary error for every
-unavailable feature. CI runs it as the `test-wasm` job, downloading wasi-sdk 34.
+continuation lines, the portable crypto's known answers, page files through `require`, `require_cut`
+(a Mjolnir program) and `File.read`, and an ordinary error for every unavailable feature. CI runs it as the `test-wasm` job, downloading wasi-sdk 34.
 
 ## What does not work, and how it fails
 
@@ -59,7 +61,12 @@ unavailable feature. CI runs it as the `test-wasm` job, downloading wasi-sdk 34.
   error ("cannot connect to 'example.com:80': name lookup is not available in the browser",
   `Process.run: pipe: Not supported`). The module has no imports besides WASI's, and links
   without `--allow-undefined`, so an unexpected new dependency is a build error.
-- **Files**: the WASI shim exposes stdout and stderr only.
+- **Files are read-only and come from the page.** `DiamondRepl.addFile(path, text)` adds a file
+  under `/`, which the WASI shim preopens as fd 3, and files outlive `reset()`. `require "./x"`
+  resolves from `/`, `require_cut "mjolnir"` finds `/cuts/mjolnir/lib/mjolnir.d6` (with its
+  `Cutfile`, when added), and `File.read` sees the same files. The page has to supply every cut a
+  program needs, its dependencies included; `tests/wasm_repl_test.mjs` mounts Mjolnir and Arel from
+  `packages/`. Opening a file for writing fails with `EROFS`, and there are no directory listings.
 - **JIT**: x86-64 only, so the interpreter runs.
 - **Deep recursion**: there is no 512 MiB main thread; the 16 MiB link-time stack bounds the call
   depth through the same scaling the fiber and thread stacks use.

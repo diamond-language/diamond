@@ -12,13 +12,54 @@ const RECORD_SEPARATOR = '\x1e';
 
 export class NativeUnavailable extends Error {}
 
-// A minimal wasi_snapshot_preview1: stdout/stderr capture and nothing else. Everything that would
-// touch the host (files, sockets, subprocesses) reports "not supported".
+// Resolves `path` against `base` into a normalized absolute path ('/a/b'), or null if it climbs
+// above the root.
+function resolvePath(base, path) {
+  const parts = path.startsWith('/') ? [] : base.split('/').filter(Boolean);
+  for (const part of path.split('/')) {
+    if (part === '' || part === '.') continue;
+    if (part === '..') { if (parts.length === 0) return null; parts.pop(); } else parts.push(part);
+  }
+  return '/' + parts.join('/');
+}
+
+// A minimal wasi_snapshot_preview1: stdout/stderr capture, plus a read-only filesystem holding
+// the files the page added (DiamondRepl.addFile), preopened at '/' as fd 3, so `require` and
+// `require_cut` can load them. Writes, sockets and subprocesses report "not supported".
 function makeWasi(state) {
   const ENOSYS = 52, EBADF = 8, ESPIPE = 70, SUCCESS = 0;
+  const ENOENT = 44, EISDIR = 31, ENOTDIR = 54, EINVAL = 28, EROFS = 69;
+  const FILETYPE_CHARACTER_DEVICE = 2, FILETYPE_DIRECTORY = 3, FILETYPE_REGULAR = 4;
   const decoder = new TextDecoder();
   const view = () => new DataView(state.memory.buffer);
   const unsupported = () => ENOSYS;
+  const readString = (pointer, length) =>
+    decoder.decode(new Uint8Array(state.memory.buffer, pointer, length));
+  // fd -> { path, directory, data, position }; 3 is the preopened root.
+  const open = new Map([[3, { path: '/', directory: true }]]);
+  let nextFd = 4;
+  const isDirectory = (path) => {
+    if (path === '/') return true;
+    const prefix = path + '/';
+    for (const name of state.files.keys()) if (name.startsWith(prefix)) return true;
+    return false;
+  };
+  const lookup = (dirFd, pointer, length) => {
+    const directory = open.get(dirFd);
+    if (directory === undefined || !directory.directory) return { error: EBADF };
+    const path = resolvePath(directory.path, readString(pointer, length));
+    if (path === null) return { error: ENOENT };
+    if (state.files.has(path)) return { path, data: state.files.get(path) };
+    if (isDirectory(path)) return { path, directory: true };
+    return { error: ENOENT };
+  };
+  const writeFilestat = (out, entry) => {
+    const v = view();
+    for (let offset = 0; offset < 64; offset += 8) v.setBigUint64(out + offset, 0n, true);
+    v.setUint8(out + 16, entry.directory ? FILETYPE_DIRECTORY : FILETYPE_REGULAR);
+    v.setBigUint64(out + 24, 1n, true);
+    v.setBigUint64(out + 32, BigInt(entry.directory ? 0 : entry.data.length), true);
+  };
   return {
     args_get: () => SUCCESS,
     args_sizes_get(argc, size) { view().setUint32(argc, 0, true); view().setUint32(size, 0, true); return SUCCESS; },
@@ -45,26 +86,91 @@ function makeWasi(state) {
       v.setUint32(written, total, true);
       return SUCCESS;
     },
-    fd_read: () => EBADF,
+    fd_read(fd, iovs, count, read) {
+      const file = open.get(fd);
+      if (file === undefined) return EBADF;
+      if (file.directory) return EISDIR;
+      const v = view();
+      let total = 0;
+      for (let i = 0; i < count; i++) {
+        const pointer = v.getUint32(iovs + i * 8, true), length = v.getUint32(iovs + i * 8 + 4, true);
+        const chunk = file.data.subarray(file.position, file.position + length);
+        new Uint8Array(state.memory.buffer, pointer, chunk.length).set(chunk);
+        file.position += chunk.length;
+        total += chunk.length;
+        if (chunk.length < length) break;
+      }
+      v.setUint32(read, total, true);
+      return SUCCESS;
+    },
     fd_pread: () => EBADF,
-    fd_close: () => SUCCESS,
+    fd_close(fd) { if (fd > 3) open.delete(fd); return SUCCESS; },
     fd_sync: () => SUCCESS,
-    fd_seek: () => ESPIPE,
+    fd_seek(fd, offset, whence, out) {
+      const file = open.get(fd);
+      if (file === undefined) return fd <= 2 ? ESPIPE : EBADF;
+      if (file.directory) return EISDIR;
+      const base = whence === 0 ? 0 : whence === 1 ? file.position : file.data.length;
+      const position = base + Number(offset);
+      if (position < 0) return EINVAL;
+      file.position = position;
+      view().setBigUint64(out, BigInt(position), true);
+      return SUCCESS;
+    },
     fd_fdstat_get(fd, out) {
       const v = view();
-      v.setUint8(out, fd <= 2 ? 2 : 0);               // filetype: character device
+      const file = open.get(fd);
+      if (fd > 2 && file === undefined) return EBADF;
+      v.setUint8(out, fd <= 2 ? FILETYPE_CHARACTER_DEVICE
+        : file.directory ? FILETYPE_DIRECTORY : FILETYPE_REGULAR);
       v.setUint16(out + 2, 0, true);                   // flags
       v.setBigUint64(out + 8, 0xffffffffffffffffn, true);
       v.setBigUint64(out + 16, 0xffffffffffffffffn, true);
-      return fd <= 2 ? SUCCESS : EBADF;
+      return SUCCESS;
     },
     fd_fdstat_set_flags: unsupported,
-    fd_filestat_get: () => EBADF,
-    fd_prestat_get: () => EBADF,
-    fd_prestat_dir_name: () => EBADF,
-    fd_readdir: () => EBADF,
-    path_open: unsupported, path_filestat_get: unsupported, path_link: unsupported,
-    path_create_directory: unsupported, path_readlink: unsupported,
+    fd_filestat_get(fd, out) {
+      const file = open.get(fd);
+      if (file === undefined) return EBADF;
+      writeFilestat(out, file);
+      return SUCCESS;
+    },
+    fd_prestat_get(fd, out) {
+      if (fd !== 3) return EBADF;
+      view().setUint8(out, 0);                         // a directory
+      view().setUint32(out + 4, 1, true);              // name length: '/'
+      return SUCCESS;
+    },
+    fd_prestat_dir_name(fd, pointer, length) {
+      if (fd !== 3 || length < 1) return EBADF;
+      new Uint8Array(state.memory.buffer, pointer, 1)[0] = 0x2f;
+      return SUCCESS;
+    },
+    fd_readdir: () => ENOSYS,
+    path_open(dirFd, lookupFlags, pointer, length, openFlags, rightsBase, rightsInheriting, fdFlags, out) {
+      if (openFlags & (1 | 4 | 8)) return EROFS;      // O_CREAT, O_EXCL, O_TRUNC
+      if (rightsBase & 0x40n) return EROFS;            // fd_write
+      const entry = lookup(dirFd, pointer, length);
+      if (entry.error !== undefined) return entry.error;
+      if ((openFlags & 2) && !entry.directory) return ENOTDIR;
+      const fd = nextFd++;
+      open.set(fd, { ...entry, position: 0 });
+      view().setUint32(out, fd, true);
+      return SUCCESS;
+    },
+    path_filestat_get(dirFd, lookupFlags, pointer, length, out) {
+      const entry = lookup(dirFd, pointer, length);
+      if (entry.error !== undefined) return entry.error;
+      writeFilestat(out, entry);
+      return SUCCESS;
+    },
+    // Nothing here is a symlink: EINVAL for a path that exists, ENOENT otherwise (realpath
+    // relies on the difference).
+    path_readlink(dirFd, pointer, length) {
+      const entry = lookup(dirFd, pointer, length);
+      return entry.error !== undefined ? entry.error : EINVAL;
+    },
+    path_link: unsupported, path_create_directory: unsupported,
     path_remove_directory: unsupported, path_rename: unsupported,
     path_unlink_file: unsupported, poll_oneoff: unsupported, sock_accept: unsupported,
     sock_shutdown: unsupported, sock_recv: unsupported, sock_send: unsupported,
@@ -84,6 +190,7 @@ const HIGHLIGHT_CLASSES = ['', 'tok-kw', 'tok-str', 'tok-num', 'tok-fn', 'tok-co
 
 export class DiamondRepl {
   #module; #instance; #state;
+  #files = new Map();
   #session = '_ = nil\n';
   #pending = '';
   #previousOutput = '';
@@ -107,7 +214,7 @@ export class DiamondRepl {
   }
 
   #instantiate() {
-    const state = { memory: null, stdout: '', stderr: '' };
+    const state = { memory: null, stdout: '', stderr: '', files: this.#files };
     // Native features the browser build does not have (TLS, databases, sockets, subprocesses)
     // are imports that throw; evaluate() turns that into an ordinary message.
     const env = {};
@@ -150,7 +257,7 @@ export class DiamondRepl {
   }
 
   static #isDeclaration(text) {
-    return /^\s*(def|class|module|interface|struct|sealed)\s/.test(text);
+    return /^\s*(def|class|module|interface|struct|sealed)\s/.test(text) || /^\s*require(_cut)?[ \t"]/.test(text);
   }
 
   // The expression/assignment wrapping src/repl.c applies to a pending entry.
@@ -239,6 +346,15 @@ export class DiamondRepl {
   get prompt() { return this.#pending ? '... ' : '{> '; }
 
   reset() { this.#session = '_ = nil\n'; this.#pending = ''; this.#previousOutput = ''; }
+
+  // Adds a read-only file programs can load: `require "./x"` resolves from '/', and
+  // `require_cut "name"` finds '/cuts/name/lib/name.d6' (plus its Cutfile, if added). `text`
+  // is a string or bytes; the files outlive reset().
+  addFile(path, text) {
+    const resolved = resolvePath('/', path);
+    if (resolved === null || resolved === '/') throw new Error(`not a file path: ${path}`);
+    this.#files.set(resolved, typeof text === 'string' ? new TextEncoder().encode(text) : new Uint8Array(text));
+  }
 
   // Feeds one line. Returns { kind: 'continue' } while an entry is unfinished, else
   // { kind: 'ok' | 'error', text }.
