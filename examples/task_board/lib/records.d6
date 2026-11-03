@@ -9,6 +9,8 @@ class BoardRecords[T]
   end
   def query() -> Mjolnir::Query = @schema.query()
   def all(query: Mjolnir::Query) -> Array[T] = @repo.all(query)
-  def get(id) -> T | Nil = @repo.get(@schema, id)
+  def get(id) -> T | Nil
+    @repo.get(@schema, id)
+  end
   def map[U](query: Mjolnir::Query, transform: Callable[[T], U]) -> Array[U] = self.all(query).map(transform)
 end

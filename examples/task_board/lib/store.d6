@@ -63,7 +63,9 @@ class BoardStore
 
   def project_records() -> BoardRecords[BoardProject] = @project_records
   def projects() -> Array[BoardProject] = @project_records.all(@projects.query().order_by("id"))
-  def task(id) -> BoardTask | Nil = @task_records.get(id)
+  def task(id) -> BoardTask | Nil
+    @task_records.get(id)
+  end
 
   def task_changeset(entity, attrs)
     changeset = Mjolnir::Changeset.cast(@tasks, entity, attrs, ["project_id", "title", "status", "notes"])

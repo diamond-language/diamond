@@ -237,7 +237,10 @@ shared through inheritance describe what each subclass gets back:
 
 ```ruby
 class Model
-  def self.find(id: Int) -> Self | Nil = self.load(id)
+  def self.find(id: Int) -> Self | Nil
+    self.load(id)
+  end
+
   def touch() -> Self
     @touched = true
     self
