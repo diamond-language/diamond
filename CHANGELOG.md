@@ -66,6 +66,13 @@ authoritative fine-grained record.
   720 ms, recursive `fib` from about 500 ms to 340 ms, and the object-heavy one from 376 ms to
   about 300 ms. JIT-compiled code is unchanged.
 
+### Fixed
+
+- **Return annotations naming a later class.** When a method's return annotation named a class
+  declared further down the file, a later caller checking that method's result against the class
+  failed to compile with "expected R, got Nil". It now compiles, and a real mismatch is still
+  reported with the right class names.
+
 ## 0.24.0 — 2026-11-02
 
 ### Added
