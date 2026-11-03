@@ -2223,6 +2223,11 @@ static bool function_belongs_to_other_module(const Compiler *compiler,
 }
 
 int find_function(const Compiler *compiler, DiamondSpan name) {
+    /* A slot the discovery pass reserved but the real pass hasn't reached yet is a
+     * forward definition. When an earlier definition of the same name exists (a REPL
+     * redefinition), a call here means that earlier one, so the forward slot is only
+     * the fallback. */
+    int forward = -1;
     for (size_t index = compiler->program->function_count; index > 0; index--) {
         const size_t function_index = index - 1;
         const char *candidate = compiler->program->functions[function_index]->name;
@@ -2238,10 +2243,16 @@ int find_function(const Compiler *compiler, DiamondSpan name) {
                 break;
             }
         }
-        if (equal && !function_belongs_to_other_module(compiler, function_index))
+        if (equal && !function_belongs_to_other_module(compiler, function_index)) {
+            if (!compiler->discovery_pass && function_index >= compiler->next_function_claim &&
+                compiler->program->functions[function_index]->declared_by_discovery) {
+                forward = (int)function_index;
+                continue;
+            }
             return (int)function_index;
+        }
     }
-    return -1;
+    return forward;
 }
 
 bool name_equals(const Compiler *compiler, const char *candidate,

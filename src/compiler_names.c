@@ -623,6 +623,20 @@ static uint16_t parse_class_member_call(Compiler *compiler, DiamondSpan name,
             owner=owner->superclass==DIAMOND_NO_CLASS?nullptr:
                 compiler->program->classes[owner->superclass];
         }
+        if(method==nullptr&&compiler->discovery_pass) {
+            /* A singleton defined later in the class body isn't in the table yet
+             * during discovery (a REPL reading the class one line at a time hits
+             * this before the method's line arrives). Discovery's bytecode is
+             * discarded, so parse it as a dynamic call -- arguments, blocks and
+             * lambdas still claim their function slots -- and let the real pass,
+             * which sees every singleton, report a name that is truly missing. */
+            const DiamondSpan method_name=compiler->current.span;
+            advance_token(compiler);
+            const uint16_t receiver=allocate_register(compiler);
+            emit_instruction(compiler,DIAMOND_OP_NIL,receiver,0,0,1);
+            return parse_invoke_named(compiler,receiver,receiver,
+                compiler->known_type_sets[receiver],method_name);
+        }
         if(method==nullptr) {
             fail(compiler,compiler->current.span,
                  "undefined class singleton method");return 0;
