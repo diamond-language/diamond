@@ -48,9 +48,11 @@ mkdir -p "$out"
 
 # Until 0.22.0 the package was called diamond-lang. Installing d6-lang over the
 # last release under that name must replace it, not sit beside it. Only the
-# default images match those release files.
+# default images on x86-64 match those release files: 0.22.0 had no arm64 build.
 former="https://github.com/diamond-language/diamond/releases/download/v0.22.0"
-if [[ "$format" == deb && "$image" == ubuntu:26.04 ]]; then
+if [[ "$(uname -m)" != x86_64 ]]; then
+    exit 0
+elif [[ "$format" == deb && "$image" == ubuntu:26.04 ]]; then
     install_former="apt-get update && apt-get install -y curl && curl -fsSLo /tmp/former.deb $former/diamond-lang_0.22.0-1_amd64.deb && DEBIAN_FRONTEND=noninteractive apt-get upgrade -y && DEBIAN_FRONTEND=noninteractive apt-get install -y --install-recommends /tmp/former.deb"
     former_gone='! dpkg-query -W -f="\${Status}" diamond-lang 2>/dev/null | grep -q "ok installed"'
 elif [[ "$format" == rpm && "$image" == fedora:44 ]]; then

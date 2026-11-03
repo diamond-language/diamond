@@ -6,6 +6,11 @@ authoritative fine-grained record.
 
 ## Unreleased
 
+### Added
+
+- **Packages for 64-bit ARM Linux.** Each release now has an arm64 `.deb` for Ubuntu 26.04 and an
+  aarch64 `.rpm` for Fedora 44 beside the x86-64 ones, built and smoke-tested on arm64 hardware.
+
 ## 0.23.0 — 2026-11-02
 
 ### Changed

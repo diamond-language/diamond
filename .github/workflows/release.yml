@@ -1,9 +1,10 @@
 name: release
 
-# Pushing a vX.Y.Z tag builds the .deb and .rpm from the tagged tree, installs
-# each into a clean container and smoke-tests it (packaging/ci.sh), then
-# creates the GitHub release with both packages attached and the changelog
-# section as its notes. A release is only tagged after the PR run for the same
+# Pushing a vX.Y.Z tag builds the .deb and .rpm from the tagged tree on x86-64
+# and on arm64 hardware, installs each into a clean container and smoke-tests it
+# (packaging/ci.sh), then creates the GitHub release with all four packages
+# attached and the changelog section as its notes. Nothing is published unless
+# every package passed. A release is only tagged after the PR run for the same
 # tree passed, so this workflow does not repeat the test matrix.
 # workflow_dispatch reruns it for an existing tag; the tag must contain
 # packaging/ (0.20 and later).
@@ -24,9 +25,30 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  publish:
-    runs-on: ubuntu-latest
+  package:
+    strategy:
+      matrix:
+        format: [deb, rpm]
+        runner: [ubuntu-latest, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: refs/tags/${{ inputs.tag || github.ref_name }}
+          fetch-depth: 1
+      - name: Build, install and smoke-test the ${{ matrix.format }}
+        run: bash packaging/ci.sh ${{ matrix.format }}
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: ${{ matrix.format }}-${{ matrix.runner }}
+          path: build/packages/${{ matrix.format }}/*.${{ matrix.format }}
+          if-no-files-found: error
+
+  publish:
+    needs: package
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
     # Creating the release and uploading its files is the only write.
     permissions:
       contents: write
@@ -37,11 +59,11 @@ jobs:
         with:
           ref: refs/tags/${{ inputs.tag || github.ref_name }}
           fetch-depth: 1
-      - name: Build, install and smoke-test the .deb
-        run: bash packaging/ci.sh deb
-      - name: Build, install and smoke-test the .rpm
-        run: bash packaging/ci.sh rpm
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          path: packages
+          merge-multiple: true
       - name: Create the release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: bash packaging/publish_release.sh "$TAG" build/packages/deb/*.deb build/packages/rpm/*.rpm
+        run: bash packaging/publish_release.sh "$TAG" packages/*.deb packages/*.rpm
