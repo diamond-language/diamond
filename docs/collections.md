@@ -71,7 +71,8 @@ Array's Enumerable-style methods: `.each`/`.select`/`.map`/`.reduce`/
 `.each_with_index`/`.sum`, and `.take(n)`/`.drop(n)`/`.flat_map`/
 `.partition`/`.group_by`/`.zip(other)`/`.each_slice(n)`/`.each_cons(n)`/
 `.tally`. `sort` and `sort_by` are stable merge sorts (O(n log n), and
-`sort_by` calls its block once per element). `sort() do |a, b| ... end` orders by a block
+`sort_by` calls its block once per element); a blockless `sort` of an array
+that is all Ints or all Strings runs natively. `sort() do |a, b| ... end` orders by a block
 that returns a negative, zero or positive Int. Arrays compare element by
 element and then by length when sorting or taking a min/max, so
 `words.sort_by() do |w| [w.length(), w] end` orders by length, then

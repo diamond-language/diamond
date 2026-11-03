@@ -203,6 +203,67 @@ static DiamondVmStatus array_slice_method(DiamondVm *vm,DiamondArray *array,Diam
     registers[dest]=DIAMOND_OBJECT(sliced);return DIAMOND_VM_OK;
 }
 
+/* Ascending order for the native sort below: Ints by value, Strings as `<` compares them
+ * (diamond_string_compare). Every element has the same kind, checked first. */
+static int native_sort_compare(DiamondValue left,DiamondValue right,bool strings) {
+    if(strings)return diamond_string_compare((const DiamondString *)left.as.object,
+        (const DiamondString *)right.as.object);
+    return left.as.integer<right.as.integer?-1:left.as.integer>right.as.integer?1:0;
+}
+
+/* Stable bottom-up merge sort of `values` using `scratch` (same length): equal elements keep
+ * their order, as the prelude's merge sort does. */
+static void native_merge_sort(DiamondValue *values,DiamondValue *scratch,size_t count,
+                              bool strings) {
+    DiamondValue *from=values,*to=scratch;
+    for(size_t width=1;width<count;width*=2) {
+        for(size_t start=0;start<count;start+=2*width) {
+            const size_t middle=start+width<count?start+width:count;
+            const size_t stop=start+2*width<count?start+2*width:count;
+            size_t left=start,right=middle,out=start;
+            /* Take from the right only when strictly smaller, keeping equal keys stable. */
+            while(left<middle&&right<stop)
+                to[out++]=native_sort_compare(from[right],from[left],strings)<0?
+                    from[right++]:from[left++];
+            while(left<middle)to[out++]=from[left++];
+            while(right<stop)to[out++]=from[right++];
+        }
+        DiamondValue *swap=from;from=to;to=swap;
+    }
+    if(from!=values)memcpy(values,from,count*sizeof *values);
+}
+
+/* `array.sort()` with no block, when every element is an Int or every element is a String:
+ * sorted natively into a new Array. *handled is false for anything else (mixed kinds, Floats,
+ * big integers, nested Arrays, objects), which the prelude's enumerable_sort still sorts. */
+static DiamondVmStatus array_sort_native(DiamondVm *vm,const DiamondArray *array,
+                                         DiamondValue *out,bool *handled) {
+    *handled=false;
+    if(array->count==0)return DIAMOND_VM_OK;
+    const bool strings=array->values[0].kind==DIAMOND_VALUE_OBJECT&&
+        array->values[0].as.object->kind==DIAMOND_OBJECT_STRING;
+    for(size_t index=0;index<array->count;index++) {
+        const DiamondValue value=array->values[index];
+        const bool same=strings?value.kind==DIAMOND_VALUE_OBJECT&&
+            value.as.object->kind==DIAMOND_OBJECT_STRING:value.kind==DIAMOND_VALUE_INT;
+        if(!same)return DIAMOND_VM_OK;
+    }
+    DiamondValue *scratch=malloc(array->count*sizeof *scratch);
+    if(scratch==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
+    /* The copy is allocated before sorting, and sorting allocates nothing the collector
+     * sees, so no element moves or is freed meanwhile. */
+    DiamondArray *sorted=allocate_array(vm,array->values,array->count);
+    if(sorted==nullptr) {
+        free(scratch);
+        return DIAMOND_VM_OUT_OF_MEMORY;
+    }
+    native_merge_sort(sorted->values,scratch,sorted->count,strings);
+    free(scratch);
+    *out=DIAMOND_OBJECT(sorted);
+    *handled=true;
+    return DIAMOND_VM_OK;
+}
+
 DiamondVmStatus collection_invoke_helper(DiamondVm *vm,const DiamondChunk *chunk,size_t depth,DiamondValue *registers,uint16_t recv,uint16_t base,uint8_t argc,uint16_t dest,const DiamondStringConstant *method_name) {
     if(method_name->length==11&&memcmp(method_name->chars,"respond_to?",11)==0)
         return builtin_respond_to(chunk,registers[recv],registers[base],argc,&registers[dest]);
@@ -230,6 +291,18 @@ DiamondVmStatus collection_invoke_helper(DiamondVm *vm,const DiamondChunk *chunk
      * exact addition caused in legacy_0092.d6's deep-
      * recursion SystemStackError test before this was
      * factored out. */
+    if(receiver_kind==DIAMOND_OBJECT_ARRAY&&argc==0&&method_name->length==4&&
+       memcmp(method_name->chars,"sort",4)==0) {
+        bool handled=false;
+        DiamondValue sorted=DIAMOND_NIL;
+        const DiamondVmStatus sort_status=array_sort_native(vm,
+            (const DiamondArray *)registers[recv].as.object,&sorted,&handled);
+        if(sort_status!=DIAMOND_VM_OK)return sort_status;
+        if(handled) {
+            registers[dest]=sorted;
+            return DIAMOND_VM_OK;
+        }
+    }
     if(receiver_kind==DIAMOND_OBJECT_ARRAY) {
         const bool join_method=method_name->length==4&&
             memcmp(method_name->chars,"join",4)==0;

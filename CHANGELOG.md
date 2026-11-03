@@ -4,6 +4,14 @@ d6 is currently pre-release. This file records user-visible capability
 milestones rather than every implementation step; the Git history remains the
 authoritative fine-grained record.
 
+## Unreleased
+
+### Changed
+
+- **`sort` is native for Int and String arrays.** A blockless `sort` of an array whose elements are
+  all Ints or all Strings now runs in C: building and sorting 50,000 Ints ten times went from 1.26 s
+  to 81 ms. Anything else (a block, mixed kinds, Floats, big integers, nested arrays) sorts as before.
+
 ## 0.24.0 — 2026-11-02
 
 ### Added
