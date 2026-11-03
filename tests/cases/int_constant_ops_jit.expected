@@ -1,0 +1,23 @@
+6 0 9 0 false true false true true false
+-4 -10 -21 2 true true false false false true
+9223372036854775808 18446744073709551614 9223372036854775808
+36893488147419103229 36893488147419103227 73786976294838206456 0 false true false true
+-2 0 0
+-1 0 0
+rescued
+40
+61
+16
+545003
+[5, -1, 6, 2]
+[true, true, false, false, false, true]
+[6, 0, 9, 0]
+[false, true, false, true, true, false]
+[9223372036854775810, 9223372036854775804, 27670116110564327421, 1]
+[false, false, true, true, false, true]
+[36893488147419103231, 36893488147419103225, 110680464442257309684, 1]
+[false, false, true, true, false, true]
+[-36893488147419103225, -36893488147419103231, -110680464442257309684, 2]
+[true, true, false, false, false, true]
+done
+nil

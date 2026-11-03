@@ -1,0 +1,88 @@
+# An Int operator whose right operand is an Int literal compiles to one
+# constant-operand instruction (ADD_INT_K, LESS_INT_K, ...) instead of a
+# CONSTANT and the register form. This copy of int_constant_ops runs with the
+# JIT compiling every function on its first call.
+
+# Every operator, with a plain Int on the left.
+def plain(x: Int) -> String
+  "#{x + 3} #{x - 3} #{x * 3} #{x % 3} #{x < 3} #{x <= 3} #{x > 3} #{x >= 3} #{x == 3} #{x != 3}"
+end
+puts(plain(3))
+puts(plain(-7))
+
+# Overflow promotes to a big integer, as the register form does.
+def edges(x: Int) -> String
+  "#{x + 1} #{x * 2} #{x - -1}"
+end
+puts(edges(9223372036854775807))
+
+# A big integer on the left takes the slow path for every operator.
+def big(x: Int) -> String
+  "#{x + 1} #{x - 1} #{x * 2} #{x % 7} #{x < 5} #{x > 5} #{x == 5} #{x != 5}"
+end
+puts(big(9223372036854775807 * 4))
+
+# Floored modulo by a negative constant, and the two divisors the fast path
+# leaves to the slow one.
+def mods(x: Int) -> String
+  "#{x % -3} #{x % -1} #{x % 1}"
+end
+puts(mods(7))
+puts(mods(-7))
+def mod_zero(x: Int) -> Int = x % 0
+begin
+  mod_zero(5)
+rescue e
+  puts("rescued")
+end
+
+# A literal that ends a branch: the jump past the other branch lands right
+# after it, so it must stay a separate instruction.
+def branchy(x: Int, flag: Bool) -> Int
+  y = x + (flag ? x : 1)
+  z = x * (if flag then 2 else 5 end)
+  y + z
+end
+puts(branchy(10, true))
+puts(branchy(10, false))
+
+# The CONSTANT folded in can be the previous statement's, defining the very
+# register the operator reads.
+def chain() -> Int
+  x = 1
+  x = x + x
+  x = x + x
+  x = x * x
+  x
+end
+puts(chain())
+
+# A loop: compound assignment, a constant comparison, and `%`.
+def loop_sum(n: Int) -> Int
+  total = 0
+  i = 0
+  while i < n
+    total = (total + i * 7) % 1000003
+    i += 1
+  end
+  total
+end
+puts(loop_sum(100000))
+
+# One operator per function, so the JIT compiles each of them; a big
+# integer argument reaches the compiled code's slow paths.
+def add3(x: Int) -> Int = x + 3
+def sub3(x: Int) -> Int = x - 3
+def mul3(x: Int) -> Int = x * 3
+def mod3(x: Int) -> Int = x % 3
+def lt3(x: Int) -> Bool = x < 3
+def le3(x: Int) -> Bool = x <= 3
+def gt3(x: Int) -> Bool = x > 3
+def ge3(x: Int) -> Bool = x >= 3
+def eq3(x: Int) -> Bool = x == 3
+def ne3(x: Int) -> Bool = x != 3
+[2, 3, 9223372036854775807, 9223372036854775807 * 4, -9223372036854775807 * 4].each() do |n|
+  puts([add3(n), sub3(n), mul3(n), mod3(n)])
+  puts([lt3(n), le3(n), gt3(n), ge3(n), eq3(n), ne3(n)])
+end
+puts("done")

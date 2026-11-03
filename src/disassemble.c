@@ -153,6 +153,30 @@ static size_t three_registers(FILE *stream, const DiamondChunk *chunk,
     return offset + 7;
 }
 
+/* The _INT_K forms: dest, left, scratch, then a constant index. */
+static size_t registers_and_constant(FILE *stream, const DiamondChunk *chunk,
+                                     const char *name, size_t offset, bool *valid) {
+    if (!require_bytes(stream, chunk, offset, 9)) return chunk->code_count;
+    const uint16_t first = checked_register(chunk, stream,
+        read_operand(chunk, offset + 1), valid);
+    const uint16_t second = checked_register(chunk, stream,
+        read_operand(chunk, offset + 3), valid);
+    const uint16_t third = checked_register(chunk, stream,
+        read_operand(chunk, offset + 5), valid);
+    const uint16_t constant = read_operand(chunk, offset + 7);
+    out_printf(stream, "%-18s r%u, r%u, r%u, k%u", name, first, second, third, constant);
+    if ((size_t)constant < chunk->constant_count) {
+        out_puts(" (", stream);
+        if (stream != nullptr) diamond_value_fprint(stream, chunk->constants[constant]);
+        out_putc(')', stream);
+    } else {
+        out_puts(" <invalid constant>", stream);
+        *valid = false;
+    }
+    out_putc('\n', stream);
+    return offset + 9;
+}
+
 static size_t four_registers(FILE *stream, const DiamondChunk *chunk,
                              const char *name, size_t offset, bool *valid) {
     if (!require_bytes(stream, chunk, offset, 9)) return chunk->code_count;
@@ -511,6 +535,36 @@ static bool disassemble_arithmetic(DisassemblyWalk *walk) {
             break;
         case DIAMOND_OP_GREATER_EQUAL_INT:
             offset = three_registers(stream, chunk, "GREATER_EQUAL_INT", offset, &valid);
+            break;
+        case DIAMOND_OP_ADD_INT_K:
+            offset = registers_and_constant(stream, chunk, "ADD_INT_K", offset, &valid);
+            break;
+        case DIAMOND_OP_SUBTRACT_INT_K:
+            offset = registers_and_constant(stream, chunk, "SUBTRACT_INT_K", offset, &valid);
+            break;
+        case DIAMOND_OP_MULTIPLY_INT_K:
+            offset = registers_and_constant(stream, chunk, "MULTIPLY_INT_K", offset, &valid);
+            break;
+        case DIAMOND_OP_MODULO_INT_K:
+            offset = registers_and_constant(stream, chunk, "MODULO_INT_K", offset, &valid);
+            break;
+        case DIAMOND_OP_LESS_INT_K:
+            offset = registers_and_constant(stream, chunk, "LESS_INT_K", offset, &valid);
+            break;
+        case DIAMOND_OP_LESS_EQUAL_INT_K:
+            offset = registers_and_constant(stream, chunk, "LESS_EQUAL_INT_K", offset, &valid);
+            break;
+        case DIAMOND_OP_GREATER_INT_K:
+            offset = registers_and_constant(stream, chunk, "GREATER_INT_K", offset, &valid);
+            break;
+        case DIAMOND_OP_GREATER_EQUAL_INT_K:
+            offset = registers_and_constant(stream, chunk, "GREATER_EQUAL_INT_K", offset, &valid);
+            break;
+        case DIAMOND_OP_EQUAL_INT_K:
+            offset = registers_and_constant(stream, chunk, "EQUAL_INT_K", offset, &valid);
+            break;
+        case DIAMOND_OP_NOT_EQUAL_INT_K:
+            offset = registers_and_constant(stream, chunk, "NOT_EQUAL_INT_K", offset, &valid);
             break;
         default:
             return false;

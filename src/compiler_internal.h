@@ -239,6 +239,13 @@ typedef struct Compiler {
      * outer/sibling function body being compiled can never be read
      * against a *different* function's own code array. */
     size_t last_instruction_offset;
+    /* The highest target patch_jump has written in last_label_function: a
+     * label there means some jump lands at that offset, so the instruction
+     * just before it must not be folded into the next one (see
+     * take_trailing_int_constant). Forward jumps are patched once the
+     * target is reached, so no label lies past code_count. */
+    DiamondFunction *last_label_function;
+    size_t last_label_offset;
     int current_class;
     int current_module;
     bool methods_private;

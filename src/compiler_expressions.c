@@ -1037,6 +1037,57 @@ static DiamondOpCode binary_opcode(DiamondTokenKind operator) {
     }
 }
 
+/* The constant-operand form of an Int binary `opcode`, or DIAMOND_OP_COUNT
+ * when there is none. `%` has no register _INT form, so it qualifies on the
+ * known types directly. */
+static DiamondOpCode int_constant_form(const Compiler *compiler, DiamondOpCode opcode,
+                                       uint16_t left, uint16_t right) {
+    switch(opcode) {
+        case DIAMOND_OP_ADD_INT: return DIAMOND_OP_ADD_INT_K;
+        case DIAMOND_OP_SUBTRACT_INT: return DIAMOND_OP_SUBTRACT_INT_K;
+        case DIAMOND_OP_MULTIPLY_INT: return DIAMOND_OP_MULTIPLY_INT_K;
+        case DIAMOND_OP_LESS_INT: return DIAMOND_OP_LESS_INT_K;
+        case DIAMOND_OP_LESS_EQUAL_INT: return DIAMOND_OP_LESS_EQUAL_INT_K;
+        case DIAMOND_OP_GREATER_INT: return DIAMOND_OP_GREATER_INT_K;
+        case DIAMOND_OP_GREATER_EQUAL_INT: return DIAMOND_OP_GREATER_EQUAL_INT_K;
+        case DIAMOND_OP_EQUAL_INT: return DIAMOND_OP_EQUAL_INT_K;
+        case DIAMOND_OP_NOT_EQUAL_INT: return DIAMOND_OP_NOT_EQUAL_INT_K;
+        case DIAMOND_OP_MODULO:
+            return compiler->known_types[left]==DIAMOND_TYPE_INT&&
+                compiler->known_types[right]==DIAMOND_TYPE_INT?
+                DIAMOND_OP_MODULO_INT_K:DIAMOND_OP_COUNT;
+        default: return DIAMOND_OP_COUNT;
+    }
+}
+
+/* When the instruction just emitted is a CONSTANT of a plain Int into
+ * `right`, with no jump landing right after it, removes it and returns its
+ * constant index in `*constant` so the caller can emit the _INT_K form.
+ * That form stores the same constant into the same register before reading
+ * `left`, so it is exactly the two instructions it replaces, even when the
+ * CONSTANT came from an earlier statement (`x = 1` then `x + x`). Any label
+ * after the CONSTANT (`x + (c ? y : 1)`) would land inside the merged
+ * instruction, so that case keeps both. */
+static bool take_trailing_int_constant(Compiler *compiler, uint16_t right,
+                                       uint16_t *constant) {
+    DiamondFunction *function=compiler->function;
+    const size_t offset=compiler->last_instruction_offset;
+    if(offset>=function->code_count||offset+5!=function->code_count)return false;
+    if(function->code[offset]!=(uint8_t)DIAMOND_OP_CONSTANT)return false;
+    const uint16_t target=(uint16_t)(((unsigned)function->code[offset+1]<<8)|
+        function->code[offset+2]);
+    const uint16_t index=(uint16_t)(((unsigned)function->code[offset+3]<<8)|
+        function->code[offset+4]);
+    if(target!=right||(size_t)index>=function->constant_count||
+       function->constants[index].kind!=DIAMOND_VALUE_INT)return false;
+    if(compiler->last_label_function==function&&
+       compiler->last_label_offset==function->code_count)return false;
+    function->code_count=offset;
+    compiler->last_instruction_offset=SIZE_MAX;
+    *constant=index;
+    return true;
+}
+
 /* The generic (non-short-circuit, non-`is`) binary-operator codegen --
  * factored out of parse_precedence's own infix loop so
  * compile_compound_assignment (below) can reuse it verbatim for `+=`/
@@ -1090,8 +1141,15 @@ uint16_t compile_binary_op(Compiler *compiler, DiamondTokenKind operator,
        compiler->known_types[left]==DIAMOND_TYPE_INT&&
        compiler->known_types[right]==DIAMOND_TYPE_INT)
         opcode=DIAMOND_OP_GREATER_EQUAL_INT;
-    emit_instruction(compiler, opcode, destination,
-                     left, right, 3);
+    const DiamondOpCode constant_form=int_constant_form(compiler,opcode,left,right);
+    uint16_t constant=0;
+    if(constant_form!=DIAMOND_OP_COUNT&&take_trailing_int_constant(compiler,right,&constant)) {
+        emit_instruction(compiler,constant_form,destination,left,right,3);
+        emit_register(compiler,constant);
+    } else {
+        emit_instruction(compiler, opcode, destination,
+                         left, right, 3);
+    }
     if(operator==DIAMOND_TOKEN_EQUAL_EQUAL || operator==DIAMOND_TOKEN_BANG_EQUAL ||
        operator==DIAMOND_TOKEN_LESS || operator==DIAMOND_TOKEN_LESS_EQUAL ||
        operator==DIAMOND_TOKEN_GREATER || operator==DIAMOND_TOKEN_GREATER_EQUAL) {

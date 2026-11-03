@@ -647,6 +647,25 @@ typedef enum DiamondOpCode : uint8_t {
     DIAMOND_OP_CHECK_SELF_RETURN,
     /* dest, first, second, selector: `SemVer.*`, see DiamondSemverFunction. */
     DIAMOND_OP_SEMVER,
+    /* dest, left, scratch, constant: an Int `+ - * %` or comparison whose right
+     * operand is an Int literal. Exactly a CONSTANT into `scratch` followed by
+     * the register form, in one dispatch: both the interpreter and the JIT
+     * store the constant into `scratch`, so register state matches the
+     * two-instruction form and the JIT's slow paths have a register to
+     * point at. Any operand kind still works (the slow path is the generic op's),
+     * and a divisor of 0 or -1 takes the slow path. The compiler emits these
+     * only after a left operand it knows is an Int (see compile_binary_op);
+     * selfhost/parser.d6 does not. */
+    DIAMOND_OP_ADD_INT_K,
+    DIAMOND_OP_SUBTRACT_INT_K,
+    DIAMOND_OP_MULTIPLY_INT_K,
+    DIAMOND_OP_MODULO_INT_K,
+    DIAMOND_OP_LESS_INT_K,
+    DIAMOND_OP_LESS_EQUAL_INT_K,
+    DIAMOND_OP_GREATER_INT_K,
+    DIAMOND_OP_GREATER_EQUAL_INT_K,
+    DIAMOND_OP_EQUAL_INT_K,
+    DIAMOND_OP_NOT_EQUAL_INT_K,
     DIAMOND_OP_COUNT,
 } DiamondOpCode;
 
@@ -1880,7 +1899,9 @@ struct DiamondVm {
     size_t opcode_counts[DIAMOND_OP_COUNT];
     /* opcode_counts is only kept when a trace that reads it is on: the
      * increment is a read-modify-write of memory on every dispatch, and on
-     * GCC builds it measurably slowed the dispatch loop. */
+     * GCC builds it measurably slowed the dispatch loop. Setting it also
+     * requires resource_limits_active, whose per-instruction block does the
+     * counting (run_source.c sets both), so the dispatch loop tests one flag. */
     bool count_opcodes;
     bool quickening;
     size_t quickening_threshold;

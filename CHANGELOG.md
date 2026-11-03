@@ -57,6 +57,15 @@ authoritative fine-grained record.
   through fewer nested calls before reaching the method body. A loop of a million one-argument
   method calls runs about 11% fewer instructions, and the object-heavy benchmark about 9%.
 
+- **Faster interpreter loop.** Each bytecode handler now jumps straight to the next one through
+  a table instead of returning to one central `switch`. Arithmetic and comparisons with an Int
+  literal operand, such as `i < 3000000`, `n - 1` or `i += 1`, compile to a single instruction
+  instead of a constant load plus the operation, and each Int operator has its own handler
+  rather than sharing one that tested the opcode again. A typed parameter declared `Int` or
+  `Float` is checked without a call. The counting loop benchmark went from 1330 ms to about
+  720 ms, recursive `fib` from about 500 ms to 340 ms, and the object-heavy one from 376 ms to
+  about 300 ms. JIT-compiled code is unchanged.
+
 ## 0.24.0 — 2026-11-02
 
 ### Added

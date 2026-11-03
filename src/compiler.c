@@ -1649,6 +1649,11 @@ void patch_jump(Compiler *compiler, size_t operand, size_t target) {
     }
     compiler->function->code[operand] = (uint8_t)(target >> 8);
     compiler->function->code[operand + 1] = (uint8_t)(target & UINT8_MAX);
+    if (compiler->last_label_function != compiler->function ||
+        target > compiler->last_label_offset) {
+        compiler->last_label_function = compiler->function;
+        compiler->last_label_offset = target;
+    }
     if (compiler->last_plain_call_function == compiler->function &&
         target == compiler->last_plain_call_code_count)
         compiler->last_plain_call_label_after = true;
@@ -1857,6 +1862,8 @@ static bool opcode_is_rewritable_arithmetic(DiamondOpCode opcode) {
         case DIAMOND_OP_SUBTRACT: case DIAMOND_OP_SUBTRACT_INT:
         case DIAMOND_OP_MULTIPLY: case DIAMOND_OP_MULTIPLY_INT:
         case DIAMOND_OP_DIVIDE: case DIAMOND_OP_DIVIDE_INT:
+        case DIAMOND_OP_ADD_INT_K: case DIAMOND_OP_SUBTRACT_INT_K:
+        case DIAMOND_OP_MULTIPLY_INT_K: case DIAMOND_OP_MODULO_INT_K:
         case DIAMOND_OP_MODULO:
         case DIAMOND_OP_SHIFT_LEFT: case DIAMOND_OP_SHIFT_RIGHT:
         case DIAMOND_OP_BITWISE_AND: case DIAMOND_OP_BITWISE_OR:

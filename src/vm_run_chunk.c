@@ -35,6 +35,26 @@
 
 extern char **environ;
 
+/* Labels-as-values dispatch in run_chunk; -DDIAMOND_THREADED_DISPATCH=0
+ * builds the plain switch instead. */
+#ifndef DIAMOND_THREADED_DISPATCH
+#if defined(__GNUC__)
+#define DIAMOND_THREADED_DISPATCH 1
+#else
+#define DIAMOND_THREADED_DISPATCH 0
+#endif
+#endif
+/* GCC otherwise merges the identical DISPATCH_NEXT tails the hot handlers
+ * end in back into one shared jump, which undoes the point of threading:
+ * measured 2-4% faster on fib, loop and objects with the merge off. */
+#if DIAMOND_THREADED_DISPATCH && defined(__GNUC__) && !defined(__clang__)
+#pragma GCC optimize("no-crossjumping")
+#endif
+/* The plain switch never jumps to the op_ labels. */
+#if !DIAMOND_THREADED_DISPATCH && defined(__GNUC__)
+#pragma GCC diagnostic ignored "-Wunused-label"
+#endif
+
 
 /* Array#push and #length are the two collection calls hot loops make, and
  * the call into collection_invoke_helper costs more than they do: its frame
@@ -164,6 +184,41 @@ static const DiamondChunk *bind_generic_entry(const DiamondChunk *chunk,
     return chunk;
 }
 
+
+/* Everything an _INT_K instruction's own handler leaves: a non-Int or big
+ * integer operand, an overflow, a `%` by 0 or -1. Answered by the generic
+ * opcode's slow path, the same one the register form reaches; the generic
+ * opcode never triggers their deopt rewrite, which would write a register
+ * form's opcode over this differently shaped instruction. Out of line so
+ * the handlers stay small. */
+__attribute__((noinline))
+static DiamondVmStatus int_constant_slow(DiamondVm *vm,const DiamondChunk *chunk,
+        size_t depth,size_t instruction_offset,DiamondOpCode opcode,
+        DiamondValue left,DiamondValue right,DiamondValue *out) {
+    switch(opcode) {
+        case DIAMOND_OP_ADD_INT_K:
+            return int_arith_slow(vm,chunk,depth,instruction_offset,DIAMOND_OP_ADD,left,right,out);
+        case DIAMOND_OP_SUBTRACT_INT_K:
+            return int_arith_slow(vm,chunk,depth,instruction_offset,DIAMOND_OP_SUBTRACT,left,right,out);
+        case DIAMOND_OP_MULTIPLY_INT_K:
+            return int_arith_slow(vm,chunk,depth,instruction_offset,DIAMOND_OP_MULTIPLY,left,right,out);
+        case DIAMOND_OP_MODULO_INT_K:
+            return int_arith_slow(vm,chunk,depth,instruction_offset,DIAMOND_OP_MODULO,left,right,out);
+        case DIAMOND_OP_LESS_INT_K:
+            return compare_int_slow(vm,chunk,depth,instruction_offset,DIAMOND_OP_LESS,left,right,out);
+        case DIAMOND_OP_LESS_EQUAL_INT_K:
+            return compare_int_slow(vm,chunk,depth,instruction_offset,DIAMOND_OP_LESS_EQUAL,left,right,out);
+        case DIAMOND_OP_GREATER_INT_K:
+            return compare_int_slow(vm,chunk,depth,instruction_offset,DIAMOND_OP_GREATER,left,right,out);
+        case DIAMOND_OP_GREATER_EQUAL_INT_K:
+            return compare_int_slow(vm,chunk,depth,instruction_offset,DIAMOND_OP_GREATER_EQUAL,left,right,out);
+        case DIAMOND_OP_EQUAL_INT_K: case DIAMOND_OP_NOT_EQUAL_INT_K:
+            return diamond_jit_equal_general(vm,chunk,depth,chunk->code+instruction_offset,
+                &left,&right,opcode==DIAMOND_OP_NOT_EQUAL_INT_K,out);
+        default:
+            return DIAMOND_VM_INVALID_BYTECODE;
+    }
+}
 
 DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                                  DiamondVm *vm,
@@ -450,6 +505,248 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
 #define OPERAND_SHORT(offset_) \
     ((uint16_t)(((unsigned)operands[(offset_)] << 8) | operands[(offset_) + 1]))
 
+    /* Ends a hot handler: the loop-top checks (end of code, a pending
+     * signal, resource limits, which also covers opcode counting), then a
+     * jump straight to the next instruction's handler. Whenever any check
+     * needs the full loop top it goes there instead, so the slow paths run
+     * exactly as before. */
+#if DIAMOND_THREADED_DISPATCH
+#define DISPATCH_NEXT()                                                    \
+    do {                                                                   \
+        if (__builtin_expect(ip < bytecode_count &&                        \
+                !atomic_load_explicit(&diamond_pending_signals,            \
+                    memory_order_relaxed) &&                               \
+                !atomic_load_explicit(&vm->resource_limits_active,         \
+                    memory_order_relaxed), 1)) {                           \
+            instruction_offset = ip;                                       \
+            instruction = bytecode[ip++];                                  \
+            _Pragma("GCC diagnostic push")                                 \
+            _Pragma("GCC diagnostic ignored \"-Wpedantic\"")               \
+            goto *dispatch_table[instruction];                             \
+            _Pragma("GCC diagnostic pop")                                  \
+        }                                                                  \
+        goto dispatch_continue;                                            \
+    } while (false)
+#else
+#define DISPATCH_NEXT() break
+#endif
+
+    /* Threaded dispatch (GCC and clang): each opcode's case also carries a
+     * label, and the loop jumps through this table instead of running the
+     * switch, which skips the switch's own range check. The hottest
+     * handlers also end in DISPATCH_NEXT, which decodes and jumps to the
+     * next instruction from where they are, so each of them predicts its
+     * own successor instead of sharing one indirect branch. Other compilers
+     * run the plain switch. */
+#if DIAMOND_THREADED_DISPATCH
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wpedantic"
+    static const void *const dispatch_table[256] = {
+        [DIAMOND_OP_CONSTANT] = &&op_CONSTANT,
+        [DIAMOND_OP_STRING] = &&op_STRING,
+        [DIAMOND_OP_SYMBOL] = &&op_SYMBOL,
+        [DIAMOND_OP_NIL] = &&op_NIL,
+        [DIAMOND_OP_BOOL] = &&op_BOOL,
+        [DIAMOND_OP_MOVE] = &&op_MOVE,
+        [DIAMOND_OP_ADD] = &&op_ADD,
+        [DIAMOND_OP_ADD_INT] = &&op_ADD_INT,
+        [DIAMOND_OP_SUBTRACT] = &&op_SUBTRACT,
+        [DIAMOND_OP_MULTIPLY] = &&op_MULTIPLY,
+        [DIAMOND_OP_DIVIDE] = &&op_DIVIDE,
+        [DIAMOND_OP_SUBTRACT_INT] = &&op_SUBTRACT_INT,
+        [DIAMOND_OP_MULTIPLY_INT] = &&op_MULTIPLY_INT,
+        [DIAMOND_OP_DIVIDE_INT] = &&op_DIVIDE_INT,
+        [DIAMOND_OP_LESS] = &&op_LESS,
+        [DIAMOND_OP_LESS_EQUAL] = &&op_LESS_EQUAL,
+        [DIAMOND_OP_GREATER] = &&op_GREATER,
+        [DIAMOND_OP_GREATER_EQUAL] = &&op_GREATER_EQUAL,
+        [DIAMOND_OP_NEGATE] = &&op_NEGATE,
+        [DIAMOND_OP_EQUAL] = &&op_EQUAL,
+        [DIAMOND_OP_NOT_EQUAL] = &&op_NOT_EQUAL,
+        [DIAMOND_OP_EQUAL_INT] = &&op_EQUAL_INT,
+        [DIAMOND_OP_NOT_EQUAL_INT] = &&op_NOT_EQUAL_INT,
+        [DIAMOND_OP_LESS_INT] = &&op_LESS_INT,
+        [DIAMOND_OP_LESS_EQUAL_INT] = &&op_LESS_EQUAL_INT,
+        [DIAMOND_OP_GREATER_INT] = &&op_GREATER_INT,
+        [DIAMOND_OP_GREATER_EQUAL_INT] = &&op_GREATER_EQUAL_INT,
+        [DIAMOND_OP_JUMP] = &&op_JUMP,
+        [DIAMOND_OP_JUMP_IF_FALSE] = &&op_JUMP_IF_FALSE,
+        [DIAMOND_OP_CALL] = &&op_CALL,
+        [DIAMOND_OP_CALL_TYPED] = &&op_CALL_TYPED,
+        [DIAMOND_OP_CLOSURE] = &&op_CLOSURE,
+        [DIAMOND_OP_CALL_CLOSURE] = &&op_CALL_CLOSURE,
+        [DIAMOND_OP_GET_CAPTURE] = &&op_GET_CAPTURE,
+        [DIAMOND_OP_GET_CAPTURE_CELL] = &&op_GET_CAPTURE_CELL,
+        [DIAMOND_OP_SET_CAPTURE] = &&op_SET_CAPTURE,
+        [DIAMOND_OP_BOX_LOCAL] = &&op_BOX_LOCAL,
+        [DIAMOND_OP_GET_CELL] = &&op_GET_CELL,
+        [DIAMOND_OP_SET_CELL] = &&op_SET_CELL,
+        [DIAMOND_OP_NEW] = &&op_NEW,
+        [DIAMOND_OP_INVOKE] = &&op_INVOKE,
+        [DIAMOND_OP_INVOKE_MONO] = &&op_INVOKE_MONO,
+        [DIAMOND_OP_INVOKE_TYPED] = &&op_INVOKE_TYPED,
+        [DIAMOND_OP_SUPER] = &&op_SUPER,
+        [DIAMOND_OP_GET_IVAR] = &&op_GET_IVAR,
+        [DIAMOND_OP_SET_IVAR] = &&op_SET_IVAR,
+        [DIAMOND_OP_GET_IVAR_NAME] = &&op_GET_IVAR_NAME,
+        [DIAMOND_OP_SET_IVAR_NAME] = &&op_SET_IVAR_NAME,
+        [DIAMOND_OP_GET_NAMESPACE_CONSTANT] = &&op_GET_NAMESPACE_CONSTANT,
+        [DIAMOND_OP_SET_NAMESPACE_CONSTANT] = &&op_SET_NAMESPACE_CONSTANT,
+        [DIAMOND_OP_CHECK_TYPE] = &&op_CHECK_TYPE,
+        [DIAMOND_OP_ARRAY] = &&op_ARRAY,
+        [DIAMOND_OP_INDEX_GET] = &&op_INDEX_GET,
+        [DIAMOND_OP_INDEX_SET] = &&op_INDEX_SET,
+        [DIAMOND_OP_HASH] = &&op_HASH,
+        [DIAMOND_OP_NOT] = &&op_NOT,
+        [DIAMOND_OP_JUMP_IF_TRUE] = &&op_JUMP_IF_TRUE,
+        [DIAMOND_OP_RETURN] = &&op_RETURN,
+        [DIAMOND_OP_RAISE] = &&op_RAISE,
+        [DIAMOND_OP_PUSH_RESCUE] = &&op_PUSH_RESCUE,
+        [DIAMOND_OP_POP_RESCUE] = &&op_POP_RESCUE,
+        [DIAMOND_OP_PUSH_ENSURE] = &&op_PUSH_ENSURE,
+        [DIAMOND_OP_RUN_ENSURE] = &&op_RUN_ENSURE,
+        [DIAMOND_OP_END_ENSURE] = &&op_END_ENSURE,
+        [DIAMOND_OP_IS_TYPE] = &&op_IS_TYPE,
+        [DIAMOND_OP_ARGUMENT_PROVIDED] = &&op_ARGUMENT_PROVIDED,
+        [DIAMOND_OP_TO_STRING] = &&op_TO_STRING,
+        [DIAMOND_OP_YIELD] = &&op_YIELD,
+        [DIAMOND_OP_REDEFINE_METHOD] = &&op_REDEFINE_METHOD,
+        [DIAMOND_OP_FIBER_NEW] = &&op_FIBER_NEW,
+        [DIAMOND_OP_PRINT] = &&op_PRINT,
+        [DIAMOND_OP_GETS] = &&op_GETS,
+        [DIAMOND_OP_FILE_OPEN] = &&op_FILE_OPEN,
+        [DIAMOND_OP_FILE_DELETE] = &&op_FILE_DELETE,
+        [DIAMOND_OP_TCP_CONNECT] = &&op_TCP_CONNECT,
+        [DIAMOND_OP_TCP_LISTEN] = &&op_TCP_LISTEN,
+        [DIAMOND_OP_TCP_LISTEN_NONBLOCK] = &&op_TCP_LISTEN_NONBLOCK,
+        [DIAMOND_OP_IO_POLL] = &&op_IO_POLL,
+        [DIAMOND_OP_UDP_BIND] = &&op_UDP_BIND,
+        [DIAMOND_OP_UDP_OPEN] = &&op_UDP_OPEN,
+        [DIAMOND_OP_SIGNAL_TRAP] = &&op_SIGNAL_TRAP,
+        [DIAMOND_OP_TLS_CONNECT] = &&op_TLS_CONNECT,
+        [DIAMOND_OP_TLS_LISTEN] = &&op_TLS_LISTEN,
+        [DIAMOND_OP_REGEXP_NEW] = &&op_REGEXP_NEW,
+        [DIAMOND_OP_CHR] = &&op_CHR,
+        [DIAMOND_OP_TO_FLOAT] = &&op_TO_FLOAT,
+        [DIAMOND_OP_TO_INT] = &&op_TO_INT,
+        [DIAMOND_OP_TO_SYMBOL] = &&op_TO_SYMBOL,
+        [DIAMOND_OP_MATH_UNARY] = &&op_MATH_UNARY,
+        [DIAMOND_OP_MATH_BINARY] = &&op_MATH_BINARY,
+        [DIAMOND_OP_PROGRAM_BUILDER_NEW] = &&op_PROGRAM_BUILDER_NEW,
+        [DIAMOND_OP_THREAD_NEW] = &&op_THREAD_NEW,
+        [DIAMOND_OP_GET_CVAR] = &&op_GET_CVAR,
+        [DIAMOND_OP_SET_CVAR] = &&op_SET_CVAR,
+        [DIAMOND_OP_SQLITE3_OPEN] = &&op_SQLITE3_OPEN,
+        [DIAMOND_OP_CHECK_DESTRUCTURE_COUNT] = &&op_CHECK_DESTRUCTURE_COUNT,
+        [DIAMOND_OP_TIME_MONOTONIC] = &&op_TIME_MONOTONIC,
+        [DIAMOND_OP_TIME_NOW] = &&op_TIME_NOW,
+        [DIAMOND_OP_TIME_AT] = &&op_TIME_AT,
+        [DIAMOND_OP_SHIFT_LEFT] = &&op_SHIFT_LEFT,
+        [DIAMOND_OP_PROCESS_RUN] = &&op_PROCESS_RUN,
+        [DIAMOND_OP_PROCESS_SPAWN] = &&op_PROCESS_SPAWN,
+        [DIAMOND_OP_DEBUGGER] = &&op_DEBUGGER,
+        [DIAMOND_OP_ARGV] = &&op_ARGV,
+        [DIAMOND_OP_ENV] = &&op_ENV,
+        [DIAMOND_OP_MODULO] = &&op_MODULO,
+        [DIAMOND_OP_COMPARE] = &&op_COMPARE,
+        [DIAMOND_OP_POSTGRES_OPEN] = &&op_POSTGRES_OPEN,
+        [DIAMOND_OP_MYSQL_OPEN] = &&op_MYSQL_OPEN,
+        [DIAMOND_OP_DEFINE_METHOD] = &&op_DEFINE_METHOD,
+        [DIAMOND_OP_LOAD_CLASS] = &&op_LOAD_CLASS,
+        [DIAMOND_OP_INVOKE_SELF_METHOD] = &&op_INVOKE_SELF_METHOD,
+        [DIAMOND_OP_BCRYPT_HASH] = &&op_BCRYPT_HASH,
+        [DIAMOND_OP_BCRYPT_VERIFY] = &&op_BCRYPT_VERIFY,
+        [DIAMOND_OP_SECURE_RANDOM_BYTES] = &&op_SECURE_RANDOM_BYTES,
+        [DIAMOND_OP_SECURE_RANDOM_HEX] = &&op_SECURE_RANDOM_HEX,
+        [DIAMOND_OP_DIGEST_SHA256] = &&op_DIGEST_SHA256,
+        [DIAMOND_OP_HMAC_SHA256] = &&op_HMAC_SHA256,
+        [DIAMOND_OP_HMAC_VERIFY] = &&op_HMAC_VERIFY,
+        [DIAMOND_OP_DIGEST_SHA1] = &&op_DIGEST_SHA1,
+        [DIAMOND_OP_HMAC_SHA1] = &&op_HMAC_SHA1,
+        [DIAMOND_OP_CIPHER_ENCRYPT] = &&op_CIPHER_ENCRYPT,
+        [DIAMOND_OP_CIPHER_DECRYPT] = &&op_CIPHER_DECRYPT,
+        [DIAMOND_OP_GZIP_COMPRESS] = &&op_GZIP_COMPRESS,
+        [DIAMOND_OP_GZIP_DECOMPRESS] = &&op_GZIP_DECOMPRESS,
+        [DIAMOND_OP_BASE64_ENCODE] = &&op_BASE64_ENCODE,
+        [DIAMOND_OP_BASE64_DECODE] = &&op_BASE64_DECODE,
+        [DIAMOND_OP_COMPILE_METHOD] = &&op_COMPILE_METHOD,
+        [DIAMOND_OP_EXIT] = &&op_EXIT,
+        [DIAMOND_OP_COLLECT_VARIADIC] = &&op_COLLECT_VARIADIC,
+        [DIAMOND_OP_CALL_SPREAD] = &&op_CALL_SPREAD,
+        [DIAMOND_OP_CASE_MATCH] = &&op_CASE_MATCH,
+        [DIAMOND_OP_CASE_ARRAY_SHAPE] = &&op_CASE_ARRAY_SHAPE,
+        [DIAMOND_OP_ARRAY_REST] = &&op_ARRAY_REST,
+        [DIAMOND_OP_CASE_HASH_SHAPE] = &&op_CASE_HASH_SHAPE,
+        [DIAMOND_OP_CASE_HASH_HAS] = &&op_CASE_HASH_HAS,
+        [DIAMOND_OP_HASH_REST] = &&op_HASH_REST,
+        [DIAMOND_OP_ARRAY_MIDDLE] = &&op_ARRAY_MIDDLE,
+        [DIAMOND_OP_ARRAY_SUFFIX] = &&op_ARRAY_SUFFIX,
+        [DIAMOND_OP_CHECK_HASH_KEY] = &&op_CHECK_HASH_KEY,
+        [DIAMOND_OP_INVOKE_SPREAD] = &&op_INVOKE_SPREAD,
+        [DIAMOND_OP_CALL_CLOSURE_SPREAD] = &&op_CALL_CLOSURE_SPREAD,
+        [DIAMOND_OP_NEW_SPREAD] = &&op_NEW_SPREAD,
+        [DIAMOND_OP_CALL_SINGLETON_SPREAD] = &&op_CALL_SINGLETON_SPREAD,
+        [DIAMOND_OP_BUILD_SPREAD_ARGS] = &&op_BUILD_SPREAD_ARGS,
+        [DIAMOND_OP_CALL_TYPED_SPREAD] = &&op_CALL_TYPED_SPREAD,
+        [DIAMOND_OP_INVOKE_TYPED_SPREAD] = &&op_INVOKE_TYPED_SPREAD,
+        [DIAMOND_OP_CALL_TYPED_SINGLETON_SPREAD] = &&op_CALL_TYPED_SINGLETON_SPREAD,
+        [DIAMOND_OP_CALL_KEYWORD_SPREAD] = &&op_CALL_KEYWORD_SPREAD,
+        [DIAMOND_OP_CALL_TYPED_KEYWORD_SPREAD] = &&op_CALL_TYPED_KEYWORD_SPREAD,
+        [DIAMOND_OP_INVOKE_KEYWORDS] = &&op_INVOKE_KEYWORDS,
+        [DIAMOND_OP_INVOKE_TYPED_KEYWORDS] = &&op_INVOKE_TYPED_KEYWORDS,
+        [DIAMOND_OP_CALL_CLOSURE_KEYWORDS] = &&op_CALL_CLOSURE_KEYWORDS,
+        [DIAMOND_OP_NEW_KEYWORDS] = &&op_NEW_KEYWORDS,
+        [DIAMOND_OP_CALL_SINGLETON_KEYWORDS] = &&op_CALL_SINGLETON_KEYWORDS,
+        [DIAMOND_OP_CALL_TYPED_SINGLETON_KEYWORDS] = &&op_CALL_TYPED_SINGLETON_KEYWORDS,
+        [DIAMOND_OP_FILE_PATH] = &&op_FILE_PATH,
+        [DIAMOND_OP_FILE_JOIN] = &&op_FILE_JOIN,
+        [DIAMOND_OP_TIME_PARSE] = &&op_TIME_PARSE,
+        [DIAMOND_OP_TIME_BUILD] = &&op_TIME_BUILD,
+        [DIAMOND_OP_DIR_ENTRIES] = &&op_DIR_ENTRIES,
+        [DIAMOND_OP_SHIFT_RIGHT] = &&op_SHIFT_RIGHT,
+        [DIAMOND_OP_BITWISE_AND] = &&op_BITWISE_AND,
+        [DIAMOND_OP_BITWISE_OR] = &&op_BITWISE_OR,
+        [DIAMOND_OP_BITWISE_XOR] = &&op_BITWISE_XOR,
+        [DIAMOND_OP_CLASS_NAME] = &&op_CLASS_NAME,
+        [DIAMOND_OP_TENSOR_ZEROS] = &&op_TENSOR_ZEROS,
+        [DIAMOND_OP_TENSOR_FROM_ARRAY] = &&op_TENSOR_FROM_ARRAY,
+        [DIAMOND_OP_TENSOR_RANDOM] = &&op_TENSOR_RANDOM,
+        [DIAMOND_OP_CHANNEL_NEW] = &&op_CHANNEL_NEW,
+        [DIAMOND_OP_SUPERVISOR_NEW] = &&op_SUPERVISOR_NEW,
+        [DIAMOND_OP_TAIL_CALL] = &&op_TAIL_CALL,
+        [DIAMOND_OP_BREAKPOINT_CHECK] = &&op_BREAKPOINT_CHECK,
+        [DIAMOND_OP_BLOCK_RETURN] = &&op_BLOCK_RETURN,
+        [DIAMOND_OP_BLOCK_BREAK] = &&op_BLOCK_BREAK,
+        [DIAMOND_OP_TCP_CONNECT_NONBLOCK] = &&op_TCP_CONNECT_NONBLOCK,
+        [DIAMOND_OP_DNS_RESOLVE] = &&op_DNS_RESOLVE,
+        [DIAMOND_OP_TLS_START_HANDSHAKE] = &&op_TLS_START_HANDSHAKE,
+        [DIAMOND_OP_JSON_STRINGIFY] = &&op_JSON_STRINGIFY,
+        [DIAMOND_OP_CHANNEL_SELECT] = &&op_CHANNEL_SELECT,
+        [DIAMOND_OP_INDEX_GET_STRING] = &&op_INDEX_GET_STRING,
+        [DIAMOND_OP_CHANNEL_SELECT_SEND] = &&op_CHANNEL_SELECT_SEND,
+        [DIAMOND_OP_SAME_CLASS] = &&op_SAME_CLASS,
+        [DIAMOND_OP_PROCESS_RUN_OPTIONS] = &&op_PROCESS_RUN_OPTIONS,
+        [DIAMOND_OP_PROCESS_SPAWN_OPTIONS] = &&op_PROCESS_SPAWN_OPTIONS,
+        [DIAMOND_OP_UNWIND_JUMP] = &&op_UNWIND_JUMP,
+        [DIAMOND_OP_JSON_STRINGIFY_OPTIONS] = &&op_JSON_STRINGIFY_OPTIONS,
+        [DIAMOND_OP_NEW_TYPED] = &&op_NEW_TYPED,
+        [DIAMOND_OP_CHECK_SELF_RETURN] = &&op_CHECK_SELF_RETURN,
+        [DIAMOND_OP_SEMVER] = &&op_SEMVER,
+        [DIAMOND_OP_NOT_EQUAL_INT_K] = &&op_NOT_EQUAL_INT_K,
+        [DIAMOND_OP_EQUAL_INT_K] = &&op_EQUAL_INT_K,
+        [DIAMOND_OP_GREATER_EQUAL_INT_K] = &&op_GREATER_EQUAL_INT_K,
+        [DIAMOND_OP_GREATER_INT_K] = &&op_GREATER_INT_K,
+        [DIAMOND_OP_LESS_EQUAL_INT_K] = &&op_LESS_EQUAL_INT_K,
+        [DIAMOND_OP_LESS_INT_K] = &&op_LESS_INT_K,
+        [DIAMOND_OP_MODULO_INT_K] = &&op_MODULO_INT_K,
+        [DIAMOND_OP_MULTIPLY_INT_K] = &&op_MULTIPLY_INT_K,
+        [DIAMOND_OP_SUBTRACT_INT_K] = &&op_SUBTRACT_INT_K,
+        [DIAMOND_OP_ADD_INT_K] = &&op_ADD_INT_K,
+        [DIAMOND_OP_COUNT ... 255] = &&op_default,
+    };
+#pragma GCC diagnostic pop
+#endif
+
     while (ip < bytecode_count) {
         /* Cheap steady-state cost (one relaxed atomic read, almost always
          * false) for prompt signal handling in CPU-bound Diamond code
@@ -465,12 +762,6 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
         instruction_offset = ip;
         uint8_t instruction = 0;
         READ_BYTE(instruction);
-        /* Both per-VM checks below are hinted false: the hint lets the compiler
-         * move their bodies out of the hot loop, which measured 2-19% faster on
-         * GCC and up to 15% on clang. Folding the two flags into one cut two
-         * instructions per dispatch but was slower on GCC, so they stay apart. */
-        if (__builtin_expect(vm->count_opcodes, 0) && instruction < DIAMOND_OP_COUNT)
-            vm->opcode_counts[instruction]++;
         /* Cheap steady-state cost (one boolean read, false unless a
          * DIAMOND_MAX_* budget is configured) for docs/sandbox.md's own
          * "Resource limits" -- same shape as diamond_pending_signals's own
@@ -493,6 +784,11 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
         if (__builtin_expect(atomic_load_explicit(&vm->resource_limits_active,
                                                   memory_order_relaxed), 0)) {
             vm->instructions_executed++;
+            /* Opcode counting turns resource_limits_active on as well (see
+             * DiamondVm.count_opcodes), so one hinted-false check covers both
+             * and DISPATCH_NEXT tests one flag fewer per instruction. */
+            if (vm->count_opcodes && instruction < DIAMOND_OP_COUNT)
+                vm->opcode_counts[instruction]++;
             if (vm->interrupt_flag != nullptr &&
                 atomic_load_explicit(vm->interrupt_flag, memory_order_relaxed)) {
                 VM_RETURN(DIAMOND_VM_INTERRUPTED);
@@ -537,8 +833,14 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
             }
         }
 
+#if DIAMOND_THREADED_DISPATCH
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wpedantic"
+        goto *dispatch_table[instruction];
+#pragma GCC diagnostic pop
+#endif
         switch ((DiamondOpCode)instruction) {
-            case DIAMOND_OP_CONSTANT: {
+            case DIAMOND_OP_CONSTANT: op_CONSTANT: {
                 uint16_t destination = 0;
                 uint16_t constant = 0;
                 READ_OPERANDS(4);
@@ -547,9 +849,9 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
                 }
                 registers[destination] = chunk->constants[constant];
-                break;
+                DISPATCH_NEXT();
             }
-            case DIAMOND_OP_STRING: {
+            case DIAMOND_OP_STRING: op_STRING: {
                 uint16_t destination = 0;
                 uint16_t string_index = 0;
                 READ_OPERANDS(4);
@@ -565,7 +867,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 registers[destination] = DIAMOND_OBJECT(string);
                 break;
             }
-            case DIAMOND_OP_SYMBOL: {
+            case DIAMOND_OP_SYMBOL: op_SYMBOL: {
                 uint16_t destination = 0;
                 uint16_t string_index = 0;
                 READ_OPERANDS(4);
@@ -581,13 +883,13 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 registers[destination] = DIAMOND_OBJECT(symbol);
                 break;
             }
-            case DIAMOND_OP_NIL: {
+            case DIAMOND_OP_NIL: op_NIL: {
                 uint16_t destination = 0;
                 READ_SHORT(destination);
                 registers[destination] = DIAMOND_NIL;
-                break;
+                DISPATCH_NEXT();
             }
-            case DIAMOND_OP_BOOL: {
+            case DIAMOND_OP_BOOL: op_BOOL: {
                 uint16_t destination = 0;
                 uint16_t boolean = 0;
                 READ_OPERANDS(4);
@@ -595,14 +897,14 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 registers[destination] = DIAMOND_BOOL(boolean != 0);
                 break;
             }
-            case DIAMOND_OP_ARGUMENT_PROVIDED: {
+            case DIAMOND_OP_ARGUMENT_PROVIDED: op_ARGUMENT_PROVIDED: {
                 uint16_t destination=0,index=0;
                 READ_SHORT(destination);READ_SHORT(index);
                 registers[destination]=DIAMOND_BOOL(index<argument_count&&
                     arguments[index].kind!=DIAMOND_VALUE_UNDEFINED);
                 break;
             }
-            case DIAMOND_OP_COLLECT_VARIADIC: {
+            case DIAMOND_OP_COLLECT_VARIADIC: op_COLLECT_VARIADIC: {
                 uint16_t destination=0,fixed_count=0,preserved_count=0;
                 READ_SHORT(destination);READ_SHORT(fixed_count);
                 READ_SHORT(preserved_count);
@@ -647,7 +949,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     registers[index]=DIAMOND_NIL;
                 break;
             }
-            case DIAMOND_OP_TO_STRING: {
+            case DIAMOND_OP_TO_STRING: op_TO_STRING: {
                 uint16_t destination=0,source=0;
                 READ_OPERANDS(4);
                 destination=OPERAND_SHORT(0); source=OPERAND_SHORT(2);
@@ -657,7 +959,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 VM_PROPAGATE(status);
                 registers[destination]=converted;break;
             }
-            case DIAMOND_OP_PRINT: {
+            case DIAMOND_OP_PRINT: op_PRINT: {
                 uint16_t destination=0,source=0;uint8_t flags=0;
                 READ_SHORT(destination);READ_SHORT(source);READ_BYTE(flags);
                 const bool newline=(flags&DIAMOND_PRINT_NEWLINE)!=0;
@@ -706,7 +1008,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 }
                 registers[destination]=DIAMOND_NIL;break;
             }
-            case DIAMOND_OP_GETS: {
+            case DIAMOND_OP_GETS: op_GETS: {
                 uint16_t destination=0;
                 READ_SHORT(destination);
                 StringBuilder builder={};
@@ -724,15 +1026,15 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 if(string==nullptr)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
                 registers[destination]=DIAMOND_OBJECT(string);break;
             }
-            case DIAMOND_OP_MOVE: {
+            case DIAMOND_OP_MOVE: op_MOVE: {
                 uint16_t destination = 0;
                 uint16_t source = 0;
                 READ_OPERANDS(4);
                 destination=OPERAND_SHORT(0); source=OPERAND_SHORT(2);
                 registers[destination] = registers[source];
-                break;
+                DISPATCH_NEXT();
             }
-            case DIAMOND_OP_ADD: {
+            case DIAMOND_OP_ADD: op_ADD: {
                 uint16_t destination = 0;
                 uint16_t left = 0;
                 uint16_t right = 0;
@@ -760,7 +1062,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                         break;
                     }
                     registers[destination] = DIAMOND_INT(sum);
-                    break;
+                    DISPATCH_NEXT();
                 }
                 DiamondValue add_result=DIAMOND_NIL;
                 const DiamondVmStatus add_status=add_fallback(vm,chunk,depth,
@@ -769,13 +1071,58 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 registers[destination]=add_result;
                 break;
             }
-            case DIAMOND_OP_SUBTRACT:
-            case DIAMOND_OP_MULTIPLY:
-            case DIAMOND_OP_DIVIDE:
-            case DIAMOND_OP_ADD_INT:
-            case DIAMOND_OP_SUBTRACT_INT:
-            case DIAMOND_OP_MULTIPLY_INT:
-            case DIAMOND_OP_DIVIDE_INT: {
+            /* The register-form Int fast paths, one handler per operator,
+             * for the same reason as the _INT_K ones below: a shared handler
+             * pays for an opcode if-chain on every instruction. Anything
+             * they don't answer -- a non-Int or big integer operand, an
+             * overflow -- re-decodes in the shared handler for the whole
+             * family, which keeps the slow paths and the deopt rewrite in
+             * one place. */
+#define INT_REGISTER_OPERANDS()                                              \
+                READ_OPERANDS(6);                                            \
+                const DiamondValue r_left=registers[OPERAND_SHORT(2)];       \
+                const DiamondValue r_right=registers[OPERAND_SHORT(4)]
+#define INT_REGISTER_ARITHMETIC(name_, checked_)                             \
+            case DIAMOND_OP_##name_: op_##name_: {                           \
+                INT_REGISTER_OPERANDS();                                     \
+                int64_t r_value=0;                                           \
+                if(r_left.kind==DIAMOND_VALUE_INT&&                          \
+                   r_right.kind==DIAMOND_VALUE_INT&&                         \
+                   !checked_(&r_value,r_left.as.integer,r_right.as.integer)) {\
+                    registers[OPERAND_SHORT(0)]=DIAMOND_INT(r_value);        \
+                    DISPATCH_NEXT();                                         \
+                }                                                            \
+                ip=instruction_offset+1;                                     \
+                goto op_SUBTRACT;                                            \
+            }
+#define INT_REGISTER_COMPARISON(name_, compare_, family_)                    \
+            case DIAMOND_OP_##name_: op_##name_: {                           \
+                INT_REGISTER_OPERANDS();                                     \
+                if(r_left.kind==DIAMOND_VALUE_INT&&                          \
+                   r_right.kind==DIAMOND_VALUE_INT) {                        \
+                    registers[OPERAND_SHORT(0)]=DIAMOND_BOOL(                \
+                        r_left.as.integer compare_ r_right.as.integer);      \
+                    DISPATCH_NEXT();                                         \
+                }                                                            \
+                ip=instruction_offset+1;                                     \
+                goto family_;                                                \
+            }
+            INT_REGISTER_ARITHMETIC(ADD_INT, ckd_add)
+            INT_REGISTER_ARITHMETIC(SUBTRACT_INT, ckd_sub)
+            INT_REGISTER_ARITHMETIC(MULTIPLY_INT, ckd_mul)
+            INT_REGISTER_COMPARISON(LESS_INT, <, op_LESS)
+            INT_REGISTER_COMPARISON(LESS_EQUAL_INT, <=, op_LESS)
+            INT_REGISTER_COMPARISON(GREATER_INT, >, op_LESS)
+            INT_REGISTER_COMPARISON(GREATER_EQUAL_INT, >=, op_LESS)
+            INT_REGISTER_COMPARISON(EQUAL_INT, ==, op_EQUAL)
+            INT_REGISTER_COMPARISON(NOT_EQUAL_INT, !=, op_EQUAL)
+#undef INT_REGISTER_ARITHMETIC
+#undef INT_REGISTER_COMPARISON
+#undef INT_REGISTER_OPERANDS
+            case DIAMOND_OP_SUBTRACT: op_SUBTRACT:
+            case DIAMOND_OP_MULTIPLY: op_MULTIPLY:
+            case DIAMOND_OP_DIVIDE: op_DIVIDE:
+            case DIAMOND_OP_DIVIDE_INT: op_DIVIDE_INT: {
                 DiamondOpCode opcode = (DiamondOpCode)instruction;
                 uint16_t destination = 0;
                 uint16_t left = 0;
@@ -826,7 +1173,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                         overflow=ckd_mul(&result_value,left_value,right_value);
                     if(!divide&&!overflow) {
                         registers[destination]=DIAMOND_INT(result_value);
-                        break;
+                        DISPATCH_NEXT();
                     }
                     if(divide&&right_value!=0&&!(left_value==INT64_MIN&&right_value==-1)) {
                         registers[destination]=DIAMOND_INT(left_value/right_value);
@@ -840,7 +1187,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 registers[destination]=slow_result;
                 break;
             }
-            case DIAMOND_OP_SHIFT_LEFT: {
+            case DIAMOND_OP_SHIFT_LEFT: op_SHIFT_LEFT: {
                 /* Int << Int: bitwise left shift. Array << value: push and
                  * return the array itself (Ruby's append idiom). Not a
                  * user-overloadable operator (see docs/syntax.md) -- no
@@ -896,7 +1243,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     "'<<' expects an Int shift amount or a value to push onto an Array");
                 VM_RETURN(DIAMOND_VM_TYPE_ERROR);
             }
-            case DIAMOND_OP_SHIFT_RIGHT: {
+            case DIAMOND_OP_SHIFT_RIGHT: op_SHIFT_RIGHT: {
                 /* Int only (a bignum on either side is handled below, not
                  * user-overloadable, no quickening; see SHIFT_LEFT). Arithmetic (sign-extending),
                  * matching Ruby's own Integer#>>, and well-defined for a
@@ -930,9 +1277,9 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 registers[destination]=shifted;
                 break;
             }
-            case DIAMOND_OP_BITWISE_AND:
-            case DIAMOND_OP_BITWISE_OR:
-            case DIAMOND_OP_BITWISE_XOR: {
+            case DIAMOND_OP_BITWISE_AND: op_BITWISE_AND:
+            case DIAMOND_OP_BITWISE_OR: op_BITWISE_OR:
+            case DIAMOND_OP_BITWISE_XOR: op_BITWISE_XOR: {
                 /* Int only, same scope cut as SHIFT_LEFT/SHIFT_RIGHT
                  * above. All three share one case body -- the only
                  * difference between them is which C operator runs.
@@ -979,7 +1326,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 registers[destination]=DIAMOND_INT(bitwise_result);
                 break;
             }
-            case DIAMOND_OP_CLASS_NAME: {
+            case DIAMOND_OP_CLASS_NAME: op_CLASS_NAME: {
                 uint16_t destination=0,source=0;
                 READ_SHORT(destination);READ_SHORT(source);
                 char name[80];
@@ -989,7 +1336,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 registers[destination]=DIAMOND_OBJECT(class_name);
                 break;
             }
-            case DIAMOND_OP_MODULO: {
+            case DIAMOND_OP_MODULO: op_MODULO: {
                 /* Floored modulo (result takes the divisor's sign),
                  * matching Ruby -- not C's truncating `%` (which takes
                  * the dividend's sign). Two plain Ints with a divisor
@@ -1021,7 +1368,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 registers[destination]=modulo_result;
                 break;
             }
-            case DIAMOND_OP_NEGATE: {
+            case DIAMOND_OP_NEGATE: op_NEGATE: {
                 uint16_t destination = 0;
                 uint16_t operand = 0;
                 READ_OPERANDS(4);
@@ -1075,10 +1422,8 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 registers[destination] = DIAMOND_INT(result_value);
                 break;
             }
-            case DIAMOND_OP_EQUAL:
-            case DIAMOND_OP_NOT_EQUAL:
-            case DIAMOND_OP_EQUAL_INT:
-            case DIAMOND_OP_NOT_EQUAL_INT: {
+            case DIAMOND_OP_EQUAL: op_EQUAL:
+            case DIAMOND_OP_NOT_EQUAL: op_NOT_EQUAL: {
                 DiamondOpCode opcode = (DiamondOpCode)instruction;
                 uint16_t destination = 0;
                 uint16_t left = 0;
@@ -1135,14 +1480,10 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 }
                 break;
             }
-            case DIAMOND_OP_LESS:
-            case DIAMOND_OP_LESS_EQUAL:
-            case DIAMOND_OP_GREATER:
-            case DIAMOND_OP_GREATER_EQUAL:
-            case DIAMOND_OP_LESS_INT:
-            case DIAMOND_OP_LESS_EQUAL_INT:
-            case DIAMOND_OP_GREATER_INT:
-            case DIAMOND_OP_GREATER_EQUAL_INT: {
+            case DIAMOND_OP_LESS: op_LESS:
+            case DIAMOND_OP_LESS_EQUAL: op_LESS_EQUAL:
+            case DIAMOND_OP_GREATER: op_GREATER:
+            case DIAMOND_OP_GREATER_EQUAL: op_GREATER_EQUAL: {
                 DiamondOpCode opcode = (DiamondOpCode)instruction;
                 uint16_t destination = 0;
                 uint16_t left = 0;
@@ -1192,7 +1533,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                         comparison=a>b;
                     else comparison=a>=b;
                     registers[destination]=DIAMOND_BOOL(comparison);
-                    break;
+                    DISPATCH_NEXT();
                 }
                 DiamondValue slow_result=DIAMOND_NIL;
                 const DiamondVmStatus slow_status=compare_int_slow(vm,chunk,depth,
@@ -1218,7 +1559,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
              * transformer's own workarounds sorting by an extracted Int
              * key instead). Time keeps its own separate working
              * comparisons untouched. */
-            case DIAMOND_OP_COMPARE: {
+            case DIAMOND_OP_COMPARE: op_COMPARE: {
                 uint16_t destination=0,left=0,right=0;
                 READ_OPERANDS(6);
                 destination=OPERAND_SHORT(0); left=OPERAND_SHORT(2); right=OPERAND_SHORT(4);
@@ -1278,7 +1619,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 }
                 registers[destination]=DIAMOND_NIL;break;
             }
-            case DIAMOND_OP_CASE_MATCH: {
+            case DIAMOND_OP_CASE_MATCH: op_CASE_MATCH: {
                 uint16_t destination=0,pattern=0,subject=0;
                 READ_SHORT(destination);READ_SHORT(pattern);READ_SHORT(subject);
                 bool matched=false;
@@ -1288,7 +1629,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 VM_PROPAGATE(status);
                 registers[destination]=DIAMOND_BOOL(matched);break;
             }
-            case DIAMOND_OP_JUMP: {
+            case DIAMOND_OP_JUMP: op_JUMP: {
                 uint8_t high = 0;
                 uint8_t low = 0;
                 READ_OPERANDS(2);
@@ -1298,9 +1639,9 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
                 }
                 ip = target;
-                break;
+                DISPATCH_NEXT();
             }
-            case DIAMOND_OP_JUMP_IF_FALSE: {
+            case DIAMOND_OP_JUMP_IF_FALSE: op_JUMP_IF_FALSE: {
                 uint16_t condition = 0;
                 uint8_t high = 0;
                 uint8_t low = 0;
@@ -1313,18 +1654,18 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 if (!is_truthy(registers[condition])) {
                     ip = target;
                 }
-                break;
+                DISPATCH_NEXT();
             }
-            case DIAMOND_OP_JUMP_IF_TRUE: {
+            case DIAMOND_OP_JUMP_IF_TRUE: op_JUMP_IF_TRUE: {
                 uint16_t condition=0;uint8_t high=0,low=0;
                 READ_OPERANDS(4);
                 condition=OPERAND_SHORT(0); high=OPERAND_BYTE(2); low=OPERAND_BYTE(3);
                 const size_t target=((size_t)high<<8)|low;
                 if(target>bytecode_count) VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
                 if(is_truthy(registers[condition])) ip=target;
-                break;
+                DISPATCH_NEXT();
             }
-            case DIAMOND_OP_CALL: {
+            case DIAMOND_OP_CALL: op_CALL: {
                 uint16_t destination = 0;
                 uint16_t function_index = 0;
                 uint16_t argument_base = 0;
@@ -1355,9 +1696,9 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     depth, nullptr, &call_result);
                 VM_PROPAGATE(status);
                 registers[destination] = call_result;
-                break;
+                DISPATCH_NEXT();
             }
-            case DIAMOND_OP_TAIL_CALL: {
+            case DIAMOND_OP_TAIL_CALL: op_TAIL_CALL: {
                 /* Produced only by the compiler rewriting a plain CALL in
                  * tail position (maybe_rewrite_self_tail_call and
                  * rewrite_cyclic_tail_calls, src/compiler.c), whose result
@@ -1512,7 +1853,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 ip = 0;
                 break;
             }
-            case DIAMOND_OP_CALL_TYPED: {
+            case DIAMOND_OP_CALL_TYPED: op_CALL_TYPED: {
                 uint16_t destination=0,argument_base=0;
                 uint16_t function_index=0;
                 uint8_t call_argument_count=0,type_argument_count=0;
@@ -1572,15 +1913,15 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 registers[destination]=call_result;
                 break;
             }
-            case DIAMOND_OP_CALL_SPREAD:
-            case DIAMOND_OP_CALL_TYPED_SPREAD:
-            case DIAMOND_OP_CALL_KEYWORD_SPREAD:
-            case DIAMOND_OP_CALL_TYPED_KEYWORD_SPREAD: {
+            case DIAMOND_OP_CALL_SPREAD: op_CALL_SPREAD:
+            case DIAMOND_OP_CALL_TYPED_SPREAD: op_CALL_TYPED_SPREAD:
+            case DIAMOND_OP_CALL_KEYWORD_SPREAD: op_CALL_KEYWORD_SPREAD:
+            case DIAMOND_OP_CALL_TYPED_KEYWORD_SPREAD: op_CALL_TYPED_KEYWORD_SPREAD: {
                 ip_slot=ip;const DiamondVmStatus helper_status=outlined_call_spread(vm,chunk,registers,depth,instruction,&ip_slot);ip=ip_slot;
                 VM_PROPAGATE(helper_status);
                 break;
             }
-            case DIAMOND_OP_BUILD_SPREAD_ARGS: {
+            case DIAMOND_OP_BUILD_SPREAD_ARGS: op_BUILD_SPREAD_ARGS: {
                 uint16_t destination=0,prefix_base=0,spread_register=0,
                     suffix_base=0;
                 uint8_t prefix_count=0,suffix_count=0;
@@ -1623,19 +1964,19 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 }
                 break;
             }
-            case DIAMOND_OP_CALL_SINGLETON_KEYWORDS:
-            case DIAMOND_OP_CALL_TYPED_SINGLETON_KEYWORDS: {
+            case DIAMOND_OP_CALL_SINGLETON_KEYWORDS: op_CALL_SINGLETON_KEYWORDS:
+            case DIAMOND_OP_CALL_TYPED_SINGLETON_KEYWORDS: op_CALL_TYPED_SINGLETON_KEYWORDS: {
                 ip_slot=ip;const DiamondVmStatus helper_status=outlined_call_singleton_keywords(vm,chunk,registers,depth,instruction,&ip_slot);ip=ip_slot;
                 VM_PROPAGATE(helper_status);
                 break;
             }
-            case DIAMOND_OP_CALL_SINGLETON_SPREAD:
-            case DIAMOND_OP_CALL_TYPED_SINGLETON_SPREAD: {
+            case DIAMOND_OP_CALL_SINGLETON_SPREAD: op_CALL_SINGLETON_SPREAD:
+            case DIAMOND_OP_CALL_TYPED_SINGLETON_SPREAD: op_CALL_TYPED_SINGLETON_SPREAD: {
                 ip_slot=ip;const DiamondVmStatus helper_status=outlined_call_singleton_spread(vm,chunk,registers,depth,instruction,&ip_slot);ip=ip_slot;
                 VM_PROPAGATE(helper_status);
                 break;
             }
-            case DIAMOND_OP_CLOSURE: {
+            case DIAMOND_OP_CLOSURE: op_CLOSURE: {
                 uint16_t dest=0;uint8_t count=0;uint16_t index=0;
                 READ_OPERANDS(5);
                 dest=OPERAND_SHORT(0); index=OPERAND_SHORT(2); count=OPERAND_BYTE(4);
@@ -1665,7 +2006,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 }
                 registers[dest]=DIAMOND_OBJECT(created);break;
             }
-            case DIAMOND_OP_GET_CAPTURE: {
+            case DIAMOND_OP_GET_CAPTURE: op_GET_CAPTURE: {
                 uint16_t dest=0,index=0;READ_OPERANDS(4);
                 dest=OPERAND_SHORT(0); index=OPERAND_SHORT(2);
                 if(closure==nullptr||index>=closure->capture_count)VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
@@ -1674,7 +2015,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
                 registers[dest]=((DiamondCell *)captured.as.object)->value;break;
             }
-            case DIAMOND_OP_GET_CAPTURE_CELL: {
+            case DIAMOND_OP_GET_CAPTURE_CELL: op_GET_CAPTURE_CELL: {
                 uint16_t dest=0,index=0;READ_OPERANDS(4);
                 dest=OPERAND_SHORT(0); index=OPERAND_SHORT(2);
                 if(closure==nullptr||index>=closure->capture_count)VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
@@ -1683,7 +2024,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
                 registers[dest]=captured;break;
             }
-            case DIAMOND_OP_SET_CAPTURE: {
+            case DIAMOND_OP_SET_CAPTURE: op_SET_CAPTURE: {
                 uint16_t index=0,source=0;READ_OPERANDS(4);
                 index=OPERAND_SHORT(0); source=OPERAND_SHORT(2);
                 if(closure==nullptr||index>=closure->capture_count)VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
@@ -1695,7 +2036,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
                 break;
             }
-            case DIAMOND_OP_BOX_LOCAL: {
+            case DIAMOND_OP_BOX_LOCAL: op_BOX_LOCAL: {
                 uint16_t reg=0;READ_SHORT(reg);
                 if(registers[reg].kind==DIAMOND_VALUE_OBJECT&&
                    registers[reg].as.object->kind==DIAMOND_OBJECT_CELL)break;
@@ -1703,14 +2044,14 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 if(cell==nullptr)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
                 registers[reg]=DIAMOND_OBJECT(cell);break;
             }
-            case DIAMOND_OP_GET_CELL: {
+            case DIAMOND_OP_GET_CELL: op_GET_CELL: {
                 uint16_t dest=0,cell_reg=0;READ_OPERANDS(4);
                 dest=OPERAND_SHORT(0); cell_reg=OPERAND_SHORT(2);
                 if(registers[cell_reg].kind!=DIAMOND_VALUE_OBJECT||
                    registers[cell_reg].as.object->kind!=DIAMOND_OBJECT_CELL)VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
                 registers[dest]=((DiamondCell *)registers[cell_reg].as.object)->value;break;
             }
-            case DIAMOND_OP_SET_CELL: {
+            case DIAMOND_OP_SET_CELL: op_SET_CELL: {
                 uint16_t cell_reg=0,source=0;READ_OPERANDS(4);
                 cell_reg=OPERAND_SHORT(0); source=OPERAND_SHORT(2);
                 if(registers[cell_reg].kind!=DIAMOND_VALUE_OBJECT||
@@ -1720,7 +2061,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
                 break;
             }
-            case DIAMOND_OP_CALL_CLOSURE: {
+            case DIAMOND_OP_CALL_CLOSURE: op_CALL_CLOSURE: {
                 uint16_t dest=0,callable=0,base=0;uint8_t argc=0;
                 READ_OPERANDS(7);
                 dest=OPERAND_SHORT(0);
@@ -1755,7 +2096,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 VM_PROPAGATE(status);
                 registers[dest]=call_result;break;
             }
-            case DIAMOND_OP_CALL_CLOSURE_KEYWORDS: {
+            case DIAMOND_OP_CALL_CLOSURE_KEYWORDS: op_CALL_CLOSURE_KEYWORDS: {
                 uint16_t dest=0,callable=0,positional_register=0;
                 uint8_t keyword_count=0;uint16_t keyword_names[DIAMOND_MAX_DECLARED_PARAMETERS];
                 uint16_t keyword_registers[DIAMOND_MAX_DECLARED_PARAMETERS];
@@ -1806,7 +2147,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     fn,called,&merged_array,depth,&call_result);
                 free(merged);VM_PROPAGATE(status);registers[dest]=call_result;break;
             }
-            case DIAMOND_OP_CALL_CLOSURE_SPREAD: {
+            case DIAMOND_OP_CALL_CLOSURE_SPREAD: op_CALL_CLOSURE_SPREAD: {
                 uint16_t dest=0,callable=0,spread_register=0;
                 READ_SHORT(dest);READ_SHORT(callable);READ_SHORT(spread_register);
                 if(registers[callable].kind!=DIAMOND_VALUE_OBJECT||
@@ -1838,7 +2179,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 VM_PROPAGATE(status);
                 registers[dest]=call_result;break;
             }
-            case DIAMOND_OP_NEW: {
+            case DIAMOND_OP_NEW: op_NEW: {
                 uint16_t dest=0,base=0;uint16_t ci=0;uint8_t argc=0;
                 READ_OPERANDS(7);
                 dest=OPERAND_SHORT(0);
@@ -1850,8 +2191,8 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 VM_PROPAGATE(s);
                 break;
             }
-            case DIAMOND_OP_NEW_TYPED:
-            case DIAMOND_OP_NEW_KEYWORDS: {
+            case DIAMOND_OP_NEW_TYPED: op_NEW_TYPED:
+            case DIAMOND_OP_NEW_KEYWORDS: op_NEW_KEYWORDS: {
                 uint16_t destination=0,positional_register=0;
                 uint16_t class_index=0;uint8_t keyword_count=0;uint16_t keyword_names[DIAMOND_MAX_DECLARED_PARAMETERS];
                 uint16_t keyword_registers[DIAMOND_MAX_DECLARED_PARAMETERS];
@@ -1924,26 +2265,26 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 gc_unprotect(vm,protected_count);VM_PROPAGATE(status);
                 registers[destination]=constructor_result;break;
             }
-            case DIAMOND_OP_NEW_SPREAD: {
+            case DIAMOND_OP_NEW_SPREAD: op_NEW_SPREAD: {
                 ip_slot=ip;const DiamondVmStatus helper_status=outlined_new_spread(vm,chunk,registers,depth,&ip_slot);ip=ip_slot;
                 VM_PROPAGATE(helper_status);
                 break;
             }
-            case DIAMOND_OP_INVOKE_KEYWORDS:
-            case DIAMOND_OP_INVOKE_TYPED_KEYWORDS: {
+            case DIAMOND_OP_INVOKE_KEYWORDS: op_INVOKE_KEYWORDS:
+            case DIAMOND_OP_INVOKE_TYPED_KEYWORDS: op_INVOKE_TYPED_KEYWORDS: {
                 ip_slot=ip;const DiamondVmStatus helper_status=outlined_invoke_keywords(vm,chunk,registers,depth,instruction,&ip_slot);ip=ip_slot;
                 VM_PROPAGATE(helper_status);
                 break;
             }
-            case DIAMOND_OP_INVOKE_SPREAD:
-            case DIAMOND_OP_INVOKE_TYPED_SPREAD: {
+            case DIAMOND_OP_INVOKE_SPREAD: op_INVOKE_SPREAD:
+            case DIAMOND_OP_INVOKE_TYPED_SPREAD: op_INVOKE_TYPED_SPREAD: {
                 ip_slot=ip;const DiamondVmStatus helper_status=outlined_invoke_spread(vm,chunk,registers,depth,instruction,&ip_slot);ip=ip_slot;
                 VM_PROPAGATE(helper_status);
                 break;
             }
-            case DIAMOND_OP_INVOKE:
-            case DIAMOND_OP_INVOKE_MONO:
-            case DIAMOND_OP_INVOKE_TYPED: {
+            case DIAMOND_OP_INVOKE: op_INVOKE:
+            case DIAMOND_OP_INVOKE_MONO: op_INVOKE_MONO:
+            case DIAMOND_OP_INVOKE_TYPED: op_INVOKE_TYPED: {
                 READ_OPERANDS(9);
                 const uint16_t dest=OPERAND_SHORT(0);
                 const uint16_t recv=OPERAND_SHORT(2);
@@ -2217,9 +2558,9 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     type_argument_count,type_arguments,depth,&call_result);
                 VM_PROPAGATE(status);
                 registers[dest]=call_result;
-                break;
+                DISPATCH_NEXT();
             }
-            case DIAMOND_OP_SUPER: {
+            case DIAMOND_OP_SUPER: op_SUPER: {
                 uint16_t dest=0,base=0,name=0;uint16_t owner_index=0;uint8_t argc=0;
                 READ_SHORT(dest);READ_SHORT(owner_index);READ_SHORT(name);
                 READ_SHORT(base); READ_BYTE(argc);
@@ -2230,7 +2571,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 registers[dest]=call_result;
                 break;
             }
-            case DIAMOND_OP_GET_IVAR: {
+            case DIAMOND_OP_GET_IVAR: op_GET_IVAR: {
                 /* A thin wrapper around diamond_jit_get_ivar -- the same
                  * function src/jit.c's own ivar-read codegen calls --
                  * mirroring DIAMOND_OP_SET_IVAR's own treatment just below.
@@ -2253,9 +2594,9 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 const DiamondVmStatus get_ivar_status=diamond_jit_get_ivar(vm,site,
                     &registers[recv],(uint8_t)field_operand,&registers[dest]);
                 VM_PROPAGATE(get_ivar_status);
-                break;
+                DISPATCH_NEXT();
             }
-            case DIAMOND_OP_SET_IVAR: {
+            case DIAMOND_OP_SET_IVAR: op_SET_IVAR: {
                 /* A thin wrapper around diamond_jit_set_ivar -- the same
                  * function src/jit.c's own ivar-write codegen calls --
                  * rather than a second, independent copy of its real
@@ -2286,10 +2627,10 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 const DiamondVmStatus set_ivar_status=diamond_jit_set_ivar(vm,site,
                     &registers[recv],(uint8_t)field_operand,&registers[source]);
                 VM_PROPAGATE(set_ivar_status);
-                break;
+                DISPATCH_NEXT();
             }
-            case DIAMOND_OP_GET_IVAR_NAME:
-            case DIAMOND_OP_SET_IVAR_NAME: {
+            case DIAMOND_OP_GET_IVAR_NAME: op_GET_IVAR_NAME:
+            case DIAMOND_OP_SET_IVAR_NAME: op_SET_IVAR_NAME: {
                 const uint8_t *site=&bytecode[instruction_offset];
                 uint16_t first=0,receiver=0,name=0;
                 READ_SHORT(first);READ_SHORT(receiver);READ_SHORT(name);
@@ -2322,7 +2663,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     instance->fields[field]:DIAMOND_NIL;
                 break;
             }
-            case DIAMOND_OP_GET_NAMESPACE_CONSTANT: {
+            case DIAMOND_OP_GET_NAMESPACE_CONSTANT: op_GET_NAMESPACE_CONSTANT: {
                 uint16_t destination=0,index=0;READ_SHORT(destination);READ_SHORT(index);
                 if(index>=DIAMOND_MAX_NAMESPACE_CONSTANTS)
                     VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
@@ -2336,7 +2677,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 }
                 registers[destination]=vm->namespace_constants[index];break;
             }
-            case DIAMOND_OP_SET_NAMESPACE_CONSTANT: {
+            case DIAMOND_OP_SET_NAMESPACE_CONSTANT: op_SET_NAMESPACE_CONSTANT: {
                 uint16_t index=0,source=0;READ_SHORT(index);READ_SHORT(source);
                 if(index>=DIAMOND_MAX_NAMESPACE_CONSTANTS)
                     VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
@@ -2358,21 +2699,21 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
              * either could ever be out of range here is malformed
              * bytecode -- same defensive bounds-check convention
              * DIAMOND_OP_NEW's own class index uses. */
-            case DIAMOND_OP_GET_CVAR: {
+            case DIAMOND_OP_GET_CVAR: op_GET_CVAR: {
                 uint16_t destination=0,class_index=0,slot=0;
                 READ_SHORT(destination);READ_SHORT(class_index);READ_SHORT(slot);
                 const DiamondVmStatus status=
                     get_cvar_helper(vm,chunk,class_index,slot,&registers[destination]);
                 VM_PROPAGATE(status);break;
             }
-            case DIAMOND_OP_SET_CVAR: {
+            case DIAMOND_OP_SET_CVAR: op_SET_CVAR: {
                 uint16_t class_index=0,slot=0,source=0;
                 READ_SHORT(class_index);READ_SHORT(slot);READ_SHORT(source);
                 const DiamondVmStatus status=
                     set_cvar_helper(vm,chunk,class_index,slot,registers[source]);
                 VM_PROPAGATE(status);break;
             }
-            case DIAMOND_OP_CHECK_TYPE: {
+            case DIAMOND_OP_CHECK_TYPE: op_CHECK_TYPE: {
                 uint16_t source=0,set_index=0; READ_OPERANDS(4);
                 source=OPERAND_SHORT(0); set_index=OPERAND_SHORT(2);
                 if(set_index>=chunk->type_set_count)
@@ -2383,9 +2724,9 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     report_check_type_failure(vm,chunk,registers[source],set_index);
                     VM_RETURN(DIAMOND_VM_TYPE_ERROR);
                 }
-                break;
+                DISPATCH_NEXT();
             }
-            case DIAMOND_OP_CHECK_SELF_RETURN: {
+            case DIAMOND_OP_CHECK_SELF_RETURN: op_CHECK_SELF_RETURN: {
                 uint16_t source=0,others=0,receiver=0; READ_OPERANDS(6);
                 source=OPERAND_SHORT(0); others=OPERAND_SHORT(2); receiver=OPERAND_SHORT(4);
                 const DiamondVmStatus self_status=check_self_return(vm,chunk,registers[source],
@@ -2417,7 +2758,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
              * ERROR status (the same one the SQLite3 driver's own bound-
              * parameter-count check reuses) rather than a new exception
              * class, for the same "wrong count of things" shape. */
-            case DIAMOND_OP_CHECK_DESTRUCTURE_COUNT: {
+            case DIAMOND_OP_CHECK_DESTRUCTURE_COUNT: op_CHECK_DESTRUCTURE_COUNT: {
                 uint16_t array_reg=0,expected=0;
                 READ_SHORT(array_reg); READ_SHORT(expected);
                 const bool minimum=(expected&0x8000u)!=0;
@@ -2439,7 +2780,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 }
                 break;
             }
-            case DIAMOND_OP_CASE_ARRAY_SHAPE: {
+            case DIAMOND_OP_CASE_ARRAY_SHAPE: op_CASE_ARRAY_SHAPE: {
                 uint16_t destination=0,array_reg=0,expected=0;
                 READ_SHORT(destination);READ_SHORT(array_reg);READ_SHORT(expected);
                 const bool minimum=(expected&0x8000u)!=0;
@@ -2453,7 +2794,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 }
                 registers[destination]=DIAMOND_BOOL(matches);break;
             }
-            case DIAMOND_OP_ARRAY_REST: {
+            case DIAMOND_OP_ARRAY_REST: op_ARRAY_REST: {
                 uint16_t destination=0,array_reg=0,start=0;
                 READ_SHORT(destination);READ_SHORT(array_reg);READ_SHORT(start);
                 if(registers[array_reg].kind!=DIAMOND_VALUE_OBJECT||
@@ -2468,7 +2809,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 if(rest==nullptr)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
                 registers[destination]=DIAMOND_OBJECT(rest);break;
             }
-            case DIAMOND_OP_CASE_HASH_SHAPE: {
+            case DIAMOND_OP_CASE_HASH_SHAPE: op_CASE_HASH_SHAPE: {
                 uint16_t destination=0,source=0;
                 READ_SHORT(destination);READ_SHORT(source);
                 registers[destination]=DIAMOND_BOOL(
@@ -2476,7 +2817,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     registers[source].as.object->kind==DIAMOND_OBJECT_HASH);
                 break;
             }
-            case DIAMOND_OP_CASE_HASH_HAS: {
+            case DIAMOND_OP_CASE_HASH_HAS: op_CASE_HASH_HAS: {
                 uint16_t destination=0,source=0,key=0;
                 READ_SHORT(destination);READ_SHORT(source);READ_SHORT(key);
                 bool present=false;
@@ -2486,7 +2827,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                         registers[key])>=0;
                 registers[destination]=DIAMOND_BOOL(present);break;
             }
-            case DIAMOND_OP_HASH_REST: {
+            case DIAMOND_OP_HASH_REST: op_HASH_REST: {
                 uint16_t destination=0,source_reg=0,excluded_reg=0;
                 READ_SHORT(destination);READ_SHORT(source_reg);READ_SHORT(excluded_reg);
                 if(registers[source_reg].kind!=DIAMOND_VALUE_OBJECT||
@@ -2512,7 +2853,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 }
                 break;
             }
-            case DIAMOND_OP_ARRAY_MIDDLE: {
+            case DIAMOND_OP_ARRAY_MIDDLE: op_ARRAY_MIDDLE: {
                 uint16_t destination=0,source_reg=0,bounds=0;
                 READ_SHORT(destination);READ_SHORT(source_reg);READ_SHORT(bounds);
                 if(registers[source_reg].kind!=DIAMOND_VALUE_OBJECT||
@@ -2529,7 +2870,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 if(middle==nullptr)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
                 registers[destination]=DIAMOND_OBJECT(middle);break;
             }
-            case DIAMOND_OP_ARRAY_SUFFIX: {
+            case DIAMOND_OP_ARRAY_SUFFIX: op_ARRAY_SUFFIX: {
                 uint16_t destination=0,source_reg=0,reverse=0;
                 READ_SHORT(destination);READ_SHORT(source_reg);READ_SHORT(reverse);
                 if(registers[source_reg].kind!=DIAMOND_VALUE_OBJECT||
@@ -2541,7 +2882,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
                 registers[destination]=source->values[source->count-reverse];break;
             }
-            case DIAMOND_OP_CHECK_HASH_KEY: {
+            case DIAMOND_OP_CHECK_HASH_KEY: op_CHECK_HASH_KEY: {
                 uint16_t source_reg=0,key_reg=0;
                 READ_SHORT(source_reg);READ_SHORT(key_reg);
                 if(registers[source_reg].kind!=DIAMOND_VALUE_OBJECT||
@@ -2563,7 +2904,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
              * (see docs/threads.md); this is deliberately just enough to
              * measure an elapsed duration (e.g. a request-timing rack
              * middleware), not a step toward one. */
-            case DIAMOND_OP_TIME_MONOTONIC: {
+            case DIAMOND_OP_TIME_MONOTONIC: op_TIME_MONOTONIC: {
                 uint16_t destination=0;
                 READ_SHORT(destination);
                 struct timespec now={};
@@ -2572,7 +2913,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     DIAMOND_FLOAT((double)now.tv_sec+(double)now.tv_nsec/1e9);
                 break;
             }
-            case DIAMOND_OP_TIME_NOW: {
+            case DIAMOND_OP_TIME_NOW: op_TIME_NOW: {
                 /* VM_PROPAGATE's argument is expanded multiple times (see
                  * its own definition) -- a function call passed directly
                  * would run time_now_helper up to 3x on any non-OK status,
@@ -2585,7 +2926,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 VM_PROPAGATE(time_status);
                 break;
             }
-            case DIAMOND_OP_TIME_AT: {
+            case DIAMOND_OP_TIME_AT: op_TIME_AT: {
                 uint16_t destination=0,epoch_register=0;
                 READ_SHORT(destination);READ_SHORT(epoch_register);
                 const DiamondVmStatus time_status=
@@ -2593,7 +2934,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 VM_PROPAGATE(time_status);
                 break;
             }
-            case DIAMOND_OP_TIME_PARSE: {
+            case DIAMOND_OP_TIME_PARSE: op_TIME_PARSE: {
                 uint16_t destination=0,string_register=0;
                 READ_SHORT(destination);READ_SHORT(string_register);
                 const DiamondVmStatus time_status=time_parse_helper(vm,
@@ -2601,7 +2942,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 VM_PROPAGATE(time_status);
                 break;
             }
-            case DIAMOND_OP_TIME_BUILD: {
+            case DIAMOND_OP_TIME_BUILD: op_TIME_BUILD: {
                 uint16_t destination=0,base_register=0;uint8_t mode=0;
                 READ_SHORT(destination);READ_SHORT(base_register);READ_BYTE(mode);
                 const DiamondVmStatus time_status=time_build_helper(vm,
@@ -2609,7 +2950,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 VM_PROPAGATE(time_status);
                 break;
             }
-            case DIAMOND_OP_TENSOR_ZEROS: {
+            case DIAMOND_OP_TENSOR_ZEROS: op_TENSOR_ZEROS: {
                 uint16_t dest=0,rows_reg=0,cols_reg=0;
                 READ_SHORT(dest);READ_SHORT(rows_reg);READ_SHORT(cols_reg);
                 if(registers[rows_reg].kind!=DIAMOND_VALUE_INT||
@@ -2630,7 +2971,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 registers[dest]=DIAMOND_OBJECT(tensor);
                 break;
             }
-            case DIAMOND_OP_TENSOR_FROM_ARRAY: {
+            case DIAMOND_OP_TENSOR_FROM_ARRAY: op_TENSOR_FROM_ARRAY: {
                 uint16_t dest=0,array_reg=0;
                 READ_SHORT(dest);READ_SHORT(array_reg);
                 if(registers[array_reg].kind!=DIAMOND_VALUE_OBJECT||
@@ -2644,7 +2985,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 VM_PROPAGATE(from_array_status);
                 break;
             }
-            case DIAMOND_OP_TENSOR_RANDOM: {
+            case DIAMOND_OP_TENSOR_RANDOM: op_TENSOR_RANDOM: {
                 uint16_t dest=0,rows_reg=0,cols_reg=0,seed_reg=0;
                 READ_SHORT(dest);READ_SHORT(rows_reg);READ_SHORT(cols_reg);READ_SHORT(seed_reg);
                 if(registers[rows_reg].kind!=DIAMOND_VALUE_INT||
@@ -2667,8 +3008,8 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 tensor_random_helper(tensor,registers[seed_reg].as.integer);
                 break;
             }
-            case DIAMOND_OP_PROCESS_RUN:
-            case DIAMOND_OP_PROCESS_RUN_OPTIONS: {
+            case DIAMOND_OP_PROCESS_RUN: op_PROCESS_RUN:
+            case DIAMOND_OP_PROCESS_RUN_OPTIONS: op_PROCESS_RUN_OPTIONS: {
                 uint16_t destination=0,argv_register=0,options_register=UINT16_MAX;
                 READ_SHORT(destination);READ_SHORT(argv_register);
                 if(instruction==DIAMOND_OP_PROCESS_RUN_OPTIONS)READ_SHORT(options_register);
@@ -2691,8 +3032,8 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 VM_PROPAGATE(run_status);
                 break;
             }
-            case DIAMOND_OP_PROCESS_SPAWN:
-            case DIAMOND_OP_PROCESS_SPAWN_OPTIONS: {
+            case DIAMOND_OP_PROCESS_SPAWN: op_PROCESS_SPAWN:
+            case DIAMOND_OP_PROCESS_SPAWN_OPTIONS: op_PROCESS_SPAWN_OPTIONS: {
                 uint16_t destination=0,argv_register=0,options_register=UINT16_MAX;
                 READ_SHORT(destination);READ_SHORT(argv_register);
                 if(instruction==DIAMOND_OP_PROCESS_SPAWN_OPTIONS)READ_SHORT(options_register);
@@ -2715,7 +3056,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 VM_PROPAGATE(spawn_status);
                 break;
             }
-            case DIAMOND_OP_BCRYPT_HASH: {
+            case DIAMOND_OP_BCRYPT_HASH: op_BCRYPT_HASH: {
                 uint16_t destination=0,password_register=0,cost_register=0;
                 READ_SHORT(destination);READ_SHORT(password_register);
                 READ_SHORT(cost_register);
@@ -2725,7 +3066,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 VM_PROPAGATE(hash_status);
                 break;
             }
-            case DIAMOND_OP_BCRYPT_VERIFY: {
+            case DIAMOND_OP_BCRYPT_VERIFY: op_BCRYPT_VERIFY: {
                 uint16_t destination=0,password_register=0,digest_register=0;
                 READ_SHORT(destination);READ_SHORT(password_register);
                 READ_SHORT(digest_register);
@@ -2735,7 +3076,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 VM_PROPAGATE(verify_status);
                 break;
             }
-            case DIAMOND_OP_SECURE_RANDOM_BYTES: {
+            case DIAMOND_OP_SECURE_RANDOM_BYTES: op_SECURE_RANDOM_BYTES: {
                 uint16_t destination=0,count_register=0;
                 READ_SHORT(destination);READ_SHORT(count_register);
                 const DiamondVmStatus bytes_status=secure_random_bytes_helper(vm,
@@ -2743,7 +3084,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 VM_PROPAGATE(bytes_status);
                 break;
             }
-            case DIAMOND_OP_SECURE_RANDOM_HEX: {
+            case DIAMOND_OP_SECURE_RANDOM_HEX: op_SECURE_RANDOM_HEX: {
                 uint16_t destination=0,count_register=0;
                 READ_SHORT(destination);READ_SHORT(count_register);
                 const DiamondVmStatus hex_status=secure_random_hex_helper(vm,
@@ -2751,14 +3092,14 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 VM_PROPAGATE(hex_status);
                 break;
             }
-            case DIAMOND_OP_DIGEST_SHA256: {
+            case DIAMOND_OP_DIGEST_SHA256: op_DIGEST_SHA256: {
                 uint16_t destination=0,data_register=0;
                 READ_SHORT(destination);READ_SHORT(data_register);
                 const DiamondVmStatus digest_status=sha256_hex_helper(vm,
                     DIAMOND_NIL,registers[data_register],false,&registers[destination]);
                 VM_PROPAGATE(digest_status);break;
             }
-            case DIAMOND_OP_HMAC_SHA256: {
+            case DIAMOND_OP_HMAC_SHA256: op_HMAC_SHA256: {
                 uint16_t destination=0,key_register=0,data_register=0;
                 READ_SHORT(destination);READ_SHORT(key_register);READ_SHORT(data_register);
                 const DiamondVmStatus hmac_status=sha256_hex_helper(vm,
@@ -2766,7 +3107,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     &registers[destination]);
                 VM_PROPAGATE(hmac_status);break;
             }
-            case DIAMOND_OP_HMAC_VERIFY: {
+            case DIAMOND_OP_HMAC_VERIFY: op_HMAC_VERIFY: {
                 uint16_t destination=0,data_register=0,key_register=0,signature_register=0;
                 READ_SHORT(destination);READ_SHORT(data_register);
                 READ_SHORT(key_register);READ_SHORT(signature_register);
@@ -2775,14 +3116,14 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     registers[signature_register],&registers[destination]);
                 VM_PROPAGATE(verify_status);break;
             }
-            case DIAMOND_OP_DIGEST_SHA1: {
+            case DIAMOND_OP_DIGEST_SHA1: op_DIGEST_SHA1: {
                 uint16_t destination=0,data_register=0;
                 READ_SHORT(destination);READ_SHORT(data_register);
                 const DiamondVmStatus digest_status=sha1_hex_helper(vm,
                     DIAMOND_NIL,registers[data_register],false,&registers[destination]);
                 VM_PROPAGATE(digest_status);break;
             }
-            case DIAMOND_OP_HMAC_SHA1: {
+            case DIAMOND_OP_HMAC_SHA1: op_HMAC_SHA1: {
                 uint16_t destination=0,key_register=0,data_register=0;
                 READ_SHORT(destination);READ_SHORT(key_register);READ_SHORT(data_register);
                 const DiamondVmStatus hmac_status=sha1_hex_helper(vm,
@@ -2790,7 +3131,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     &registers[destination]);
                 VM_PROPAGATE(hmac_status);break;
             }
-            case DIAMOND_OP_CIPHER_ENCRYPT: {
+            case DIAMOND_OP_CIPHER_ENCRYPT: op_CIPHER_ENCRYPT: {
                 uint16_t destination=0,key_register=0,plaintext_register=0;
                 READ_SHORT(destination);READ_SHORT(key_register);
                 READ_SHORT(plaintext_register);
@@ -2799,7 +3140,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     &registers[destination]);
                 VM_PROPAGATE(encrypt_status);break;
             }
-            case DIAMOND_OP_CIPHER_DECRYPT: {
+            case DIAMOND_OP_CIPHER_DECRYPT: op_CIPHER_DECRYPT: {
                 uint16_t destination=0,key_register=0,blob_register=0;
                 READ_SHORT(destination);READ_SHORT(key_register);READ_SHORT(blob_register);
                 const DiamondVmStatus decrypt_status=aes_gcm_decrypt_helper(vm,
@@ -2807,14 +3148,14 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     &registers[destination]);
                 VM_PROPAGATE(decrypt_status);break;
             }
-            case DIAMOND_OP_GZIP_COMPRESS: {
+            case DIAMOND_OP_GZIP_COMPRESS: op_GZIP_COMPRESS: {
                 uint16_t destination=0,data_register=0;
                 READ_SHORT(destination);READ_SHORT(data_register);
                 const DiamondVmStatus compress_status=gzip_compress_helper(vm,
                     registers[data_register],&registers[destination]);
                 VM_PROPAGATE(compress_status);break;
             }
-            case DIAMOND_OP_GZIP_DECOMPRESS: {
+            case DIAMOND_OP_GZIP_DECOMPRESS: op_GZIP_DECOMPRESS: {
                 uint16_t destination=0,data_register=0,max_size_register=0;
                 READ_SHORT(destination);READ_SHORT(data_register);READ_SHORT(max_size_register);
                 const DiamondVmStatus decompress_status=gzip_decompress_helper(vm,
@@ -2822,21 +3163,21 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     &registers[destination]);
                 VM_PROPAGATE(decompress_status);break;
             }
-            case DIAMOND_OP_BASE64_ENCODE: {
+            case DIAMOND_OP_BASE64_ENCODE: op_BASE64_ENCODE: {
                 uint16_t destination=0,data_register=0;
                 READ_SHORT(destination);READ_SHORT(data_register);
                 const DiamondVmStatus encode_status=base64_encode_helper(vm,
                     registers[data_register],&registers[destination]);
                 VM_PROPAGATE(encode_status);break;
             }
-            case DIAMOND_OP_BASE64_DECODE: {
+            case DIAMOND_OP_BASE64_DECODE: op_BASE64_DECODE: {
                 uint16_t destination=0,data_register=0;
                 READ_SHORT(destination);READ_SHORT(data_register);
                 const DiamondVmStatus decode_status=base64_decode_helper(vm,
                     registers[data_register],&registers[destination]);
                 VM_PROPAGATE(decode_status);break;
             }
-            case DIAMOND_OP_EXIT: {
+            case DIAMOND_OP_EXIT: op_EXIT: {
                 uint16_t code_register=0;
                 READ_SHORT(code_register);
                 const DiamondVmStatus exit_status=exit_helper(vm,registers[code_register]);
@@ -2846,7 +3187,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 VM_PROPAGATE(exit_status);
                 break;
             }
-            case DIAMOND_OP_DEBUGGER: {
+            case DIAMOND_OP_DEBUGGER: op_DEBUGGER: {
                 uint16_t destination=0;uint8_t local_count=0;
                 READ_SHORT(destination);READ_BYTE(local_count);
                 uint16_t name_indices[DIAMOND_MAX_LOCALS];
@@ -2862,20 +3203,20 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 registers[destination]=DIAMOND_NIL;
                 break;
             }
-            case DIAMOND_OP_BREAKPOINT_CHECK: {
+            case DIAMOND_OP_BREAKPOINT_CHECK: op_BREAKPOINT_CHECK: {
                 ip_slot=ip;const DiamondVmStatus helper_status=outlined_breakpoint_check(vm,chunk,registers,depth,instruction_offset,&ip_slot);ip=ip_slot;
                 VM_PROPAGATE(helper_status);
                 break;
             }
-            case DIAMOND_OP_ARGV: {
+            case DIAMOND_OP_ARGV: op_ARGV: {
                 uint16_t destination=0;READ_SHORT(destination);
                 registers[destination]=vm->argv_value;break;
             }
-            case DIAMOND_OP_ENV: {
+            case DIAMOND_OP_ENV: op_ENV: {
                 uint16_t destination=0;READ_SHORT(destination);
                 registers[destination]=vm->env_value;break;
             }
-            case DIAMOND_OP_IS_TYPE: {
+            case DIAMOND_OP_IS_TYPE: op_IS_TYPE: {
                 uint16_t destination=0,source=0,type=0;
                 READ_OPERANDS(6);
                 destination=OPERAND_SHORT(0); source=OPERAND_SHORT(2); type=OPERAND_SHORT(4);
@@ -2885,7 +3226,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     value_matches_type(chunk,registers[source],type));
                 break;
             }
-            case DIAMOND_OP_SAME_CLASS: {
+            case DIAMOND_OP_SAME_CLASS: op_SAME_CLASS: {
                 uint16_t destination=0,left=0,right=0;
                 READ_OPERANDS(6);
                 destination=OPERAND_SHORT(0); left=OPERAND_SHORT(2); right=OPERAND_SHORT(4);
@@ -2893,7 +3234,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     diamond_values_same_class(registers[left],registers[right]));
                 break;
             }
-            case DIAMOND_OP_ARRAY: {
+            case DIAMOND_OP_ARRAY: op_ARRAY: {
                 uint16_t destination=0,base=0,count=0;
                 READ_OPERANDS(6);
                 destination=OPERAND_SHORT(0); base=OPERAND_SHORT(2); count=OPERAND_SHORT(4);
@@ -2902,7 +3243,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 VM_PROPAGATE(status);
                 break;
             }
-            case DIAMOND_OP_INDEX_GET: {
+            case DIAMOND_OP_INDEX_GET: op_INDEX_GET: {
                 uint16_t destination=0,receiver=0,index_register=0;
                 READ_OPERANDS(6);
                 destination=OPERAND_SHORT(0); receiver=OPERAND_SHORT(2); index_register=OPERAND_SHORT(4);
@@ -2914,7 +3255,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 registers[destination]=indexed;
                 break;
             }
-            case DIAMOND_OP_INDEX_GET_STRING: {
+            case DIAMOND_OP_INDEX_GET_STRING: op_INDEX_GET_STRING: {
                 uint16_t destination=0,receiver=0,string_index=0;
                 READ_OPERANDS(6);
                 destination=OPERAND_SHORT(0); receiver=OPERAND_SHORT(2); string_index=OPERAND_SHORT(4);
@@ -2926,7 +3267,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 registers[destination]=indexed;
                 break;
             }
-            case DIAMOND_OP_INDEX_SET: {
+            case DIAMOND_OP_INDEX_SET: op_INDEX_SET: {
                 uint16_t receiver=0,index_register=0,source=0;
                 READ_OPERANDS(6);
                 receiver=OPERAND_SHORT(0); index_register=OPERAND_SHORT(2); source=OPERAND_SHORT(4);
@@ -2936,7 +3277,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 VM_PROPAGATE(status);
                 break;
             }
-            case DIAMOND_OP_HASH: {
+            case DIAMOND_OP_HASH: op_HASH: {
                 uint16_t destination=0,base=0,count=0;
                 READ_OPERANDS(6);
                 destination=OPERAND_SHORT(0); base=OPERAND_SHORT(2); count=OPERAND_SHORT(4);
@@ -2947,14 +3288,14 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 registers[destination]=built;
                 break;
             }
-            case DIAMOND_OP_NOT: {
+            case DIAMOND_OP_NOT: op_NOT: {
                 uint16_t destination=0,source=0;
                 READ_OPERANDS(4);
                 destination=OPERAND_SHORT(0); source=OPERAND_SHORT(2);
                 registers[destination]=DIAMOND_BOOL(!is_truthy(registers[source]));
                 break;
             }
-            case DIAMOND_OP_RETURN: {
+            case DIAMOND_OP_RETURN: op_RETURN: {
                 uint16_t source = 0;
                 READ_SHORT(source);
                 while(handler_count>0 &&
@@ -2968,7 +3309,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 *result = registers[source];
                 VM_RETURN(DIAMOND_VM_OK);
             }
-            case DIAMOND_OP_RAISE: {
+            case DIAMOND_OP_RAISE: op_RAISE: {
                 uint16_t source=0;READ_SHORT(source);
                 vm->exception=registers[source];vm->has_exception=true;
                 const bool first_raise=raise_capture_backtrace_helper(vm,chunk);
@@ -2990,7 +3331,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     format_uncaught_exception_message(vm,vm->exception,!first_raise);
                 VM_RETURN(DIAMOND_VM_EXCEPTION);
             }
-            case DIAMOND_OP_PUSH_RESCUE: {
+            case DIAMOND_OP_PUSH_RESCUE: op_PUSH_RESCUE: {
                 uint16_t destination=0;uint8_t type_count=0,types[8],high=0,low=0;
                 READ_SHORT(destination);READ_BYTE(type_count);
                 for(size_t i=0;i<8;i++)READ_BYTE(types[i]);
@@ -3006,11 +3347,11 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 for(size_t i=0;i<type_count;i++)handler->types[i]=types[i];
                 break;
             }
-            case DIAMOND_OP_POP_RESCUE:
+            case DIAMOND_OP_POP_RESCUE: op_POP_RESCUE:
                 if(handler_count==0||handlers[handler_count-1].kind!=HANDLER_RESCUE)
                     VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
                 handler_count--;break;
-            case DIAMOND_OP_PUSH_ENSURE: {
+            case DIAMOND_OP_PUSH_ENSURE: op_PUSH_ENSURE: {
                 uint8_t high=0,low=0;READ_BYTE(high);READ_BYTE(low);
                 const size_t target=((size_t)high<<8)|low;
                 if(handler_count==16||target>bytecode_count)
@@ -3019,7 +3360,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     .kind=HANDLER_ENSURE,.target=target,.enabled=true};
                 break;
             }
-            case DIAMOND_OP_UNWIND_JUMP: {
+            case DIAMOND_OP_UNWIND_JUMP: op_UNWIND_JUMP: {
                 uint8_t levels=0,high=0,low=0;READ_BYTE(levels);READ_BYTE(high);READ_BYTE(low);
                 const size_t target=((size_t)high<<8)|low;
                 if(target>bytecode_count||
@@ -3027,7 +3368,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
                 break;
             }
-            case DIAMOND_OP_RUN_ENSURE: {
+            case DIAMOND_OP_RUN_ENSURE: op_RUN_ENSURE: {
                 uint8_t high=0,low=0;READ_BYTE(high);READ_BYTE(low);
                 const size_t continuation=((size_t)high<<8)|low;
                 if(handler_count==0||continuation>bytecode_count||
@@ -3037,8 +3378,8 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     (PendingUnwind){.kind=PENDING_NORMAL,.continuation=continuation});
                 break;
             }
-            case DIAMOND_OP_BLOCK_RETURN:
-            case DIAMOND_OP_BLOCK_BREAK: {
+            case DIAMOND_OP_BLOCK_RETURN: op_BLOCK_RETURN:
+            case DIAMOND_OP_BLOCK_BREAK: op_BLOCK_BREAK: {
                 uint16_t source=0;READ_SHORT(source);
                 const bool is_break=bytecode[instruction_offset]==DIAMOND_OP_BLOCK_BREAK;
                 const uint64_t target=closure==nullptr?0:
@@ -3079,7 +3420,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 vm->nonlocal_is_break=is_break;
                 VM_RETURN(DIAMOND_VM_NONLOCAL_EXIT);
             }
-            case DIAMOND_OP_END_ENSURE: {
+            case DIAMOND_OP_END_ENSURE: op_END_ENSURE: {
                 if(handler_count==0 ||
                    handlers[handler_count-1].kind!=HANDLER_ACTIVE_ENSURE)
                     VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
@@ -3135,7 +3476,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 }
                 VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
             }
-            case DIAMOND_OP_YIELD: {
+            case DIAMOND_OP_YIELD: op_YIELD: {
                 uint16_t dest=0,source=0;
                 READ_SHORT(dest);READ_SHORT(source);
                 if(vm->running_fiber==nullptr) VM_RETURN(DIAMOND_VM_YIELD_WITHOUT_FIBER);
@@ -3162,7 +3503,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 registers[dest]=vm->running_fiber->resume_value;
                 break;
             }
-            case DIAMOND_OP_REDEFINE_METHOD: {
+            case DIAMOND_OP_REDEFINE_METHOD: op_REDEFINE_METHOD: {
                 ip_slot=ip;const DiamondVmStatus helper_status=outlined_redefine_method(vm,chunk,registers,&ip_slot);ip=ip_slot;
                 VM_PROPAGATE(helper_status);
                 break;
@@ -3179,17 +3520,17 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
              * caller to redefine_method instead) rather than silently
              * repointing it, keeping the two operations' contracts
              * separate and predictable. */
-            case DIAMOND_OP_DEFINE_METHOD: {
+            case DIAMOND_OP_DEFINE_METHOD: op_DEFINE_METHOD: {
                 ip_slot=ip;const DiamondVmStatus helper_status=outlined_define_method(vm,chunk,registers,&ip_slot);ip=ip_slot;
                 VM_PROPAGATE(helper_status);
                 break;
             }
-            case DIAMOND_OP_COMPILE_METHOD: {
+            case DIAMOND_OP_COMPILE_METHOD: op_COMPILE_METHOD: {
                 ip_slot=ip;const DiamondVmStatus helper_status=outlined_compile_method(vm,chunk,registers,&ip_slot);ip=ip_slot;
                 VM_PROPAGATE(helper_status);
                 break;
             }
-            case DIAMOND_OP_LOAD_CLASS: {
+            case DIAMOND_OP_LOAD_CLASS: op_LOAD_CLASS: {
                 uint16_t dest=0;uint16_t class_operand=0;
                 READ_SHORT(dest);READ_SHORT(class_operand);
                 if((size_t)class_operand>=chunk->class_count)
@@ -3209,7 +3550,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
              * calling function happens to be lexically defined in, which
              * is the entire point: an inherited method reaches whichever
              * subclass actually received the original external call. */
-            case DIAMOND_OP_INVOKE_SELF_METHOD: {
+            case DIAMOND_OP_INVOKE_SELF_METHOD: op_INVOKE_SELF_METHOD: {
                 uint16_t dest=0,base=0,name_index=0;uint8_t argc=0;
                 READ_SHORT(dest);READ_SHORT(name_index);READ_SHORT(base);READ_BYTE(argc);
                 if(registers[0].kind!=DIAMOND_VALUE_CLASS)
@@ -3267,7 +3608,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 VM_PROPAGATE(self_call_status);
                 registers[dest]=call_result;break;
             }
-            case DIAMOND_OP_FIBER_NEW: {
+            case DIAMOND_OP_FIBER_NEW: op_FIBER_NEW: {
                 uint16_t dest=0,callable_reg=0;
                 READ_SHORT(dest);READ_SHORT(callable_reg);
                 if(registers[callable_reg].kind!=DIAMOND_VALUE_OBJECT||
@@ -3304,7 +3645,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     .as.object=(DiamondObject *)handle};
                 break;
             }
-            case DIAMOND_OP_FILE_OPEN: {
+            case DIAMOND_OP_FILE_OPEN: op_FILE_OPEN: {
                 uint16_t dest=0,path_reg=0,mode_reg=0;
                 READ_SHORT(dest);READ_SHORT(path_reg);READ_SHORT(mode_reg);
                 VM_SANDBOX_GUARD("File.open", "filesystem");
@@ -3334,7 +3675,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     .as.object=(DiamondObject *)handle};
                 break;
             }
-            case DIAMOND_OP_FILE_DELETE: {
+            case DIAMOND_OP_FILE_DELETE: op_FILE_DELETE: {
                 uint16_t dest=0,path_reg=0;
                 READ_SHORT(dest);READ_SHORT(path_reg);
                 VM_SANDBOX_GUARD("File.delete", "filesystem");
@@ -3357,12 +3698,12 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 registers[dest]=(DiamondValue){.kind=DIAMOND_VALUE_BOOL,.as.boolean=true};
                 break;
             }
-            case DIAMOND_OP_DIR_ENTRIES: {
+            case DIAMOND_OP_DIR_ENTRIES: op_DIR_ENTRIES: {
                 ip_slot=ip;const DiamondVmStatus helper_status=outlined_dir_entries(vm,chunk,registers,&ip_slot);ip=ip_slot;
                 VM_PROPAGATE(helper_status);
                 break;
             }
-            case DIAMOND_OP_FILE_JOIN: {
+            case DIAMOND_OP_FILE_JOIN: op_FILE_JOIN: {
                 uint16_t dest=0,base=0;uint8_t argc=0;
                 READ_SHORT(dest);READ_SHORT(base);READ_BYTE(argc);
                 DiamondValue join_result=DIAMOND_NIL;
@@ -3372,17 +3713,17 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 registers[dest]=join_result;
                 break;
             }
-            case DIAMOND_OP_SEMVER: {
+            case DIAMOND_OP_SEMVER: op_SEMVER: {
                 ip_slot=ip;const DiamondVmStatus helper_status=outlined_semver(vm,chunk,registers,&ip_slot);ip=ip_slot;
                 VM_PROPAGATE(helper_status);
                 break;
             }
-            case DIAMOND_OP_FILE_PATH: {
+            case DIAMOND_OP_FILE_PATH: op_FILE_PATH: {
                 ip_slot=ip;const DiamondVmStatus helper_status=outlined_file_path(vm,chunk,registers,&ip_slot);ip=ip_slot;
                 VM_PROPAGATE(helper_status);
                 break;
             }
-            case DIAMOND_OP_REGEXP_NEW: {
+            case DIAMOND_OP_REGEXP_NEW: op_REGEXP_NEW: {
                 uint16_t dest=0,pattern_reg=0,options_reg=0;
                 READ_SHORT(dest);READ_SHORT(pattern_reg);READ_SHORT(options_reg);
                 if(registers[pattern_reg].kind!=DIAMOND_VALUE_OBJECT||
@@ -3400,7 +3741,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 registers[dest]=new_result;
                 break;
             }
-            case DIAMOND_OP_SQLITE3_OPEN: {
+            case DIAMOND_OP_SQLITE3_OPEN: op_SQLITE3_OPEN: {
                 uint16_t dest=0,path_reg=0,mode_reg=0;
                 READ_SHORT(dest);READ_SHORT(path_reg);READ_SHORT(mode_reg);
                 VM_SANDBOX_GUARD("SQLite3.open", "database");
@@ -3431,17 +3772,17 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
 #endif
                 break;
             }
-            case DIAMOND_OP_POSTGRES_OPEN: {
+            case DIAMOND_OP_POSTGRES_OPEN: op_POSTGRES_OPEN: {
                 ip_slot=ip;const DiamondVmStatus helper_status=outlined_postgres_open(vm,chunk,registers,&ip_slot);ip=ip_slot;
                 VM_PROPAGATE(helper_status);
                 break;
             }
-            case DIAMOND_OP_MYSQL_OPEN: {
+            case DIAMOND_OP_MYSQL_OPEN: op_MYSQL_OPEN: {
                 ip_slot=ip;const DiamondVmStatus helper_status=outlined_mysql_open(vm,chunk,registers,&ip_slot);ip=ip_slot;
                 VM_PROPAGATE(helper_status);
                 break;
             }
-            case DIAMOND_OP_PROGRAM_BUILDER_NEW: {
+            case DIAMOND_OP_PROGRAM_BUILDER_NEW: op_PROGRAM_BUILDER_NEW: {
                 uint16_t dest=0;
                 READ_SHORT(dest);
                 DiamondProgramBuilder *handle=allocate_program_builder(vm);
@@ -3450,32 +3791,32 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     .as.object=(DiamondObject *)handle};
                 break;
             }
-            case DIAMOND_OP_THREAD_NEW: {
+            case DIAMOND_OP_THREAD_NEW: op_THREAD_NEW: {
                 ip_slot=ip;const DiamondVmStatus helper_status=outlined_thread_new(vm,chunk,registers,&ip_slot);ip=ip_slot;
                 VM_PROPAGATE(helper_status);
                 break;
             }
-            case DIAMOND_OP_CHANNEL_NEW: {
+            case DIAMOND_OP_CHANNEL_NEW: op_CHANNEL_NEW: {
                 ip_slot=ip;const DiamondVmStatus helper_status=outlined_channel_new(vm,chunk,registers,&ip_slot);ip=ip_slot;
                 VM_PROPAGATE(helper_status);
                 break;
             }
-            case DIAMOND_OP_CHANNEL_SELECT: {
+            case DIAMOND_OP_CHANNEL_SELECT: op_CHANNEL_SELECT: {
                 ip_slot=ip;const DiamondVmStatus helper_status=outlined_channel_select(vm,chunk,registers,&ip_slot);ip=ip_slot;
                 VM_PROPAGATE(helper_status);
                 break;
             }
-            case DIAMOND_OP_CHANNEL_SELECT_SEND: {
+            case DIAMOND_OP_CHANNEL_SELECT_SEND: op_CHANNEL_SELECT_SEND: {
                 ip_slot=ip;const DiamondVmStatus helper_status=outlined_channel_select_send(vm,chunk,registers,&ip_slot);ip=ip_slot;
                 VM_PROPAGATE(helper_status);
                 break;
             }
-            case DIAMOND_OP_SUPERVISOR_NEW: {
+            case DIAMOND_OP_SUPERVISOR_NEW: op_SUPERVISOR_NEW: {
                 ip_slot=ip;const DiamondVmStatus helper_status=outlined_supervisor_new(vm,chunk,registers,&ip_slot);ip=ip_slot;
                 VM_PROPAGATE(helper_status);
                 break;
             }
-            case DIAMOND_OP_DNS_RESOLVE: {
+            case DIAMOND_OP_DNS_RESOLVE: op_DNS_RESOLVE: {
                 uint16_t dest=0,host_reg=0,channels_reg=0,deadline_reg=0;
                 READ_SHORT(dest);READ_SHORT(host_reg);READ_SHORT(channels_reg);READ_SHORT(deadline_reg);
                 VM_SANDBOX_GUARD("DNS.resolve", "network");
@@ -3489,7 +3830,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 VM_PROPAGATE(status);
                 break;
             }
-            case DIAMOND_OP_TCP_CONNECT_NONBLOCK: {
+            case DIAMOND_OP_TCP_CONNECT_NONBLOCK: op_TCP_CONNECT_NONBLOCK: {
                 uint16_t dest=0,address_reg=0,port_reg=0;
                 READ_SHORT(dest);READ_SHORT(address_reg);READ_SHORT(port_reg);
                 VM_SANDBOX_GUARD("TCPSocket.connect_nonblocking", "network");
@@ -3508,7 +3849,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 registers[dest]=DIAMOND_OBJECT(handle);
                 break;
             }
-            case DIAMOND_OP_TCP_CONNECT: {
+            case DIAMOND_OP_TCP_CONNECT: op_TCP_CONNECT: {
                 uint16_t dest=0,host_reg=0,port_reg=0,options_reg=0;
                 READ_SHORT(dest);READ_SHORT(host_reg);READ_SHORT(port_reg);
                 READ_SHORT(options_reg);
@@ -3547,13 +3888,13 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     .as.object=(DiamondObject *)handle};
                 break;
             }
-            case DIAMOND_OP_TCP_LISTEN:
-            case DIAMOND_OP_TCP_LISTEN_NONBLOCK: {
+            case DIAMOND_OP_TCP_LISTEN: op_TCP_LISTEN:
+            case DIAMOND_OP_TCP_LISTEN_NONBLOCK: op_TCP_LISTEN_NONBLOCK: {
                 ip_slot=ip;const DiamondVmStatus helper_status=outlined_tcp_listen_nonblock(vm,chunk,registers,instruction,&ip_slot);ip=ip_slot;
                 VM_PROPAGATE(helper_status);
                 break;
             }
-            case DIAMOND_OP_UDP_BIND: {
+            case DIAMOND_OP_UDP_BIND: op_UDP_BIND: {
                 uint16_t dest=0,port_reg=0,host_reg=0;
                 READ_SHORT(dest);READ_SHORT(port_reg);READ_SHORT(host_reg);
                 VM_SANDBOX_GUARD("UDPSocket.bind", "network");
@@ -3580,7 +3921,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     .as.object=(DiamondObject *)udp_handle};
                 break;
             }
-            case DIAMOND_OP_UDP_OPEN: {
+            case DIAMOND_OP_UDP_OPEN: op_UDP_OPEN: {
                 uint16_t dest=0;
                 READ_SHORT(dest);
                 VM_SANDBOX_GUARD("UDPSocket.open", "network");
@@ -3591,7 +3932,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     .as.object=(DiamondObject *)udp_handle};
                 break;
             }
-            case DIAMOND_OP_SIGNAL_TRAP: {
+            case DIAMOND_OP_SIGNAL_TRAP: op_SIGNAL_TRAP: {
                 VM_SANDBOX_GUARD("Signal.trap", "signals");
                 uint16_t dest=0,name_reg=0,handler_reg=0;
                 READ_SHORT(dest);READ_SHORT(name_reg);READ_SHORT(handler_reg);
@@ -3645,13 +3986,13 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 registers[dest]=DIAMOND_NIL;
                 break;
             }
-            case DIAMOND_OP_TLS_START_HANDSHAKE:
-            case DIAMOND_OP_TLS_CONNECT: {
+            case DIAMOND_OP_TLS_START_HANDSHAKE: op_TLS_START_HANDSHAKE:
+            case DIAMOND_OP_TLS_CONNECT: op_TLS_CONNECT: {
                 ip_slot=ip;const DiamondVmStatus helper_status=outlined_tls_connect(vm,chunk,registers,instruction,&ip_slot);ip=ip_slot;
                 VM_PROPAGATE(helper_status);
                 break;
             }
-            case DIAMOND_OP_TLS_LISTEN: {
+            case DIAMOND_OP_TLS_LISTEN: op_TLS_LISTEN: {
                 uint16_t dest=0,port_reg=0,cert_reg=0,key_reg=0,options_reg=0;
                 READ_SHORT(dest);READ_SHORT(port_reg);READ_SHORT(cert_reg);READ_SHORT(key_reg);
                 READ_SHORT(options_reg);
@@ -3684,12 +4025,12 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     .as.object=(DiamondObject *)listener_handle};
                 break;
             }
-            case DIAMOND_OP_IO_POLL: {
+            case DIAMOND_OP_IO_POLL: op_IO_POLL: {
                 ip_slot=ip;const DiamondVmStatus helper_status=outlined_io_poll(vm,chunk,registers,depth,&ip_slot);ip=ip_slot;
                 VM_PROPAGATE(helper_status);
                 break;
             }
-            case DIAMOND_OP_CHR: {
+            case DIAMOND_OP_CHR: op_CHR: {
                 uint16_t dest=0,source=0;
                 READ_SHORT(dest);READ_SHORT(source);
                 if(registers[source].kind!=DIAMOND_VALUE_INT) {
@@ -3707,7 +4048,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 if(string==nullptr)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
                 registers[dest]=DIAMOND_OBJECT(string);break;
             }
-            case DIAMOND_OP_TO_FLOAT: {
+            case DIAMOND_OP_TO_FLOAT: op_TO_FLOAT: {
                 uint16_t dest=0,source=0;
                 READ_SHORT(dest);READ_SHORT(source);
                 double as_double=0.0;
@@ -3719,7 +4060,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 registers[dest]=DIAMOND_FLOAT(as_double);
                 break;
             }
-            case DIAMOND_OP_TO_INT: {
+            case DIAMOND_OP_TO_INT: op_TO_INT: {
                 uint16_t dest=0,source=0;
                 READ_SHORT(dest);READ_SHORT(source);
                 if(registers[source].kind!=DIAMOND_VALUE_FLOAT) {
@@ -3732,7 +4073,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 registers[dest]=converted;
                 break;
             }
-            case DIAMOND_OP_TO_SYMBOL: {
+            case DIAMOND_OP_TO_SYMBOL: op_TO_SYMBOL: {
                 uint16_t dest=0,source=0;
                 READ_SHORT(dest);READ_SHORT(source);
                 if(registers[source].kind!=DIAMOND_VALUE_OBJECT||
@@ -3748,8 +4089,8 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 registers[dest]=DIAMOND_OBJECT(symbol);
                 break;
             }
-            case DIAMOND_OP_JSON_STRINGIFY:
-            case DIAMOND_OP_JSON_STRINGIFY_OPTIONS: {
+            case DIAMOND_OP_JSON_STRINGIFY: op_JSON_STRINGIFY:
+            case DIAMOND_OP_JSON_STRINGIFY_OPTIONS: op_JSON_STRINGIFY_OPTIONS: {
                 uint16_t dest=0,source=0,options=UINT16_MAX;
                 READ_SHORT(dest);READ_SHORT(source);
                 if(instruction==DIAMOND_OP_JSON_STRINGIFY_OPTIONS)READ_SHORT(options);
@@ -3761,7 +4102,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 registers[dest]=json_text;
                 break;
             }
-            case DIAMOND_OP_MATH_UNARY: {
+            case DIAMOND_OP_MATH_UNARY: op_MATH_UNARY: {
                 uint16_t dest=0,source=0;uint8_t function_id=0;
                 READ_SHORT(dest);READ_SHORT(source);READ_BYTE(function_id);
                 double operand=0.0;
@@ -3784,7 +4125,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 registers[dest]=DIAMOND_FLOAT(math_result);
                 break;
             }
-            case DIAMOND_OP_MATH_BINARY: {
+            case DIAMOND_OP_MATH_BINARY: op_MATH_BINARY: {
                 uint16_t dest=0,left=0,right=0;uint8_t function_id=0;
                 READ_SHORT(dest);READ_SHORT(left);READ_SHORT(right);READ_BYTE(function_id);
                 double left_value=0.0,right_value=0.0;
@@ -3802,7 +4143,81 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 registers[dest]=DIAMOND_FLOAT(math_result);
                 break;
             }
-            default:
+            /* dest, left, scratch, constant (see the opcode's comment in
+             * src/vm.h): a CONSTANT into `scratch` and the register form in
+             * one dispatch, one handler per operator. The CONSTANT's store
+             * comes first: `scratch` can be `left` itself (`x = 1` then
+             * `x + x` folds the first statement's CONSTANT). Anything but two
+             * plain Ints (with a divisor other than 0 and -1 for `%`), and
+             * any overflow, goes to int_constant_slow, which takes the
+             * generic opcode's path and never rewrites the instruction. */
+#define INT_K_OPERANDS()                                                     \
+                READ_OPERANDS(8);                                            \
+                const uint16_t k_destination=OPERAND_SHORT(0);               \
+                const uint16_t k_constant=OPERAND_SHORT(6);                  \
+                if((size_t)k_constant>=chunk->constant_count)                \
+                    VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);                  \
+                const DiamondValue k_right=chunk->constants[k_constant];     \
+                registers[OPERAND_SHORT(4)]=k_right;                         \
+                const DiamondValue k_left=registers[OPERAND_SHORT(2)];       \
+                const bool k_plain=k_left.kind==DIAMOND_VALUE_INT&&          \
+                    k_right.kind==DIAMOND_VALUE_INT;                         \
+                const int64_t k_a=k_left.as.integer,k_b=k_right.as.integer
+#define INT_K_SLOW()                                                         \
+                do {                                                         \
+                    DiamondValue k_result=DIAMOND_NIL;                       \
+                    const DiamondVmStatus k_status=int_constant_slow(vm,     \
+                        chunk,depth,instruction_offset,                      \
+                        (DiamondOpCode)instruction,k_left,k_right,&k_result);\
+                    VM_PROPAGATE(k_status);                                  \
+                    registers[k_destination]=k_result;                       \
+                } while(false)
+#define INT_K_ARITHMETIC(name_, checked_)                                      \
+            case DIAMOND_OP_##name_: op_##name_: {                           \
+                INT_K_OPERANDS();                                            \
+                int64_t k_value=0;                                           \
+                if(k_plain&&!checked_(&k_value,k_a,k_b)) {                   \
+                    registers[k_destination]=DIAMOND_INT(k_value);           \
+                    DISPATCH_NEXT();                                         \
+                }                                                            \
+                INT_K_SLOW();                                                \
+                break;                                                       \
+            }
+#define INT_K_COMPARISON(name_, compare_)                                      \
+            case DIAMOND_OP_##name_: op_##name_: {                           \
+                INT_K_OPERANDS();                                            \
+                if(k_plain) {                                                \
+                    registers[k_destination]=DIAMOND_BOOL(k_a compare_ k_b); \
+                    DISPATCH_NEXT();                                         \
+                }                                                            \
+                INT_K_SLOW();                                                \
+                break;                                                       \
+            }
+            INT_K_ARITHMETIC(ADD_INT_K, ckd_add)
+            INT_K_ARITHMETIC(SUBTRACT_INT_K, ckd_sub)
+            INT_K_ARITHMETIC(MULTIPLY_INT_K, ckd_mul)
+            INT_K_COMPARISON(LESS_INT_K, <)
+            INT_K_COMPARISON(LESS_EQUAL_INT_K, <=)
+            INT_K_COMPARISON(GREATER_INT_K, >)
+            INT_K_COMPARISON(GREATER_EQUAL_INT_K, >=)
+            INT_K_COMPARISON(EQUAL_INT_K, ==)
+            INT_K_COMPARISON(NOT_EQUAL_INT_K, !=)
+            case DIAMOND_OP_MODULO_INT_K: op_MODULO_INT_K: {
+                INT_K_OPERANDS();
+                if(k_plain&&k_b!=0&&k_b!=-1) {
+                    int64_t remainder=k_a%k_b;
+                    if(remainder!=0&&((remainder<0)!=(k_b<0)))remainder+=k_b;
+                    registers[k_destination]=DIAMOND_INT(remainder);
+                    DISPATCH_NEXT();
+                }
+                INT_K_SLOW();
+                break;
+            }
+#undef INT_K_ARITHMETIC
+#undef INT_K_COMPARISON
+#undef INT_K_SLOW
+#undef INT_K_OPERANDS
+            default: op_default:
                 VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
         }
 dispatch_continue:
@@ -3814,6 +4229,7 @@ dispatch_continue:
 #undef READ_OPERANDS
 #undef OPERAND_BYTE
 #undef OPERAND_SHORT
+#undef DISPATCH_NEXT
 #undef VM_RETURN
 #undef VM_PROPAGATE
 #undef VM_PROPAGATE_SIGNAL

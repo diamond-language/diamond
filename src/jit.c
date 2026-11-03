@@ -1679,6 +1679,10 @@ static bool opcode_writes_no_register(DiamondOpCode opcode) {
 
 static bool opcode_dest_is_first_u16(DiamondOpCode opcode) {
     switch (opcode) {
+        case DIAMOND_OP_ADD_INT_K: case DIAMOND_OP_SUBTRACT_INT_K: case DIAMOND_OP_MULTIPLY_INT_K:
+        case DIAMOND_OP_MODULO_INT_K: case DIAMOND_OP_LESS_INT_K: case DIAMOND_OP_LESS_EQUAL_INT_K:
+        case DIAMOND_OP_GREATER_INT_K: case DIAMOND_OP_GREATER_EQUAL_INT_K:
+        case DIAMOND_OP_EQUAL_INT_K: case DIAMOND_OP_NOT_EQUAL_INT_K:
         case DIAMOND_OP_NIL:
         case DIAMOND_OP_BOOL:
         case DIAMOND_OP_MOVE:
@@ -1730,11 +1734,14 @@ static bool opcode_dest_is_first_u16(DiamondOpCode opcode) {
  * compile_body's exact per-case decode calls (no generic width table
  * exists). `*dest` is the register it writes, -1 for an instruction that
  * writes none; `*jump_target` is its bytecode target, -1 for a non-jump.
+ * The _INT_K forms also write their scratch register, returned in
+ * `*second_dest` (-1 for every other instruction).
  * Returns false for an opcode outside the whitelist or a truncated stream,
  * which every caller treats as "unknown, assume the worst". */
 static bool decode_instruction_operands(const DiamondFunction *fn, size_t *pc,
-        DiamondOpCode opcode, int32_t *dest, int32_t *jump_target) {
+        DiamondOpCode opcode, int32_t *dest, int32_t *jump_target, int32_t *second_dest) {
     *dest = -1;
+    *second_dest = -1;
     *jump_target = -1;
     if (opcode_writes_no_register(opcode)) {
         switch (opcode) {
@@ -1773,6 +1780,16 @@ static bool decode_instruction_operands(const DiamondFunction *fn, size_t *pc,
     *dest = destination;
     switch (opcode) {
         case DIAMOND_OP_NIL: return true; /* dest only */
+        case DIAMOND_OP_ADD_INT_K: case DIAMOND_OP_SUBTRACT_INT_K: case DIAMOND_OP_MULTIPLY_INT_K:
+        case DIAMOND_OP_MODULO_INT_K: case DIAMOND_OP_LESS_INT_K: case DIAMOND_OP_LESS_EQUAL_INT_K:
+        case DIAMOND_OP_GREATER_INT_K: case DIAMOND_OP_GREATER_EQUAL_INT_K:
+        case DIAMOND_OP_EQUAL_INT_K: case DIAMOND_OP_NOT_EQUAL_INT_K: {
+            uint16_t left = 0, scratch = 0, constant = 0;
+            if (!decode_u16(fn, pc, &left) || !decode_u16(fn, pc, &scratch) ||
+                !decode_u16(fn, pc, &constant)) return false;
+            *second_dest = scratch;
+            return true;
+        }
         case DIAMOND_OP_BOOL: case DIAMOND_OP_MOVE: case DIAMOND_OP_CONSTANT:
         case DIAMOND_OP_ARGUMENT_PROVIDED: case DIAMOND_OP_STRING: {
             uint16_t a = 0;
@@ -1826,9 +1843,9 @@ bool diamond_jit_function_has_loop(const DiamondFunction *fn) {
         const size_t start = pc;
         uint8_t raw_opcode = 0;
         if (!decode_u8(fn, &pc, &raw_opcode)) return false;
-        int32_t dest = -1, jump_target = -1;
+        int32_t dest = -1, jump_target = -1, second_dest = -1;
         if (!decode_instruction_operands(fn, &pc, (DiamondOpCode)raw_opcode,
-                &dest, &jump_target)) return false;
+                &dest, &jump_target, &second_dest)) return false;
         if (raw_opcode == DIAMOND_OP_TAIL_CALL) return true; /* a loop when self */
         if (jump_target >= 0 && (size_t)jump_target <= start) return true;
     }
@@ -1840,10 +1857,11 @@ static bool parameter_never_reassigned(const DiamondFunction *fn, uint16_t targe
     while (pc < fn->code_count) {
         uint8_t raw_opcode = 0;
         if (!decode_u8(fn, &pc, &raw_opcode)) return false;
-        int32_t dest = -1, jump_target = -1;
+        int32_t dest = -1, jump_target = -1, second_dest = -1;
         if (!decode_instruction_operands(fn, &pc, (DiamondOpCode)raw_opcode,
-                &dest, &jump_target)) return false;
-        if (dest == (int32_t)target_register) return false;
+                &dest, &jump_target, &second_dest)) return false;
+        if (dest == (int32_t)target_register || second_dest == (int32_t)target_register)
+            return false;
     }
     return true;
 }
@@ -1929,6 +1947,17 @@ static int32_t register_new_class_or_move_src(const DiamondFunction *fn,
                 uint16_t src = 0;
                 if (!decode_u16(fn, &pc, &src)) return -1;
                 if (writes_target) { sole_write_is_move = true; *move_src = src; }
+                break;
+            }
+            /* Writes dest and scratch, neither with a class. */
+            case DIAMOND_OP_ADD_INT_K: case DIAMOND_OP_SUBTRACT_INT_K: case DIAMOND_OP_MULTIPLY_INT_K:
+            case DIAMOND_OP_MODULO_INT_K: case DIAMOND_OP_LESS_INT_K: case DIAMOND_OP_LESS_EQUAL_INT_K:
+            case DIAMOND_OP_GREATER_INT_K: case DIAMOND_OP_GREATER_EQUAL_INT_K:
+            case DIAMOND_OP_EQUAL_INT_K: case DIAMOND_OP_NOT_EQUAL_INT_K: {
+                uint16_t left = 0, scratch = 0, constant = 0;
+                if (!decode_u16(fn, &pc, &left) || !decode_u16(fn, &pc, &scratch) ||
+                    !decode_u16(fn, &pc, &constant)) return -1;
+                if (scratch == target_register && ++write_count > 1) return -1;
                 break;
             }
             case DIAMOND_OP_BOOL: case DIAMOND_OP_CONSTANT:
@@ -2423,6 +2452,50 @@ static bool compile_value_instruction(JitCompiler *jc, DiamondOpCode opcode, siz
                 !decode_u16(fn, &pc, &right)) { jc->bailed = true; return true; }
             compile_equal_op(jc, instruction_start, dest, left, right,
                 opcode == DIAMOND_OP_NOT_EQUAL || opcode == DIAMOND_OP_NOT_EQUAL_INT);
+            break;
+        }
+        /* The constant-operand forms: store the constant into `scratch`,
+         * exactly as the CONSTANT they replace did, then compile the
+         * register form against it. The generic opcode goes to the slow
+         * paths, whose deopt rewrite only applies to the _INT forms -- it
+         * would write a register-form opcode over this instruction. */
+        case DIAMOND_OP_ADD_INT_K:
+        case DIAMOND_OP_SUBTRACT_INT_K:
+        case DIAMOND_OP_MULTIPLY_INT_K:
+        case DIAMOND_OP_MODULO_INT_K:
+        case DIAMOND_OP_LESS_INT_K:
+        case DIAMOND_OP_LESS_EQUAL_INT_K:
+        case DIAMOND_OP_GREATER_INT_K:
+        case DIAMOND_OP_GREATER_EQUAL_INT_K:
+        case DIAMOND_OP_EQUAL_INT_K:
+        case DIAMOND_OP_NOT_EQUAL_INT_K: {
+            uint16_t dest = 0, left = 0, scratch = 0, index = 0;
+            if (!decode_u16(fn, &pc, &dest) || !decode_u16(fn, &pc, &left) ||
+                !decode_u16(fn, &pc, &scratch) || !decode_u16(fn, &pc, &index)) {
+                jc->bailed = true; return true;
+            }
+            if (index >= fn->constant_count || fn->constants[index].kind != DIAMOND_VALUE_INT) {
+                jc->bailed = true; return true;
+            }
+            emit_store_kind_imm(&jc->buf, JIT_REGISTERS_BASE, reg_disp(scratch, KIND_OFF),
+                DIAMOND_VALUE_INT);
+            emit_mov_imm64(&jc->buf, REG_RAX, (uint64_t)fn->constants[index].as.integer);
+            emit_store_r64(&jc->buf, JIT_REGISTERS_BASE, reg_disp(scratch, AS_OFF), REG_RAX);
+            if (opcode == DIAMOND_OP_EQUAL_INT_K || opcode == DIAMOND_OP_NOT_EQUAL_INT_K) {
+                compile_equal_op(jc, instruction_start, dest, left, scratch,
+                    opcode == DIAMOND_OP_NOT_EQUAL_INT_K);
+                break;
+            }
+            const DiamondOpCode generic =
+                opcode == DIAMOND_OP_ADD_INT_K ? DIAMOND_OP_ADD :
+                opcode == DIAMOND_OP_SUBTRACT_INT_K ? DIAMOND_OP_SUBTRACT :
+                opcode == DIAMOND_OP_MULTIPLY_INT_K ? DIAMOND_OP_MULTIPLY :
+                opcode == DIAMOND_OP_MODULO_INT_K ? DIAMOND_OP_MODULO :
+                opcode == DIAMOND_OP_LESS_INT_K ? DIAMOND_OP_LESS :
+                opcode == DIAMOND_OP_LESS_EQUAL_INT_K ? DIAMOND_OP_LESS_EQUAL :
+                opcode == DIAMOND_OP_GREATER_INT_K ? DIAMOND_OP_GREATER :
+                DIAMOND_OP_GREATER_EQUAL;
+            compile_binary_int_op(jc, instruction_start, dest, left, scratch, generic);
             break;
         }
         case DIAMOND_OP_SET_IVAR: {
