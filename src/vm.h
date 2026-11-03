@@ -1899,7 +1899,9 @@ struct DiamondVm {
     size_t opcode_counts[DIAMOND_OP_COUNT];
     /* opcode_counts is only kept when a trace that reads it is on: the
      * increment is a read-modify-write of memory on every dispatch, and on
-     * GCC builds it measurably slowed the dispatch loop. */
+     * GCC builds it measurably slowed the dispatch loop. Setting it also
+     * requires resource_limits_active, whose per-instruction block does the
+     * counting (run_source.c sets both), so the dispatch loop tests one flag. */
     bool count_opcodes;
     bool quickening;
     size_t quickening_threshold;

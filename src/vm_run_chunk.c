@@ -506,16 +506,16 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
     ((uint16_t)(((unsigned)operands[(offset_)] << 8) | operands[(offset_) + 1]))
 
     /* Ends a hot handler: the loop-top checks (end of code, a pending
-     * signal, opcode counting, resource limits), then a jump straight to the
-     * next instruction's handler. Whenever any check needs the full loop top
-     * it goes there instead, so the slow paths run exactly as before. */
+     * signal, resource limits, which also covers opcode counting), then a
+     * jump straight to the next instruction's handler. Whenever any check
+     * needs the full loop top it goes there instead, so the slow paths run
+     * exactly as before. */
 #if DIAMOND_THREADED_DISPATCH
 #define DISPATCH_NEXT()                                                    \
     do {                                                                   \
         if (__builtin_expect(ip < bytecode_count &&                        \
                 !atomic_load_explicit(&diamond_pending_signals,            \
                     memory_order_relaxed) &&                               \
-                !vm->count_opcodes &&                                      \
                 !atomic_load_explicit(&vm->resource_limits_active,         \
                     memory_order_relaxed), 1)) {                           \
             instruction_offset = ip;                                       \
@@ -762,12 +762,6 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
         instruction_offset = ip;
         uint8_t instruction = 0;
         READ_BYTE(instruction);
-        /* Both per-VM checks below are hinted false: the hint lets the compiler
-         * move their bodies out of the hot loop, which measured 2-19% faster on
-         * GCC and up to 15% on clang. Folding the two flags into one cut two
-         * instructions per dispatch but was slower on GCC, so they stay apart. */
-        if (__builtin_expect(vm->count_opcodes, 0) && instruction < DIAMOND_OP_COUNT)
-            vm->opcode_counts[instruction]++;
         /* Cheap steady-state cost (one boolean read, false unless a
          * DIAMOND_MAX_* budget is configured) for docs/sandbox.md's own
          * "Resource limits" -- same shape as diamond_pending_signals's own
@@ -790,6 +784,11 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
         if (__builtin_expect(atomic_load_explicit(&vm->resource_limits_active,
                                                   memory_order_relaxed), 0)) {
             vm->instructions_executed++;
+            /* Opcode counting turns resource_limits_active on as well (see
+             * DiamondVm.count_opcodes), so one hinted-false check covers both
+             * and DISPATCH_NEXT tests one flag fewer per instruction. */
+            if (vm->count_opcodes && instruction < DIAMOND_OP_COUNT)
+                vm->opcode_counts[instruction]++;
             if (vm->interrupt_flag != nullptr &&
                 atomic_load_explicit(vm->interrupt_flag, memory_order_relaxed)) {
                 VM_RETURN(DIAMOND_VM_INTERRUPTED);

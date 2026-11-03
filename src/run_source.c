@@ -133,6 +133,8 @@ static int run_compiled_chunk(const char *name, DiamondChunk chunk, DiamondBytec
     vm.quickening = diamond_env_flag("DIAMOND_QUICKEN");
     vm.count_opcodes = diamond_env_flag("DIAMOND_TRACE_OPCODES") ||
                        diamond_env_flag("DIAMOND_TRACE_TAIL_CALLS");
+    /* The dispatch loop counts opcodes inside its resource-limits block. */
+    if (vm.count_opcodes) atomic_store(&vm.resource_limits_active, true);
     const char *quickening_threshold = getenv("DIAMOND_QUICKEN_THRESHOLD");
     if (quickening_threshold != nullptr && quickening_threshold[0] != '\0') {
         char *end = nullptr;
