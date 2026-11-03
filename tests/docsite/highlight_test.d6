@@ -1,0 +1,69 @@
+# Tests for tools/docsite/highlight.d6.
+#
+#   build/diamond tests/docsite/highlight_test.d6
+
+require "../../tools/docsite/markdown"
+require "../../tools/docsite/highlight"
+
+STATS = {"checks" => 0, "failures" => 0}
+
+def check(name: String, code: String, expected: String)
+  STATS["checks"] += 1
+  actual = highlight(code)
+  return if actual == expected
+  STATS["failures"] += 1
+  puts("FAIL #{name}")
+  puts("  expected: #{expected.inspect()}")
+  puts("  actual:   #{actual.inspect()}")
+end
+
+def kw(text: String) -> String = "<span class=\"tok-kw\">#{text}</span>"
+def str(text: String) -> String = "<span class=\"tok-str\">#{text}</span>"
+def num(text: String) -> String = "<span class=\"tok-num\">#{text}</span>"
+def const(text: String) -> String = "<span class=\"tok-const\">#{text}</span>"
+
+check("def and name", "def greet(name)", "#{kw("def")} <span class=\"tok-fn\">greet</span>(name)")
+check("predicate def", "def empty?() = true", "#{kw("def")} <span class=\"tok-fn\">empty?</span>() = #{kw("true")}")
+check("string with interpolation", "\"hi \#{name}\" + 'x'", "#{str("&quot;hi \#{name}&quot;")} + #{str("'x'")}")
+check("escaped quote", "\"a\\\"b\"", str("&quot;a\\&quot;b&quot;"))
+check("numbers", "1_000 + 2.5 - 0x1F", "#{num("1_000")} + #{num("2.5")} - #{num("0x1F")}")
+check("range is not a float", "1..3", "#{num("1")}..#{num("3")}")
+check("comment", "x = 1 # => 1", "x = #{num("1")} <span class=\"tok-comment\"># =&gt; 1</span>")
+check("hash in string is not a comment", "\"#1\"", str("&quot;#1&quot;"))
+check("constants and scope", "Foo::Bar.new()", "#{const("Foo")}::#{const("Bar")}.new()")
+check("symbol", "x = :ready", "x = <span class=\"tok-sym\">:ready</span>")
+check("keyword argument is not a symbol", "f(name: 1)", "f(name: #{num("1")})")
+check("ivar", "@total += 1", "<span class=\"tok-ivar\">@total</span> += #{num("1")}")
+check("method named like a keyword", "x.class()", "x.class()")
+check("regex literal", "s =~ /a+b/i", "s =~ #{str("/a+b/i")}")
+check("division", "a / b / c", "a / b / c")
+check("escaping", "a < b && c", "a &lt; b &amp;&amp; c")
+check("sealed before class", "sealed class Shape", "#{kw("sealed")} #{kw("class")} #{const("Shape")}")
+check("sealed as a name", "sealed = true", "sealed = #{kw("true")}")
+check("not, and, or stay plain", "not a and b", "not a and b")
+
+STATS["checks"] += 1
+block = highlight_code_blocks("<pre><code class=\"language-d6\">puts(&quot;a &lt; b&quot;)</code></pre>")
+unless block == "<pre><code class=\"language-d6\">puts(#{str("&quot;a &lt; b&quot;")})</code></pre>"
+  STATS["failures"] += 1
+  puts("FAIL highlight_code_blocks: #{block.inspect()}")
+end
+
+# KEYWORDS must be exactly the lexer's keyword tokens from IF through IS.
+STATS["checks"] += 1
+root = File.expand_path(File.dirname(__FILE__) + "/../..")
+header = File.read(root + "/src/lexer.h")
+first = header.index_of("DIAMOND_TOKEN_IF,")
+last = header.index_of("DIAMOND_TOKEN_IS,")
+coloured = header.slice(first, last - first + 17).scan(Regexp.new("DIAMOND_TOKEN_([A-Z_]+)")).map() do |match| match[0] end
+spellings = File.read(root + "/src/lexer.c").scan(Regexp.new("text_equals\\(lexer, \"([a-z_]+)\", [0-9]+\\)[^;]*return DIAMOND_TOKEN_([A-Z_]+)"))
+lexer_keywords = spellings.select() do |match| coloured.include?(match[1]) end.map() do |match| match[0] end
+missing = lexer_keywords.reject() do |word| KEYWORDS.include?(word) || word == "sealed" end
+extra = (KEYWORDS + ["sealed"]).reject() do |word| lexer_keywords.include?(word) end
+unless missing.length() == 0 && extra.length() == 0 && lexer_keywords.length() > 40
+  STATS["failures"] += 1
+  puts("FAIL KEYWORDS out of step with src/lexer.c: missing #{missing.inspect()}, extra #{extra.inspect()}")
+end
+
+puts("highlight: #{STATS["checks"]} checks, #{STATS["failures"]} failures")
+exit(STATS["failures"] == 0 ? 0 : 1)

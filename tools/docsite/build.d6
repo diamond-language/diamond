@@ -1,0 +1,188 @@
+# Builds the documentation site from docs/ into a directory of static HTML.
+#
+#   build/diamond tools/docsite/build.d6 [OUTPUT]     # default: build/docsite
+#
+# docs/docsite.txt lists the pages in sidebar order. Each page is written one
+# directory deep (guide/NAME.html or reference/NAME.html) and every link
+# between pages is relative, so the output works when served under /docs/
+# and when opened straight from disk. index.html sends a visitor to the
+# first page.
+
+require "markdown"
+require "highlight"
+
+REPOSITORY = "https://github.com/diamond-language/diamond"
+
+struct Page(source: String, url: String, section: String, title: String, html: String, headings: Array)
+end
+
+struct Section(name: String, sources: Array)
+end
+
+# Sections and their Markdown files (paths relative to docs/), from the contents file.
+def contents(path: String) -> Array
+  sections = []
+  File.read(path).split("\n").each() do |raw|
+    line = raw.strip()
+    next if line == "" || line.start_with?("#")
+    if line.start_with?("==")
+      sections.push(Section.new(line.slice(2, line.length() - 2).strip(), []))
+    else
+      raise "#{path}: #{line} comes before any == section" if sections.length() == 0
+      sections[sections.length() - 1].sources().push(line)
+    end
+  end
+  sections
+end
+
+def url_for(source: String) -> String
+  name = File.basename(source, ".md")
+  source.start_with?("guide/") ? "guide/#{name}.html" : "reference/#{name}.html"
+end
+
+# Every docs/ Markdown file, relative to docs/.
+def markdown_files(docs: String) -> Array
+  files = []
+  [".", "guide"].each() do |dir|
+    full = dir == "." ? docs : "#{docs}/#{dir}"
+    next unless File.directory?(full)
+    Dir.entries(full).sort().each() do |entry|
+      next unless entry.end_with?(".md")
+      files.push(dir == "." ? entry : "#{dir}/#{entry}")
+    end
+  end
+  files
+end
+
+# The link map for one page: each Markdown file, spelled the way this page
+# would link to it, mapped to its published page or to the file on GitHub.
+def links_for(source: String, files: Array, published: Hash) -> Hash
+  here = File.dirname(source)
+  links = {}
+  files.each() do |file|
+    target = published.include_key?(file) ? "../#{published[file]}" : "#{REPOSITORY}/blob/main/docs/#{file}"
+    links[relative(here, file)] = target
+  end
+  links
+end
+
+# `file` (relative to docs/) as a relative link from directory `from`.
+def relative(from: String, file: String) -> String
+  return file if from == "."
+  return file.slice(from.length() + 1, file.length() - from.length() - 1) if file.start_with?("#{from}/")
+  "../#{file}"
+end
+
+def sidebar(sections: Array, pages: Hash, current: String) -> String
+  parts = sections.map() do |section|
+    items = section.sources().map() do |source|
+      page = pages[source]
+      mark = source == current ? " class=\"current\" aria-current=\"page\"" : ""
+      "<li><a href=\"../#{page.url()}\"#{mark}>#{escape(page.title())}</a></li>"
+    end
+    "<div class=\"nav-section\"><h2>#{escape(section.name())}</h2>\n<ul>\n#{items.join("\n")}\n</ul></div>"
+  end
+  parts.join("\n")
+end
+
+def on_this_page(page: Page) -> String
+  return "" if page.headings().length() < 2
+  items = page.headings().map() do |heading|
+    "<li class=\"toc-#{heading.level()}\"><a href=\"##{heading.id()}\">#{escape(heading.text())}</a></li>"
+  end
+  "<nav class=\"toc\" aria-label=\"On this page\"><h2>On this page</h2>\n<ul>\n#{items.join("\n")}\n</ul></nav>"
+end
+
+def neighbour(page, rel: String, label: String) -> String
+  return "<span></span>" if page == nil
+  "<a class=\"pager-#{rel}\" href=\"../#{page.url()}\" rel=\"#{rel}\"><span>#{label}</span>#{escape(page.title())}</a>"
+end
+
+def layout(page: Page, nav: String, previous, following) -> String
+  edit = "#{REPOSITORY}/edit/main/docs/#{page.source()}"
+  [
+    "<!doctype html>",
+    "<html lang=\"en\">",
+    "<head>",
+    "<meta charset=\"utf-8\">",
+    "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">",
+    "<title>#{escape(page.title())} · d6 docs</title>",
+    "<link rel=\"icon\" type=\"image/svg+xml\" href=\"../../favicon.svg\">",
+    "<link rel=\"preconnect\" href=\"https://fonts.googleapis.com\">",
+    "<link rel=\"preconnect\" href=\"https://fonts.gstatic.com\" crossorigin>",
+    "<link href=\"https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap\" rel=\"stylesheet\">",
+    "<link rel=\"stylesheet\" href=\"../assets/docs.css\">",
+    "</head>",
+    "<body>",
+    "<a class=\"skip-link\" href=\"#content\">Skip to content</a>",
+    "<header class=\"topbar\">",
+    "  <button class=\"nav-toggle\" aria-controls=\"sidebar\" aria-expanded=\"false\" aria-label=\"Show navigation\"><span></span></button>",
+    "  <a class=\"brand\" href=\"../../\"><span class=\"brand-mark\">d6</span> docs</a>",
+    "  <nav class=\"top-links\"><a href=\"../../\">Home</a><a href=\"#{REPOSITORY}\">GitHub</a></nav>",
+    "</header>",
+    "<div class=\"shell\">",
+    "<aside class=\"sidebar\" id=\"sidebar\">",
+    nav,
+    "</aside>",
+    "<main class=\"content\" id=\"content\">",
+    "<article class=\"prose\">",
+    page.html(),
+    "</article>",
+    "<nav class=\"pager\" aria-label=\"Previous and next page\">",
+    neighbour(previous, "prev", "Previous"),
+    neighbour(following, "next", "Next"),
+    "</nav>",
+    "<p class=\"edit\"><a href=\"#{edit}\">Edit this page on GitHub</a></p>",
+    "</main>",
+    on_this_page(page),
+    "</div>",
+    "<script src=\"../assets/docs.js\"></script>",
+    "</body>",
+    "</html>",
+    ""
+  ].join("\n")
+end
+
+def copy_asset(from: String, to: String)
+  File.write(to, File.read(from))
+end
+
+root = File.expand_path(File.dirname(__FILE__) + "/../..")
+docs = root + "/docs"
+output = ARGV.length() > 0 ? File.expand_path(ARGV[0]) : root + "/build/docsite"
+sections = contents(docs + "/docsite.txt")
+files = markdown_files(docs)
+
+published = {}
+order = []
+sections.each() do |section|
+  section.sources().each() do |source|
+    raise "docs/docsite.txt: #{source} is listed twice" if published.include_key?(source)
+    raise "docs/docsite.txt: docs/#{source} does not exist" unless File.exist?("#{docs}/#{source}")
+    published[source] = url_for(source)
+    order.push([source, section.name()])
+  end
+end
+
+pages = {}
+order.each() do |pair|
+  source = pair[0]
+  rendered = Markdown.new(links_for(source, files, published)).render(File.read("#{docs}/#{source}"))
+  title = rendered.title() == "" ? File.basename(source, ".md") : rendered.title()
+  pages[source] = Page.new(source, published[source], pair[1], title, highlight_code_blocks(rendered.html()), rendered.headings())
+end
+
+["guide", "reference", "assets"].each() do |dir| Dir.mkdir_p("#{output}/#{dir}") end
+order.each_with_index() do |pair, index|
+  page = pages[pair[0]]
+  previous = index > 0 ? pages[order[index - 1][0]] : nil
+  following = index + 1 < order.length() ? pages[order[index + 1][0]] : nil
+  File.write("#{output}/#{page.url()}", layout(page, sidebar(sections, pages, pair[0]), previous, following))
+end
+first = pages[order[0][0]].url()
+File.write("#{output}/index.html", "<!doctype html>\n<meta charset=\"utf-8\">\n<title>d6 docs</title>\n" +
+  "<meta http-equiv=\"refresh\" content=\"0; url=#{first}\">\n<a href=\"#{first}\">d6 documentation</a>\n")
+["docs.css", "docs.js"].each() do |asset|
+  copy_asset("#{root}/tools/docsite/assets/#{asset}", "#{output}/assets/#{asset}")
+end
+puts("docsite: #{order.length()} pages in #{output}")

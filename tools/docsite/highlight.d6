@@ -1,0 +1,157 @@
+# Colours the d6 code blocks of rendered docs HTML.
+#
+# Follows the homepage REPL's highlighter (diamond_wasm_tokens in
+# wasm/repl_driver.c): keywords, strings and regex literals, numbers,
+# symbols, instance and class variables, the name after `def`, capitalized
+# names, and `#` comments, with the same tok-* classes. KEYWORDS must match
+# the lexer's keyword tokens (DIAMOND_TOKEN_IF through DIAMOND_TOKEN_IS in
+# src/lexer.h) except `sealed`, which the lexer (and so this) treats as a
+# keyword only directly before `class`; tests/docsite/highlight_test.d6 checks
+# the list against src/lexer.c.
+
+KEYWORDS = ["if", "unless", "then", "else", "elsif", "case", "when", "end", "while", "until", "do", "loop",
+  "true", "false", "nil", "def", "closure", "class", "struct", "interface", "module", "include",
+  "private", "protected", "public", "attr_reader", "attr_writer", "attr_accessor", "attr_predicate", "attr",
+  "module_function", "alias_method", "delegate", "self", "super", "return", "break", "next", "redo", "raise",
+  "retry", "yield", "begin", "rescue", "ensure", "is"]
+D6_BLOCK = Regexp.new("<pre><code class=\"language-d6\">((.|\\n)*?)</code></pre>")
+# After one of these, a slash is division rather than the start of a regex literal.
+VALUE_ENDINGS = ["identifier", "number", "string", "symbol", "ivar", "close", "value-keyword", "def", "dot", "regex"]
+VALUE_KEYWORDS = ["end", "true", "false", "nil", "self"]
+
+def highlight_code_blocks(html: String) -> String
+  html.gsub(D6_BLOCK) do |block|
+    code = D6_BLOCK.match(block)[1]
+    "<pre><code class=\"language-d6\">#{highlight(unescape(code))}</code></pre>"
+  end
+end
+
+def unescape(text: String) -> String
+  text.gsub("&quot;", "\"").gsub("&gt;", ">").gsub("&lt;", "<").gsub("&amp;", "&")
+end
+
+def identifier_start?(char: String) -> Bool
+  (char >= "a" && char <= "z") || (char >= "A" && char <= "Z") || char == "_"
+end
+
+def identifier_char?(char: String) -> Bool
+  identifier_start?(char) || digit?(char)
+end
+
+def digit?(char: String) -> Bool = char >= "0" && char <= "9"
+
+def span(css: String, text: String) -> String
+  css == "" ? escape(text) : "<span class=\"#{css}\">#{escape(text)}</span>"
+end
+
+# The index just past a quoted string starting at `start`, honouring
+# backslash escapes and nested #{...} interpolation in double quotes.
+def string_end(chars: Array, start: Int) -> Int
+  quote = chars[start]
+  index = start + 1
+  depth = 0
+  while index < chars.length()
+    char = chars[index]
+    if char == "\\"
+      index += 2
+      next
+    end
+    if quote == "\"" && char == "#" && index + 1 < chars.length() && chars[index + 1] == "{"
+      depth += 1
+      index += 2
+      next
+    end
+    if depth > 0 && char == "}"
+      depth -= 1
+    elsif depth == 0 && char == quote
+      return index + 1
+    end
+    index += 1
+  end
+  chars.length()
+end
+
+# The index just past /pattern/flags at `start`, or -1 when the line has no closing slash.
+def regex_end(chars: Array, start: Int) -> Int
+  index = start + 1
+  while index < chars.length() && chars[index] != "/"
+    return -1 if chars[index] == "\n"
+    index += chars[index] == "\\" ? 2 : 1
+  end
+  return -1 if index >= chars.length()
+  index += 1
+  index += 1 while index < chars.length() && identifier_start?(chars[index])
+  index
+end
+
+def highlight(code: String) -> String
+  chars = code.chars()
+  out = []
+  previous = ""
+  after_def = false
+  index = 0
+  while index < chars.length()
+    char = chars[index]
+    start = index
+    if char == "#"
+      index += 1 while index < chars.length() && chars[index] != "\n"
+      out.push(span("tok-comment", chars.slice(start, index - start).join("")))
+      next
+    elsif char == " " || char == "\n" || char == "\t"
+      out.push(char)
+      index += 1
+      next
+    elsif char == "\"" || char == "'"
+      index = string_end(chars, index)
+      out.push(span("tok-str", chars.slice(start, index - start).join("")))
+      previous = "string"
+    elsif char == "@"
+      index += 1
+      index += 1 while index < chars.length() && chars[index] == "@"
+      index += 1 while index < chars.length() && identifier_char?(chars[index])
+      out.push(span("tok-ivar", chars.slice(start, index - start).join("")))
+      previous = "ivar"
+    elsif char == ":" && index + 1 < chars.length() && identifier_start?(chars[index + 1]) &&
+          (index == 0 || (!identifier_char?(chars[index - 1]) && chars[index - 1] != ":"))
+      index += 1
+      index += 1 while index < chars.length() && identifier_char?(chars[index])
+      index += 1 if index < chars.length() && (chars[index] == "?" || chars[index] == "!")
+      out.push(span("tok-sym", chars.slice(start, index - start).join("")))
+      previous = "symbol"
+    elsif digit?(char)
+      index += 1
+      while index < chars.length() && (identifier_char?(chars[index]) ||
+            (chars[index] == "." && index + 1 < chars.length() && digit?(chars[index + 1])))
+        index += 1
+      end
+      out.push(span("tok-num", chars.slice(start, index - start).join("")))
+      previous = "number"
+    elsif identifier_start?(char)
+      index += 1
+      index += 1 while index < chars.length() && identifier_char?(chars[index])
+      index += 1 if index < chars.length() && (chars[index] == "?" || chars[index] == "!") &&
+        !(index + 1 < chars.length() && chars[index + 1] == "=")
+      word = chars.slice(start, index - start).join("")
+      sealed = word == "sealed" && chars.slice(index, chars.length() - index).join("").start_with?(" class")
+      if (KEYWORDS.include?(word) || sealed) && previous != "dot"
+        out.push(span("tok-kw", word))
+        previous = VALUE_KEYWORDS.include?(word) ? "value-keyword" : (word == "def" ? "def" : "keyword")
+        after_def = word == "def"
+        next
+      end
+      css = after_def ? "tok-fn" : (char >= "A" && char <= "Z" ? "tok-const" : "")
+      out.push(span(css, word))
+      previous = "identifier"
+    elsif char == "/" && !VALUE_ENDINGS.include?(previous) && regex_end(chars, index) > 0
+      index = regex_end(chars, index)
+      out.push(span("tok-str", chars.slice(start, index - start).join("")))
+      previous = "regex"
+    else
+      index += 1
+      out.push(escape(char))
+      previous = char == "." ? "dot" : ((char == ")" || char == "]" || char == "}") ? "close" : "punctuation")
+    end
+    after_def = false
+  end
+  out.join("")
+end
