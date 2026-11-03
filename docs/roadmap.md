@@ -68,8 +68,6 @@ Current behavior: [threads](threads.md).
 
 Current behavior: [deployment](deployment.md).
 
-- **Cross-compile CI** -- the cross kit is validated by hand against an aarch64 sysroot
-  under qemu; a CI job would need a cached sysroot and an emulator.
 - **Targets beyond 64-bit little-endian** -- a 32-bit or big-endian target needs a
   portable program image rather than the current struct dump.
 - **MySQL in static builds** -- a static musl kit leaves the MariaDB client out; including

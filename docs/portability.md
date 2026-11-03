@@ -78,7 +78,8 @@ request and finally falls back to the process's own stack.
   Fedora aarch64 sysroot, then `d6 build --target=...`; the resulting binaries
   ran under `qemu-aarch64` (classes, SQLite3, threads, Regexp, JSON, fibers, deep
   recursion, supervised workers). It reproduced an aarch64-only failure that CI
-  later reported. See [deployment](deployment.md#cross-compilation).
+  later reported. CI cross-builds the kit and runs its binary under qemu on every
+  pull-request update (`test-cross-aarch64`). See [deployment](deployment.md#cross-compilation).
 - **x86_64 Linux musl, fully static** -- the same kit with `STATIC=1 NO_MYSQL=1`
   against an Alpine sysroot; the binary is statically linked and ran TLS, SQLite3,
   threads, Regexp, JSON and fibers on a glibc host. `MySQL.open` raises there.
