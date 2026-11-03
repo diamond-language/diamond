@@ -2,7 +2,8 @@
 # in a function's body (dynamic method dispatch, including a plain
 # self.other_method() call) bailed the whole function out of JIT
 # eligibility -- confirmed via git stash against this exact file: 2 compiled
-# function(s) before, 4 after (bump/run_loop both newly compile).
+# function(s) before, 4 after (bump/run_loop both newly compile). Now 3:
+# `value` is a plain getter, read without a call, so it is never compiled.
 class Counter
   def initialize(n)
     @n = n

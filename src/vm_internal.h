@@ -1292,6 +1292,7 @@ DIAMOND_INTERNAL bool value_matches_type(const DiamondChunk *chunk, DiamondValue
 
 DIAMOND_INTERNAL bool value_matches_set(const DiamondChunk *chunk,DiamondValue value,
                               uint16_t set_index,bool attach);
+DIAMOND_INTERNAL bool value_plainly_matches_set(const DiamondTypeSet *set,DiamondValue value);
 
 DIAMOND_INTERNAL bool array_value_satisfies_constraints(DiamondArray *array,
                                                DiamondValue value);

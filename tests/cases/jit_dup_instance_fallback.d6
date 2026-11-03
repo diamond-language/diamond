@@ -2,7 +2,8 @@
 # Instance-dup support still can't handle inline (real method dispatch,
 # not attempted) -- diamond_jit_dup's own lookup_method check correctly
 # detects the override and falls back to full interpretation instead of
-# running its own default copy logic.
+# running its own default copy logic. (`n()` is a plain getter, read
+# without a call, so it is never compiled.)
 class Widget
   def initialize(n)
     @n = n

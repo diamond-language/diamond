@@ -331,6 +331,58 @@ DiamondVmStatus jit_call_or_interpret(DiamondVm *vm, const DiamondFunction *func
  * out (like call_closure_helper/forward_to_top_level_helper above) so the
  * DIAMOND_MAX_ARGUMENTS+1-sized buffer doesn't live directly in any of
  * run_chunk's own case blocks, times three. */
+static inline uint16_t getter_operand(const uint8_t *code) {
+    return (uint16_t)(((unsigned)code[0] << 8) | code[1]);
+}
+
+/* A method whose whole body reads one instance variable and returns it
+ * (`def x() = @x`, optionally with a declared return type):
+ *
+ *     GET_IVAR  rD, r0, field          7 bytes
+ *     CHECK_TYPE rD, set               5 bytes, only with a return type
+ *     RETURN    rD                     3 bytes
+ *
+ * Calling it costs a whole frame for one field read, so a call with no
+ * arguments reads the field here instead, through diamond_jit_get_ivar
+ * with the body's own instruction as the cache site, exactly what the
+ * body would do. Every case where the body could fail or behave otherwise
+ * returns false and the method is called as usual, so errors, messages and
+ * backtraces are the ordinary ones: a receiver that isn't an instance, a
+ * field past the instance's, a value the declared type rejects (or that
+ * needs the full type matcher), and arities that make a no-argument call
+ * an error. The caller skips this with a debugger attached, which can
+ * stop inside the body. */
+static bool trivial_getter_result(DiamondVm *vm,const DiamondFunction *fn,
+        DiamondValue self_value,DiamondValue *result) {
+    const uint8_t *code=fn->code;
+    if((fn->code_count!=10&&fn->code_count!=15)||code[0]!=DIAMOND_OP_GET_IVAR)return false;
+    const uint16_t dest=getter_operand(code+1);
+    const uint16_t field=getter_operand(code+5);
+    if(getter_operand(code+3)!=0||field>UINT8_MAX)return false;
+    size_t at=7;
+    uint16_t set=DIAMOND_NO_TYPE_SET;
+    if(fn->code_count==15) {
+        if(code[7]!=DIAMOND_OP_CHECK_TYPE||getter_operand(code+8)!=dest)return false;
+        set=getter_operand(code+10);
+        if((size_t)set>=fn->type_set_count)return false;
+        at=12;
+    }
+    if(code[at]!=DIAMOND_OP_RETURN||getter_operand(code+at+1)!=dest)return false;
+    /* The call passes one argument, self. */
+    if(fn->required_arity>1||(fn->arity<1&&!fn->has_variadic))return false;
+    if(self_value.kind!=DIAMOND_VALUE_OBJECT||
+       self_value.as.object->kind!=DIAMOND_OBJECT_INSTANCE||
+       field>=((const DiamondInstance *)self_value.as.object)->field_count)
+        return false;
+    DiamondValue value=DIAMOND_NIL;
+    if(diamond_jit_get_ivar(vm,code,&self_value,(uint8_t)field,&value)!=DIAMOND_VM_OK)
+        return false;
+    if(set!=DIAMOND_NO_TYPE_SET&&!value_plainly_matches_set(&fn->type_sets[set],value))
+        return false;
+    *result=value;
+    return true;
+}
+
 DiamondVmStatus invoke_resolved_method_helper(DiamondVm *vm,
         const DiamondChunk *owner_chunk,const DiamondMethod *method,
         DiamondValue self_value,const DiamondValue *registers,uint16_t base,
@@ -344,6 +396,13 @@ DiamondVmStatus invoke_resolved_method_helper(DiamondVm *vm,
      * needs its own explicit guard against the shared buffer below. */
     if((size_t)argc+1+method->bound_value_count>(size_t)DIAMOND_MAX_ARGUMENTS+1)
         return DIAMOND_VM_ARITY_ERROR;
+    if(argc==0&&!typed&&method->bound_value_count==0&&vm->debug_fd<0) {
+        const DiamondChunk *getter_chunk=
+            method->source_chunk!=nullptr?method->source_chunk:owner_chunk;
+        if(trivial_getter_result(vm,getter_chunk->functions[method->function_index],
+               self_value,result))
+            return DIAMOND_VM_OK;
+    }
     DiamondValue args[DIAMOND_MAX_ARGUMENTS+1];args[0]=self_value;
     for(size_t i=0;i<argc;i++)args[i+1]=registers[(size_t)base+i];
     /* Trailing parameters compile_method's own synthesized source appended

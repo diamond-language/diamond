@@ -1275,6 +1275,19 @@ bool value_matches_set(const DiamondChunk *chunk,DiamondValue value,
     return false;
 }
 
+/* True when value_matches_set would say true on plain members alone, the
+ * checks that need no chunk: false when `value` misses every member or a
+ * member before its match needs the full matcher. For callers that have
+ * no chunk built yet and take the ordinary path whenever this is false. */
+bool value_plainly_matches_set(const DiamondTypeSet *set,DiamondValue value) {
+    for(size_t index=0;index<set->count;index++) {
+        const int plain=plain_member_match(value,&set->members[index]);
+        if(plain<0)return false;
+        if(plain)return true;
+    }
+    return false;
+}
+
 /* The message for a failed DIAMOND_OP_CHECK_TYPE, in either execution mode. */
 __attribute__((noinline,cold))
 void report_check_type_failure(DiamondVm *vm,const DiamondChunk *chunk,
