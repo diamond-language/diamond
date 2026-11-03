@@ -1959,6 +1959,20 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 }
                 if((size_t)name>=chunk->string_count) VM_RETURN(DIAMOND_VM_TYPE_ERROR);
                 const DiamondStringConstant *method_name=&chunk->strings[name];
+                /* Array/Hash/String #length and Array#push first: none of the
+                 * names tested below can be either, and loops make these two
+                 * calls far more than any other, so they skip that chain. */
+                if(type_argument_count==0&&registers[recv].kind==DIAMOND_VALUE_OBJECT) {
+                    const DiamondObjectKind fast_kind=registers[recv].as.object->kind;
+                    DiamondVmStatus fast_status;
+                    if((fast_kind==DIAMOND_OBJECT_ARRAY||fast_kind==DIAMOND_OBJECT_HASH||
+                        fast_kind==DIAMOND_OBJECT_STRING)&&
+                       collection_invoke_fast(vm,registers,recv,base,argc,dest,method_name,
+                           fast_kind,&fast_status)) {
+                        VM_PROPAGATE(fast_status);
+                        break;
+                    }
+                }
                 /* tap/dup -- universal for every native receiver kind (a
                  * primitive, String, Symbol, Array, or Hash can't ever
                  * define its own method to shadow these, unlike an

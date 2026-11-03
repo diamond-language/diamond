@@ -39,10 +39,9 @@
  * cost real margin against DIAMOND_MAX_CALL_DEPTH's stack-depth guard
  * if it lived directly in a run_chunk case, and CALL_CLOSURE is itself
  * on run_chunk's own recursive call path. */
-DiamondVmStatus call_closure_helper(DiamondVm *vm,const DiamondChunk *chunk,
-        const DiamondFunction *fn,const DiamondClosure *called,
-        const DiamondValue *registers,uint16_t base,uint8_t argc,size_t depth,
-        DiamondValue *result) {
+DiamondVmStatus block_call_prepare(const DiamondChunk *chunk,
+        const DiamondFunction *fn,const DiamondClosure *called,uint8_t argc,
+        DiamondBlockCall *call) {
     if(diamond_block_ignores_arguments(called,fn))argc=0;
     const bool needs_self_slot=fn->owner_class!=DIAMOND_OWNER_NONE;
     /* A `closure` (compiler.c's UINT8_MAX-2 owner_class sentinel) also
@@ -56,25 +55,12 @@ DiamondVmStatus call_closure_helper(DiamondVm *vm,const DiamondChunk *chunk,
      * must compare against the real, un-inflated argc, not the padded
      * argument_count used only to place real arguments correctly. */
     const bool self_via_capture=fn->owner_class==DIAMOND_OWNER_CAPTURED_SELF;
-    /* No argc>DIAMOND_MAX_ARGUMENTS guard needed here: argc is a plain
-     * uint8_t (the wire format's own argument-count width), so it can
-     * never exceed DIAMOND_MAX_ARGUMENTS (255) in the first place --
-     * call_arguments[DIAMOND_MAX_ARGUMENTS+1] below always has room. */
-    DiamondValue call_arguments[DIAMOND_MAX_ARGUMENTS+1];
-    const DiamondValue *arguments=&registers[base];
-    size_t argument_count=argc;
-    if(needs_self_slot) {
-        call_arguments[0]=DIAMOND_NIL;
-        for(size_t index=0;index<argc;index++)
-            call_arguments[index+1]=registers[(size_t)base+index];
-        arguments=call_arguments;
-        argument_count=(size_t)argc+1;
-    }
+    const size_t argument_count=needs_self_slot?(size_t)argc+1:argc;
     const size_t arity_check_count=self_via_capture?(size_t)argc:argument_count;
     if(arity_check_count<fn->required_arity||
        (arity_check_count>fn->arity && !fn->has_variadic))
         return DIAMOND_VM_ARITY_ERROR;
-    const DiamondChunk child={.name=fn->name,.code=fn->code,.lines=fn->lines,
+    call->child=(DiamondChunk){.name=fn->name,.code=fn->code,.lines=fn->lines,
       .columns=fn->columns,.code_count=fn->code_count,.constants=fn->constants,
       .constant_count=fn->constant_count,.strings=fn->strings,.string_count=fn->string_count,
       .type_sets=fn->type_sets,.type_set_count=fn->type_set_count,
@@ -87,7 +73,37 @@ DiamondVmStatus call_closure_helper(DiamondVm *vm,const DiamondChunk *chunk,
         .binding_owner_plus_one=(uint16_t)(fn->owner_class+1u),
       .parameter_offset=fn->owner_class==DIAMOND_OWNER_NONE?0:1,
       .register_count=fn->register_count,.has_variadic=fn->has_variadic};
-    return run_chunk(&child,vm,arguments,argument_count,depth+1,called,result);
+    call->called=called;
+    call->argc=argc;
+    call->self_slot=needs_self_slot;
+    return DIAMOND_VM_OK;
+}
+
+DiamondVmStatus block_call_run(DiamondVm *vm,const DiamondBlockCall *call,
+        const DiamondValue *arguments,size_t depth,DiamondValue *result) {
+    if(!call->self_slot)
+        return run_chunk(&call->child,vm,arguments,call->argc,depth+1,
+            call->called,result);
+    /* No argc>DIAMOND_MAX_ARGUMENTS guard needed here: argc is a plain
+     * uint8_t (the wire format's own argument-count width), so it can
+     * never exceed DIAMOND_MAX_ARGUMENTS (255) in the first place --
+     * call_arguments[DIAMOND_MAX_ARGUMENTS+1] below always has room. */
+    DiamondValue call_arguments[DIAMOND_MAX_ARGUMENTS+1];
+    call_arguments[0]=DIAMOND_NIL;
+    for(size_t index=0;index<call->argc;index++)
+        call_arguments[index+1]=arguments[index];
+    return run_chunk(&call->child,vm,call_arguments,(size_t)call->argc+1,
+        depth+1,call->called,result);
+}
+
+DiamondVmStatus call_closure_helper(DiamondVm *vm,const DiamondChunk *chunk,
+        const DiamondFunction *fn,const DiamondClosure *called,
+        const DiamondValue *registers,uint16_t base,uint8_t argc,size_t depth,
+        DiamondValue *result) {
+    DiamondBlockCall call;
+    const DiamondVmStatus prepared=block_call_prepare(chunk,fn,called,argc,&call);
+    if(prepared!=DIAMOND_VM_OK)return prepared;
+    return block_call_run(vm,&call,&registers[base],depth,result);
 }
 
 /* Shared by DIAMOND_OP_INVOKE's Int-primitive (times/upto/downto) and

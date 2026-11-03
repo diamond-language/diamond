@@ -331,6 +331,19 @@ DIAMOND_INTERNAL DiamondVmStatus regexp_split_helper(DiamondVm *vm,const Diamond
 /* Shared primitives that stay in vm.c (needed by vm_regexp.c) */
 [[nodiscard]] DIAMOND_INTERNAL bool byte_buffer_append(ByteBuffer *buffer,const char *bytes,size_t count);
 DIAMOND_INTERNAL DiamondVmStatus call_closure_helper(DiamondVm *vm,const DiamondChunk *chunk, const DiamondFunction *fn,const DiamondClosure *called, const DiamondValue *registers,uint16_t base,uint8_t argc,size_t depth, DiamondValue *result);
+/* call_closure_helper in two steps, for native code that calls one block many
+ * times with the same argument count (Array#map/#select): block_call_prepare
+ * checks the arity and builds the block's chunk once, block_call_run makes
+ * each call. A prepared call is valid while `chunk`'s tables and the closure
+ * are; its `child` points into the block's function, never at the caller. */
+typedef struct {
+    DiamondChunk child;
+    const DiamondClosure *called;
+    uint8_t argc;
+    bool self_slot;
+} DiamondBlockCall;
+DIAMOND_INTERNAL DiamondVmStatus block_call_prepare(const DiamondChunk *chunk,const DiamondFunction *fn,const DiamondClosure *called,uint8_t argc,DiamondBlockCall *call);
+DIAMOND_INTERNAL DiamondVmStatus block_call_run(DiamondVm *vm,const DiamondBlockCall *call,const DiamondValue *arguments,size_t depth,DiamondValue *result);
 [[nodiscard]] DIAMOND_INTERNAL bool gc_protect(DiamondVm *vm, DiamondValue value);
 DIAMOND_INTERNAL DiamondVmStatus stringify_value(DiamondVm *vm,const DiamondChunk *chunk, size_t depth,DiamondValue value, DiamondValue *out);
 

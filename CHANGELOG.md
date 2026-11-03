@@ -36,6 +36,12 @@ authoritative fine-grained record.
   couldn't prove were Ints no longer take the general comparison path. The block-heavy benchmark
   went from 349 ms to 199 ms.
 
+- **Cheaper block calls, `push`, `length` and `sum`.** `map` and `select` set up their block's
+  call once rather than once per element. Calls to `push` and `length` skip about ten other
+  method-name tests that used to come first. A blockless `sum` of plain Ints adds them in C, and
+  anything else (a block, Floats, big integers, overflow) sums as before. The block-heavy
+  benchmark went from 202 ms to 154 ms.
+
 ## 0.24.0 — 2026-11-02
 
 ### Added

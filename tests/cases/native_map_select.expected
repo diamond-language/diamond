@@ -16,4 +16,17 @@ bad 2
 type: expected Callable[1], got Int
 none: wrong number of arguments
 [kept1]
+[7, 7]
+two: expected Callable[1], got Callable[2]
+lambda: expected Callable[1], got Callable[2]
+0
+6
+9223372036854775808
+3.5
+12
+sum: Int does not support '+' with String
+3
+1
+[1, 2]
+frozen: frozen object cannot be modified
 nil
