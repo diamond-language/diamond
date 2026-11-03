@@ -11,20 +11,22 @@ depth. To try the language before installing anything, use the REPL at
 
 Each [release](https://github.com/diamond-language/diamond/releases) has a
 `.deb` for Ubuntu 26.04 and an `.rpm` for Fedora 44, for x86-64 CPUs with
-AVX2 (x86-64-v3: Intel Haswell, AMD Excavator and later). Releases after 0.23.0
-also have both for 64-bit ARM (`arm64` and `aarch64` in the file names), which
-run on any 64-bit ARM CPU. Download the one for your system from the
+AVX2 (x86-64-v3: Intel Haswell, AMD Excavator and later) and for any 64-bit
+ARM CPU (`arm64` and `aarch64` in the file names). Download the one for your
+system from the
 [latest release](https://github.com/diamond-language/diamond/releases/latest)
 and install it:
 
 ```sh
 # Ubuntu 26.04
 sudo apt update && sudo apt upgrade
-sudo apt install ~/Downloads/d6-lang_0.23.0-1_amd64.deb
+sudo apt install ~/Downloads/d6-lang_0.24.0-1_amd64.deb
+sudo apt install ~/Downloads/d6-lang_0.24.0-1_arm64.deb     # 64-bit ARM
 
 # Fedora 44
 sudo dnf upgrade
-sudo dnf install ~/Downloads/d6-lang-0.23.0-1.fc44.x86_64.rpm
+sudo dnf install ~/Downloads/d6-lang-0.24.0-1.fc44.x86_64.rpm
+sudo dnf install ~/Downloads/d6-lang-0.24.0-1.fc44.aarch64.rpm   # 64-bit ARM
 ```
 
 The package puts `d6`, `facet`, `d6-lsp` and `d6-dap` in
@@ -69,7 +71,7 @@ This puts `d6`, `facet`, `d6-lsp` and `d6-dap` in
 Either way, check it:
 
 ```sh
-d6 --version     # d6 0.23.0
+d6 --version     # d6 0.24.0
 ```
 
 The [asdf-diamond](https://github.com/diamond-language/asdf-diamond) plugin
