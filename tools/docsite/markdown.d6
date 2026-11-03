@@ -14,7 +14,8 @@
 #   page.headings()  # every "## " and "### " heading, for the table of contents
 #
 # `links` maps a Markdown file name ("core-syntax.md") to the URL its page is
-# published at; a link to a mapped file keeps its "#fragment".
+# published at; a link to a mapped file keeps its "#fragment". Any other
+# relative link is prefixed with `fallback` when one is given.
 
 struct Heading(level: Int, id: String, text: String)
 end
@@ -35,12 +36,14 @@ AUTOLINK = Regexp.new("&lt;(https?://[^\\s&]+)&gt;")
 STRONG = Regexp.new("\\*\\*(\\S((.|\\n)*?\\S)?)\\*\\*")
 EMPHASIS = Regexp.new("(^|[^A-Za-z0-9*])\\*(\\S([^*]*?\\S)?)\\*")
 UNDERSCORE_EMPHASIS = Regexp.new("(^|[^A-Za-z0-9_])_(\\S([^_]*?\\S)?)_([^A-Za-z0-9_]|$)")
+URL_SCHEME = Regexp.new("^[A-Za-z][A-Za-z0-9+.-]*:")
 ESCAPABLE = "\\`*_{}[]()#+-.!|<>"
 D6_LANGUAGES = ["ruby", "diamond", "d6", "rb"]
 
 class Markdown
-  def initialize(links: Hash)
+  def initialize(links: Hash, fallback: String = "")
     @links = links
+    @fallback = fallback
     @headings = []
     @title = ""
     @used_ids = {}
@@ -403,7 +406,11 @@ class Markdown
     hash = url.index_of("#")
     file = hash == nil ? url : url.slice(0, hash)
     fragment = hash == nil ? "" : url.slice(hash, url.length() - hash)
-    @links.include_key?(file) ? @links[file] + fragment : url
+    return @links[file] + fragment if @links.include_key?(file)
+    # Any other relative link (to a file outside the published pages) goes to
+    # `fallback` + the link, the file on GitHub when the generator sets it.
+    return url if @fallback == "" || file == "" || url.start_with?("/") || URL_SCHEME.match?(url)
+    @fallback + url
   end
 
   # -- Text helpers ---------------------------------------------------------

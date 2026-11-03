@@ -986,6 +986,7 @@ test-docsite: $(TARGET)
 	$(BUILD_DIR)/diamond tests/docsite/markdown_test.d6
 	$(BUILD_DIR)/diamond tests/docsite/highlight_test.d6
 	$(BUILD_DIR)/diamond tools/docsite/build.d6 $(BUILD_DIR)/docsite
+	$(BUILD_DIR)/diamond tests/docsite/links_test.d6 $(BUILD_DIR)/docsite
 
 test-exit: debug
 	bash tests/exit_test.sh

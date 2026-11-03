@@ -173,7 +173,9 @@ end
 pages = {}
 order.each() do |pair|
   source = pair[0]
-  rendered = Markdown.new(links_for(source, files, published)).render(File.read("#{docs}/#{source}"))
+  folder = File.dirname(source) == "." ? "docs/" : "docs/#{File.dirname(source)}/"
+  fallback = "#{REPOSITORY}/blob/main/#{folder}"
+  rendered = Markdown.new(links_for(source, files, published), fallback).render(File.read("#{docs}/#{source}"))
   title = rendered.title() == "" ? File.basename(source, ".md") : rendered.title()
   pages[source] = Page.new(source, published[source], pair[1], title, highlight_code_blocks(rendered.html()), rendered.headings())
 end

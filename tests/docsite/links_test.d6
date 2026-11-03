@@ -1,0 +1,60 @@
+# Checks the links of a built documentation site: every relative link names a
+# page that exists, and every #fragment an id on that page. Links that leave
+# the docs (http, mailto, or ../../ up to the homepage) are not checked.
+#
+#   build/diamond tests/docsite/links_test.d6 build/docsite
+
+HREF = Regexp.new("href=\"([^\"]+)\"")
+ID = Regexp.new("\\sid=\"([^\"]+)\"")
+EXTERNAL = Regexp.new("^(https?:|mailto:)")
+
+# A path with "dir/../" and "./" segments folded away.
+def fold(path: String) -> String
+  parts = []
+  path.split("/").each() do |part|
+    if part == ".."
+      parts.pop() if parts.length() > 0
+    elsif part != "."
+      parts.push(part)
+    end
+  end
+  parts.join("/")
+end
+
+root = ARGV.length() > 0 ? ARGV[0] : "build/docsite"
+pages = []
+["guide", "reference"].each() do |dir|
+  Dir.entries("#{root}/#{dir}").sort().each() do |entry|
+    pages.push("#{dir}/#{entry}") if entry.end_with?(".html")
+  end
+end
+
+ids = {}
+pages.each() do |page|
+  ids[page] = File.read("#{root}/#{page}").scan(ID).map() do |match| match[0] end
+end
+
+checked = 0
+broken = []
+pages.each() do |page|
+  File.read("#{root}/#{page}").scan(HREF).each() do |match|
+    href = match[0]
+    next if EXTERNAL.match?(href) || href.start_with?("../../")
+    checked += 1
+    hash = href.index_of("#")
+    path = hash == nil ? href : href.slice(0, hash)
+    fragment = hash == nil ? "" : href.slice(hash + 1, href.length() - hash - 1)
+    target = path == "" ? page : fold("#{File.dirname(page)}/#{path}")
+    if !target.end_with?(".html")
+      broken.push("#{page}: #{href} (no such file)") if !File.exist?("#{root}/#{target}")
+    elsif !ids.include_key?(target)
+      broken.push("#{page}: #{href} (no such page)")
+    elsif fragment != "" && !ids[target].include?(fragment)
+      broken.push("#{page}: #{href} (no id \"#{fragment}\")")
+    end
+  end
+end
+
+broken.each() do |line| puts(line) end
+puts("links: #{checked} checked, #{broken.length()} broken")
+exit(broken.length() == 0 ? 0 : 1)
