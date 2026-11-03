@@ -1072,12 +1072,57 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 registers[destination]=add_result;
                 break;
             }
+            /* The register-form Int fast paths, one handler per operator,
+             * for the same reason as the _INT_K ones below: a shared handler
+             * pays for an opcode if-chain on every instruction. Anything
+             * they don't answer -- a non-Int or big integer operand, an
+             * overflow -- re-decodes in the shared handler for the whole
+             * family, which keeps the slow paths and the deopt rewrite in
+             * one place. */
+#define INT_REGISTER_OPERANDS()                                              \
+                READ_OPERANDS(6);                                            \
+                const DiamondValue r_left=registers[OPERAND_SHORT(2)];       \
+                const DiamondValue r_right=registers[OPERAND_SHORT(4)]
+#define INT_REGISTER_ARITHMETIC(name_, checked_)                             \
+            case DIAMOND_OP_##name_: op_##name_: {                           \
+                INT_REGISTER_OPERANDS();                                     \
+                int64_t r_value=0;                                           \
+                if(r_left.kind==DIAMOND_VALUE_INT&&                          \
+                   r_right.kind==DIAMOND_VALUE_INT&&                         \
+                   !checked_(&r_value,r_left.as.integer,r_right.as.integer)) {\
+                    registers[OPERAND_SHORT(0)]=DIAMOND_INT(r_value);        \
+                    DISPATCH_NEXT();                                         \
+                }                                                            \
+                ip=instruction_offset+1;                                     \
+                goto op_SUBTRACT;                                            \
+            }
+#define INT_REGISTER_COMPARISON(name_, compare_, family_)                    \
+            case DIAMOND_OP_##name_: op_##name_: {                           \
+                INT_REGISTER_OPERANDS();                                     \
+                if(r_left.kind==DIAMOND_VALUE_INT&&                          \
+                   r_right.kind==DIAMOND_VALUE_INT) {                        \
+                    registers[OPERAND_SHORT(0)]=DIAMOND_BOOL(                \
+                        r_left.as.integer compare_ r_right.as.integer);      \
+                    DISPATCH_NEXT();                                         \
+                }                                                            \
+                ip=instruction_offset+1;                                     \
+                goto family_;                                                \
+            }
+            INT_REGISTER_ARITHMETIC(ADD_INT, ckd_add)
+            INT_REGISTER_ARITHMETIC(SUBTRACT_INT, ckd_sub)
+            INT_REGISTER_ARITHMETIC(MULTIPLY_INT, ckd_mul)
+            INT_REGISTER_COMPARISON(LESS_INT, <, op_LESS)
+            INT_REGISTER_COMPARISON(LESS_EQUAL_INT, <=, op_LESS)
+            INT_REGISTER_COMPARISON(GREATER_INT, >, op_LESS)
+            INT_REGISTER_COMPARISON(GREATER_EQUAL_INT, >=, op_LESS)
+            INT_REGISTER_COMPARISON(EQUAL_INT, ==, op_EQUAL)
+            INT_REGISTER_COMPARISON(NOT_EQUAL_INT, !=, op_EQUAL)
+#undef INT_REGISTER_ARITHMETIC
+#undef INT_REGISTER_COMPARISON
+#undef INT_REGISTER_OPERANDS
             case DIAMOND_OP_SUBTRACT: op_SUBTRACT:
             case DIAMOND_OP_MULTIPLY: op_MULTIPLY:
             case DIAMOND_OP_DIVIDE: op_DIVIDE:
-            case DIAMOND_OP_ADD_INT: op_ADD_INT:
-            case DIAMOND_OP_SUBTRACT_INT: op_SUBTRACT_INT:
-            case DIAMOND_OP_MULTIPLY_INT: op_MULTIPLY_INT:
             case DIAMOND_OP_DIVIDE_INT: op_DIVIDE_INT: {
                 DiamondOpCode opcode = (DiamondOpCode)instruction;
                 uint16_t destination = 0;
@@ -1379,9 +1424,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 break;
             }
             case DIAMOND_OP_EQUAL: op_EQUAL:
-            case DIAMOND_OP_NOT_EQUAL: op_NOT_EQUAL:
-            case DIAMOND_OP_EQUAL_INT: op_EQUAL_INT:
-            case DIAMOND_OP_NOT_EQUAL_INT: op_NOT_EQUAL_INT: {
+            case DIAMOND_OP_NOT_EQUAL: op_NOT_EQUAL: {
                 DiamondOpCode opcode = (DiamondOpCode)instruction;
                 uint16_t destination = 0;
                 uint16_t left = 0;
@@ -1441,11 +1484,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
             case DIAMOND_OP_LESS: op_LESS:
             case DIAMOND_OP_LESS_EQUAL: op_LESS_EQUAL:
             case DIAMOND_OP_GREATER: op_GREATER:
-            case DIAMOND_OP_GREATER_EQUAL: op_GREATER_EQUAL:
-            case DIAMOND_OP_LESS_INT: op_LESS_INT:
-            case DIAMOND_OP_LESS_EQUAL_INT: op_LESS_EQUAL_INT:
-            case DIAMOND_OP_GREATER_INT: op_GREATER_INT:
-            case DIAMOND_OP_GREATER_EQUAL_INT: op_GREATER_EQUAL_INT: {
+            case DIAMOND_OP_GREATER_EQUAL: op_GREATER_EQUAL: {
                 DiamondOpCode opcode = (DiamondOpCode)instruction;
                 uint16_t destination = 0;
                 uint16_t left = 0;
