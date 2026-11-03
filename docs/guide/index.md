@@ -62,7 +62,7 @@ Each chapter has notes like these where d6 breaks a habit:
 - **Ruby**: the syntax is close, but every call needs parentheses, blocks are
   `do ... end` only, there are no single-quoted strings, and `yield` belongs
   to fibers rather than blocks.
-- **Python**: `end` closes blocks instead of indentation, `nil` is `None`,
+- **Python**: `end` closes blocks instead of indentation, `None` is spelled `nil`,
   and named arguments work on any call: `area(width: 3, height: 4)`.
 - **JavaScript**: there is no `undefined` and no implicit conversion.
   `"1" + 1` is an error, not `"11"`.

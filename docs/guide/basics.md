@@ -183,7 +183,7 @@ puts(nickname)                  # => ada
 
 ## Coming from another language
 
-- **Python**: `nil` is `None`, `true`/`false` are lowercase, and `0`, `""`
+- **Python**: `None` is spelled `nil`, `True`/`False` are `true`/`false`, and `0`, `""`
   and empty collections are *true*. Blocks end with `end`, not a dedent.
 - **JavaScript**: there is no `undefined`, no `===`, and no implicit
   conversion: `"1" + 1` raises an error instead of producing `"11"`.
