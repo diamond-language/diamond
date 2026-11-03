@@ -11,8 +11,9 @@ depth. To try the language before installing anything, use the REPL at
 
 Each [release](https://github.com/diamond-language/diamond/releases) has a
 `.deb` for Ubuntu 26.04 and an `.rpm` for Fedora 44, for x86-64 CPUs with
-AVX2 (x86-64-v3: Intel Haswell, AMD Excavator and later). Download the one
-for your system from the
+AVX2 (x86-64-v3: Intel Haswell, AMD Excavator and later). Releases after 0.23.0
+also have both for 64-bit ARM (`arm64` and `aarch64` in the file names), which
+run on any 64-bit ARM CPU. Download the one for your system from the
 [latest release](https://github.com/diamond-language/diamond/releases/latest)
 and install it:
 

@@ -33,11 +33,6 @@ leans into the dice: rewriting in d6 is a saving throw.
   variables and internal identifiers. Avoid plumbing changes whose only purpose would be
   to replace the codename.
 
-### Packages
-
-- **arm64 packages** -- the `.deb` and `.rpm` are x86-64 only; an arm64 build needs its
-  own runner in the `release` and `test-packages` jobs.
-
 ### `struct` declarations
 
 Current behavior: [classes and modules](classes-and-modules.md).

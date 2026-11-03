@@ -397,13 +397,15 @@ jobs:
   # Builds the .deb (Ubuntu 26.04) and .rpm (Fedora 44) and installs each into a
   # fresh container of the same image, where packaging/smoke_test.sh runs a
   # script, a facet new project's tests, and diamond build against the package.
+  # Each format is built and installed on x86-64 and on arm64 hardware, as the release does.
   test-packages:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
         format: [deb, rpm]
+        runner: [ubuntu-latest, ubuntu-24.04-arm]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
