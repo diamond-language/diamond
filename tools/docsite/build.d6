@@ -7,6 +7,11 @@
 # between pages is relative, so the output works when served under /docs/
 # and when opened straight from disk. index.html sends a visitor to the
 # first page.
+#
+# Guide pages get Run buttons on their d6 examples (assets/docs.js). They run
+# in the homepage REPL's WebAssembly build, which docs.js loads from the site
+# root two levels up (/js/diamond-wasm.js and /wasm/diamond.wasm), so Run only
+# works when the docs are served beside the homepage.
 
 require "markdown"
 require "highlight"
@@ -35,9 +40,10 @@ def contents(path: String) -> Array
   sections
 end
 
-def url_for(source: String) -> String
+# Pages in a "Guide" section are published under guide/, the rest under reference/.
+def url_for(source: String, section: String) -> String
   name = File.basename(source, ".md")
-  source.start_with?("guide/") ? "guide/#{name}.html" : "reference/#{name}.html"
+  section.start_with?("Guide") ? "guide/#{name}.html" : "reference/#{name}.html"
 end
 
 # Every docs/ Markdown file, relative to docs/.
@@ -113,7 +119,7 @@ def layout(page: Page, nav: String, previous, following) -> String
     "<link href=\"https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap\" rel=\"stylesheet\">",
     "<link rel=\"stylesheet\" href=\"../assets/docs.css\">",
     "</head>",
-    "<body>",
+    "<body data-site-root=\"../../\">",
     "<a class=\"skip-link\" href=\"#content\">Skip to content</a>",
     "<header class=\"topbar\">",
     "  <button class=\"nav-toggle\" aria-controls=\"sidebar\" aria-expanded=\"false\" aria-label=\"Show navigation\"><span></span></button>",
@@ -125,7 +131,7 @@ def layout(page: Page, nav: String, previous, following) -> String
     nav,
     "</aside>",
     "<main class=\"content\" id=\"content\">",
-    "<article class=\"prose\">",
+    page.source().start_with?("guide/") ? "<article class=\"prose\" data-runnable>" : "<article class=\"prose\">",
     page.html(),
     "</article>",
     "<nav class=\"pager\" aria-label=\"Previous and next page\">",
@@ -159,7 +165,7 @@ sections.each() do |section|
   section.sources().each() do |source|
     raise "docs/docsite.txt: #{source} is listed twice" if published.include_key?(source)
     raise "docs/docsite.txt: docs/#{source} does not exist" unless File.exist?("#{docs}/#{source}")
-    published[source] = url_for(source)
+    published[source] = url_for(source, section.name())
     order.push([source, section.name()])
   end
 end
@@ -172,7 +178,12 @@ order.each() do |pair|
   pages[source] = Page.new(source, published[source], pair[1], title, highlight_code_blocks(rendered.html()), rendered.headings())
 end
 
-["guide", "reference", "assets"].each() do |dir| Dir.mkdir_p("#{output}/#{dir}") end
+# Start from empty directories, so a page removed from the contents file is
+# removed from the site too.
+["guide", "reference", "assets"].each() do |dir|
+  Process.run(["rm", "-rf", "#{output}/#{dir}"])
+  Dir.mkdir_p("#{output}/#{dir}")
+end
 order.each_with_index() do |pair, index|
   page = pages[pair[0]]
   previous = index > 0 ? pages[order[index - 1][0]] : nil

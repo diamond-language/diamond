@@ -1,7 +1,8 @@
 # Pages of the documentation site (getdiamond.codes/docs), in sidebar order.
 # Built by tools/docsite/build.d6. "== Name" starts a sidebar section; every
-# other non-comment line is a Markdown file under docs/. Files in docs/guide/
-# are published under guide/, the rest under reference/. A docs/*.md file not
+# other non-comment line is a Markdown file under docs/. Pages in a "Guide"
+# section are published under guide/, the rest under reference/; examples get
+# Run buttons on pages from docs/guide/. A docs/*.md file not
 # listed here is linked to on GitHub instead.
 
 == Guide
@@ -11,6 +12,10 @@ guide/control-flow.md
 guide/collections.md
 guide/functions.md
 guide/classes.md
+guide/types.md
+guide/errors.md
+guide/concurrency.md
+getting-started.md
 
 == Reference: the language
 syntax.md

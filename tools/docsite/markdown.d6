@@ -4,7 +4,9 @@
 # bullet and ordered lists (nested by indentation), tables, block quotes,
 # horizontal rules, raw HTML lines, and inline code, links, autolinks,
 # **strong**, *emphasis* and backslash escapes. It is not a full CommonMark
-# implementation.
+# implementation. A `<!-- docsite: no-run -->` (or `<!-- doc-check: skip -->`)
+# comment right above a code block marks it data-run="no", so the site gives
+# it no Run button.
 #
 #   page = Markdown.new(links).render(source)
 #   page.html()      # the rendered body
@@ -43,12 +45,14 @@ class Markdown
     @title = ""
     @used_ids = {}
     @placeholders = []
+    @no_run = false
   end
 
   def render(source: String) -> RenderedPage
     @headings = []
     @title = ""
     @used_ids = {}
+    @no_run = false
     html = blocks(source.gsub("\r\n", "\n").gsub("\t", "    ").split("\n"))
     RenderedPage.new(html, @title, @headings)
   end
@@ -60,6 +64,8 @@ class Markdown
     index = 0
     while index < lines.length()
       line = lines[index]
+      # A no-run marker applies only to the code block right after it.
+      @no_run = false unless line.strip() == "" || FENCE.match?(line) || HTML_BLOCK.match?(line)
       if line.strip() == ""
         index += 1
       elsif FENCE.match?(line)
@@ -123,6 +129,8 @@ class Markdown
     end
     language = "d6" if D6_LANGUAGES.include?(language)
     attribute = language == "" ? "" : " class=\"language-#{language}\""
+    attribute += " data-run=\"no\"" if @no_run
+    @no_run = false
     out.push("<pre><code#{attribute}>#{escape(body.join("\n"))}</code></pre>")
     index + 1
   end
@@ -148,6 +156,7 @@ class Markdown
       break if comment && lines[index - 1].include?("-->")
     end
     html = block.join("\n")
+    @no_run = true if comment && (html.include?("docsite: no-run") || html.include?("doc-check: skip"))
     out.push(html) unless html.strip().start_with?("<!--") && html.strip().end_with?("-->")
     index
   end

@@ -41,7 +41,8 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
-code, pre { font-family: 'JetBrains Mono', ui-monospace, 'SFMono-Regular', Menlo, Consolas, monospace; }
+/* No ligatures: `=>` in an example must look like what you type. */
+code, pre { font-family: 'JetBrains Mono', ui-monospace, 'SFMono-Regular', Menlo, Consolas, monospace; font-variant-ligatures: none; }
 
 a { color: var(--blue-bright); text-decoration: none; }
 a:hover { text-decoration: underline; }
@@ -211,6 +212,7 @@ a:hover { text-decoration: underline; }
 .tok-sym { color: var(--tok-const); }
 
 .table-wrap { overflow-x: auto; margin: 0 0 18px; border: 1px solid var(--border); border-radius: var(--radius); }
+.prose pre, .table-wrap, .toc { scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
 .prose table { border-collapse: collapse; width: 100%; font-size: 14px; }
 .prose th, .prose td { padding: 8px 12px; text-align: left; vertical-align: top; border-bottom: 1px solid var(--border-soft); }
 .prose th { background: var(--bg-raised); font-weight: 600; }
@@ -262,4 +264,46 @@ a:hover { text-decoration: underline; }
   .pager { grid-template-columns: 1fr; }
   .pager-next { grid-column: 1; }
   .top-links { gap: 14px; }
+}
+
+/* ---- Run buttons on guide examples ---- */
+
+.runnable { position: relative; margin: 0 0 18px; }
+.runnable > pre { margin: 0; }
+.run-button {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  padding: 4px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-card);
+  color: var(--text-dim);
+  font: 500 12px 'Inter', sans-serif;
+  cursor: pointer;
+}
+.run-button:hover:not(:disabled) { color: var(--text); border-color: var(--blue); }
+.run-button:disabled { cursor: progress; opacity: 0.8; }
+.prose pre.run-output {
+  margin: -1px 0 0;
+  border-top-left-radius: 0;
+  border-top-right-radius: 0;
+  background: #070a11;
+  color: var(--text-dim);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.prose pre.run-output::before {
+  content: 'Output';
+  display: block;
+  margin-bottom: 6px;
+  font: 600 11px 'Inter', sans-serif;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+.prose pre.run-output.run-error { color: #ffb4b4; }
+.runnable > pre:first-child:has(+ .run-button + .run-output:not([hidden])) {
+  border-bottom-left-radius: 0;
+  border-bottom-right-radius: 0;
 }

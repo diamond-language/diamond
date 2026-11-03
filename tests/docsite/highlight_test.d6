@@ -49,6 +49,13 @@ unless block == "<pre><code class=\"language-d6\">puts(#{str("&quot;a &lt; b&quo
   puts("FAIL highlight_code_blocks: #{block.inspect()}")
 end
 
+STATS["checks"] += 1
+marked = highlight_code_blocks("<pre><code class=\"language-d6\" data-run=\"no\">1</code></pre>")
+unless marked == "<pre><code class=\"language-d6\" data-run=\"no\">#{num("1")}</code></pre>"
+  STATS["failures"] += 1
+  puts("FAIL highlight keeps data-run: #{marked.inspect()}")
+end
+
 # KEYWORDS must be exactly the lexer's keyword tokens from IF through IS.
 STATS["checks"] += 1
 root = File.expand_path(File.dirname(__FILE__) + "/../..")
