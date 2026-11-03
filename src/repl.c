@@ -575,12 +575,21 @@ static bool run_candidate(DiamondProgram *program, DiamondValue *out_result,
     return true;
 }
 
+/* `require "x"` and `require_cut "x"` are loader directives, not expressions: the loader only sees
+ * them at the start of a line, so they go into the session as written. */
+static bool is_require_line(const char *source) {
+    const size_t length = strncmp(source, "require_cut", 11) == 0 ? 11 :
+        strncmp(source, "require", 7) == 0 ? 7 : 0;
+    return length > 0 && (source[length] == ' ' || source[length] == '\t' || source[length] == '"');
+}
+
 static bool repl_pending_is_declaration(const char *source) {
     while (*source == ' ' || *source == '\t' || *source == '\r' || *source == '\n')
         source++;
     return strncmp(source, "def ", 4) == 0 || strncmp(source, "class ", 6) == 0 ||
         strncmp(source, "module ", 7) == 0 || strncmp(source, "interface ", 10) == 0 ||
-        strncmp(source, "struct ", 7) == 0 || strncmp(source, "sealed ", 7) == 0;
+        strncmp(source, "struct ", 7) == 0 || strncmp(source, "sealed ", 7) == 0 ||
+        is_require_line(source);
 }
 
 static bool append_repl_assignment(ReplBuffer *destination, const ReplBuffer *pending) {

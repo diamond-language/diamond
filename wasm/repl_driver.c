@@ -41,18 +41,39 @@ static bool ensure_state(void) {
     return ok;
 }
 
-/* 0 on success, 65 compile error, 70 runtime error, 74 out of memory. */
+/* 0 on success, 65 compile error, 70 runtime error, 74 out of memory.
+ *
+ * `require` and `require_cut` lines are expanded by the same loader the CLI uses, reading the
+ * page's in-memory files (DiamondRepl.addFile in wasm/web/diamond-wasm.js): `require_cut
+ * "mjolnir"` finds cuts/mjolnir/lib/mjolnir.d6 there. An error in the session itself is
+ * reported as `line:column: error:` -- the page reads that form to spot an unfinished entry --
+ * and one inside a required file names that file. */
 WASM_EXPORT("diamond_wasm_eval") int diamond_wasm_eval(const char *source) {
     if (!ensure_state()) return 74;
-    diamond_program_free(program);
-    program->allow_top_level_redefinition = true;
-    DiamondDiagnostic diagnostic;
-    if (!diamond_compile_incremental(source, program, prelude_template, &diagnostic)) {
-        fprintf(stderr, "%u:%u: error: %s\n", (unsigned)diagnostic.span.line,
-                (unsigned)diagnostic.span.column, diagnostic.message);
+    DiamondSourceBundle bundle;
+    char load_error[768];
+    if (!diamond_load_program("<repl>", source, &bundle, load_error, sizeof load_error)) {
+        fprintf(stderr, "%s\n", load_error);
         fflush(stderr);
         return 65;
     }
+    diamond_program_free(program);
+    program->allow_top_level_redefinition = true;
+    DiamondDiagnostic diagnostic;
+    const bool compiled =
+        diamond_compile_incremental(bundle.source, program, prelude_template, &diagnostic);
+    if (!compiled) {
+        const DiamondResolvedLocation where = diamond_resolve_diagnostic_location(
+            "<repl>", bundle.source, diagnostic, &bundle, 0);
+        if (strcmp(where.path, "<repl>") == 0)
+            fprintf(stderr, "%zu:%zu: error: %s\n", where.line, where.column, diagnostic.message);
+        else
+            fprintf(stderr, "%s:%zu:%zu: error: %s\n", where.path, where.line, where.column,
+                    diagnostic.message);
+        fflush(stderr);
+    }
+    diamond_source_bundle_free(&bundle);
+    if (!compiled) return 65;
     DiamondChunk chunk = diamond_program_chunk(program);
     chunk.name = "<repl>";
     DiamondVm vm;
