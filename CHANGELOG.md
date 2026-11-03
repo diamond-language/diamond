@@ -4,6 +4,17 @@ d6 is currently pre-release. This file records user-visible capability
 milestones rather than every implementation step; the Git history remains the
 authoritative fine-grained record.
 
+## Unreleased
+
+### Added
+
+- **A documentation site.** `tools/docsite/build.d6` (written in d6) turns `docs/` into the site
+  served at getdiamond.codes/docs: a new beginner-friendly guide in `docs/guide/` for people who
+  already know another language, followed by the existing reference pages, with a sidebar,
+  an on-this-page panel and d6 syntax highlighting. Guide examples have a Run button that runs
+  them in the browser with the homepage's WebAssembly build, and every `# =>` claim in the guide
+  is checked by `make test-docs`. `make test-docsite` builds the site and checks every link.
+
 ## 0.25.0 — 2026-11-03
 
 ### Changed
