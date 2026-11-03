@@ -1,0 +1,45 @@
+# % under the JIT: floored like Ruby. The edge cases (a 0 or -1 divisor, INT64_MIN,
+# bignums, Floats, String formatting, a user-defined %) go through the slow path and
+# must give the interpreter's answers.
+class Wrap
+  attr x
+
+  def initialize(x)
+    @x = x
+  end
+
+  def %(other)
+    "Wrap(#{@x} mod #{other})"
+  end
+end
+
+def m(a, b)
+  a % b
+end
+
+def safe(a, b)
+  begin
+    m(a, b)
+  rescue
+    "raised"
+  end
+end
+
+big = 2 ** 70
+min = -9223372036854775807 - 1
+pairs = [
+  [7, 3], [-7, 3], [7, -3], [-7, -3], [6, 3], [-6, 3], [0, 5], [5, 0],
+  [min, -1], [min, 3], [min, -3], [9223372036854775807, -2],
+  [big, 7], [7, big], [-big, 7], [7.5, 2], [-7.5, 2], [7, 2.5],
+  ["%05d", 42], [Wrap.new(3), 4], [nil, 1]
+]
+
+# Enough rounds for the compiled code to run every case, printing the last.
+i = 0
+while i < 200
+  pairs.each() do |p|
+    r = safe(p[0], p[1])
+    puts(r) if i == 199
+  end
+  i += 1
+end

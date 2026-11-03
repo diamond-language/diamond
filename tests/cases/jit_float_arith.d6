@@ -1,0 +1,33 @@
+# Float arithmetic and comparisons under the JIT, which does Float with Float in
+# native code: signed zeros, infinities and NaN (every comparison false) must match
+# the interpreter, and mixed Int/Float or non-numeric operands take the slow path.
+def ops(a, b)
+  [a + b, a - b, a * b, a / b, a < b, a <= b, a > b, a >= b]
+end
+
+def safe(a, b)
+  begin
+    ops(a, b)
+  rescue
+    "raised"
+  end
+end
+
+nan = 0.0 / 0.0
+inf = 1.0 / 0.0
+pairs = [
+  [1.5, 2.25], [2.25, 1.5], [3.0, 3.0], [-0.0, 0.0], [1.0, 0.0], [-1.0, 0.0],
+  [nan, 1.0], [1.0, nan], [nan, nan], [inf, inf], [inf, 1.0], [1e308, 1e308],
+  [2, 0.5], [0.5, 2], [7, 2], [-7, 2], [9223372036854775807, 1],
+  ["a", "b"], [1.0, nil]
+]
+
+# Enough rounds for the compiled code to run every case, printing the last.
+i = 0
+while i < 100
+  pairs.each() do |p|
+    r = safe(p[0], p[1])
+    puts(r.to_s()) if i == 99
+  end
+  i += 1
+end

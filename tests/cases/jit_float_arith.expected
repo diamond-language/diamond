@@ -1,0 +1,20 @@
+[3.75, -0.75, 3.375, 0.6666666666666666, true, true, false, false]
+[3.75, 0.75, 3.375, 1.5, false, false, true, true]
+[6.0, 0.0, 9.0, 1.0, false, true, false, true]
+[0.0, -0.0, -0.0, NaN, false, true, false, true]
+[1.0, 1.0, 0.0, Infinity, false, false, true, true]
+[-1.0, -1.0, -0.0, -Infinity, true, true, false, false]
+[NaN, NaN, NaN, NaN, false, false, false, false]
+[NaN, NaN, NaN, NaN, false, false, false, false]
+[NaN, NaN, NaN, NaN, false, false, false, false]
+[Infinity, NaN, Infinity, NaN, false, true, false, true]
+[Infinity, Infinity, Infinity, Infinity, false, false, true, true]
+[Infinity, 0.0, Infinity, 1.0, false, true, false, true]
+[2.5, 1.5, 1.0, 4.0, false, false, true, true]
+[2.5, -1.5, 1.0, 0.25, true, true, false, false]
+[9, 5, 14, 3, false, false, true, true]
+[-5, -9, -14, -3, true, true, false, false]
+[9223372036854775808, 9223372036854775806, 9223372036854775807, 9223372036854775807, false, false, true, true]
+raised
+raised
+nil

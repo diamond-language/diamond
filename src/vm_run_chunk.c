@@ -991,88 +991,34 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
             case DIAMOND_OP_MODULO: {
                 /* Floored modulo (result takes the divisor's sign),
                  * matching Ruby -- not C's truncating `%` (which takes
-                 * the dividend's sign). User-overloadable like the other
-                 * arithmetic operators (unlike `<<`): an Instance left
-                 * operand tries a `%` method the same way ADD/SUBTRACT/
-                 * etc. do. Arbitrary-precision Ints are supported through
-                 * diamond_bignum_modulo_floored (the remainder falls out
-                 * of the same limb division `/` uses). */
+                 * the dividend's sign). Two plain Ints with a divisor
+                 * other than 0 and -1 are handled here; everything else
+                 * (those divisors, bignums, Floats, String formatting, an
+                 * Instance's own `%`) goes through modulo_slow
+                 * (src/vm_operators.c) by way of int_arith_slow, the same
+                 * path the JIT's compiled `%` calls. */
                 uint16_t destination=0,left=0,right=0;
                 READ_OPERANDS(6);
                 destination=OPERAND_SHORT(0); left=OPERAND_SHORT(2); right=OPERAND_SHORT(4);
                 if(registers[left].kind==DIAMOND_VALUE_INT&&
-                   registers[right].kind==DIAMOND_VALUE_INT&&
-                   !value_is_bignum(registers[left])&&
-                   !value_is_bignum(registers[right])) {
+                   registers[right].kind==DIAMOND_VALUE_INT) {
                     const int64_t left_value=registers[left].as.integer;
                     const int64_t right_value=registers[right].as.integer;
-                    if(right_value==0)VM_RETURN(DIAMOND_VM_DIVISION_BY_ZERO);
-                    int64_t remainder=0;
-                    if(left_value==INT64_MIN&&right_value==-1) {
-                        /* INT64_MIN / -1 overflows int64_t (traps on some
-                         * platforms) -- but mathematically -1 divides
-                         * everything evenly, so the true remainder is
-                         * always 0 regardless, no division needed. */
-                        remainder=0;
-                    } else {
-                        remainder=left_value%right_value;
+                    if(right_value!=0&&right_value!=-1) {
+                        int64_t remainder=left_value%right_value;
                         if(remainder!=0&&((remainder<0)!=(right_value<0)))
                             remainder+=right_value;
-                    }
-                    registers[destination]=DIAMOND_INT(remainder);
-                    break;
-                }
-                if(is_int_value(registers[left])&&is_int_value(registers[right])) {
-                    /* Reaching here with two Ints means at least one is a
-                     * bignum (the plain-int64 case broke out above). */
-                    DiamondIntView left_view, right_view, zero_view;
-                    diamond_int_view(registers[left],&left_view);
-                    diamond_int_view(registers[right],&right_view);
-                    diamond_int_view_int64(0,&zero_view);
-                    if(diamond_bignum_compare(right_view,zero_view)==0)
-                        VM_RETURN(DIAMOND_VM_DIVISION_BY_ZERO);
-                    const DiamondValue modulus=
-                        diamond_bignum_modulo_floored(vm,left_view,right_view);
-                    if(modulus.kind==DIAMOND_VALUE_NIL)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
-                    registers[destination]=modulus;break;
-                }
-                if((registers[left].kind==DIAMOND_VALUE_FLOAT||
-                    registers[left].kind==DIAMOND_VALUE_INT)&&
-                   (registers[right].kind==DIAMOND_VALUE_FLOAT||
-                    registers[right].kind==DIAMOND_VALUE_INT)&&
-                   (registers[left].kind==DIAMOND_VALUE_FLOAT||
-                    registers[right].kind==DIAMOND_VALUE_FLOAT)) {
-                    const double left_real=registers[left].kind==DIAMOND_VALUE_FLOAT?
-                        registers[left].as.real:(double)registers[left].as.integer;
-                    const double right_real=registers[right].kind==DIAMOND_VALUE_FLOAT?
-                        registers[right].as.real:(double)registers[right].as.integer;
-                    double remainder=fmod(left_real,right_real);
-                    if(remainder!=0&&((remainder<0)!=(right_real<0)))
-                        remainder+=right_real;
-                    registers[destination]=DIAMOND_FLOAT(remainder);
-                    break;
-                }
-                if(registers[left].kind==DIAMOND_VALUE_OBJECT&&
-                   registers[left].as.object->kind==DIAMOND_OBJECT_STRING) {
-                    const DiamondVmStatus percent_status=string_percent_helper(vm,chunk,
-                        depth,registers,left,right,destination);
-                    VM_PROPAGATE(percent_status);
-                    break;
-                }
-                if(registers[left].kind==DIAMOND_VALUE_OBJECT&&
-                   registers[left].as.object->kind==DIAMOND_OBJECT_INSTANCE) {
-                    bool found=false;DiamondValue op_result=DIAMOND_NIL;
-                    const uint8_t *site=bytecode+instruction_offset;
-                    const DiamondVmStatus status=invoke_operator_method(vm,chunk,depth,
-                        site,(const DiamondInstance *)registers[left].as.object,
-                        "%",1,&registers[right],1,&op_result,&found);
-                    if(found) {
-                        VM_PROPAGATE(status);
-                        registers[destination]=op_result;break;
+                        registers[destination]=DIAMOND_INT(remainder);
+                        break;
                     }
                 }
-                format_operator_type_error(vm,registers[left],registers[right],"%");
-                VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                DiamondValue modulo_result=DIAMOND_NIL;
+                const DiamondVmStatus modulo_status=int_arith_slow(vm,chunk,depth,
+                    instruction_offset,DIAMOND_OP_MODULO,registers[left],registers[right],
+                    &modulo_result);
+                VM_PROPAGATE(modulo_status);
+                registers[destination]=modulo_result;
+                break;
             }
             case DIAMOND_OP_NEGATE: {
                 uint16_t destination = 0;

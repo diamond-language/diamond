@@ -2204,3 +2204,22 @@ the interpreter, where those budgets are counted.
 `JIT_VM` is `r12`, whose ModRM base encoding needs a SIB byte; `emit_load_r64` does not emit
 one, so the poll copies it to `rax` first (the same trap as RSP in `emit_lea`).
 
+
+## `%` and Float arithmetic
+
+`MODULO` compiles through `compile_binary_int_op`. Two plain Ints with a divisor other than 0
+and -1 are done inline (`idiv`, then the divisor is added to a nonzero remainder whose sign
+differs from it, so the result is floored like the interpreter's); every other case calls
+`diamond_jit_arith_slow`, whose `int_arith_slow` hands `MODULO` to `modulo_slow`
+(`src/vm_operators.c`). The interpreter's `MODULO` case calls the same function past its own
+Int fast path, so the two share one implementation of the 0 and -1 divisors, bignums, Floats,
+String formatting and a user-defined `%`.
+
+`CONSTANT` compiles Float constants as well as Ints (both are a kind byte and a 64-bit payload);
+before, one Float literal kept the whole function in the interpreter. In the arithmetic and
+comparison opcodes, a kind check that fails on the Int path now lands in `emit_float_binary`:
+if both operands are Float it does the operation with SSE2 (`addsd`/`subsd`/`mulsd`/`divsd`
+from memory, or `ucomisd` with the operands ordered so the condition is "above" or "above or
+equal", which an unordered NaN result never sets). Int with Float and every other pair go on to
+the slow call as before. On the fistfight benchmarks this took `loop` from 1.13s to 0.18s and
+`mandelbrot` from 0.31s to 0.08s under `DIAMOND_JIT=1`.

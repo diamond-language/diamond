@@ -436,9 +436,79 @@ int diamond_string_compare(const DiamondString *a,const DiamondString *b) {
  * same anti-duplication discipline established in Phase 2e after the
  * EQUAL/INDEX_GET trampolines shipped with their own, subtly incomplete
  * copies of logic that already lived elsewhere. */
+/* Everything `%` does beyond two plain Ints with a divisor other than 0
+ * and -1: those two divisors, bignums, Floats, String formatting and an
+ * Instance's own `%`. Floored like Ruby (the result takes the divisor's
+ * sign). The interpreter's MODULO case and the JIT (through int_arith_slow)
+ * both end up here, so the two can't disagree. */
+static DiamondVmStatus modulo_slow(DiamondVm *vm, const DiamondChunk *chunk,
+        size_t depth, size_t instruction_offset, DiamondValue left_value,
+        DiamondValue right_value, DiamondValue *out_result) {
+    if(left_value.kind==DIAMOND_VALUE_INT&&right_value.kind==DIAMOND_VALUE_INT&&
+       !value_is_bignum(left_value)&&!value_is_bignum(right_value)) {
+        const int64_t left_int=left_value.as.integer;
+        const int64_t right_int=right_value.as.integer;
+        if(right_int==0)return DIAMOND_VM_DIVISION_BY_ZERO;
+        /* -1 divides everything evenly, and C's INT64_MIN % -1 traps. */
+        if(right_int==-1) { *out_result=DIAMOND_INT(0); return DIAMOND_VM_OK; }
+        int64_t remainder=left_int%right_int;
+        if(remainder!=0&&((remainder<0)!=(right_int<0)))remainder+=right_int;
+        *out_result=DIAMOND_INT(remainder);
+        return DIAMOND_VM_OK;
+    }
+    if(is_int_value(left_value)&&is_int_value(right_value)) {
+        DiamondIntView left_view, right_view, zero_view;
+        diamond_int_view(left_value,&left_view);
+        diamond_int_view(right_value,&right_view);
+        diamond_int_view_int64(0,&zero_view);
+        if(diamond_bignum_compare(right_view,zero_view)==0)return DIAMOND_VM_DIVISION_BY_ZERO;
+        const DiamondValue modulus=diamond_bignum_modulo_floored(vm,left_view,right_view);
+        if(modulus.kind==DIAMOND_VALUE_NIL)return DIAMOND_VM_OUT_OF_MEMORY;
+        *out_result=modulus;
+        return DIAMOND_VM_OK;
+    }
+    if((left_value.kind==DIAMOND_VALUE_FLOAT||left_value.kind==DIAMOND_VALUE_INT)&&
+       (right_value.kind==DIAMOND_VALUE_FLOAT||right_value.kind==DIAMOND_VALUE_INT)&&
+       (left_value.kind==DIAMOND_VALUE_FLOAT||right_value.kind==DIAMOND_VALUE_FLOAT)) {
+        const double left_real=left_value.kind==DIAMOND_VALUE_FLOAT?
+            left_value.as.real:(double)left_value.as.integer;
+        const double right_real=right_value.kind==DIAMOND_VALUE_FLOAT?
+            right_value.as.real:(double)right_value.as.integer;
+        double remainder=fmod(left_real,right_real);
+        if(remainder!=0&&((remainder<0)!=(right_real<0)))remainder+=right_real;
+        *out_result=DIAMOND_FLOAT(remainder);
+        return DIAMOND_VM_OK;
+    }
+    if(left_value.kind==DIAMOND_VALUE_OBJECT&&
+       left_value.as.object->kind==DIAMOND_OBJECT_STRING) {
+        /* Both operands are still held by the caller's registers, so this
+         * scratch copy doesn't need to be a GC root. */
+        DiamondValue scratch[3]={left_value,right_value,DIAMOND_NIL};
+        const DiamondVmStatus status=string_percent_helper(vm,chunk,depth,scratch,0,1,2);
+        if(status==DIAMOND_VM_OK)*out_result=scratch[2];
+        return status;
+    }
+    if(left_value.kind==DIAMOND_VALUE_OBJECT&&
+       left_value.as.object->kind==DIAMOND_OBJECT_INSTANCE) {
+        bool found=false;DiamondValue op_result=DIAMOND_NIL;
+        const uint8_t *site=chunk->code+instruction_offset;
+        const DiamondVmStatus status=invoke_operator_method(vm,chunk,depth,site,
+            (const DiamondInstance *)left_value.as.object,"%",1,&right_value,1,
+            &op_result,&found);
+        if(found) {
+            if(status==DIAMOND_VM_OK)*out_result=op_result;
+            return status;
+        }
+    }
+    format_operator_type_error(vm,left_value,right_value,"%");
+    return DIAMOND_VM_TYPE_ERROR;
+}
+
 DiamondVmStatus int_arith_slow(DiamondVm *vm, const DiamondChunk *chunk,
         size_t depth, size_t instruction_offset, DiamondOpCode opcode,
         DiamondValue left_value, DiamondValue right_value, DiamondValue *out_result) {
+    if(opcode==DIAMOND_OP_MODULO)
+        return modulo_slow(vm,chunk,depth,instruction_offset,left_value,right_value,out_result);
     const bool kind_mismatch=left_value.kind!=DIAMOND_VALUE_INT||
         right_value.kind!=DIAMOND_VALUE_INT;
     DiamondOpCode generic=opcode;

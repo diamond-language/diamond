@@ -12,6 +12,11 @@ authoritative fine-grained record.
   all Ints or all Strings now runs in C: building and sorting 50,000 Ints ten times went from 1.26 s
   to 81 ms. Anything else (a block, mixed kinds, Floats, big integers, nested arrays) sorts as before.
 
+- **The JIT compiles `%` and Float arithmetic.** A function using `%` or a Float literal used to
+  stay in the interpreter; both now compile, and Float-with-Float `+ - * /` and comparisons run
+  as native SSE2 code. A tight Int loop with `%` runs about 6x faster under `DIAMOND_JIT=1`, and a
+  Mandelbrot loop about 4x.
+
 ## 0.24.0 — 2026-11-02
 
 ### Added
