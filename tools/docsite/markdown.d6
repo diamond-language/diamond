@@ -1,0 +1,442 @@
+# Markdown to HTML for the documentation site.
+#
+# Covers the Markdown the docs use: ATX headings, paragraphs, fenced code,
+# bullet and ordered lists (nested by indentation), tables, block quotes,
+# horizontal rules, raw HTML lines, and inline code, links, autolinks,
+# **strong**, *emphasis* and backslash escapes. It is not a full CommonMark
+# implementation. A `<!-- docsite: no-run -->` (or `<!-- doc-check: skip -->`)
+# comment right above a code block marks it data-run="no", so the site gives
+# it no Run button.
+#
+#   page = Markdown.new(links).render(source)
+#   page.html()      # the rendered body
+#   page.title()     # text of the first "# " heading ("" when there is none)
+#   page.headings()  # every "## " and "### " heading, for the table of contents
+#
+# `links` maps a Markdown file name ("core-syntax.md") to the URL its page is
+# published at; a link to a mapped file keeps its "#fragment". Any other
+# relative link is prefixed with `fallback` when one is given.
+
+struct Heading(level: Int, id: String, text: String)
+end
+
+struct RenderedPage(html: String, title: String, headings: Array)
+end
+
+FENCE = Regexp.new("^(\\s*)(```+|~~~+)\\s*([A-Za-z0-9_+-]*)")
+ATX_HEADING = Regexp.new("^(\#{1,6})\\s+(.*?)\\s*#*\\s*$")
+BULLET = Regexp.new("^(\\s*)([-*+])(\\s+)(.*)$")
+ORDERED = Regexp.new("^(\\s*)([0-9]{1,9})([.)])(\\s+)(.*)$")
+RULE = Regexp.new("^\\s{0,3}((-\\s*){3,}|(\\*\\s*){3,}|(_\\s*){3,})$")
+TABLE_DELIMITER = Regexp.new("^\\s*\\|?\\s*:?-+:?\\s*(\\|\\s*:?-+:?\\s*)*\\|?\\s*$")
+HTML_BLOCK = Regexp.new("^\\s{0,3}(<!--|</?[A-Za-z][A-Za-z0-9-]*(\\s|>|/>|$))")
+QUOTE = Regexp.new("^\\s{0,3}>\\s?(.*)$")
+LINK = Regexp.new("\\[([^\\]]+)\\]\\(([^)\\s]+)\\)")
+AUTOLINK = Regexp.new("&lt;(https?://[^\\s&]+)&gt;")
+STRONG = Regexp.new("\\*\\*(\\S((.|\\n)*?\\S)?)\\*\\*")
+EMPHASIS = Regexp.new("(^|[^A-Za-z0-9*])\\*(\\S([^*]*?\\S)?)\\*")
+UNDERSCORE_EMPHASIS = Regexp.new("(^|[^A-Za-z0-9_])_(\\S([^_]*?\\S)?)_([^A-Za-z0-9_]|$)")
+URL_SCHEME = Regexp.new("^[A-Za-z][A-Za-z0-9+.-]*:")
+ESCAPABLE = "\\`*_{}[]()#+-.!|<>"
+D6_LANGUAGES = ["ruby", "diamond", "d6", "rb"]
+
+class Markdown
+  def initialize(links: Hash, fallback: String = "")
+    @links = links
+    @fallback = fallback
+    @headings = []
+    @title = ""
+    @used_ids = {}
+    @placeholders = []
+    @no_run = false
+  end
+
+  def render(source: String) -> RenderedPage
+    @headings = []
+    @title = ""
+    @used_ids = {}
+    @no_run = false
+    html = blocks(source.gsub("\r\n", "\n").gsub("\t", "    ").split("\n"))
+    RenderedPage.new(html, @title, @headings)
+  end
+
+  # -- Blocks ---------------------------------------------------------------
+
+  def blocks(lines: Array) -> String
+    out = []
+    index = 0
+    while index < lines.length()
+      line = lines[index]
+      # A no-run marker applies only to the code block right after it.
+      @no_run = false unless line.strip() == "" || FENCE.match?(line) || HTML_BLOCK.match?(line)
+      if line.strip() == ""
+        index += 1
+      elsif FENCE.match?(line)
+        index = fenced_code(lines, index, out)
+      elsif ATX_HEADING.match?(line.lstrip()) && indent_of(line) < 4
+        match = ATX_HEADING.match(line.lstrip())
+        out.push(heading(match[1].length(), match[2]))
+        index += 1
+      elsif RULE.match?(line)
+        out.push("<hr>")
+        index += 1
+      elsif HTML_BLOCK.match?(line)
+        index = html_block(lines, index, out)
+      elsif QUOTE.match?(line)
+        index = quote(lines, index, out)
+      elsif list_marker?(line)
+        index = list(lines, index, out)
+      elsif table_start?(lines, index)
+        index = table(lines, index, out)
+      else
+        index = paragraph(lines, index, out)
+      end
+    end
+    out.join("\n")
+  end
+
+  def indent_of(line: String) -> Int = line.length() - line.lstrip().length()
+
+  def list_marker?(line: String) -> Bool
+    (BULLET.match?(line) && !RULE.match?(line)) || ORDERED.match?(line)
+  end
+
+  def table_start?(lines: Array, index: Int) -> Bool
+    index + 1 < lines.length() && lines[index].include?("|") &&
+      lines[index + 1].include?("-") && TABLE_DELIMITER.match?(lines[index + 1])
+  end
+
+  # A line that ends a paragraph because another block starts on it.
+  def interrupts?(line: String) -> Bool
+    line.strip() == "" || FENCE.match?(line) || ATX_HEADING.match?(line.lstrip()) ||
+      RULE.match?(line) || QUOTE.match?(line) || HTML_BLOCK.match?(line) ||
+      BULLET.match?(line) || starts_ordered_at_one?(line)
+  end
+
+  def starts_ordered_at_one?(line: String) -> Bool
+    match = ORDERED.match(line)
+    match != nil && match[2] == "1"
+  end
+
+  def fenced_code(lines: Array, start: Int, out: Array) -> Int
+    match = FENCE.match(lines[start])
+    indent = match[1].length()
+    marker = match[2]
+    language = match[3].downcase()
+    index = start + 1
+    body = []
+    while index < lines.length() && !lines[index].strip().start_with?(marker)
+      line = lines[index]
+      body.push(indent_of(line) >= indent ? line.slice(indent, line.length() - indent) : line.lstrip())
+      index += 1
+    end
+    language = "d6" if D6_LANGUAGES.include?(language)
+    attribute = language == "" ? "" : " class=\"language-#{language}\""
+    attribute += " data-run=\"no\"" if @no_run
+    @no_run = false
+    out.push("<pre><code#{attribute}>#{escape(body.join("\n"))}</code></pre>")
+    index + 1
+  end
+
+  def heading(level: Int, raw: String) -> String
+    text = plain(raw)
+    id = unique_id(slug(text))
+    @title = text if level == 1 && @title == ""
+    @headings.push(Heading.new(level, id, text)) if level == 2 || level == 3
+    "<h#{level} id=\"#{id}\"><a class=\"anchor\" href=\"##{id}\">#{inline(raw)}</a></h#{level}>"
+  end
+
+  def html_block(lines: Array, start: Int, out: Array) -> Int
+    index = start
+    block = []
+    # A comment ends at its own "-->", so a fence right below it (the docs'
+    # `<!-- doc-check: skip -->` markers) is still read as code.
+    comment = lines[start].strip().start_with?("<!--")
+    while index < lines.length() && lines[index].strip() != ""
+      break if !comment && index > start && FENCE.match?(lines[index])
+      block.push(lines[index])
+      index += 1
+      break if comment && lines[index - 1].include?("-->")
+    end
+    html = block.join("\n")
+    @no_run = true if comment && (html.include?("docsite: no-run") || html.include?("doc-check: skip"))
+    out.push(html) unless html.strip().start_with?("<!--") && html.strip().end_with?("-->")
+    index
+  end
+
+  def quote(lines: Array, start: Int, out: Array) -> Int
+    index = start
+    inner = []
+    while index < lines.length() && lines[index].strip() != ""
+      match = QUOTE.match(lines[index])
+      inner.push(match == nil ? lines[index] : match[1])
+      index += 1
+    end
+    out.push("<blockquote>\n#{blocks(inner)}\n</blockquote>")
+    index
+  end
+
+  def paragraph(lines: Array, start: Int, out: Array) -> Int
+    index = start
+    text = [lines[index].strip()]
+    index += 1
+    while index < lines.length() && !interrupts?(lines[index]) && !table_start?(lines, index)
+      text.push(lines[index].strip())
+      index += 1
+    end
+    out.push("<p>#{inline(text.join("\n"))}</p>")
+    index
+  end
+
+  # One list: consecutive items of the same kind at the first item's indent.
+  # An item owns every following line indented past its marker, blank lines
+  # between them, and lazy continuation lines of its paragraph.
+  def list(lines: Array, start: Int, out: Array) -> Int
+    first = lines[start]
+    ordered = !BULLET.match?(first)
+    base = indent_of(first)
+    start_number = ordered ? ORDERED.match(first)[2].to_i() : 1
+    items = []
+    loose = false
+    index = start
+    while index < lines.length()
+      line = lines[index]
+      break unless list_marker?(line) && indent_of(line) == base && BULLET.match?(line) != ordered
+      content_indent = marker_width(line)
+      item = [line.slice(content_indent, line.length() - content_indent)]
+      index += 1
+      while index < lines.length()
+        line = lines[index]
+        if line.strip() == ""
+          following = index + 1
+          following += 1 while following < lines.length() && lines[following].strip() == ""
+          break if following >= lines.length() || indent_of(lines[following]) < content_indent
+          loose = true if indent_of(lines[following]) == content_indent && !list_marker?(lines[following].lstrip()) &&
+            !FENCE.match?(lines[following])
+          while index < following
+            item.push("")
+            index += 1
+          end
+        elsif indent_of(line) >= content_indent
+          item.push(line.slice(content_indent, line.length() - content_indent))
+          index += 1
+        elsif !interrupts?(line) && item[item.length() - 1].strip() != "" && !list_marker?(line)
+          item.push(line.strip())
+          index += 1
+        else
+          break
+        end
+      end
+      items.push(item)
+      # A blank line between two items makes the list loose.
+      if index < lines.length() && lines[index].strip() == ""
+        following = index + 1
+        following += 1 while following < lines.length() && lines[following].strip() == ""
+        if following < lines.length() && list_marker?(lines[following]) && indent_of(lines[following]) == base &&
+           BULLET.match?(lines[following]) != ordered
+          loose = true
+          index = following
+        end
+      end
+    end
+    tag = ordered ? "ol" : "ul"
+    open = ordered && start_number != 1 ? "<ol start=\"#{start_number}\">" : "<#{tag}>"
+    rendered = items.map() do |item|
+      body = blocks(item)
+      body = unwrap_paragraphs(body) unless loose
+      "<li>#{body}</li>"
+    end
+    out.push("#{open}\n#{rendered.join("\n")}\n</#{tag}>")
+    index
+  end
+
+  def marker_width(line: String) -> Int
+    match = BULLET.match(line)
+    if match != nil
+      return match[1].length() + 1 + (match[3].length() > 4 ? 1 : match[3].length())
+    end
+    match = ORDERED.match(line)
+    match[1].length() + match[2].length() + 1 + (match[4].length() > 4 ? 1 : match[4].length())
+  end
+
+  # A tight list item shows its paragraphs without <p> wrappers.
+  def unwrap_paragraphs(html: String) -> String
+    html.gsub(Regexp.new("<p>((.|\\n)*?)</p>"), "\\1")
+  end
+
+  def table(lines: Array, start: Int, out: Array) -> Int
+    header = cells(lines[start])
+    alignments = cells(lines[start + 1]).map() do |cell|
+      left = cell.start_with?(":")
+      right = cell.end_with?(":")
+      left && right ? "center" : (right ? "right" : (left ? "left" : ""))
+    end
+    index = start + 2
+    rows = []
+    while index < lines.length() && lines[index].strip() != "" && lines[index].include?("|")
+      rows.push(cells(lines[index]))
+      index += 1
+    end
+    head = []
+    header.each_with_index() do |text, column|
+      head.push(table_cell("th", text, item_or(alignments, column)))
+    end
+    body = rows.map() do |row|
+      columns = []
+      header.each_with_index() do |_, column|
+        columns.push(table_cell("td", item_or(row, column), item_or(alignments, column)))
+      end
+      "<tr>#{columns.join("")}</tr>"
+    end
+    out.push("<div class=\"table-wrap\"><table>\n<thead><tr>#{head.join("")}</tr></thead>\n" +
+      "<tbody>\n#{body.join("\n")}\n</tbody>\n</table></div>")
+    index
+  end
+
+  def table_cell(tag: String, text: String, alignment: String) -> String
+    style = alignment == "" ? "" : " style=\"text-align: #{alignment}\""
+    "<#{tag}#{style}>#{inline(text)}</#{tag}>"
+  end
+
+  # Splits a table row on `|`, except inside code spans or after a backslash.
+  def cells(line: String) -> Array
+    row = line.strip()
+    row = row.slice(1, row.length() - 1) if row.start_with?("|")
+    row = row.slice(0, row.length() - 1) if row.end_with?("|") && !row.end_with?("\\|")
+    result = []
+    current = []
+    in_code = false
+    previous = ""
+    row.each_char() do |char|
+      if char == "`"
+        in_code = !in_code
+        current.push(char)
+      elsif char == "|" && !in_code && previous != "\\"
+        result.push(current.join("").strip())
+        current = []
+      elsif char == "|" && previous == "\\"
+        current.pop()
+        current.push("|")
+      else
+        current.push(char)
+      end
+      previous = char
+    end
+    result.push(current.join("").strip())
+    result
+  end
+
+  # -- Inline ---------------------------------------------------------------
+
+  # Code spans and backslash escapes are set aside first, so nothing inside
+  # them is read as a link or emphasis; the rest is escaped, then marked up.
+  def inline(text: String) -> String
+    @placeholders = []
+    shielded = protect_code_and_escapes(text)
+    html = escape(shielded)
+    html = html.gsub(LINK) do |whole|
+      match = LINK.match(whole)
+      "<a href=\"#{link_target(match[2])}\">#{match[1]}</a>"
+    end
+    html = html.gsub(AUTOLINK, "<a href=\"\\1\">\\1</a>")
+    html = html.gsub(STRONG, "<strong>\\1</strong>")
+    html = html.gsub(EMPHASIS, "\\1<em>\\2</em>")
+    html = html.gsub(UNDERSCORE_EMPHASIS, "\\1<em>\\2</em>\\4")
+    restore(html)
+  end
+
+  def protect_code_and_escapes(text: String) -> String
+    out = []
+    chars = text.chars()
+    index = 0
+    while index < chars.length()
+      char = chars[index]
+      if char == "\\" && index + 1 < chars.length() && ESCAPABLE.include?(chars[index + 1])
+        out.push(placeholder(escape(chars[index + 1])))
+        index += 2
+      elsif char == "`"
+        run = 0
+        run += 1 while index + run < chars.length() && chars[index + run] == "`"
+        close = closing_backticks(chars, index + run, run)
+        if close < 0
+          run.times() do out.push("`") end
+          index += run
+        else
+          code = chars.slice(index + run, close - index - run).join("")
+          code = code.slice(1, code.length() - 2) if code.length() > 2 && code.start_with?(" ") && code.end_with?(" ")
+          out.push(placeholder("<code>#{escape(code.gsub("\n", " "))}</code>"))
+          index = close + run
+        end
+      else
+        out.push(char)
+        index += 1
+      end
+    end
+    out.join("")
+  end
+
+  # The index of the next run of exactly `run` backticks at or after `from`, or -1.
+  def closing_backticks(chars: Array, from: Int, run: Int) -> Int
+    index = from
+    while index < chars.length()
+      if chars[index] == "`"
+        length = 0
+        length += 1 while index + length < chars.length() && chars[index + length] == "`"
+        return index if length == run
+        index += length
+      else
+        index += 1
+      end
+    end
+    -1
+  end
+
+  def placeholder(html: String) -> String
+    @placeholders.push(html)
+    "\u0001#{@placeholders.length() - 1}\u0002"
+  end
+
+  def restore(html: String) -> String
+    html.gsub(Regexp.new("\u0001([0-9]+)\u0002")) do |whole|
+      @placeholders[whole.slice(1, whole.length() - 2).to_i()]
+    end
+  end
+
+  def link_target(url: String) -> String
+    hash = url.index_of("#")
+    file = hash == nil ? url : url.slice(0, hash)
+    fragment = hash == nil ? "" : url.slice(hash, url.length() - hash)
+    return @links[file] + fragment if @links.include_key?(file)
+    # Any other relative link (to a file outside the published pages) goes to
+    # `fallback` + the link, the file on GitHub when the generator sets it.
+    return url if @fallback == "" || file == "" || url.start_with?("/") || URL_SCHEME.match?(url)
+    @fallback + url
+  end
+
+  # -- Text helpers ---------------------------------------------------------
+
+  # A heading's text without markup, for its id and the table of contents.
+  def plain(raw: String) -> String
+    raw.gsub(LINK, "\\1").gsub("`", "").gsub("**", "").gsub(Regexp.new("\\\\(.)"), "\\1")
+  end
+
+  # GitHub's anchor rule: lower case, drop punctuation, spaces become hyphens.
+  def slug(text: String) -> String
+    text.downcase().gsub(Regexp.new("[^a-z0-9 _-]"), "").gsub(" ", "-")
+  end
+
+  def unique_id(base: String) -> String
+    count = @used_ids.fetch(base, 0)
+    @used_ids[base] = count + 1
+    count == 0 ? base : "#{base}-#{count}"
+  end
+end
+
+def escape(text: String) -> String
+  text.gsub("&", "&amp;").gsub("<", "&lt;").gsub(">", "&gt;").gsub("\"", "&quot;")
+end
+
+# The array's item at index, or "" past its end.
+def item_or(items: Array, index: Int) -> String
+  index < items.length() ? items[index] : ""
+end

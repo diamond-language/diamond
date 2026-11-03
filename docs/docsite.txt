@@ -1,0 +1,52 @@
+# Pages of the documentation site (getdiamond.codes/docs), in sidebar order.
+# Built by tools/docsite/build.d6. "== Name" starts a sidebar section; every
+# other non-comment line is a Markdown file under docs/. Pages in a "Guide"
+# section are published under guide/, the rest under reference/; examples get
+# Run buttons on pages from docs/guide/. A docs/*.md file not
+# listed here is linked to on GitHub instead.
+
+== Guide
+guide/index.md
+guide/basics.md
+guide/control-flow.md
+guide/collections.md
+guide/functions.md
+guide/classes.md
+guide/types.md
+guide/errors.md
+guide/concurrency.md
+getting-started.md
+
+== Reference: the language
+syntax.md
+core-syntax.md
+callables.md
+classes-and-modules.md
+object-model.md
+types-and-errors.md
+collections.md
+runtime-reference.md
+time.md
+
+== Reference: concurrency
+fibers.md
+threads.md
+cancellation.md
+
+== Reference: I/O and services
+io.md
+local-io.md
+processes.md
+networking.md
+databases.md
+
+== Reference: tools
+repl.md
+debugging.md
+lsp.md
+caching.md
+packages.md
+cut-contract.md
+deployment.md
+sandbox.md
+portability.md
