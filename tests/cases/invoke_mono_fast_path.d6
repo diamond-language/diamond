@@ -1,0 +1,58 @@
+# A call site turns monomorphic after its first hit, and the warm path then
+# takes the cached method without the universal-method checks. Each loop
+# below runs a site well past that point.
+
+# A class's own tap/to_s/dup still win over the universal ones.
+class Own
+  def tap() -> String = "own tap"
+  def to_s() -> String = "own to_s"
+  def dup() -> Int = 7
+end
+
+# An exception's message stays its field even when a subclass defines one.
+class Oops < StandardError
+  def message() -> String = "defined message"
+end
+
+# A private method still refuses an outside caller on a warm site.
+class Secret
+  def peek() -> Int = hidden()
+  private def hidden() -> Int = 42
+end
+
+own = Own.new()
+oops = Oops.new("field message")
+secret = Secret.new()
+i = 0
+while i < 3
+  puts(own.tap())
+  puts(own.to_s())
+  puts(own.dup())
+  puts(oops.message())
+  puts(secret.peek())
+  i += 1
+end
+
+# Two classes through one site: the cache goes polymorphic and back.
+class A
+  def name() -> String = "a"
+end
+class B
+  def name() -> String = "b"
+end
+items = [A.new(), B.new(), A.new(), A.new(), B.new()]
+names = ""
+items.each() do |item|
+  names += item.name()
+end
+puts(names)
+
+begin
+  j = 0
+  while j < 3
+    secret.hidden()
+    j += 1
+  end
+rescue e
+  puts("rescued")
+end

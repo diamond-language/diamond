@@ -2377,8 +2377,8 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 source=OPERAND_SHORT(0); set_index=OPERAND_SHORT(2);
                 if(set_index>=chunk->type_set_count)
                     VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
-                const bool matches=value_matches_set(chunk,registers[source],
-                    set_index,true);
+                const bool matches=value_quickly_matches_set(chunk,registers[source],set_index)||
+                    value_matches_set(chunk,registers[source],set_index,true);
                 if(!matches) {
                     report_check_type_failure(vm,chunk,registers[source],set_index);
                     VM_RETURN(DIAMOND_VM_TYPE_ERROR);

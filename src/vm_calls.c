@@ -326,6 +326,12 @@ DiamondVmStatus jit_call_or_interpret(DiamondVm *vm, const DiamondFunction *func
         const DiamondChunk *chunk_to_interpret, const DiamondValue *arguments,
         size_t argument_count, size_t depth, const DiamondClosure *closure,
         DiamondValue *result) {
+    /* Without the JIT the call is just run_chunk, which repeats
+     * jit_call_core's depth check itself; only native code stages tail
+     * calls, so there is no DIAMOND_JIT_TAIL to handle either. */
+    if (!vm->jit)
+        return run_chunk(chunk_to_interpret, vm, arguments, argument_count,
+            depth + 1, closure, result);
     const uint8_t status = jit_call_core(vm, function, chunk_to_interpret,
         arguments, argument_count, depth, closure, result);
     if (status == DIAMOND_JIT_TAIL)
@@ -440,7 +446,8 @@ static bool native_range_to_a(DiamondVm *vm,const DiamondChunk *owner_chunk,
     return true;
 }
 
-DiamondVmStatus invoke_resolved_method_helper(DiamondVm *vm,
+__attribute__((noinline))
+static DiamondVmStatus invoke_resolved_method_general(DiamondVm *vm,
         const DiamondChunk *owner_chunk,const DiamondMethod *method,
         DiamondValue self_value,const DiamondValue *registers,uint16_t base,
         uint8_t argc,bool typed,uint8_t type_argument_count,
@@ -453,18 +460,6 @@ DiamondVmStatus invoke_resolved_method_helper(DiamondVm *vm,
      * needs its own explicit guard against the shared buffer below. */
     if((size_t)argc+1+method->bound_value_count>(size_t)DIAMOND_MAX_ARGUMENTS+1)
         return DIAMOND_VM_ARITY_ERROR;
-    if(argc==0&&!typed&&method->bound_value_count==0&&vm->debug_fd<0) {
-        const DiamondChunk *getter_chunk=
-            method->source_chunk!=nullptr?method->source_chunk:owner_chunk;
-        if(trivial_getter_result(vm,getter_chunk->functions[method->function_index],
-               self_value,result))
-            return DIAMOND_VM_OK;
-        if(method->source_chunk==nullptr) {
-            DiamondVmStatus range_status;
-            if(native_range_to_a(vm,owner_chunk,method,self_value,result,&range_status))
-                return range_status;
-        }
-    }
     DiamondValue args[DIAMOND_MAX_ARGUMENTS+1];args[0]=self_value;
     for(size_t i=0;i<argc;i++)args[i+1]=registers[(size_t)base+i];
     /* Trailing parameters compile_method's own synthesized source appended
@@ -520,6 +515,82 @@ DiamondVmStatus invoke_resolved_method_helper(DiamondVm *vm,
       .type_variable_bindings=type_argument_count==0?nullptr:explicit_bindings,
       .register_count=fn->register_count,.has_variadic=fn->has_variadic};
     return jit_call_or_interpret(vm,fn,&child,args,total_args,depth,nullptr,result);
+}
+
+/* Methods with at most this many arguments, called without type arguments or
+ * compile_method bound values, take invoke_resolved_method_plain. */
+enum { DIAMOND_PLAIN_METHOD_ARGUMENTS = 7 };
+
+/* invoke_resolved_method_general for the common call, with the same chunk and
+ * arguments it would build (no explicit bindings, so type_variable_bindings
+ * stays nullptr, as it does there for an untyped call). Kept apart so this
+ * frame holds eight argument slots rather than the general one's 256-slot
+ * buffer and binding array, which every call used to pay for on entry. */
+__attribute__((always_inline))
+static inline DiamondVmStatus invoke_resolved_method_plain(DiamondVm *vm,
+        const DiamondChunk *function_chunk,const DiamondFunction *fn,
+        DiamondValue self_value,const DiamondValue *registers,uint16_t base,
+        uint8_t argc,size_t depth,DiamondValue *result) {
+    DiamondValue args[DIAMOND_PLAIN_METHOD_ARGUMENTS+1];
+    args[0]=self_value;
+    for(size_t i=0;i<argc;i++)args[i+1]=registers[(size_t)base+i];
+    const DiamondChunk child={.name=fn->name,.code=fn->code,
+      .lines=fn->lines,.columns=fn->columns,.code_count=fn->code_count,
+      .constants=fn->constants,.constant_count=fn->constant_count,
+      .strings=fn->strings,.string_count=fn->string_count,
+      .type_sets=fn->type_sets,.type_set_count=fn->type_set_count,
+      .functions=function_chunk->functions,.function_count=function_chunk->function_count,
+      .classes=function_chunk->classes,.class_count=function_chunk->class_count,
+      .interfaces=function_chunk->interfaces,.interface_count=function_chunk->interface_count,
+      .parameter_type_sets=fn->parameter_type_sets,
+      .type_variable_count=fn->type_variable_count,
+      .class_type_variable=fn->class_type_variable,
+        .binding_owner_plus_one=(uint16_t)(fn->owner_class+1u),
+      .parameter_offset=fn->owner_class==DIAMOND_OWNER_NONE?0:1,
+      .register_count=fn->register_count,.has_variadic=fn->has_variadic};
+    return jit_call_or_interpret(vm,fn,&child,args,(size_t)argc+1,depth,nullptr,result);
+}
+
+/* Calls `method` on `self_value` with the caller's registers[base..base+argc)
+ * as its arguments. A getter, a bounded Int Range#to_a, and every call with no
+ * type arguments, no bound values and few arguments are answered before
+ * invoke_resolved_method_general's large frame is ever set up. */
+__attribute__((always_inline)) static inline DiamondVmStatus
+invoke_resolved_method_dispatch(DiamondVm *vm,
+        const DiamondChunk *owner_chunk,const DiamondMethod *method,
+        DiamondValue self_value,const DiamondValue *registers,uint16_t base,
+        uint8_t argc,bool typed,uint8_t type_argument_count,
+        const uint16_t *type_arguments,const DiamondChunk *caller_chunk,
+        size_t depth,DiamondValue *result) {
+    if(typed||method->bound_value_count!=0||argc>DIAMOND_PLAIN_METHOD_ARGUMENTS)
+        return invoke_resolved_method_general(vm,owner_chunk,method,self_value,
+            registers,base,argc,typed,type_argument_count,type_arguments,
+            caller_chunk,depth,result);
+    const DiamondChunk *function_chunk=
+        method->source_chunk!=nullptr?method->source_chunk:owner_chunk;
+    const DiamondFunction *fn=function_chunk->functions[method->function_index];
+    if(argc==0&&vm->debug_fd<0) {
+        if(trivial_getter_result(vm,fn,self_value,result))
+            return DIAMOND_VM_OK;
+        if(method->source_chunk==nullptr) {
+            DiamondVmStatus range_status;
+            if(native_range_to_a(vm,owner_chunk,method,self_value,result,&range_status))
+                return range_status;
+        }
+    }
+    return invoke_resolved_method_plain(vm,function_chunk,fn,self_value,
+        registers,base,argc,depth,result);
+}
+
+DiamondVmStatus invoke_resolved_method_helper(DiamondVm *vm,
+        const DiamondChunk *owner_chunk,const DiamondMethod *method,
+        DiamondValue self_value,const DiamondValue *registers,uint16_t base,
+        uint8_t argc,bool typed,uint8_t type_argument_count,
+        const uint16_t *type_arguments,const DiamondChunk *caller_chunk,
+        size_t depth,DiamondValue *result) {
+    return invoke_resolved_method_dispatch(vm,owner_chunk,method,self_value,
+        registers,base,argc,typed,type_argument_count,type_arguments,
+        caller_chunk,depth,result);
 }
 
 /* JIT trampoline for a plain DIAMOND_OP_CALL: the same validation and the same
@@ -780,6 +851,26 @@ DiamondVmStatus diamond_jit_invoke_instance(DiamondVm *vm, const DiamondChunk *c
     }
     DiamondInstance *instance=(DiamondInstance *)registers[recv].as.object;
     const DiamondChunk *owner=instance->owner!=nullptr?instance->owner:vm->root_chunk;
+    const DiamondMethod *method=nullptr;
+    /* Warm monomorphic site: the cache only ever holds a method that
+     * lookup_method found on this class, so the universal-method checks
+     * below (each gated on lookup_method coming back empty) cannot apply.
+     * The exception-field names are intercepted even when a class defines
+     * them, so those keep the full path. */
+    if(instruction==DIAMOND_OP_INVOKE_MONO&&
+       !(method_name->length==7&&memcmp(method_name->chars,"message",7)==0)&&
+       !(method_name->length==5&&memcmp(method_name->chars,"cause",5)==0)&&
+       !(method_name->length==9&&memcmp(method_name->chars,"backtrace",9)==0)) {
+        const size_t slot=diamond_cache_find(site,vm->method_caches,
+            sizeof vm->method_caches[0]);
+        if(slot!=SIZE_MAX&&vm->method_caches[slot].entry_count==1&&
+           vm->method_caches[slot].entries[0].receiver_class==instance->class) {
+            method=vm->method_caches[slot].entries[0].method;
+            vm->inline_cache_hits++;
+            vm->monomorphic_dispatches++;
+            if(method!=nullptr)goto resolved;
+        }
+    }
     /* tap/dup/freeze/frozen?/respond_to?/public_send -- universal methods,
      * gated on lookup_method coming back empty first: a class CAN
      * legitimately define its own dup/tap/respond_to?, and that user
@@ -882,7 +973,6 @@ DiamondVmStatus diamond_jit_invoke_instance(DiamondVm *vm, const DiamondChunk *c
         sizeof vm->method_caches[0]);
     const DiamondMethodCache *cache=cache_slot==SIZE_MAX?nullptr:
         &vm->method_caches[cache_slot];
-    const DiamondMethod *method=nullptr;
     if (instruction==DIAMOND_OP_INVOKE_MONO &&
         cache!=nullptr && cache->entry_count==1 &&
         cache->entries[0].receiver_class==instance->class) {
@@ -907,6 +997,7 @@ DiamondVmStatus diamond_jit_invoke_instance(DiamondVm *vm, const DiamondChunk *c
     if(method==nullptr)
         return jit_instance_method_missing(vm,owner,instance,method_name,registers,base,argc,
             depth,out);
+resolved:
     if(method->is_private||method->is_protected) {
         const DiamondVmStatus visibility=check_instance_method_visibility(vm,chunk,owner,
             instance,method,method_name,registers,recv);
@@ -915,7 +1006,7 @@ DiamondVmStatus diamond_jit_invoke_instance(DiamondVm *vm, const DiamondChunk *c
     if(argc<method->required_arity||
        (argc>method->arity && !method->has_variadic))
         return DIAMOND_VM_ARITY_ERROR;
-    return invoke_resolved_method_helper(vm,owner,
+    return invoke_resolved_method_dispatch(vm,owner,
         method,registers[recv],registers,base,argc,
         instruction==DIAMOND_OP_INVOKE_TYPED,
         type_argument_count,type_arguments,chunk,depth,out);

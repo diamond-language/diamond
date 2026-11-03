@@ -1331,7 +1331,8 @@ DiamondVmStatus check_self_return(DiamondVm *vm,const DiamondChunk *chunk,Diamon
 DiamondVmStatus diamond_jit_check_type(DiamondVm *vm, const DiamondChunk *chunk,
         const DiamondValue *value, uint16_t set_index) {
     if (set_index >= chunk->type_set_count) return DIAMOND_VM_INVALID_BYTECODE;
-    if (value_matches_set(chunk, *value, set_index, true)) return DIAMOND_VM_OK;
+    if (value_quickly_matches_set(chunk, *value, set_index) ||
+        value_matches_set(chunk, *value, set_index, true)) return DIAMOND_VM_OK;
     report_check_type_failure(vm, chunk, *value, set_index);
     return DIAMOND_VM_TYPE_ERROR;
 }
