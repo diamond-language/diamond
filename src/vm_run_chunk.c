@@ -185,6 +185,41 @@ static const DiamondChunk *bind_generic_entry(const DiamondChunk *chunk,
 }
 
 
+/* Everything an _INT_K instruction's own handler leaves: a non-Int or big
+ * integer operand, an overflow, a `%` by 0 or -1. Answered by the generic
+ * opcode's slow path, the same one the register form reaches; the generic
+ * opcode never triggers their deopt rewrite, which would write a register
+ * form's opcode over this differently shaped instruction. Out of line so
+ * the handlers stay small. */
+__attribute__((noinline))
+static DiamondVmStatus int_constant_slow(DiamondVm *vm,const DiamondChunk *chunk,
+        size_t depth,size_t instruction_offset,DiamondOpCode opcode,
+        DiamondValue left,DiamondValue right,DiamondValue *out) {
+    switch(opcode) {
+        case DIAMOND_OP_ADD_INT_K:
+            return int_arith_slow(vm,chunk,depth,instruction_offset,DIAMOND_OP_ADD,left,right,out);
+        case DIAMOND_OP_SUBTRACT_INT_K:
+            return int_arith_slow(vm,chunk,depth,instruction_offset,DIAMOND_OP_SUBTRACT,left,right,out);
+        case DIAMOND_OP_MULTIPLY_INT_K:
+            return int_arith_slow(vm,chunk,depth,instruction_offset,DIAMOND_OP_MULTIPLY,left,right,out);
+        case DIAMOND_OP_MODULO_INT_K:
+            return int_arith_slow(vm,chunk,depth,instruction_offset,DIAMOND_OP_MODULO,left,right,out);
+        case DIAMOND_OP_LESS_INT_K:
+            return compare_int_slow(vm,chunk,depth,instruction_offset,DIAMOND_OP_LESS,left,right,out);
+        case DIAMOND_OP_LESS_EQUAL_INT_K:
+            return compare_int_slow(vm,chunk,depth,instruction_offset,DIAMOND_OP_LESS_EQUAL,left,right,out);
+        case DIAMOND_OP_GREATER_INT_K:
+            return compare_int_slow(vm,chunk,depth,instruction_offset,DIAMOND_OP_GREATER,left,right,out);
+        case DIAMOND_OP_GREATER_EQUAL_INT_K:
+            return compare_int_slow(vm,chunk,depth,instruction_offset,DIAMOND_OP_GREATER_EQUAL,left,right,out);
+        case DIAMOND_OP_EQUAL_INT_K: case DIAMOND_OP_NOT_EQUAL_INT_K:
+            return diamond_jit_equal_general(vm,chunk,depth,chunk->code+instruction_offset,
+                &left,&right,opcode==DIAMOND_OP_NOT_EQUAL_INT_K,out);
+        default:
+            return DIAMOND_VM_INVALID_BYTECODE;
+    }
+}
+
 DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                                  DiamondVm *vm,
                                  const DiamondValue *arguments,
@@ -4072,94 +4107,78 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
             }
             /* dest, left, scratch, constant (see the opcode's comment in
              * src/vm.h): a CONSTANT into `scratch` and the register form in
-             * one dispatch. Anything but two
+             * one dispatch, one handler per operator. The CONSTANT's store
+             * comes first: `scratch` can be `left` itself (`x = 1` then
+             * `x + x` folds the first statement's CONSTANT). Anything but two
              * plain Ints (with a divisor other than 0 and -1 for `%`), and
-             * any overflow, takes the generic opcode's slow path, which
-             * never rewrites the instruction. */
-            case DIAMOND_OP_ADD_INT_K: op_ADD_INT_K:
-            case DIAMOND_OP_SUBTRACT_INT_K: op_SUBTRACT_INT_K:
-            case DIAMOND_OP_MULTIPLY_INT_K: op_MULTIPLY_INT_K:
-            case DIAMOND_OP_MODULO_INT_K: op_MODULO_INT_K:
-            case DIAMOND_OP_LESS_INT_K: op_LESS_INT_K:
-            case DIAMOND_OP_LESS_EQUAL_INT_K: op_LESS_EQUAL_INT_K:
-            case DIAMOND_OP_GREATER_INT_K: op_GREATER_INT_K:
-            case DIAMOND_OP_GREATER_EQUAL_INT_K: op_GREATER_EQUAL_INT_K:
-            case DIAMOND_OP_EQUAL_INT_K: op_EQUAL_INT_K:
-            case DIAMOND_OP_NOT_EQUAL_INT_K: op_NOT_EQUAL_INT_K: {
-                const DiamondOpCode opcode=(DiamondOpCode)instruction;
-                READ_OPERANDS(8);
-                const uint16_t destination=OPERAND_SHORT(0);
-                const uint16_t left=OPERAND_SHORT(2);
-                const uint16_t scratch=OPERAND_SHORT(4);
-                const uint16_t constant=OPERAND_SHORT(6);
-                if((size_t)constant>=chunk->constant_count)
-                    VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
-                /* The CONSTANT's store comes first: `scratch` can be `left` itself
-                 * (`x = 1` then `x + x` fuses the first statement's CONSTANT). */
-                const DiamondValue right_value=chunk->constants[constant];
-                registers[scratch]=right_value;
-                const DiamondValue left_value=registers[left];
-                if(left_value.kind==DIAMOND_VALUE_INT&&right_value.kind==DIAMOND_VALUE_INT) {
-                    const int64_t a=left_value.as.integer,b=right_value.as.integer;
-                    int64_t value=0;
-                    bool handled=true,comparison=false,boolean=false;
-                    switch(opcode) {
-                        case DIAMOND_OP_ADD_INT_K: handled=!ckd_add(&value,a,b); break;
-                        case DIAMOND_OP_SUBTRACT_INT_K: handled=!ckd_sub(&value,a,b); break;
-                        case DIAMOND_OP_MULTIPLY_INT_K: handled=!ckd_mul(&value,a,b); break;
-                        case DIAMOND_OP_MODULO_INT_K:
-                            handled=b!=0&&b!=-1;
-                            if(handled) {
-                                value=a%b;
-                                if(value!=0&&((value<0)!=(b<0)))value+=b;
-                            }
-                            break;
-                        case DIAMOND_OP_LESS_INT_K: comparison=true; boolean=a<b; break;
-                        case DIAMOND_OP_LESS_EQUAL_INT_K: comparison=true; boolean=a<=b; break;
-                        case DIAMOND_OP_GREATER_INT_K: comparison=true; boolean=a>b; break;
-                        case DIAMOND_OP_GREATER_EQUAL_INT_K: comparison=true; boolean=a>=b; break;
-                        case DIAMOND_OP_EQUAL_INT_K: comparison=true; boolean=a==b; break;
-                        default: comparison=true; boolean=a!=b; break;
-                    }
-                    if(handled) {
-                        registers[destination]=comparison?DIAMOND_BOOL(boolean):DIAMOND_INT(value);
-                        DISPATCH_NEXT();
-                    }
+             * any overflow, goes to int_constant_slow, which takes the
+             * generic opcode's path and never rewrites the instruction. */
+#define INT_K_OPERANDS()                                                     \
+                READ_OPERANDS(8);                                            \
+                const uint16_t k_destination=OPERAND_SHORT(0);               \
+                const uint16_t k_constant=OPERAND_SHORT(6);                  \
+                if((size_t)k_constant>=chunk->constant_count)                \
+                    VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);                  \
+                const DiamondValue k_right=chunk->constants[k_constant];     \
+                registers[OPERAND_SHORT(4)]=k_right;                         \
+                const DiamondValue k_left=registers[OPERAND_SHORT(2)];       \
+                const bool k_plain=k_left.kind==DIAMOND_VALUE_INT&&          \
+                    k_right.kind==DIAMOND_VALUE_INT;                         \
+                const int64_t k_a=k_left.as.integer,k_b=k_right.as.integer
+#define INT_K_SLOW()                                                         \
+                do {                                                         \
+                    DiamondValue k_result=DIAMOND_NIL;                       \
+                    const DiamondVmStatus k_status=int_constant_slow(vm,     \
+                        chunk,depth,instruction_offset,                      \
+                        (DiamondOpCode)instruction,k_left,k_right,&k_result);\
+                    VM_PROPAGATE(k_status);                                  \
+                    registers[k_destination]=k_result;                       \
+                } while(false)
+#define INT_K_ARITHMETIC(name_, checked_)                                      \
+            case DIAMOND_OP_##name_: op_##name_: {                           \
+                INT_K_OPERANDS();                                            \
+                int64_t k_value=0;                                           \
+                if(k_plain&&!checked_(&k_value,k_a,k_b)) {                   \
+                    registers[k_destination]=DIAMOND_INT(k_value);           \
+                    DISPATCH_NEXT();                                         \
+                }                                                            \
+                INT_K_SLOW();                                                \
+                break;                                                       \
+            }
+#define INT_K_COMPARISON(name_, compare_)                                      \
+            case DIAMOND_OP_##name_: op_##name_: {                           \
+                INT_K_OPERANDS();                                            \
+                if(k_plain) {                                                \
+                    registers[k_destination]=DIAMOND_BOOL(k_a compare_ k_b); \
+                    DISPATCH_NEXT();                                         \
+                }                                                            \
+                INT_K_SLOW();                                                \
+                break;                                                       \
+            }
+            INT_K_ARITHMETIC(ADD_INT_K, ckd_add)
+            INT_K_ARITHMETIC(SUBTRACT_INT_K, ckd_sub)
+            INT_K_ARITHMETIC(MULTIPLY_INT_K, ckd_mul)
+            INT_K_COMPARISON(LESS_INT_K, <)
+            INT_K_COMPARISON(LESS_EQUAL_INT_K, <=)
+            INT_K_COMPARISON(GREATER_INT_K, >)
+            INT_K_COMPARISON(GREATER_EQUAL_INT_K, >=)
+            INT_K_COMPARISON(EQUAL_INT_K, ==)
+            INT_K_COMPARISON(NOT_EQUAL_INT_K, !=)
+            case DIAMOND_OP_MODULO_INT_K: op_MODULO_INT_K: {
+                INT_K_OPERANDS();
+                if(k_plain&&k_b!=0&&k_b!=-1) {
+                    int64_t remainder=k_a%k_b;
+                    if(remainder!=0&&((remainder<0)!=(k_b<0)))remainder+=k_b;
+                    registers[k_destination]=DIAMOND_INT(remainder);
+                    DISPATCH_NEXT();
                 }
-                DiamondValue slow_result=DIAMOND_NIL;
-                DiamondVmStatus slow_status=DIAMOND_VM_OK;
-                switch(opcode) {
-                    case DIAMOND_OP_ADD_INT_K: case DIAMOND_OP_SUBTRACT_INT_K:
-                    case DIAMOND_OP_MULTIPLY_INT_K: case DIAMOND_OP_MODULO_INT_K: {
-                        const DiamondOpCode generic=
-                            opcode==DIAMOND_OP_ADD_INT_K?DIAMOND_OP_ADD:
-                            opcode==DIAMOND_OP_SUBTRACT_INT_K?DIAMOND_OP_SUBTRACT:
-                            opcode==DIAMOND_OP_MULTIPLY_INT_K?DIAMOND_OP_MULTIPLY:
-                            DIAMOND_OP_MODULO;
-                        slow_status=int_arith_slow(vm,chunk,depth,instruction_offset,
-                            generic,left_value,right_value,&slow_result);
-                        break;
-                    }
-                    case DIAMOND_OP_EQUAL_INT_K: case DIAMOND_OP_NOT_EQUAL_INT_K:
-                        slow_status=diamond_jit_equal_general(vm,chunk,depth,
-                            bytecode+instruction_offset,&left_value,&right_value,
-                            opcode==DIAMOND_OP_NOT_EQUAL_INT_K,&slow_result);
-                        break;
-                    default: {
-                        const DiamondOpCode generic=
-                            opcode==DIAMOND_OP_LESS_INT_K?DIAMOND_OP_LESS:
-                            opcode==DIAMOND_OP_LESS_EQUAL_INT_K?DIAMOND_OP_LESS_EQUAL:
-                            opcode==DIAMOND_OP_GREATER_INT_K?DIAMOND_OP_GREATER:
-                            DIAMOND_OP_GREATER_EQUAL;
-                        slow_status=compare_int_slow(vm,chunk,depth,instruction_offset,
-                            generic,left_value,right_value,&slow_result);
-                        break;
-                    }
-                }
-                VM_PROPAGATE(slow_status);
-                registers[destination]=slow_result;
+                INT_K_SLOW();
                 break;
             }
+#undef INT_K_ARITHMETIC
+#undef INT_K_COMPARISON
+#undef INT_K_SLOW
+#undef INT_K_OPERANDS
             default: op_default:
                 VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
         }
