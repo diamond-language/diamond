@@ -156,7 +156,15 @@ What the split costs at run time is cross-unit inlining and interprocedural regi
 instructions (1.5% more cycles, geometric mean over `bench/`, up to 6% on
 `jit_native_collection_reads`) than the one-file build. The release build therefore links with
 `-flto` (`LTO_FLAGS` in the Makefile): instructions are then within 0.1% of the one-file build and
-cycles 1% below it. The sanitizer and debug builds do not use it. Neither does the AOT runtime
+cycles 1% below it. The sanitizer and debug builds do not use it.
+
+Since 2026-11 the GCC x86-64 release build compiles `vm_run_chunk.c` itself outside LTO again, with
+`RUN_CHUNK_RELEASE_CFLAGS` (no auto-vectorization, 16-byte struct copies, unrolled copy loops). Under
+LTO, GCC realigns `run_chunk`'s stack to 32 bytes and gives up `rbp` as a frame pointer; built alone
+with those flags it keeps `rbp` for the dispatch loop. By then the cross-unit inlining it gives up was
+worth less than that register: the fistfight suite runs about 2% fewer instructions and 2% fewer cycles
+(geometric mean), with tight integer loops the exception (one is 13% slower). The Makefile comment
+above `RUN_CHUNK_RELEASE_CFLAGS` has the numbers. Neither does the AOT runtime
 archive, which `diamond build` links at `-O2` (see the roadmap for what an LTO build of it would cost).
 
 ## How a move is done

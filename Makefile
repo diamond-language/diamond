@@ -284,15 +284,37 @@ tsan:
 		CFLAGS="$(CFLAGS_COMMON) $(CFLAGS_TSAN)" LDFLAGS="$(LDFLAGS_TSAN)"
 
 # The release build links with -flto: run_chunk lives in its own translation unit (src/vm_run_chunk.c,
-# docs/internal/vm-source-layout.md), and without cross-unit inlining and register allocation the
-# interpreter executes about 3% more instructions (1.5% more cycles) than it did in one file.
+# docs/internal/vm-source-layout.md), and the rest of the VM gains from cross-unit inlining.
 LTO_FLAGS ?= -flto
+
+# With GCC on x86-64, the release build compiles vm_run_chunk.c itself outside LTO, with these flags. The
+# point is to free rbp: GCC realigns run_chunk's stack to 32 bytes (taking rbp as a frame pointer) when the
+# function has any 256-bit vector code, which here was auto-vectorized struct building and ymm struct
+# copies, and in an LTO link it realigns for no reason the dumps show at all. Without vectorization and
+# with copies capped at 16 bytes, run_chunk gets one more callee-saved register for its dispatch state.
+# -mstringop-strategy=unrolled_loop keeps those capped fixed-size copies (48-80-byte unwind and frame
+# state) off `rep movs`, which made exceptions 14% slower; the variable-size clears go through
+# diamond_zero_bytes so they still reach libc's memset. Measured against the all-LTO build on the
+# fistfight suite (cycles): geometric mean -2%; fib -7%, exceptions -9%, trees -5%, counts -8%;
+# loop +13%, json +4%, mandelbrot and sieve +3%.
+RUN_CHUNK_RELEASE_CFLAGS :=
+ifeq ($(UNAME_M),x86_64)
+ifneq ($(findstring clang,$(CC)),clang)
+RUN_CHUNK_RELEASE_CFLAGS := -fno-tree-slp-vectorize -fno-tree-loop-vectorize -mmove-max=128 \
+	-mstringop-strategy=unrolled_loop
+endif
+endif
+RUN_CHUNK_CFLAGS ?=
+ifneq ($(strip $(RUN_CHUNK_CFLAGS)),)
+$(BUILD_DIR)/vm_run_chunk.o: override CFLAGS := $(filter-out $(LTO_FLAGS),$(CFLAGS)) $(RUN_CHUNK_CFLAGS)
+endif
 
 release:
 	$(MAKE) clean-variant
 	$(MAKE) $(TARGET) $(BUILD_DIR)/run_cases \
 		CFLAGS="$(CFLAGS_COMMON) $(CFLAGS_RELEASE) $(LTO_FLAGS)" \
-		LDFLAGS="$(LDFLAGS) $(CFLAGS_RELEASE) $(LTO_FLAGS)"
+		LDFLAGS="$(LDFLAGS) $(CFLAGS_RELEASE) $(LTO_FLAGS)" \
+		RUN_CHUNK_CFLAGS="$(RUN_CHUNK_RELEASE_CFLAGS)"
 
 # What a variant switch must discard: the objects and binaries built with $(CFLAGS), which the
 # variants change. Not the whole $(BUILD_DIR): the tool objects in $(DBG_OBJ_DIR) and the fuzzer

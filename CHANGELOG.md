@@ -22,6 +22,14 @@ authoritative fine-grained record.
 
 ### Changed
 
+- **A leaner interpreter loop.** With GCC on x86-64, the release build compiles the interpreter's
+  dispatch function on its own with flags that free one more CPU register for it, and arithmetic
+  on an Int constant no longer stalls on reading back the previous instruction's result. Across the
+  benchmark suite, programs run about 3.5% fewer cycles on average. Calls and loops over
+  collections gain the most: recursive `fib` and raising and rescuing exceptions each run about 8%
+  fewer cycles, and block iteration (`each`, `times`, `reduce`) about 9% fewer. A bare integer
+  counting loop runs about 7% more.
+
 - **Faster setters and Float arithmetic.** A setter whose whole body stores its argument
   (`attr_accessor`'s `x=`, or a one-field `initialize`) is answered by writing the field,
   without a call, the way getters already were; and Float-with-Float `+ - * /` no longer

@@ -289,7 +289,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
      * when that count exceeds this. */
     size_t register_capacity = live_register_count > DIAMOND_INLINE_REGISTER_COUNT
         ? live_register_count : DIAMOND_INLINE_REGISTER_COUNT;
-    memset(registers, 0, live_register_count * sizeof(DiamondValue));
+    diamond_zero_bytes(registers, live_register_count * sizeof(DiamondValue));
     /* Bounded at live_register_count, not argument_count -- a variadic
      * call (see the has_variadic check above) can pass more arguments
      * than this callee has registers for; DIAMOND_OP_COLLECT_VARIADIC
@@ -1825,7 +1825,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 }
                 arguments = tail_buffer;
                 argument_count = call_argument_count;
-                memset(registers, 0, live_register_count * sizeof(DiamondValue));
+                diamond_zero_bytes(registers, live_register_count * sizeof(DiamondValue));
                 /* The same copy a fresh call makes at entry. */
                 const size_t copied = (size_t)call_argument_count < live_register_count
                     ? (size_t)call_argument_count : live_register_count;
@@ -1836,7 +1836,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     /* Bindings are derived from the arguments of every call, as at
                      * entry, so the next iteration may bind different types. */
                     if (chunk != &execution) execution = *chunk;
-                    memset(bindings, 0, chunk->type_variable_count * sizeof(DiamondTypeBinding));
+                    diamond_zero_bytes(bindings, chunk->type_variable_count * sizeof(DiamondTypeBinding));
                     if(chunk->class_type_variable) {
                         if(argument_count==0||
                            !value_is_native_kind(arguments[0],DIAMOND_OBJECT_INSTANCE))
@@ -1877,63 +1877,8 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 break;
             }
             case DIAMOND_OP_CALL_TYPED: op_CALL_TYPED: {
-                uint16_t destination=0,argument_base=0;
-                uint16_t function_index=0;
-                uint8_t call_argument_count=0,type_argument_count=0;
-                READ_OPERANDS(8);
-                destination=OPERAND_SHORT(0);
-                function_index=OPERAND_SHORT(2);
-                argument_base=OPERAND_SHORT(4);
-                call_argument_count=OPERAND_BYTE(6);
-                type_argument_count=OPERAND_BYTE(7);
-                if((size_t)function_index>=chunk->function_count||
-                   (size_t)argument_base+call_argument_count>DIAMOND_REGISTER_COUNT||
-                   type_argument_count>8)
-                    VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
-                const DiamondFunction *function=chunk->functions[function_index];
-                if(type_argument_count!=function->type_variable_count||
-                   call_argument_count<function->required_arity||
-                   (call_argument_count>function->arity && !function->has_variadic))
-                    VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
-                /* Only the first type_argument_count entries are ever read (below,
-                 * and through .type_variable_bindings); zeroing all eight cost about
-                 * 3 KB of memset on every call, typed or not. */
-                DiamondTypeBinding explicit_bindings[type_argument_count==0?1:type_argument_count];
-                for(size_t index=0;index<type_argument_count;index++) {
-                    explicit_bindings[index]=(DiamondTypeBinding){};
-                    uint16_t set_index=0;READ_SHORT(set_index);
-                    if((size_t)set_index>=chunk->type_set_count)
-                        VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
-                    (void)binding_node(&explicit_bindings[index]);
-                    bind_context_set(&explicit_bindings[index],0,chunk,
-                                     chunk->type_sets,set_index);
-                }
-                const DiamondChunk called_chunk={.name=function->name,
-                    .code=function->code,.lines=function->lines,
-                    .columns=function->columns,.code_count=function->code_count,
-                    .constants=function->constants,
-                    .constant_count=function->constant_count,
-                    .strings=function->strings,.string_count=function->string_count,
-                    .type_sets=function->type_sets,
-                    .type_set_count=function->type_set_count,
-                    .functions=chunk->functions,.function_count=chunk->function_count,
-                    .classes=chunk->classes,.class_count=chunk->class_count,
-                    .interfaces=chunk->interfaces,
-                    .interface_count=chunk->interface_count,
-                    .parameter_type_sets=function->parameter_type_sets,
-                    .type_variable_count=function->type_variable_count,
-                    .class_type_variable=function->class_type_variable,
-        .binding_owner_plus_one=(uint16_t)(function->owner_class+1u),
-                    .parameter_offset=function->owner_class==DIAMOND_OWNER_NONE?0:1,
-                    .type_variable_bindings=explicit_bindings,
-                    .register_count=function->register_count,
-                    .has_variadic=function->has_variadic};
-                DiamondValue call_result=DIAMOND_NIL;
-                const DiamondVmStatus status=run_chunk(&called_chunk,vm,
-                    &registers[argument_base],call_argument_count,depth+1,nullptr,
-                    &call_result);
-                VM_PROPAGATE(status);
-                registers[destination]=call_result;
+                ip_slot=ip;const DiamondVmStatus helper_status=outlined_call_typed(vm,chunk,registers,depth,&ip_slot);ip=ip_slot;
+                VM_PROPAGATE(helper_status);
                 break;
             }
             case DIAMOND_OP_CALL_SPREAD: op_CALL_SPREAD:
@@ -2018,7 +1963,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     if(created->type_bindings==nullptr)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
                     created->type_binding_count=variables;
                     vm->bytes_allocated+=variables*sizeof *created->type_bindings;
-                    memcpy(created->type_bindings,chunk->type_variable_bindings,
+                    diamond_copy_bytes(created->type_bindings,chunk->type_variable_bindings,
                         variables*sizeof *created->type_bindings);
                 }
                 if(created->is_block) {
@@ -4226,16 +4171,22 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);                  \
                 const DiamondValue k_right=chunk->constants[k_constant];     \
                 registers[OPERAND_SHORT(4)]=k_right;                         \
-                const DiamondValue k_left=registers[OPERAND_SHORT(2)];       \
-                const bool k_plain=k_left.kind==DIAMOND_VALUE_INT&&          \
+                /* Read through a pointer, kind and payload separately: a   \
+                 * whole-value copy here becomes a 16-byte load ahead of the \
+                 * branch, and the register was usually just written by the  \
+                 * previous instruction as separate kind and payload stores, \
+                 * which a 16-byte load cannot forward from -- it stalls in  \
+                 * the load queue. Only the slow path needs the whole value. */\
+                const DiamondValue *k_left=&registers[OPERAND_SHORT(2)];     \
+                const bool k_plain=k_left->kind==DIAMOND_VALUE_INT&&         \
                     k_right.kind==DIAMOND_VALUE_INT;                         \
-                const int64_t k_a=k_left.as.integer,k_b=k_right.as.integer
+                const int64_t k_a=k_left->as.integer,k_b=k_right.as.integer
 #define INT_K_SLOW()                                                         \
                 do {                                                         \
                     DiamondValue k_result=DIAMOND_NIL;                       \
                     const DiamondVmStatus k_status=int_constant_slow(vm,     \
                         chunk,depth,instruction_offset,                      \
-                        (DiamondOpCode)instruction,k_left,k_right,&k_result);\
+                        (DiamondOpCode)instruction,*k_left,k_right,&k_result);\
                     VM_PROPAGATE(k_status);                                  \
                     registers[k_destination]=k_result;                       \
                 } while(false)

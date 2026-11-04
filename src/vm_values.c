@@ -1197,3 +1197,16 @@ DiamondVmStatus diamond_jit_frozen(DiamondVm *vm, const DiamondValue *receiver,
     }
     return DIAMOND_VM_TYPE_ERROR; /* not dup_defined -- caller must fall back */
 }
+
+/* Out-of-line memset/memcpy for run_chunk's variable-size clears and copies. vm_run_chunk.c is built
+ * with -mstringop-strategy=unrolled_loop (see the Makefile), which keeps its many small fixed-size
+ * struct copies off `rep movs` but would also expand these into byte loops; a call here reaches the
+ * C library's versions instead. */
+__attribute__((noinline))
+void diamond_zero_bytes(void *destination,size_t size) {
+    memset(destination,0,size);
+}
+__attribute__((noinline))
+void diamond_copy_bytes(void *destination,const void *source,size_t size) {
+    memcpy(destination,source,size);
+}
