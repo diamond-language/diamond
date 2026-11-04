@@ -1,0 +1,22 @@
+# Hash#fetch answers a found key, or a missing key's fallback, natively; the
+# prelude's hash_fetch still handles the rest. These are the edges.
+counts = {1 => 10, "a" => nil, :s => 3}
+p(counts.fetch(1, 0))
+p(counts.fetch(2, 0))
+p(counts.fetch("a", 5))
+p(counts.fetch(:s))
+p(counts.fetch(:missing, :fallback))
+p(counts.fetch(9, nil))
+p(counts.fetch(1.0, "float key"))
+
+# A missing key without a fallback still raises the prelude's IndexError.
+begin
+  counts.fetch(42)
+rescue error: IndexError
+  puts("index: #{error.message()}")
+end
+
+# A counting loop, the shape the native path is for.
+tally = {}
+[3, 1, 3, 2, 3, 1].each() do |v| tally[v] = tally.fetch(v, 0) + 1 end
+p(tally)

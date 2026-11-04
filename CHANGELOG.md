@@ -41,6 +41,11 @@ authoritative fine-grained record.
   from a loop in C instead of the prelude's d6 loop, about 45% fewer instructions per block
   call. `break`, `next`, `return`, raises and errors behave as before.
 
+- **Native `Hash#fetch`.** A found key, or a missing key with a fallback, is answered with one
+  native lookup instead of the prelude's `include_key?` plus `[]`: counting into a Hash with
+  `counts[k] = counts.fetch(k, 0) + 1` runs about 49% fewer instructions. A missing key with
+  no fallback raises the same `IndexError` as before.
+
 - **`sub`/`gsub` with a String pattern skip the Regexp.** When both the pattern and the
   replacement are Strings and the replacement has no `\` escapes, the replace is a plain
   substring search instead of compiling a Regexp on every call: a small-string workload

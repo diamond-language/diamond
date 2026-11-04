@@ -589,6 +589,25 @@ DiamondVmStatus collection_invoke_helper(DiamondVm *vm,const DiamondChunk *chunk
         registers[dest]=DIAMOND_BOOL(hash_find(hash,registers[base])>=0);
         return DIAMOND_VM_OK;
     }
+    /* fetch(key) and fetch(key, fallback) with one lookup, where the
+     * prelude's hash_fetch makes two through d6. A missing key without a
+     * fallback (it raises) or with a Symbol one (it may be the prelude's
+     * own no-fallback marker) is left to hash_fetch, so its errors stay. */
+    if(receiver_kind==DIAMOND_OBJECT_HASH&&(argc==1||argc==2)&&
+       method_name->length==5&&memcmp(method_name->chars,"fetch",5)==0) {
+        const DiamondHash *hash=(const DiamondHash *)registers[recv].as.object;
+        const ptrdiff_t found=hash_find(hash,registers[base]);
+        if(found>=0) {
+            registers[dest]=hash->entries[found].value;return DIAMOND_VM_OK;
+        }
+        if(argc==2) {
+            const DiamondValue fallback=registers[(size_t)base+1];
+            if(!(fallback.kind==DIAMOND_VALUE_OBJECT&&
+                 fallback.as.object->kind==DIAMOND_OBJECT_SYMBOL)) {
+                registers[dest]=fallback;return DIAMOND_VM_OK;
+            }
+        }
+    }
     if(receiver_kind==DIAMOND_OBJECT_ARRAY||receiver_kind==DIAMOND_OBJECT_HASH) {
         /* Not chunk->code+instruction_offset (an ordinary call site's
          * own would be stable, but the native-spread synthetic re-entry
