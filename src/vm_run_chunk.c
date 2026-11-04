@@ -289,7 +289,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
      * when that count exceeds this. */
     size_t register_capacity = live_register_count > DIAMOND_INLINE_REGISTER_COUNT
         ? live_register_count : DIAMOND_INLINE_REGISTER_COUNT;
-    memset(registers, 0, live_register_count * sizeof(DiamondValue));
+    diamond_zero_bytes(registers, live_register_count * sizeof(DiamondValue));
     /* Bounded at live_register_count, not argument_count -- a variadic
      * call (see the has_variadic check above) can pass more arguments
      * than this callee has registers for; DIAMOND_OP_COLLECT_VARIADIC
@@ -1825,7 +1825,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 }
                 arguments = tail_buffer;
                 argument_count = call_argument_count;
-                memset(registers, 0, live_register_count * sizeof(DiamondValue));
+                diamond_zero_bytes(registers, live_register_count * sizeof(DiamondValue));
                 /* The same copy a fresh call makes at entry. */
                 const size_t copied = (size_t)call_argument_count < live_register_count
                     ? (size_t)call_argument_count : live_register_count;
@@ -1836,7 +1836,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     /* Bindings are derived from the arguments of every call, as at
                      * entry, so the next iteration may bind different types. */
                     if (chunk != &execution) execution = *chunk;
-                    memset(bindings, 0, chunk->type_variable_count * sizeof(DiamondTypeBinding));
+                    diamond_zero_bytes(bindings, chunk->type_variable_count * sizeof(DiamondTypeBinding));
                     if(chunk->class_type_variable) {
                         if(argument_count==0||
                            !value_is_native_kind(arguments[0],DIAMOND_OBJECT_INSTANCE))
@@ -1963,7 +1963,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     if(created->type_bindings==nullptr)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
                     created->type_binding_count=variables;
                     vm->bytes_allocated+=variables*sizeof *created->type_bindings;
-                    memcpy(created->type_bindings,chunk->type_variable_bindings,
+                    diamond_copy_bytes(created->type_bindings,chunk->type_variable_bindings,
                         variables*sizeof *created->type_bindings);
                 }
                 if(created->is_block) {

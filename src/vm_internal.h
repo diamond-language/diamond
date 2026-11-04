@@ -1822,6 +1822,8 @@ DIAMOND_INTERNAL DiamondVmStatus outlined_channel_select_send(DiamondVm *vm,cons
         size_t *ip_ref);
 DIAMOND_INTERNAL DiamondVmStatus outlined_io_poll(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
         size_t depth,size_t *ip_ref);
+DIAMOND_INTERNAL void diamond_zero_bytes(void *destination,size_t size);
+DIAMOND_INTERNAL void diamond_copy_bytes(void *destination,const void *source,size_t size);
 DIAMOND_INTERNAL DiamondVmStatus outlined_call_typed(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
         size_t depth,size_t *ip_ref);
 DIAMOND_INTERNAL DiamondVmStatus outlined_call_spread(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
