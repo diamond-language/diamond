@@ -338,6 +338,13 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
     };
     vm->frames = &frame;
 
+/* The two buffers a call may own: both are NULL on almost every call, and free(NULL) is still a
+ * call through the PLT. */
+#define RELEASE_BUFFERS() do {                                         \
+        if(__builtin_expect(heap_registers!=nullptr,0))free(heap_registers); \
+        if(__builtin_expect(tail_buffer!=nullptr,0))free(tail_buffer);       \
+    } while(false)
+
     #define RECORD_ERROR(status_) do {                                      \
         if ((status_) != DIAMOND_VM_OK) {                                   \
             size_t used = strlen(vm->error);                                \
@@ -376,8 +383,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
             }                                                        \
             if(return_status_!=DIAMOND_VM_TYPE_ERROR) {               \
                 vm->frames = frame.previous;                         \
-                free(heap_registers);                                \
-                free(tail_buffer);                                   \
+                RELEASE_BUFFERS();                                       \
                 return return_status_;                               \
             }                                                        \
         }                                                            \
@@ -387,8 +393,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
             goto dispatch_continue;                                  \
         RECORD_ERROR(return_status_);                                \
         vm->frames = frame.previous;                                 \
-        free(heap_registers);                                        \
-        free(tail_buffer);                                           \
+        RELEASE_BUFFERS();                                       \
         return vm->has_exception?DIAMOND_VM_EXCEPTION:return_status_;\
     } while (false)
 
@@ -1714,9 +1719,15 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 const DiamondChunk *called_chunk =
                     plain_call_chunk_for(function, chunk, &called_storage);
                 DiamondValue call_result = DIAMOND_NIL;
-                const DiamondVmStatus status = jit_call_or_interpret(vm, function,
-                    called_chunk, &registers[argument_base], call_argument_count,
-                    depth, nullptr, &call_result);
+                /* With the JIT off, jit_call_or_interpret only forwards to run_chunk, and
+                 * since run_chunk is built outside LTO that forward is a whole extra call
+                 * frame per d6 call. */
+                const DiamondVmStatus status = vm->jit
+                    ? jit_call_or_interpret(vm, function, called_chunk,
+                        &registers[argument_base], call_argument_count, depth,
+                        nullptr, &call_result)
+                    : run_chunk(called_chunk, vm, &registers[argument_base],
+                        call_argument_count, depth + 1, nullptr, &call_result);
                 VM_PROPAGATE(status);
                 registers[destination] = call_result;
                 DISPATCH_NEXT();
@@ -4256,12 +4267,10 @@ dispatch_continue:
     if(depth==0&&vm->running_fiber!=nullptr&&ip>=bytecode_count) {
         *result=DIAMOND_NIL;
         vm->frames=frame.previous;
-        free(heap_registers);
-        free(tail_buffer);
+        RELEASE_BUFFERS();
         return DIAMOND_VM_OK;
     }
     vm->frames = frame.previous;
-    free(heap_registers);
-    free(tail_buffer);
+    RELEASE_BUFFERS();
     return DIAMOND_VM_INVALID_BYTECODE;
 }
