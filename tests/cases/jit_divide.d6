@@ -1,0 +1,37 @@
+# `/` under the JIT: floored like Ruby. idiv truncates, so the compiled code
+# steps the quotient down; the zero, INT64_MIN / -1 and bignum cases go through
+# the slow path and must give the interpreter's answers.
+def d(a, b)
+  a / b
+end
+
+def typed(a: Int, b: Int) -> Int
+  a / b
+end
+
+def safe(a, b)
+  begin
+    d(a, b)
+  rescue ZeroDivisionError
+    "raised"
+  end
+end
+
+big = 2 ** 70
+min = -9223372036854775807 - 1
+pairs = [
+  [7, 2], [-7, 2], [7, -2], [-7, -2], [6, 3], [-6, 3], [0, 5], [5, 0],
+  [min, -1], [min, 3], [9223372036854775807, -2], [-big, 7], [7.5, 2]
+]
+
+# Enough rounds for the compiled code to run every case, printing the last.
+i = 0
+while i < 200
+  pairs.each() do |p|
+    r = safe(p[0], p[1])
+    puts(r) if i == 199
+  end
+  t = typed(-7, 2) + typed(-1, 3) + typed(7, 2)
+  puts(t) if i == 199
+  i += 1
+end

@@ -985,6 +985,17 @@ static void compile_binary_int_op(JitCompiler *jc, size_t instruction_start, uin
         patch_rel32_to_here(buf, skip);
         emit_cqo(buf);
         emit_idiv(buf, REG_RCX);
+        /* Floored, like diamond_int_floor_divide: idiv truncates, so a
+         * nonzero remainder (RDX) whose sign differs from the divisor's
+         * steps the quotient (RAX) down by one. */
+        emit_test_r64(buf, REG_RDX, REG_RDX);
+        size_t exact = emit_jcc_placeholder(buf, JCC_E);
+        emit_alu_rr(buf, ALU_XOR, REG_RDX, REG_RCX);
+        size_t same_sign = emit_jcc_placeholder(buf, JCC_NS);
+        emit_mov_imm64(buf, REG_RDX, 1);
+        emit_alu_rr(buf, ALU_SUB, REG_RAX, REG_RDX);
+        patch_rel32_to_here(buf, exact);
+        patch_rel32_to_here(buf, same_sign);
         emit_store_kind_imm(buf, JIT_REGISTERS_BASE, reg_disp(dest, KIND_OFF), DIAMOND_VALUE_INT);
         emit_store_r64(buf, JIT_REGISTERS_BASE, reg_disp(dest, AS_OFF), REG_RAX);
         size_t done = emit_jmp_placeholder(buf);

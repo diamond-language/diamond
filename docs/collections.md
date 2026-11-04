@@ -332,11 +332,10 @@ General numeric helpers remain plain functions:
 arithmetic). `abs` inherits negation's overflow behavior, so `abs` of the
 most negative 64-bit `Int` promotes to an arbitrary-precision `Int`
 instead of raising or silently wrapping — there is no longer a most
-negative `Int` that `abs` can't represent. `mod(a, b)` truncates `a / b` toward
-zero before multiplying back (via `to_i`/`to_f` for the `Float` case,
-since `/` between two `Float`s doesn't truncate the way `Int`
-division does), so its result keeps the same C-style sign convention
-for both types — `mod(-7, 3)` is `-1`, not `2` (not Euclidean/
+negative `Int` that `abs` can't represent. `mod(a, b)` is the C-style
+remainder, the counterpart of truncating division: unlike `%` (and `/`,
+which both floor), its result keeps the dividend's sign for both types
+— `mod(-7, 3)` is `-1`, not `2` (not Euclidean/
 Python-style mod), and `mod(-7.0, 3.0)` is likewise `-1.0`. `b == 0`
 raises the same `ZeroDivisionError` integer division would; `b == 0.0`
 raises a rescuable `RangeError` instead (from `to_i` rejecting the
