@@ -1,0 +1,69 @@
+# A method whose whole body stores its argument in an instance variable is
+# answered by writing the field, without a call. Everything a real call would
+# do differently must still happen: these are the edges.
+class Point
+  attr_accessor x: Int
+  attr_accessor label
+
+  def initialize(x, label)
+    @x = x
+    @label = label
+  end
+end
+
+class Shifted < Point
+  def x=(value: Int)
+    @x = value + 100
+  end
+end
+
+class Box[T]
+  attr_accessor value: T
+
+  def initialize(value: T)
+    @value = value
+  end
+end
+
+point = Point.new(3, "p")
+point.x = 4
+puts(point.x())
+point.label = nil
+puts(point.label())
+puts(point.x = 9)
+
+shifted = Shifted.new(1, "s")
+shifted.x = 5
+puts(shifted.x())
+
+box = Box[Int].new(1)
+box.value = 41
+puts(box.value() + 1)
+
+# The declared parameter type still rejects a wrong value, with the usual message.
+begin
+  point.x = "nine"
+rescue error: TypeError
+  puts(error.message())
+end
+puts(point.x())
+
+# A frozen object still refuses the write.
+point.freeze()
+begin
+  point.x = 10
+rescue error: FrozenError
+  puts("frozen: #{error.message()}")
+end
+puts(point.x())
+
+# Float arithmetic answered inline still matches the general path.
+a = 1.5
+b = 0.25
+puts(a + b)
+puts(a - b)
+puts(a * b)
+puts(a / b)
+puts(a / 0.0)
+puts(2 * b)
+puts(a - 1)

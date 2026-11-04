@@ -3,7 +3,8 @@
 # not attempted) -- diamond_jit_dup's own lookup_method check correctly
 # detects the override and falls back to full interpretation instead of
 # running its own default copy logic. (`n()` is a plain getter, read
-# without a call, so it is never compiled.)
+# without a call, and `initialize` only stores its argument, written
+# without a call, so neither is compiled.)
 class Widget
   def initialize(n)
     @n = n

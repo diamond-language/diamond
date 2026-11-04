@@ -1064,6 +1064,13 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     registers[destination] = DIAMOND_INT(sum);
                     DISPATCH_NEXT();
                 }
+                /* Float + Float: add_fallback's Float branch, inline. */
+                if (registers[left].kind == DIAMOND_VALUE_FLOAT &&
+                    registers[right].kind == DIAMOND_VALUE_FLOAT) {
+                    registers[destination] = DIAMOND_FLOAT(
+                        registers[left].as.real + registers[right].as.real);
+                    DISPATCH_NEXT();
+                }
                 DiamondValue add_result=DIAMOND_NIL;
                 const DiamondVmStatus add_status=add_fallback(vm,chunk,depth,
                     instruction_offset,registers[left],registers[right],&add_result);
@@ -1179,6 +1186,22 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                         registers[destination]=DIAMOND_INT(left_value/right_value);
                         break;
                     }
+                }
+                /* Float with Float, for the generic opcodes: what int_arith_
+                 * slow's Float branch computes, without the call and its
+                 * kind checks. An _INT opcode still goes there, which turns
+                 * it back into the generic one. */
+                if(registers[left].kind==DIAMOND_VALUE_FLOAT&&
+                   registers[right].kind==DIAMOND_VALUE_FLOAT&&
+                   (opcode==DIAMOND_OP_SUBTRACT||opcode==DIAMOND_OP_MULTIPLY||
+                    opcode==DIAMOND_OP_DIVIDE)) {
+                    const double left_real=registers[left].as.real;
+                    const double right_real=registers[right].as.real;
+                    registers[destination]=DIAMOND_FLOAT(
+                        opcode==DIAMOND_OP_SUBTRACT?left_real-right_real:
+                        opcode==DIAMOND_OP_MULTIPLY?left_real*right_real:
+                        left_real/right_real);
+                    DISPATCH_NEXT();
                 }
                 DiamondValue slow_result=DIAMOND_NIL;
                 const DiamondVmStatus slow_status=int_arith_slow(vm,chunk,depth,

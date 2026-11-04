@@ -406,6 +406,54 @@ static bool trivial_getter_result(DiamondVm *vm,const DiamondFunction *fn,
     return true;
 }
 
+/* The setter twin of trivial_getter_result: a method whose whole body
+ * stores its one argument in an instance variable and returns it
+ * (`attr_accessor`'s `x=`, or `def x=(v) = @x = v`):
+ *
+ *     CHECK_TYPE r1, set               5 bytes, only with a parameter type
+ *     SET_IVAR  r0, field, r1          7 bytes
+ *     RETURN    r1                     3 bytes
+ *
+ * A one-argument call stores the field here, through diamond_jit_set_ivar
+ * with the body's own SET_IVAR as the cache site. Whenever the body could
+ * fail or behave otherwise -- an argument the parameter type rejects (or
+ * that needs the full matcher), a frozen receiver, a field past the
+ * instance's, any arity but exactly self plus one -- it returns false
+ * before writing anything and the method is called as usual, so errors
+ * and backtraces are the ordinary ones. A failed write barrier (out of
+ * memory) after the store also falls back: the call stores the same value
+ * again and reports the error itself. */
+static bool trivial_setter_result(DiamondVm *vm,const DiamondFunction *fn,
+        DiamondValue self_value,DiamondValue argument,DiamondValue *result) {
+    const uint8_t *code=fn->code;
+    if(fn->code_count!=10&&fn->code_count!=15)return false;
+    if(fn->arity!=2||fn->required_arity!=2||fn->has_variadic)return false;
+    size_t at=0;
+    uint16_t set=DIAMOND_NO_TYPE_SET;
+    if(fn->code_count==15) {
+        if(code[0]!=DIAMOND_OP_CHECK_TYPE||getter_operand(code+1)!=1)return false;
+        set=getter_operand(code+3);
+        if((size_t)set>=fn->type_set_count)return false;
+        at=5;
+    }
+    if(code[at]!=DIAMOND_OP_SET_IVAR||getter_operand(code+at+1)!=0||
+       getter_operand(code+at+5)!=1)return false;
+    const uint16_t field=getter_operand(code+at+3);
+    if(field>UINT8_MAX)return false;
+    if(code[at+7]!=DIAMOND_OP_RETURN||getter_operand(code+at+8)!=1)return false;
+    if(self_value.kind!=DIAMOND_VALUE_OBJECT||
+       self_value.as.object->kind!=DIAMOND_OBJECT_INSTANCE)
+        return false;
+    const DiamondInstance *instance=(const DiamondInstance *)self_value.as.object;
+    if(instance->object.frozen||field>=instance->field_count)return false;
+    if(set!=DIAMOND_NO_TYPE_SET&&!value_plainly_matches_set(&fn->type_sets[set],argument))
+        return false;
+    if(diamond_jit_set_ivar(vm,code+at,&self_value,(uint8_t)field,&argument)!=DIAMOND_VM_OK)
+        return false;
+    *result=argument;
+    return true;
+}
+
 /* Range#to_a for a bounded Int range, filled here instead of by the prelude's
  * push loop (lib/core.d6), which costs a push call per element. Only an exact
  * Range (a subclass may override to_a) with Int bounds and a Bool `exclusive`
@@ -577,6 +625,9 @@ invoke_resolved_method_dispatch(DiamondVm *vm,
             if(native_range_to_a(vm,owner_chunk,method,self_value,result,&range_status))
                 return range_status;
         }
+    } else if(argc==1&&vm->debug_fd<0) {
+        if(trivial_setter_result(vm,fn,self_value,registers[base],result))
+            return DIAMOND_VM_OK;
     }
     return invoke_resolved_method_plain(vm,function_chunk,fn,self_value,
         registers,base,argc,depth,result);

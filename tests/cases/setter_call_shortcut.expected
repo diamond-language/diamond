@@ -1,0 +1,17 @@
+4
+nil
+9
+105
+42
+expected Int, got String
+9
+frozen: frozen object cannot be modified
+9
+1.75
+1.25
+0.375
+6.0
+Infinity
+0.5
+0.5
+nil

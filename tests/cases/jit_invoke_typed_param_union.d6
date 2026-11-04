@@ -8,7 +8,7 @@
 # narrows it to a single concrete class right at box.double()'s own call
 # site -- Phase 15's new per-call-site fact (DiamondFunction.invoke_
 # site_known_class) now covers exactly this, so `run_loop` compiles too
-# (3, not 2).
+# (2 with `double`; `initialize` only stores its argument, written without a call).
 class Box
   def initialize(value)
     @value = value
