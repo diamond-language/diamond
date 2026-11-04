@@ -1,0 +1,97 @@
+# PGO training: an order-processing workload. Classes with attributes and methods, structs,
+# polymorphic dispatch, hashes keyed by strings, sort_by, JSON round trips and string formatting.
+struct LineItem(sku: String, quantity: Int, unit_cents: Int)
+end
+
+class Customer
+  attr name, tier
+
+  def initialize(name, tier)
+    @name = name
+    @tier = tier
+  end
+
+  def discount_percent() -> Int
+    case @tier
+    when "gold" then 15
+    when "silver" then 5
+    else 0
+    end
+  end
+end
+
+class Order
+  attr id, customer, items
+
+  def initialize(id, customer)
+    @id = id
+    @customer = customer
+    @items = []
+  end
+
+  def add(item)
+    @items.push(item)
+  end
+
+  def subtotal() -> Int
+    @items.reduce(0) do |sum, item|
+      sum + item.quantity() * item.unit_cents()
+    end
+  end
+
+  def total() -> Int
+    sub = subtotal()
+    sub - sub * @customer.discount_percent() / 100
+  end
+end
+
+# Shipping rules dispatch on the class, as an app's strategy objects would.
+class FlatShipping
+  def cost(order) = 499
+end
+
+class WeightShipping
+  def cost(order) = 100 + order.items().length() * 75
+end
+
+def build_orders(count, customers)
+  orders = []
+  count.times() do |n|
+    order = Order.new(n, customers[n % customers.length()])
+    (n % 5 + 1).times() do |k|
+      order.add(LineItem.new("SKU-#{(n * 7 + k) % 300}", k + 1, 250 + (n * 13 + k * 31) % 4000))
+    end
+    orders.push(order)
+  end
+  orders
+end
+
+customers = []
+["gold", "silver", "bronze", "silver", "gold", "basic"].each_with_index() do |tier, i|
+  customers.push(Customer.new("customer #{i}", tier))
+end
+shipping = [FlatShipping.new(), WeightShipping.new()]
+
+grand = 0
+rounds = 0
+while rounds < 12
+  orders = build_orders(4000, customers)
+  by_sku = {}
+  orders.each() do |order|
+    order.items().each() do |item|
+      by_sku[item.sku()] = (by_sku[item.sku()] || 0) + item.quantity()
+    end
+    grand += order.total() + shipping[order.id() % 2].cost(order)
+  end
+  top = by_sku.keys().sort_by() do |sku|
+    -by_sku[sku]
+  end
+  report = top.slice(0, 20).map() do |sku|
+    {"sku": sku, "units": by_sku[sku], "label": "#{sku}: #{by_sku[sku]} units"}
+  end
+  text = JSON.stringify(report)
+  back = JSON.parse(text)
+  grand += back.length() + text.length()
+  rounds += 1
+end
+puts(grand)

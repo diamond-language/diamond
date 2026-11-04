@@ -167,6 +167,18 @@ worth less than that register: the fistfight suite runs about 2% fewer instructi
 above `RUN_CHUNK_RELEASE_CFLAGS` has the numbers. Neither does the AOT runtime
 archive, which `diamond build` links at `-O2` (see the roadmap for what an LTO build of it would cost).
 
+With GCC, `make release` is also profile-guided (`PGO` in the Makefile): it builds an instrumented
+binary, runs the training programs in `tools/pgo/`, and builds again from the profile. This is for
+the instruction cache more than anything. The hot helpers `run_chunk` calls (method dispatch, ivar
+access, string and hash helpers) were otherwise placed wherever the link put them, and IBS
+sampling showed one relink stacking 11-12 executed lines into single 8-way L1i sets: `objects` had 8x
+the instruction-cache misses of the build before it. With the profile, GCC splits cold blocks into
+`.text.unlikely` and groups hot functions, and that benchmark's misses fall 36x. The fistfight suite
+runs 6.6% fewer cycles (geometric mean); tight integer loops lose 1-2%. The training programs are kept
+apart from the fistfight benchmarks so the suite stays a fair measure: they are small workloads of
+their own (orders, text, numeric, functional, errors, trees, data). One that adds a new hot path
+belongs there. `PGO=0` builds without it; clang builds never use it.
+
 ## How a move is done
 
 A move is mechanical: the function text, with its leading comment, leaves `vm.c` and arrives

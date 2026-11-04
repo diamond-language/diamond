@@ -1,0 +1,75 @@
+# PGO training: data handling. Nested JSON documents parsed and re-serialised, then array
+# kernels over plain Int arrays: a histogram, prefix sums and an in-place partition, all
+# indexed reads and writes in while loops.
+def make_document(n)
+  {
+    "service": "svc-#{n % 40}",
+    "replicas": n % 5 + 1,
+    "enabled": n % 3 != 0,
+    "limits": {"cpu": n % 8 * 0.25, "memory": "#{n % 16 + 1}Gi"},
+    "ports": [8000 + n % 100, 9000 + n % 50],
+    "labels": {"team": "t#{n % 9}", "tier": n % 2 == 0 ? "web" : "worker"}
+  }
+end
+
+total = 0
+docs = []
+600.times() do |n|
+  docs.push(make_document(n))
+end
+rounds = 0
+while rounds < 15
+  text = JSON.stringify(docs)
+  parsed = JSON.parse(text)
+  parsed.each() do |doc|
+    total += doc["replicas"] + doc["ports"][1] if doc["enabled"]
+    total += doc["labels"]["team"].length()
+  end
+  total += text.length()
+  rounds += 1
+end
+
+size = 50000
+values = []
+i = 0
+while i < size
+  values.push((i * 2654435761) % 1000)
+  i += 1
+end
+histogram = []
+i = 0
+while i < 1000
+  histogram.push(0)
+  i += 1
+end
+rounds = 0
+while rounds < 6
+  i = 0
+  while i < size
+    histogram[values[i]] += 1
+    i += 1
+  end
+  prefix = 0
+  i = 0
+  while i < 1000
+    prefix += histogram[i]
+    histogram[i] = prefix % 65536
+    i += 1
+  end
+  pivot = 500 + rounds
+  lo = 0
+  hi = size - 1
+  while lo < hi
+    if values[lo] < pivot
+      lo += 1
+    else
+      tmp = values[lo]
+      values[lo] = values[hi]
+      values[hi] = tmp
+      hi -= 1
+    end
+  end
+  total += lo + histogram[999]
+  rounds += 1
+end
+puts(total)

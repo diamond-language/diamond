@@ -1,0 +1,59 @@
+# PGO training: control flow and errors. raise/rescue/ensure with custom error classes,
+# rescue by class, `is` type tests and nil checks.
+class ValidationError < StandardError
+end
+
+class NotFound < StandardError
+end
+
+def lookup(table, key)
+  value = table[key]
+  raise NotFound.new("no #{key}") if value == nil
+  value
+end
+
+def validate(n)
+  raise ValidationError.new("negative: #{n}") if n < 0
+  raise ArgumentError.new("too big: #{n}") if n > 900
+  n
+end
+
+def classify(value) -> String
+  if value is Int
+    value.even?() ? "even" : "odd"
+  elsif value is String
+    "text"
+  elsif value == nil
+    "none"
+  else
+    "other"
+  end
+end
+
+table = {}
+100.times() do |i|
+  table["k#{i}"] = i * 3
+end
+
+total = 0
+cleanups = 0
+rounds = 0
+while rounds < 30
+  1000.times() do |i|
+    begin
+      n = validate(lookup(table, "k#{i % 130}") - 10 + rounds)
+      total += n
+    rescue e: ValidationError
+      total += e.message().length()
+    rescue missing: NotFound
+      total += 2
+    rescue bad: ArgumentError
+      total += 3
+    ensure
+      cleanups += 1
+    end
+    total += classify(i % 4 == 0 ? nil : (i % 4 == 1 ? "x" : i)).length()
+  end
+  rounds += 1
+end
+puts(total + cleanups)
