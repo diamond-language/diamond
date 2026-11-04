@@ -3,10 +3,11 @@
 set -euo pipefail
 diamond="${1:-./build/diamond}"
 output="$(mktemp)"
+signalled="$(mktemp -u)"
 pid=""
 cleanup() {
   if [[ -n "$pid" ]]; then kill -KILL "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true; fi
-  rm -f "$output"
+  rm -f "$output" "$signalled"
 }
 trap cleanup EXIT
 program=$(cat <<'DIAMOND'
@@ -20,8 +21,8 @@ class Signals
 end
 def busy()
   puts("worker ready")
-  deadline = Time.monotonic() + 0.5
-  while Time.monotonic() < deadline
+  deadline = Time.monotonic() + 10.0
+  while Time.monotonic() < deadline && !File.exist?(ENV["SIGNALLED"])
     nil
   end
 end
@@ -34,7 +35,8 @@ puts("caught")
 DIAMOND
 )
 for attempt in 1 2 3 4 5; do
-  "$diamond" -e "$program" > "$output" 2>&1 &
+  rm -f "$signalled"
+  SIGNALLED="$signalled" "$diamond" -e "$program" > "$output" 2>&1 &
   pid=$!
   ready=false
   for ((probe = 0; probe < 500; probe++)); do
@@ -45,6 +47,7 @@ for attempt in 1 2 3 4 5; do
   if [[ "$ready" != true ]]; then cat "$output" >&2; exit 1; fi
   sleep .03
   kill -TERM "$pid"
+  touch "$signalled"
   if ! wait "$pid"; then cat "$output" >&2; exit 1; fi
   pid=""
   grep -qx 'caught' "$output"
