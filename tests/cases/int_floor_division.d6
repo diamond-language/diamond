@@ -1,0 +1,46 @@
+# Int `/` is floored like Ruby: the quotient rounds toward negative infinity,
+# so (a / b) * b + a % b == a for every sign mix, bignums included.
+def d(a, b)
+  a / b
+end
+
+# The typed form compiles to DIVIDE_INT, the interpreter's fast path.
+def typed(a: Int, b: Int) -> Int
+  a / b
+end
+
+def safe(a, b)
+  begin
+    d(a, b)
+  rescue ZeroDivisionError
+    "raised"
+  end
+end
+
+big = 2 ** 70
+min = -9223372036854775807 - 1
+pairs = [
+  [7, 2], [-7, 2], [7, -2], [-7, -2], [6, 3], [-6, 3], [0, 5], [5, 0],
+  [min, -1], [min, 3], [9223372036854775807, -2],
+  [big, 7], [-big, 7], [-big, -7], [7, big], [-7, big], [7.5, 2]
+]
+pairs.each() do |p|
+  puts(safe(p[0], p[1]))
+end
+
+puts(typed(-7, 2))
+puts(typed(-1, 3))
+
+# The identity holds across every sign combination.
+ok = true
+[-13, -7, -1, 0, 1, 7, 13, min, big, -big].each() do |a|
+  [-5, -3, -1, 1, 3, 5, big, -big].each() do |b|
+    ok = false unless (a / b) * b + a % b == a
+  end
+end
+puts(ok)
+
+# Compound assignment goes through the same operator.
+x = -9
+x /= 4
+x

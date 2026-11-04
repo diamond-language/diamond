@@ -560,7 +560,7 @@ DiamondVmStatus int_arith_slow(DiamondVm *vm, const DiamondChunk *chunk,
                 diamond_int_view_int64(0,&zero_view);
                 if(diamond_bignum_compare(right_view,zero_view)==0)
                     return DIAMOND_VM_DIVISION_BY_ZERO;
-                bignum_result=diamond_bignum_divide_truncated(vm,left_view,right_view);
+                bignum_result=diamond_bignum_divide_floored(vm,left_view,right_view);
             }
             if(bignum_result.kind==DIAMOND_VALUE_NIL)return DIAMOND_VM_OUT_OF_MEMORY;
             *out_result=bignum_result;
@@ -627,7 +627,7 @@ DiamondVmStatus int_arith_slow(DiamondVm *vm, const DiamondChunk *chunk,
             *out_result=bignum_result;
             return DIAMOND_VM_OK;
         }
-        *out_result=DIAMOND_INT(left_int/right_int);
+        *out_result=DIAMOND_INT(diamond_int_floor_divide(left_int,right_int));
         return DIAMOND_VM_OK;
     }
     DiamondIntView left_view, right_view;

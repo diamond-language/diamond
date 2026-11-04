@@ -22,6 +22,12 @@ authoritative fine-grained record.
 
 ### Changed
 
+- **Int division rounds down.** `/` on two `Int`s now floors (rounds toward negative infinity),
+  like Ruby and Python and like `%` already did, instead of truncating toward zero: `-7 / 2` is
+  `-4` (was `-3`) and `7 / -2` is `-4`. `(a / b) * b + a % b == a` now holds for every sign mix,
+  arbitrary-precision `Int`s included. Results with both operands the same sign, or an exact
+  quotient, are unchanged.
+
 - **A leaner interpreter loop.** With GCC on x86-64, the release build compiles the interpreter's
   dispatch function on its own with flags that free one more CPU register for it, and arithmetic
   on an Int constant no longer stalls on reading back the previous instruction's result. Across the

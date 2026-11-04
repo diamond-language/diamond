@@ -1188,7 +1188,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                         DISPATCH_NEXT();
                     }
                     if(divide&&right_value!=0&&!(left_value==INT64_MIN&&right_value==-1)) {
-                        registers[destination]=DIAMOND_INT(left_value/right_value);
+                        registers[destination]=DIAMOND_INT(diamond_int_floor_divide(left_value,right_value));
                         break;
                     }
                 }

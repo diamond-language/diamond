@@ -25,7 +25,14 @@ end
 def mod(a: Int | Float, b: Int | Float) -> Int | Float
   quotient = a / b
   if quotient is Int
-    a - quotient * b
+    # C-style: the remainder takes the dividend's sign. `/` and `%` floor,
+    # so step a floored remainder of the wrong sign back by one divisor.
+    remainder = a % b
+    if remainder != 0 && (remainder < 0) != (a < 0)
+      remainder - b
+    else
+      remainder
+    end
   else
     a - to_f(to_i(quotient)) * b
   end

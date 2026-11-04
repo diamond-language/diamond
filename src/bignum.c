@@ -298,9 +298,9 @@ DiamondValue diamond_bignum_multiply(DiamondVm *vm, DiamondIntView left,
     return value;
 }
 
-DiamondValue diamond_bignum_divide_truncated(DiamondVm *vm,
+DiamondValue diamond_bignum_divide_floored(DiamondVm *vm,
         DiamondIntView left, DiamondIntView right) {
-    uint32_t *quotient = malloc((left.limb_count == 0 ? 1 : left.limb_count) *
+    uint32_t *quotient = malloc((left.limb_count + 1) *
                                 sizeof(uint32_t));
     uint32_t *remainder = malloc((right.limb_count + 1) * sizeof(uint32_t));
     if (quotient == nullptr || remainder == nullptr) {
@@ -313,7 +313,15 @@ DiamondValue diamond_bignum_divide_truncated(DiamondVm *vm,
         remainder, &remainder_count);
     DiamondValue value = DIAMOND_NIL;
     if (ok) {
-        value = bignum_canonicalize(vm, left.negative != right.negative,
+        /* Floored: a negative quotient with a nonzero remainder rounds
+         * one further from zero, matching Int's int64 `/` and `%`. */
+        const bool negative = left.negative != right.negative;
+        if (negative && magnitude_trim(remainder, remainder_count) != 0) {
+            const uint32_t one = 1;
+            quotient_count = magnitude_add(quotient, quotient_count, &one, 1,
+                                           quotient);
+        }
+        value = bignum_canonicalize(vm, negative,
                              quotient, quotient_count);
     }
     free(quotient); free(remainder);

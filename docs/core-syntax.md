@@ -563,6 +563,11 @@ representable 64-bit `Int`) no longer raises — it promotes to an
 arbitrary-precision `Int` instead, transparently; `is Int` and arithmetic
 both keep working the same way on a promoted value as on any other `Int`.
 
+Int `/` is *floored* division, matching Ruby (not C's truncating `/`):
+the quotient rounds toward negative infinity, so `-7 / 2` is `-4` and
+`7 / -2` is `-4`, and `(a / b) * b + a % b == a` always holds.
+Arbitrary-precision `Int`s round the same way.
+
 `%` is *floored* modulo, matching Ruby (not C's truncating `%`): the
 result always takes the divisor's sign, not the dividend's — `-7 % 3` is
 `2`, not `-1`. Works on `Int`/`Float` and any mix of the two (same

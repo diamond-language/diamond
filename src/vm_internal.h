@@ -1843,6 +1843,15 @@ DIAMOND_INTERNAL DiamondVmStatus outlined_channel_select_send(DiamondVm *vm,cons
 DIAMOND_INTERNAL DiamondVmStatus outlined_io_poll(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
         size_t depth,size_t *ip_ref);
 DIAMOND_INTERNAL void diamond_zero_bytes(void *destination,size_t size);
+
+/* Int `/`: floored, rounding toward negative infinity like Ruby and like
+ * Int `%`, so (a / b) * b + a % b == a. C truncates, so a nonzero
+ * remainder whose sign differs from the divisor's steps the quotient down.
+ * Callers rule out right == 0 and INT64_MIN / -1 first. */
+static inline int64_t diamond_int_floor_divide(int64_t left,int64_t right) {
+    const int64_t quotient=left/right;
+    return quotient-((left%right!=0)&((left^right)<0));
+}
 DIAMOND_INTERNAL void diamond_copy_bytes(void *destination,const void *source,size_t size);
 DIAMOND_INTERNAL DiamondVmStatus outlined_call_typed(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
         size_t depth,size_t *ip_ref);

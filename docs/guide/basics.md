@@ -63,11 +63,13 @@ puts((2 ** 100).class())   # => Int
 puts(1_000_000 + 1)    # => 1000001
 ```
 
-Dividing two `Int`s gives an `Int`. Use a `Float` on either side, or
+Dividing two `Int`s gives an `Int`, rounded down (toward negative
+infinity, like Ruby): `-7 / 2` is `-4`. Use a `Float` on either side, or
 `fdiv`, for a fractional answer. Mixing `Int` and `Float` gives a `Float`.
 
 ```ruby
 puts(7 / 2)        # => 3
+puts(-7 / 2)       # => -4
 puts(7.0 / 2)      # => 3.5
 puts(7.fdiv(2))    # => 3.5
 puts(7 % 3)        # => 1
