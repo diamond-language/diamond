@@ -1,0 +1,24 @@
+# sub and gsub with a String pattern and a plain String replacement skip the
+# Regexp; these are the edges that must still match the Regexp path.
+p("user-12:3".gsub("-", "__"))
+p("a-b-c".sub("-", "+"))
+p("aaaa".gsub("aa", "b"))
+p("aaa".gsub("aa", "b"))
+p("abc".gsub("x", "y"))
+p("ab".gsub("abc", "y"))
+p("abc".gsub("abc", ""))
+p("a.b.c".gsub(".", "!"))
+p("x*y".sub("*", "^"))
+p("--".gsub("-", "-="))
+p("héllo wörld".gsub("ö", "o"))
+p("".gsub("a", "b"))
+p("abab".gsub("b", "bb"))
+
+# Escapes in the replacement and an empty pattern keep the Regexp path.
+p("a-b".gsub("-", "\\0\\0"))
+p("a-b".gsub("-", "\\\\"))
+p("ab".gsub("", "."))
+p("ab".sub("", "."))
+
+# A block replacement still sees each match.
+p("a-b-c".gsub("-") do |m| m + m end)

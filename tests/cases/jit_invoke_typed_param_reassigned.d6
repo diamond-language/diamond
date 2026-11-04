@@ -2,12 +2,11 @@
 # in-scope instance of the exact same class, via a plain MOVE -- not a
 # DIAMOND_OP_NEW, which the JIT doesn't support at all and would bail the
 # function for an unrelated reason) fails parameter_never_reassigned's
-# whole-body scan and must still bail -- confirms the "never reassigned"
-# proof is real, not skipped. Only `initialize`/`double` compile (2, not
-# 3); `run_loop` (the reassigning caller) never becomes eligible, so 0
-# counted bailouts either (see jit_invoke_self_mixed_receiver.d6's own
-# comment on why a function that never becomes eligible isn't a
-# "bailout" in DIAMOND_TRACE_JIT's own sense).
+# whole-body scan. `run_loop` used to bail for an unrelated reason, its
+# `i == 3`; since the JIT compiles Int == (ba6a8827) it compiles anyway,
+# through the general dispatch path rather than the single-class proof,
+# and the total stays right (a reassignment to another class gives the
+# right answer too). `double` and `run_loop` compile (2); `initialize` only stores its argument, written without a call.
 class Box
   def initialize(value)
     @value = value

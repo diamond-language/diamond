@@ -288,6 +288,27 @@ bool operator_prelude_fallback(DiamondVm *vm,const DiamondChunk *chunk,
     const char *prefix=left.as.object->kind==DIAMOND_OBJECT_ARRAY?"diamond_array_op_":
         left.as.object->kind==DIAMOND_OBJECT_STRING?"diamond_string_op_":nullptr;
     if(prefix==nullptr)return false;
+    /* Array * Int (and Array.new(n, fill), compiled to `[fill] * n`) fills
+     * the result here: the prelude's version pushes one element at a time,
+     * about a thousand instructions each. A String (join), a negative or
+     * big count, and a result past 2^26 elements (left to the prelude's
+     * own growth, as Range#to_a does) still go to the prelude, with its
+     * messages. */
+    if(left.as.object->kind==DIAMOND_OBJECT_ARRAY&&strcmp(word,"times")==0&&
+       right.kind==DIAMOND_VALUE_INT&&right.as.integer>=0) {
+        const DiamondArray *pattern=(const DiamondArray *)left.as.object;
+        uint64_t total=0;
+        if(!ckd_mul(&total,(uint64_t)pattern->count,(uint64_t)right.as.integer)&&
+           total<=(UINT64_C(1)<<26)) {
+            DiamondArray *repeated=allocate_array_uninitialized(vm,(size_t)total);
+            if(repeated==nullptr) {*status=DIAMOND_VM_OUT_OF_MEMORY;return true;}
+            for(size_t index=0;index<(size_t)total;index++)
+                repeated->values[index]=pattern->values[index%pattern->count];
+            *out=DIAMOND_OBJECT(repeated);
+            *status=DIAMOND_VM_OK;
+            return true;
+        }
+    }
     char bridge[DIAMOND_MAX_FUNCTION_NAME];
     const int written=snprintf(bridge,sizeof bridge,"%s%s",prefix,word);
     if(written<=0||(size_t)written>=sizeof bridge)return false;

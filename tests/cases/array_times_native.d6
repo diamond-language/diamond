@@ -1,0 +1,22 @@
+# Array * Int is filled natively (and Array.new(n, fill), compiled to it);
+# a String, a negative or non-Int count still take the prelude's path.
+# Every slot holds the same fill object, as in Ruby.
+p([1, 2] * 3)
+p([] * 4)
+p([nil] * 0)
+p(Array.new(3, "x"))
+p(Array.new(2))
+p([1, 2] * ", ")
+begin
+  p([1] * -1)
+rescue error: ArgumentError
+  puts(error.message())
+end
+begin
+  p([1] * 1.5)
+rescue error: TypeError
+  puts(error.message())
+end
+a = Array.new(3, [])
+a[0].push(1)
+p(a)

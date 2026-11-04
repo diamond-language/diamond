@@ -247,6 +247,21 @@ DiamondVmStatus string_percent_helper(DiamondVm *vm,const DiamondChunk *chunk,si
     return DIAMOND_VM_OK;
 }
 
+/* The first occurrence of needle[0..needle_length) in haystack, or nullptr:
+ * memchr for the first byte, then memcmp. needle_length is at least 1. A
+ * portable stand-in for memmem, which not every libc here declares. */
+static const char *find_bytes(const char *haystack,size_t haystack_length,
+        const char *needle,size_t needle_length) {
+    while(haystack_length>=needle_length) {
+        const char *candidate=memchr(haystack,needle[0],haystack_length-needle_length+1);
+        if(candidate==nullptr)return nullptr;
+        if(memcmp(candidate,needle,needle_length)==0)return candidate;
+        haystack_length-=(size_t)(candidate-haystack)+1;
+        haystack=candidate+1;
+    }
+    return nullptr;
+}
+
 /* sub/gsub/scan's pattern: a Regexp, or a String matched literally. A
  * String becomes a Regexp parked in registers[dest], which keeps it alive
  * until the method writes its result there. */
@@ -274,6 +289,42 @@ static DiamondVmStatus string_pattern_argument(DiamondVm *vm,DiamondValue *regis
 __attribute__((noinline))
 static DiamondVmStatus string_substitute_method(DiamondVm *vm,const DiamondChunk *chunk,size_t depth,DiamondValue *registers,uint16_t base,uint8_t argc,uint16_t dest,const DiamondString *source,const bool gsub_method) {
     if(argc!=2)return DIAMOND_VM_ARITY_ERROR;
+    /* A String pattern with a String replacement that has no backslash
+     * escapes is a plain substring replace: no Regexp to compile per call.
+     * An empty pattern (a match between every byte) and escaped
+     * replacements keep the Regexp path and its exact semantics. */
+    if(registers[base].kind==DIAMOND_VALUE_OBJECT&&
+       registers[base].as.object->kind==DIAMOND_OBJECT_STRING&&
+       registers[(size_t)base+1].kind==DIAMOND_VALUE_OBJECT&&
+       registers[(size_t)base+1].as.object->kind==DIAMOND_OBJECT_STRING) {
+        const DiamondString *needle=(const DiamondString *)registers[base].as.object;
+        const DiamondString *replacement=
+            (const DiamondString *)registers[(size_t)base+1].as.object;
+        if(needle->length>0&&
+           memchr(replacement->chars,'\\',replacement->length)==nullptr) {
+            ByteBuffer output={0};
+            size_t cursor=0;
+            bool ok=true;
+            while(ok&&cursor+needle->length<=source->length) {
+                const char *found=find_bytes(source->chars+cursor,source->length-cursor,
+                    needle->chars,needle->length);
+                if(found==nullptr)break;
+                const size_t at=(size_t)(found-source->chars);
+                ok=byte_buffer_append(&output,source->chars+cursor,at-cursor)&&
+                   byte_buffer_append(&output,replacement->chars,replacement->length);
+                cursor=at+needle->length;
+                if(!gsub_method)break;
+            }
+            if(ok&&cursor<source->length)
+                ok=byte_buffer_append(&output,source->chars+cursor,source->length-cursor);
+            if(!ok) {free(output.data);return DIAMOND_VM_OUT_OF_MEMORY;}
+            DiamondString *replaced=allocate_string(vm,
+                output.data!=nullptr?output.data:"",output.length);
+            free(output.data);
+            if(replaced==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
+            registers[dest]=DIAMOND_OBJECT(replaced);return DIAMOND_VM_OK;
+        }
+    }
     const DiamondRegexp *pattern=nullptr;
     const DiamondVmStatus pattern_status=string_pattern_argument(vm,registers,base,dest,
         gsub_method?"gsub":"sub",&pattern);

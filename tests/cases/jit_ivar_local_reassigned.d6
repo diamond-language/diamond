@@ -1,12 +1,12 @@
 # An ivar-loaded local reassigned anywhere in the body (even to another
 # read of the exact same ivar) fails register_new_class_if_sole_writer's
-# whole-body "exactly one write" rule and must still bail -- confirms the
-# proof is real, not skipped, same shape as jit_new_local_reassigned.d6's
-# identical NEW-based test. Only Box#initialize/Holder#initialize/
-# Box#double compile (3, verified by name via a temporary local trace,
-# not assumed); `run` (the reassigning caller) never becomes eligible, so
-# 0 counted bailouts either (a function that never becomes eligible isn't
-# a "bailout" in DIAMOND_TRACE_JIT's own sense).
+# whole-body "exactly one write" rule, same shape as jit_new_local_
+# reassigned.d6's NEW-based test. `run` used to bail for an unrelated
+# reason, its `i == 3`; since the JIT compiles Int == (ba6a8827) it
+# compiles anyway, through the general dispatch path rather than the
+# single-class proof, and the total stays right. `double` and `run`
+# compile (2); both `initialize`s only store their argument, written
+# without a call.
 class Box
   def initialize(value)
     @value = value

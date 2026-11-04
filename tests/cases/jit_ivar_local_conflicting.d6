@@ -4,8 +4,10 @@
 # real, not just "first write wins" regardless of what comes later.
 # `set_a`/`set_b` are two separately typed setters for the *same* field;
 # both run before `use` ever reads it, so by the time `use` compiles,
-# the field is already poisoned. `use` never becomes eligible; every
-# other method here still compiles independently.
+# the field is already poisoned. `use` never becomes eligible. Of the
+# rest only `B#describe` runs as a call and compiles (1): the setters and
+# `initialize`s only store their argument and `A#describe` only reads a
+# field, all answered without a call.
 class A
   def initialize(n)
     @n = n

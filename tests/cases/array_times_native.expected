@@ -1,0 +1,10 @@
+[1, 2, 1, 2, 1, 2]
+[]
+[]
+["x", "x", "x"]
+[nil, nil]
+"1, 2"
+negative argument to Array *
+Array * needs an Int or a String, got 1.5
+[[1], [1], [1]]
+[[1], [1], [1]]

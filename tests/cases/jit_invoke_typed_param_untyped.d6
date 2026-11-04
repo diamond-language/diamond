@@ -2,7 +2,7 @@
 # (compile_definition's own zero-init, never overwritten since no `: Type`
 # annotation was parsed), so parameter_is_single_class rejects it
 # outright -- no compile-time proof exists at all. `run_loop` never
-# compiles; `Box#double`/`Box#initialize` still do (2, not 3).
+# compiles; `Box#double` still does (1, not 2: `initialize` only stores its argument, written without a call).
 class Box
   def initialize(value)
     @value = value

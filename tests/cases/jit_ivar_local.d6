@@ -14,7 +14,8 @@
 # untyped `box` and `run` stayed ineligible even with this phase's own
 # jit.c change, for exactly that reason, not a bug). Before this phase,
 # `x.double()` here made `run` bail whole (an unproven-type INVOKE
-# receiver); all 4 functions now compile.
+# receiver); now `run` and `double` compile (2). Both `initialize`s only
+# store their argument, written without a call.
 class Box
   def initialize(value)
     @value = value

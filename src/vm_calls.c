@@ -358,6 +358,49 @@ static inline uint16_t getter_operand(const uint8_t *code) {
     return (uint16_t)(((unsigned)code[0] << 8) | code[1]);
 }
 
+/* Whether a getter's return type or a setter's parameter type plainly
+ * accepts `value`, for the call shortcuts below: true only where
+ * value_matches_set is sure to say yes too, false meaning "make the call".
+ * Beyond value_plainly_matches_set it settles user-class members, which a
+ * class-typed field (`-> Node | Nil`) needs: an exact instance of the class
+ * matches, and nil, a Bool, an Int or a Float never does, so the walk can
+ * go on to the next member. Anything else at a class member (a subclass
+ * instance, a native object) is left to the full matcher, and so is every
+ * generic or otherwise non-plain member. `classes` is the table the
+ * function's own type ids index, its chunk's. */
+__attribute__((always_inline))
+static inline bool shortcut_type_matches(const DiamondChunk *function_chunk,
+        const DiamondTypeSet *set,DiamondValue value) {
+    /* The commonest field types, before the general walk. */
+    if(set->count!=0&&set->members[0].argument_set==DIAMOND_NO_TYPE_SET&&
+       set->members[0].second_argument_set==DIAMOND_NO_TYPE_SET&&
+       ((set->members[0].id==DIAMOND_TYPE_INT&&value.kind==DIAMOND_VALUE_INT)||
+        (set->members[0].id==DIAMOND_TYPE_FLOAT&&value.kind==DIAMOND_VALUE_FLOAT)))
+        return true;
+    for(size_t index=0;index<set->count;index++) {
+        const DiamondTypeMember *member=&set->members[index];
+        if(member->argument_set!=DIAMOND_NO_TYPE_SET||
+           member->second_argument_set!=DIAMOND_NO_TYPE_SET)return false;
+        const int plain=diamond_plain_type_match(value,member->id);
+        if(plain==1)return true;
+        if(plain==0)continue;
+        if(member->id<DIAMOND_TYPE_CLASS_BASE||member->id>=DIAMOND_TYPE_VARIABLE_BASE)
+            return false;
+        if(value.kind==DIAMOND_VALUE_NIL||value.kind==DIAMOND_VALUE_BOOL||
+           value.kind==DIAMOND_VALUE_INT||value.kind==DIAMOND_VALUE_FLOAT)
+            continue;
+        const size_t class_index=(size_t)(member->id-DIAMOND_TYPE_CLASS_BASE);
+        if(value.kind!=DIAMOND_VALUE_OBJECT||
+           value.as.object->kind!=DIAMOND_OBJECT_INSTANCE||
+           class_index>=function_chunk->class_count||
+           ((const DiamondInstance *)value.as.object)->class!=
+               function_chunk->classes[class_index])
+            return false;
+        return true;
+    }
+    return false;
+}
+
 /* A method whose whole body reads one instance variable and returns it
  * (`def x() = @x`, optionally with a declared return type):
  *
@@ -375,7 +418,8 @@ static inline uint16_t getter_operand(const uint8_t *code) {
  * needs the full type matcher), and arities that make a no-argument call
  * an error. The caller skips this with a debugger attached, which can
  * stop inside the body. */
-static bool trivial_getter_result(DiamondVm *vm,const DiamondFunction *fn,
+static bool trivial_getter_result(DiamondVm *vm,const DiamondChunk *function_chunk,
+        const DiamondFunction *fn,
         DiamondValue self_value,DiamondValue *result) {
     const uint8_t *code=fn->code;
     if((fn->code_count!=10&&fn->code_count!=15)||code[0]!=DIAMOND_OP_GET_IVAR)return false;
@@ -400,9 +444,58 @@ static bool trivial_getter_result(DiamondVm *vm,const DiamondFunction *fn,
     DiamondValue value=DIAMOND_NIL;
     if(diamond_jit_get_ivar(vm,code,&self_value,(uint8_t)field,&value)!=DIAMOND_VM_OK)
         return false;
-    if(set!=DIAMOND_NO_TYPE_SET&&!value_plainly_matches_set(&fn->type_sets[set],value))
+    if(set!=DIAMOND_NO_TYPE_SET&&!shortcut_type_matches(function_chunk,&fn->type_sets[set],value))
         return false;
     *result=value;
+    return true;
+}
+
+/* The setter twin of trivial_getter_result: a method whose whole body
+ * stores its one argument in an instance variable and returns it
+ * (`attr_accessor`'s `x=`, or `def x=(v) = @x = v`):
+ *
+ *     CHECK_TYPE r1, set               5 bytes, only with a parameter type
+ *     SET_IVAR  r0, field, r1          7 bytes
+ *     RETURN    r1                     3 bytes
+ *
+ * A one-argument call stores the field here, through diamond_jit_set_ivar
+ * with the body's own SET_IVAR as the cache site. Whenever the body could
+ * fail or behave otherwise -- an argument the parameter type rejects (or
+ * that needs the full matcher), a frozen receiver, a field past the
+ * instance's, any arity but exactly self plus one -- it returns false
+ * before writing anything and the method is called as usual, so errors
+ * and backtraces are the ordinary ones. A failed write barrier (out of
+ * memory) after the store also falls back: the call stores the same value
+ * again and reports the error itself. */
+static bool trivial_setter_result(DiamondVm *vm,const DiamondChunk *function_chunk,
+        const DiamondFunction *fn,
+        DiamondValue self_value,DiamondValue argument,DiamondValue *result) {
+    const uint8_t *code=fn->code;
+    if(fn->code_count!=10&&fn->code_count!=15)return false;
+    if(fn->arity!=2||fn->required_arity!=2||fn->has_variadic)return false;
+    size_t at=0;
+    uint16_t set=DIAMOND_NO_TYPE_SET;
+    if(fn->code_count==15) {
+        if(code[0]!=DIAMOND_OP_CHECK_TYPE||getter_operand(code+1)!=1)return false;
+        set=getter_operand(code+3);
+        if((size_t)set>=fn->type_set_count)return false;
+        at=5;
+    }
+    if(code[at]!=DIAMOND_OP_SET_IVAR||getter_operand(code+at+1)!=0||
+       getter_operand(code+at+5)!=1)return false;
+    const uint16_t field=getter_operand(code+at+3);
+    if(field>UINT8_MAX)return false;
+    if(code[at+7]!=DIAMOND_OP_RETURN||getter_operand(code+at+8)!=1)return false;
+    if(self_value.kind!=DIAMOND_VALUE_OBJECT||
+       self_value.as.object->kind!=DIAMOND_OBJECT_INSTANCE)
+        return false;
+    const DiamondInstance *instance=(const DiamondInstance *)self_value.as.object;
+    if(instance->object.frozen||field>=instance->field_count)return false;
+    if(set!=DIAMOND_NO_TYPE_SET&&!shortcut_type_matches(function_chunk,&fn->type_sets[set],argument))
+        return false;
+    if(diamond_jit_set_ivar(vm,code+at,&self_value,(uint8_t)field,&argument)!=DIAMOND_VM_OK)
+        return false;
+    *result=argument;
     return true;
 }
 
@@ -569,14 +662,20 @@ invoke_resolved_method_dispatch(DiamondVm *vm,
     const DiamondChunk *function_chunk=
         method->source_chunk!=nullptr?method->source_chunk:owner_chunk;
     const DiamondFunction *fn=function_chunk->functions[method->function_index];
+    /* Both shortcut bodies are 10 or 15 bytes; checking that here keeps
+     * every other method from paying for the calls. */
+    const bool shortcut_sized=fn->code_count==10||fn->code_count==15;
     if(argc==0&&vm->debug_fd<0) {
-        if(trivial_getter_result(vm,fn,self_value,result))
+        if(shortcut_sized&&trivial_getter_result(vm,function_chunk,fn,self_value,result))
             return DIAMOND_VM_OK;
         if(method->source_chunk==nullptr) {
             DiamondVmStatus range_status;
             if(native_range_to_a(vm,owner_chunk,method,self_value,result,&range_status))
                 return range_status;
         }
+    } else if(argc==1&&shortcut_sized&&vm->debug_fd<0) {
+        if(trivial_setter_result(vm,function_chunk,fn,self_value,registers[base],result))
+            return DIAMOND_VM_OK;
     }
     return invoke_resolved_method_plain(vm,function_chunk,fn,self_value,
         registers,base,argc,depth,result);
@@ -591,6 +690,47 @@ DiamondVmStatus invoke_resolved_method_helper(DiamondVm *vm,
     return invoke_resolved_method_dispatch(vm,owner_chunk,method,self_value,
         registers,base,argc,typed,type_argument_count,type_arguments,
         caller_chunk,depth,result);
+}
+
+/* run_chunk's first try for an INVOKE_MONO on an Instance: when the site's
+ * cache holds this receiver's class and the cached method is a trivial
+ * getter (no arguments) or setter (one), answer it here, before
+ * diamond_jit_invoke_instance's frame and checks. Everything that path would
+ * check first holds: the cache only holds a method lookup_method found on
+ * this class, the exception-field names it intercepts are left to it, and a
+ * private or protected method, bound values, a wrong arity or an attached
+ * debugger all fall through. Returns false, having changed nothing, whenever
+ * the full call is needed. */
+bool diamond_mono_accessor_shortcut(DiamondVm *vm,const uint8_t *site,
+        const DiamondStringConstant *method_name,const DiamondValue *registers,
+        uint16_t recv,uint16_t base,uint8_t argc,DiamondValue *result) {
+    if(argc>1||vm->debug_fd>=0)return false;
+    const DiamondInstance *instance=(const DiamondInstance *)registers[recv].as.object;
+    const size_t slot=diamond_cache_find(site,vm->method_caches,
+        sizeof vm->method_caches[0]);
+    if(slot==SIZE_MAX||vm->method_caches[slot].entry_count!=1||
+       vm->method_caches[slot].entries[0].receiver_class!=instance->class)
+        return false;
+    const DiamondMethod *method=vm->method_caches[slot].entries[0].method;
+    if(method==nullptr||method->is_private||method->is_protected||
+       method->bound_value_count!=0||argc<method->required_arity||
+       (argc>method->arity&&!method->has_variadic))
+        return false;
+    if((method_name->length==7&&memcmp(method_name->chars,"message",7)==0)||
+       (method_name->length==5&&memcmp(method_name->chars,"cause",5)==0)||
+       (method_name->length==9&&memcmp(method_name->chars,"backtrace",9)==0))
+        return false;
+    const DiamondChunk *owner=instance->owner!=nullptr?instance->owner:vm->root_chunk;
+    const DiamondChunk *function_chunk=
+        method->source_chunk!=nullptr?method->source_chunk:owner;
+    const DiamondFunction *fn=function_chunk->functions[method->function_index];
+    if(fn->code_count!=10&&fn->code_count!=15)return false;
+    if(!(argc==0?trivial_getter_result(vm,function_chunk,fn,registers[recv],result):
+          trivial_setter_result(vm,function_chunk,fn,registers[recv],registers[base],result)))
+        return false;
+    vm->inline_cache_hits++;
+    vm->monomorphic_dispatches++;
+    return true;
 }
 
 /* JIT trampoline for a plain DIAMOND_OP_CALL: the same validation and the same
@@ -1331,10 +1471,16 @@ void backtrace_append_live_frames(DiamondVm *vm,DiamondArray *backtrace) {
             frame->chunk->lines[offset]:0;
         const uint32_t column=in_bounds&&frame->chunk->columns!=nullptr?
             frame->chunk->columns[offset]:0;
-        char text[256];
-        const int written=snprintf(text,sizeof text,"%s:%u:%u",name,line,column);
-        if(written<0)continue;
-        const size_t length=(size_t)written<sizeof text?(size_t)written:sizeof text-1;
+        /* "name:line:column", capped at 255 bytes as snprintf into this
+         * buffer used to be; built by hand since every raise pays for it. */
+        char text[256+48];
+        size_t length=strnlen(name,255);
+        memcpy(text,name,length);
+        text[length++]=':';
+        length+=format_int_decimal(text+length,line);
+        text[length++]=':';
+        length+=format_int_decimal(text+length,column);
+        if(length>255)length=255;
         DiamondString *entry=allocate_string(vm,text,length);
         if(entry==nullptr)return;
         if(!array_push(vm,backtrace,DIAMOND_OBJECT(entry)))return;

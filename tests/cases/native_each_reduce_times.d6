@@ -1,0 +1,73 @@
+# Array#each, #each_with_index, #reduce and Int#times run their loops natively.
+# Everything the prelude loops did must still hold: these are the edges.
+values = [3, 1, 4, 1, 5]
+
+# Return values: each and each_with_index answer the array, times its count.
+p(values.each() do |v| v end)
+p(values.each_with_index() do |v, i| v end)
+p(3.times() do |i| i end)
+p(values.reduce(0) do |sum, v| sum + v end)
+p([].reduce("start") do |acc, v| acc + v end)
+p([].each() do |v| puts("never") end)
+p(0.times() do |i| puts("never") end)
+p((-2).times() do |i| puts("never") end)
+
+# Arguments: the element, the element and its index, the running value.
+values.each_with_index() do |v, i| print("#{i}:#{v} ") end
+puts("")
+p(values.reduce([]) do |acc, v| acc + [v * 2] end)
+
+# break, next and an early return reach the caller as before.
+p(values.each() do |v|
+  break v * 100 if v == 4
+end)
+seen = []
+values.each() do |v|
+  next if v == 1
+  seen.push(v)
+end
+p(seen)
+def first_big(values)
+  values.each() do |v|
+    return v if v > 3
+  end
+  nil
+end
+p(first_big(values))
+p(10.times() do |i| break i if i == 7 end)
+
+# A block that grows the array sees the new elements, as the prelude's
+# length re-read did.
+growing = [1, 2]
+growing.each() do |v|
+  growing.push(v + 10) if v < 10
+end
+p(growing)
+
+# The running value survives collections: only the loop holds it.
+long = values.reduce("") do |acc, v|
+  junk = []
+  200.times() do |i| junk.push("x#{i}") end
+  acc + "#{v}"
+end
+p(long)
+
+# A raise inside the block propagates.
+begin
+  values.each() do |v| raise "stop at #{v}" if v == 4 end
+rescue error
+  puts(error)
+end
+
+# A block taking the wrong number of parameters fails the prelude function's
+# own Callable check, with its message.
+begin
+  values.reduce(0) do |only| only end
+rescue error: TypeError
+  puts("type: #{error.message()}")
+end
+begin
+  3.times() do |a, b| a end
+rescue error: TypeError
+  puts("type: #{error.message()}")
+end

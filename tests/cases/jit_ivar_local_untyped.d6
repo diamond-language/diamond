@@ -4,7 +4,8 @@
 # `@box = box` correctly marks DiamondClass.field_type_status "unknown"
 # (2) rather than wrongly trusting whatever class happened to be passed
 # at the one call site this file has. `run` never becomes eligible;
-# `initialize`/`double` still compile independently (2, not 3).
+# `double` still compiles; both `initialize`s only store their argument,
+# written without a call (1).
 class Box
   def initialize(value)
     @value = value

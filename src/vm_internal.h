@@ -356,6 +356,7 @@ DIAMOND_INTERNAL DiamondVmStatus json_stringify_document(DiamondVm *vm,const Dia
 DIAMOND_INTERNAL DiamondHash *allocate_hash(DiamondVm *vm);
 [[nodiscard]] DIAMOND_INTERNAL bool builder_append(StringBuilder *builder,const char *chars,size_t length);
 [[nodiscard]] DIAMOND_INTERNAL bool builder_format_value(StringBuilder *builder,DiamondValue value);
+DIAMOND_INTERNAL size_t format_int_decimal(char *out,int64_t value);
 [[nodiscard]] DIAMOND_INTERNAL bool grow_buffer_append(GrowBuffer *buffer,const char *text,size_t text_length);
 #define GROW_BUFFER_APPEND_LITERAL(buffer_,literal_) \
     grow_buffer_append((buffer_),(literal_),sizeof(literal_)-1)
@@ -1507,6 +1508,9 @@ DIAMOND_INTERNAL DiamondVmStatus invoke_resolved_method_helper(DiamondVm *vm,
         uint8_t argc,bool typed,uint8_t type_argument_count,
         const uint16_t *type_arguments,const DiamondChunk *caller_chunk,
         size_t depth,DiamondValue *result);
+DIAMOND_INTERNAL bool diamond_mono_accessor_shortcut(DiamondVm *vm,const uint8_t *site,
+        const DiamondStringConstant *method_name,const DiamondValue *registers,
+        uint16_t recv,uint16_t base,uint8_t argc,DiamondValue *result);
 
 DIAMOND_INTERNAL DiamondVmStatus diamond_jit_super_call(DiamondVm *vm, const DiamondChunk *chunk,
         uint16_t owner_index, uint16_t name, DiamondValue *registers, uint16_t base,

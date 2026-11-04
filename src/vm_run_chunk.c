@@ -1064,6 +1064,13 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     registers[destination] = DIAMOND_INT(sum);
                     DISPATCH_NEXT();
                 }
+                /* Float + Float: add_fallback's Float branch, inline. */
+                if (registers[left].kind == DIAMOND_VALUE_FLOAT &&
+                    registers[right].kind == DIAMOND_VALUE_FLOAT) {
+                    registers[destination] = DIAMOND_FLOAT(
+                        registers[left].as.real + registers[right].as.real);
+                    DISPATCH_NEXT();
+                }
                 DiamondValue add_result=DIAMOND_NIL;
                 const DiamondVmStatus add_status=add_fallback(vm,chunk,depth,
                     instruction_offset,registers[left],registers[right],&add_result);
@@ -1179,6 +1186,22 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                         registers[destination]=DIAMOND_INT(left_value/right_value);
                         break;
                     }
+                }
+                /* Float with Float, for the generic opcodes: what int_arith_
+                 * slow's Float branch computes, without the call and its
+                 * kind checks. An _INT opcode still goes there, which turns
+                 * it back into the generic one. */
+                if(registers[left].kind==DIAMOND_VALUE_FLOAT&&
+                   registers[right].kind==DIAMOND_VALUE_FLOAT&&
+                   (opcode==DIAMOND_OP_SUBTRACT||opcode==DIAMOND_OP_MULTIPLY||
+                    opcode==DIAMOND_OP_DIVIDE)) {
+                    const double left_real=registers[left].as.real;
+                    const double right_real=registers[right].as.real;
+                    registers[destination]=DIAMOND_FLOAT(
+                        opcode==DIAMOND_OP_SUBTRACT?left_real-right_real:
+                        opcode==DIAMOND_OP_MULTIPLY?left_real*right_real:
+                        left_real/right_real);
+                    DISPATCH_NEXT();
                 }
                 DiamondValue slow_result=DIAMOND_NIL;
                 const DiamondVmStatus slow_status=int_arith_slow(vm,chunk,depth,
@@ -2300,6 +2323,18 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 }
                 if((size_t)name>=chunk->string_count) VM_RETURN(DIAMOND_VM_TYPE_ERROR);
                 const DiamondStringConstant *method_name=&chunk->strings[name];
+                /* A warm site calling an attr getter or setter: the field
+                 * read or write, before any of the checks below. */
+                if((DiamondOpCode)instruction==DIAMOND_OP_INVOKE_MONO&&
+                   registers[recv].kind==DIAMOND_VALUE_OBJECT&&
+                   registers[recv].as.object->kind==DIAMOND_OBJECT_INSTANCE) {
+                    DiamondValue accessor_result;
+                    if(diamond_mono_accessor_shortcut(vm,bytecode+instruction_offset,
+                           method_name,registers,recv,base,argc,&accessor_result)) {
+                        registers[dest]=accessor_result;
+                        DISPATCH_NEXT();
+                    }
+                }
                 /* Array/Hash/String #length and Array#push first: none of the
                  * names tested below can be either, and loops make these two
                  * calls far more than any other, so they skip that chain. */
@@ -3247,6 +3282,20 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 uint16_t destination=0,receiver=0,index_register=0;
                 READ_OPERANDS(6);
                 destination=OPERAND_SHORT(0); receiver=OPERAND_SHORT(2); index_register=OPERAND_SHORT(4);
+                /* An Array read at an in-bounds, non-negative Int index:
+                 * what diamond_jit_index_get answers last, after its Hash,
+                 * String, Instance and Range checks. Everything else (a
+                 * negative or out-of-bounds index raises there) goes on. */
+                if(registers[receiver].kind==DIAMOND_VALUE_OBJECT&&
+                   registers[receiver].as.object->kind==DIAMOND_OBJECT_ARRAY&&
+                   registers[index_register].kind==DIAMOND_VALUE_INT) {
+                    const DiamondArray *array=(const DiamondArray *)registers[receiver].as.object;
+                    const int64_t at=registers[index_register].as.integer;
+                    if(at>=0&&(uint64_t)at<array->count) {
+                        registers[destination]=array->values[at];
+                        DISPATCH_NEXT();
+                    }
+                }
                 const uint8_t *site=bytecode+instruction_offset;
                 DiamondValue indexed=DIAMOND_NIL;
                 const DiamondVmStatus status=diamond_jit_index_get(vm,chunk,depth,site,
@@ -3271,6 +3320,24 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 uint16_t receiver=0,index_register=0,source=0;
                 READ_OPERANDS(6);
                 receiver=OPERAND_SHORT(0); index_register=OPERAND_SHORT(2); source=OPERAND_SHORT(4);
+                /* An Array write at an in-bounds, non-negative Int index,
+                 * unfrozen and without element-type constraints: what
+                 * diamond_jit_index_set does last, write barrier included.
+                 * Everything else goes on to it, errors and all. */
+                if(registers[receiver].kind==DIAMOND_VALUE_OBJECT&&
+                   registers[receiver].as.object->kind==DIAMOND_OBJECT_ARRAY&&
+                   registers[index_register].kind==DIAMOND_VALUE_INT) {
+                    DiamondArray *array=(DiamondArray *)registers[receiver].as.object;
+                    const int64_t at=registers[index_register].as.integer;
+                    if(at>=0&&(uint64_t)at<array->count&&!array->object.frozen&&
+                       array->constraint_count==0) {
+                        array->values[at]=registers[source];
+                        if(array->object.old&&
+                           !gc_write_barrier_index(vm,(DiamondObject *)array,(size_t)at))
+                            VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                        DISPATCH_NEXT();
+                    }
+                }
                 const uint8_t *site=bytecode+instruction_offset;
                 const DiamondVmStatus status=diamond_jit_index_set(vm,chunk,depth,site,
                     &registers[receiver],&registers[index_register],&registers[source]);

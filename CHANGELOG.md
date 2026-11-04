@@ -20,6 +20,40 @@ authoritative fine-grained record.
   directory: `cd greeter && d6 build` produces `./greeter`. `d6 build tool.d6` still produces
   `tool`.
 
+### Changed
+
+- **Faster setters and Float arithmetic.** A setter whose whole body stores its argument
+  (`attr_accessor`'s `x=`, or a one-field `initialize`) is answered by writing the field,
+  without a call, the way getters already were; and Float-with-Float `+ - * /` no longer
+  leaves the interpreter's arithmetic instruction. An n-body simulation runs about 19% fewer
+  instructions and a Mandelbrot loop about 37% fewer. Both shortcuts also settle class-typed
+  fields (`-> Node | Nil`), so a binary-tree walk runs about 21% fewer. A warm call site
+  answers such a getter or setter before the method-call machinery is entered at all,
+  another 19% off the n-body simulation and 5-6% off object-heavy loops.
+
+- **Faster Array indexing and `Array.new`.** Reading or writing an Array element at an
+  in-bounds Int index is answered in the interpreter's own instruction, and `Array * Int`
+  (which `Array.new(n, fill)` compiles to) fills the result natively instead of pushing one
+  element at a time: a sieve of Eratosthenes to a million runs about 63% fewer instructions.
+
+- **Native `each`, `each_with_index`, `reduce` and `times`.** Like `map` and `select` before
+  them, Array's `each`, `each_with_index` and `reduce` and Int's `times` call their block
+  from a loop in C instead of the prelude's d6 loop, about 45% fewer instructions per block
+  call. `break`, `next`, `return`, raises and errors behave as before.
+
+- **Native `Hash#fetch`.** A found key, or a missing key with a fallback, is answered with one
+  native lookup instead of the prelude's `include_key?` plus `[]`: counting into a Hash with
+  `counts[k] = counts.fetch(k, 0) + 1` runs about 49% fewer instructions. A missing key with
+  no fallback raises the same `IndexError` as before.
+
+- **`sub`/`gsub` with a String pattern skip the Regexp.** When both the pattern and the
+  replacement are Strings and the replacement has no `\` escapes, the replace is a plain
+  substring search instead of compiling a Regexp on every call: a small-string workload
+  mixing `gsub` with `upcase`, `include?` and `slice` runs about 41% fewer instructions.
+  Interpolating an Int (`"#{n}"`, `to_s`, `join`) no longer goes through `printf`: another
+  10% off that workload and 16% off a string-building one. Raising an exception builds its
+  backtrace entries the same way, about 15% off a loop that raises in one call of five.
+
 ## 0.25.0 — 2026-11-03
 
 ### Changed
