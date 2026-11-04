@@ -1719,11 +1719,10 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 const DiamondChunk *called_chunk =
                     plain_call_chunk_for(function, chunk, &called_storage);
                 DiamondValue call_result = DIAMOND_NIL;
-                /* With the JIT off, jit_call_or_interpret only forwards to run_chunk, and
-                 * since run_chunk is built outside LTO that forward is a whole extra call
-                 * frame per d6 call. */
+                /* vm->jit tested here rather than inside jit_call_or_interpret: GCC lays
+                 * this handler out about 8 instructions shorter that way. */
                 const DiamondVmStatus status = vm->jit
-                    ? jit_call_or_interpret(vm, function, called_chunk,
+                    ? jit_call_with_jit(vm, function, called_chunk,
                         &registers[argument_base], call_argument_count, depth,
                         nullptr, &call_result)
                     : run_chunk(called_chunk, vm, &registers[argument_base],

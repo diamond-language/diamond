@@ -322,16 +322,13 @@ static DiamondVmStatus jit_tail_loop(DiamondVm *vm, const DiamondChunk *chunk,
     return (DiamondVmStatus)status;
 }
 
-DiamondVmStatus jit_call_or_interpret(DiamondVm *vm, const DiamondFunction *function,
+/* A call with the JIT on: native code if the callee is compiled, the interpreter otherwise, and the
+ * cross-function tail calls native code staged. jit_call_or_interpret (vm_internal.h) handles the
+ * JIT-off case inline. */
+DiamondVmStatus jit_call_with_jit(DiamondVm *vm, const DiamondFunction *function,
         const DiamondChunk *chunk_to_interpret, const DiamondValue *arguments,
         size_t argument_count, size_t depth, const DiamondClosure *closure,
         DiamondValue *result) {
-    /* Without the JIT the call is just run_chunk, which repeats
-     * jit_call_core's depth check itself; only native code stages tail
-     * calls, so there is no DIAMOND_JIT_TAIL to handle either. */
-    if (!vm->jit)
-        return run_chunk(chunk_to_interpret, vm, arguments, argument_count,
-            depth + 1, closure, result);
     const uint8_t status = jit_call_core(vm, function, chunk_to_interpret,
         arguments, argument_count, depth, closure, result);
     if (status == DIAMOND_JIT_TAIL)

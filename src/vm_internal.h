@@ -1497,10 +1497,30 @@ static inline DiamondVmStatus set_cvar_helper(DiamondVm *vm,const DiamondChunk *
     return DIAMOND_VM_OK;
 }
 
-DIAMOND_INTERNAL DiamondVmStatus jit_call_or_interpret(DiamondVm *vm, const DiamondFunction *function,
+DIAMOND_INTERNAL DiamondVmStatus jit_call_with_jit(DiamondVm *vm, const DiamondFunction *function,
         const DiamondChunk *chunk_to_interpret, const DiamondValue *arguments,
         size_t argument_count, size_t depth, const DiamondClosure *closure,
         DiamondValue *result);
+DIAMOND_INTERNAL DiamondVmStatus run_chunk(const DiamondChunk *chunk, DiamondVm *vm,
+                                 const DiamondValue *arguments,
+                                 size_t argument_count, size_t depth,
+                                 const DiamondClosure *closure,
+                                 DiamondValue *result);
+
+/* Calls `function`: through the JIT when it is on, otherwise straight into the interpreter. Inline
+ * so the JIT-off call is one call frame: run_chunk is built outside LTO (see the Makefile), so an
+ * out-of-line forwarder would cost a frame of its own on every d6 call. run_chunk repeats the depth
+ * check the JIT path makes, and only native code stages tail calls. */
+static inline DiamondVmStatus jit_call_or_interpret(DiamondVm *vm, const DiamondFunction *function,
+        const DiamondChunk *chunk_to_interpret, const DiamondValue *arguments,
+        size_t argument_count, size_t depth, const DiamondClosure *closure,
+        DiamondValue *result) {
+    if (!vm->jit)
+        return run_chunk(chunk_to_interpret, vm, arguments, argument_count,
+            depth + 1, closure, result);
+    return jit_call_with_jit(vm, function, chunk_to_interpret, arguments, argument_count,
+        depth, closure, result);
+}
 
 DIAMOND_INTERNAL DiamondVmStatus invoke_resolved_method_helper(DiamondVm *vm,
         const DiamondChunk *owner_chunk,const DiamondMethod *method,
