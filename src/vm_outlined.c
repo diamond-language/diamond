@@ -1942,6 +1942,69 @@ DiamondVmStatus outlined_io_poll(DiamondVm *vm,const DiamondChunk *chunk,Diamond
     HELPER_DONE;
 }
 
+/* DIAMOND_OP_CALL_TYPED, moved out of run_chunk's switch: its explicit_bindings array is a VLA
+ * (up to eight ~1.1 KB DiamondTypeBindings), and a VLA anywhere in run_chunk makes GCC keep rbp as
+ * a frame pointer, taking a callee-saved register from the whole dispatch loop. A fixed [8] array
+ * would instead add ~9 KB to every run_chunk frame. The caller applies VM_PROPAGATE to the status. */
+__attribute__((noinline))
+DiamondVmStatus outlined_call_typed(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t depth,size_t *ip_ref) {
+    size_t ip=*ip_ref;
+    uint16_t destination=0,function_index=0,argument_base=0;
+    uint8_t call_argument_count=0,type_argument_count=0;
+    READ_SHORT(destination);READ_SHORT(function_index);READ_SHORT(argument_base);
+    READ_BYTE(call_argument_count);READ_BYTE(type_argument_count);
+    if((size_t)function_index>=chunk->function_count||
+       (size_t)argument_base+call_argument_count>DIAMOND_REGISTER_COUNT||
+       type_argument_count>8)
+        VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
+    const DiamondFunction *function=chunk->functions[function_index];
+    if(type_argument_count!=function->type_variable_count||
+       call_argument_count<function->required_arity||
+       (call_argument_count>function->arity && !function->has_variadic))
+        VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
+    /* Only the first type_argument_count entries are ever read (below,
+     * and through .type_variable_bindings); zeroing all eight cost about
+     * 3 KB of memset on every call, typed or not. */
+    DiamondTypeBinding explicit_bindings[type_argument_count==0?1:type_argument_count];
+    for(size_t index=0;index<type_argument_count;index++) {
+        explicit_bindings[index]=(DiamondTypeBinding){};
+        uint16_t set_index=0;READ_SHORT(set_index);
+        if((size_t)set_index>=chunk->type_set_count)
+            VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
+        (void)binding_node(&explicit_bindings[index]);
+        bind_context_set(&explicit_bindings[index],0,chunk,
+                         chunk->type_sets,set_index);
+    }
+    const DiamondChunk called_chunk={.name=function->name,
+        .code=function->code,.lines=function->lines,
+        .columns=function->columns,.code_count=function->code_count,
+        .constants=function->constants,
+        .constant_count=function->constant_count,
+        .strings=function->strings,.string_count=function->string_count,
+        .type_sets=function->type_sets,
+        .type_set_count=function->type_set_count,
+        .functions=chunk->functions,.function_count=chunk->function_count,
+        .classes=chunk->classes,.class_count=chunk->class_count,
+        .interfaces=chunk->interfaces,
+        .interface_count=chunk->interface_count,
+        .parameter_type_sets=function->parameter_type_sets,
+        .type_variable_count=function->type_variable_count,
+        .class_type_variable=function->class_type_variable,
+        .binding_owner_plus_one=(uint16_t)(function->owner_class+1u),
+        .parameter_offset=function->owner_class==DIAMOND_OWNER_NONE?0:1,
+        .type_variable_bindings=explicit_bindings,
+        .register_count=function->register_count,
+        .has_variadic=function->has_variadic};
+    DiamondValue call_result=DIAMOND_NIL;
+    const DiamondVmStatus status=run_chunk(&called_chunk,vm,
+        &registers[argument_base],call_argument_count,depth+1,nullptr,
+        &call_result);
+    VM_PROPAGATE(status);
+    registers[destination]=call_result;
+    HELPER_DONE;
+}
+
 /* DIAMOND_OP_CALL_SPREAD, DIAMOND_OP_CALL_TYPED_SPREAD, DIAMOND_OP_CALL_KEYWORD_SPREAD,
  * DIAMOND_OP_CALL_TYPED_KEYWORD_SPREAD, moved out of run_chunk's switch (see HELPER_DONE below):
  * the case body is unchanged apart from its macros, so it keeps the operand decoding, sandbox
