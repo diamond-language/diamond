@@ -57,6 +57,39 @@ rescue error: FrozenError
 end
 puts(point.x())
 
+# Class-typed fields: an exact instance and nil are settled without a call,
+# a subclass instance goes through the full type check, and a wrong class or
+# a primitive is still rejected with the usual message.
+class Link
+  attr_accessor next_link: Link | Nil
+
+  def initialize(next_link: Link | Nil)
+    @next_link = next_link
+  end
+end
+
+class SpecialLink < Link
+end
+
+head = Link.new(nil)
+puts(head.next_link())
+head.next_link = Link.new(nil)
+puts(head.next_link().next_link())
+head.next_link = SpecialLink.new(nil)
+puts(head.next_link() is SpecialLink)
+head.next_link = nil
+puts(head.next_link())
+begin
+  head.next_link = point
+rescue error: TypeError
+  puts(error.message())
+end
+begin
+  head.next_link = 5
+rescue error: TypeError
+  puts(error.message())
+end
+
 # Float arithmetic answered inline still matches the general path.
 a = 1.5
 b = 0.25

@@ -358,6 +358,49 @@ static inline uint16_t getter_operand(const uint8_t *code) {
     return (uint16_t)(((unsigned)code[0] << 8) | code[1]);
 }
 
+/* Whether a getter's return type or a setter's parameter type plainly
+ * accepts `value`, for the call shortcuts below: true only where
+ * value_matches_set is sure to say yes too, false meaning "make the call".
+ * Beyond value_plainly_matches_set it settles user-class members, which a
+ * class-typed field (`-> Node | Nil`) needs: an exact instance of the class
+ * matches, and nil, a Bool, an Int or a Float never does, so the walk can
+ * go on to the next member. Anything else at a class member (a subclass
+ * instance, a native object) is left to the full matcher, and so is every
+ * generic or otherwise non-plain member. `classes` is the table the
+ * function's own type ids index, its chunk's. */
+__attribute__((always_inline))
+static inline bool shortcut_type_matches(const DiamondChunk *function_chunk,
+        const DiamondTypeSet *set,DiamondValue value) {
+    /* The commonest field types, before the general walk. */
+    if(set->count!=0&&set->members[0].argument_set==DIAMOND_NO_TYPE_SET&&
+       set->members[0].second_argument_set==DIAMOND_NO_TYPE_SET&&
+       ((set->members[0].id==DIAMOND_TYPE_INT&&value.kind==DIAMOND_VALUE_INT)||
+        (set->members[0].id==DIAMOND_TYPE_FLOAT&&value.kind==DIAMOND_VALUE_FLOAT)))
+        return true;
+    for(size_t index=0;index<set->count;index++) {
+        const DiamondTypeMember *member=&set->members[index];
+        if(member->argument_set!=DIAMOND_NO_TYPE_SET||
+           member->second_argument_set!=DIAMOND_NO_TYPE_SET)return false;
+        const int plain=diamond_plain_type_match(value,member->id);
+        if(plain==1)return true;
+        if(plain==0)continue;
+        if(member->id<DIAMOND_TYPE_CLASS_BASE||member->id>=DIAMOND_TYPE_VARIABLE_BASE)
+            return false;
+        if(value.kind==DIAMOND_VALUE_NIL||value.kind==DIAMOND_VALUE_BOOL||
+           value.kind==DIAMOND_VALUE_INT||value.kind==DIAMOND_VALUE_FLOAT)
+            continue;
+        const size_t class_index=(size_t)(member->id-DIAMOND_TYPE_CLASS_BASE);
+        if(value.kind!=DIAMOND_VALUE_OBJECT||
+           value.as.object->kind!=DIAMOND_OBJECT_INSTANCE||
+           class_index>=function_chunk->class_count||
+           ((const DiamondInstance *)value.as.object)->class!=
+               function_chunk->classes[class_index])
+            return false;
+        return true;
+    }
+    return false;
+}
+
 /* A method whose whole body reads one instance variable and returns it
  * (`def x() = @x`, optionally with a declared return type):
  *
@@ -375,7 +418,8 @@ static inline uint16_t getter_operand(const uint8_t *code) {
  * needs the full type matcher), and arities that make a no-argument call
  * an error. The caller skips this with a debugger attached, which can
  * stop inside the body. */
-static bool trivial_getter_result(DiamondVm *vm,const DiamondFunction *fn,
+static bool trivial_getter_result(DiamondVm *vm,const DiamondChunk *function_chunk,
+        const DiamondFunction *fn,
         DiamondValue self_value,DiamondValue *result) {
     const uint8_t *code=fn->code;
     if((fn->code_count!=10&&fn->code_count!=15)||code[0]!=DIAMOND_OP_GET_IVAR)return false;
@@ -400,7 +444,7 @@ static bool trivial_getter_result(DiamondVm *vm,const DiamondFunction *fn,
     DiamondValue value=DIAMOND_NIL;
     if(diamond_jit_get_ivar(vm,code,&self_value,(uint8_t)field,&value)!=DIAMOND_VM_OK)
         return false;
-    if(set!=DIAMOND_NO_TYPE_SET&&!value_plainly_matches_set(&fn->type_sets[set],value))
+    if(set!=DIAMOND_NO_TYPE_SET&&!shortcut_type_matches(function_chunk,&fn->type_sets[set],value))
         return false;
     *result=value;
     return true;
@@ -423,7 +467,8 @@ static bool trivial_getter_result(DiamondVm *vm,const DiamondFunction *fn,
  * and backtraces are the ordinary ones. A failed write barrier (out of
  * memory) after the store also falls back: the call stores the same value
  * again and reports the error itself. */
-static bool trivial_setter_result(DiamondVm *vm,const DiamondFunction *fn,
+static bool trivial_setter_result(DiamondVm *vm,const DiamondChunk *function_chunk,
+        const DiamondFunction *fn,
         DiamondValue self_value,DiamondValue argument,DiamondValue *result) {
     const uint8_t *code=fn->code;
     if(fn->code_count!=10&&fn->code_count!=15)return false;
@@ -446,7 +491,7 @@ static bool trivial_setter_result(DiamondVm *vm,const DiamondFunction *fn,
         return false;
     const DiamondInstance *instance=(const DiamondInstance *)self_value.as.object;
     if(instance->object.frozen||field>=instance->field_count)return false;
-    if(set!=DIAMOND_NO_TYPE_SET&&!value_plainly_matches_set(&fn->type_sets[set],argument))
+    if(set!=DIAMOND_NO_TYPE_SET&&!shortcut_type_matches(function_chunk,&fn->type_sets[set],argument))
         return false;
     if(diamond_jit_set_ivar(vm,code+at,&self_value,(uint8_t)field,&argument)!=DIAMOND_VM_OK)
         return false;
@@ -617,16 +662,19 @@ invoke_resolved_method_dispatch(DiamondVm *vm,
     const DiamondChunk *function_chunk=
         method->source_chunk!=nullptr?method->source_chunk:owner_chunk;
     const DiamondFunction *fn=function_chunk->functions[method->function_index];
+    /* Both shortcut bodies are 10 or 15 bytes; checking that here keeps
+     * every other method from paying for the calls. */
+    const bool shortcut_sized=fn->code_count==10||fn->code_count==15;
     if(argc==0&&vm->debug_fd<0) {
-        if(trivial_getter_result(vm,fn,self_value,result))
+        if(shortcut_sized&&trivial_getter_result(vm,function_chunk,fn,self_value,result))
             return DIAMOND_VM_OK;
         if(method->source_chunk==nullptr) {
             DiamondVmStatus range_status;
             if(native_range_to_a(vm,owner_chunk,method,self_value,result,&range_status))
                 return range_status;
         }
-    } else if(argc==1&&vm->debug_fd<0) {
-        if(trivial_setter_result(vm,fn,self_value,registers[base],result))
+    } else if(argc==1&&shortcut_sized&&vm->debug_fd<0) {
+        if(trivial_setter_result(vm,function_chunk,fn,self_value,registers[base],result))
             return DIAMOND_VM_OK;
     }
     return invoke_resolved_method_plain(vm,function_chunk,fn,self_value,

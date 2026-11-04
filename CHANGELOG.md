@@ -26,7 +26,8 @@ authoritative fine-grained record.
   (`attr_accessor`'s `x=`, or a one-field `initialize`) is answered by writing the field,
   without a call, the way getters already were; and Float-with-Float `+ - * /` no longer
   leaves the interpreter's arithmetic instruction. An n-body simulation runs about 19% fewer
-  instructions and a Mandelbrot loop about 37% fewer.
+  instructions and a Mandelbrot loop about 37% fewer. Both shortcuts also settle class-typed
+  fields (`-> Node | Nil`), so a binary-tree walk runs about 21% fewer.
 
 ## 0.25.0 — 2026-11-03
 

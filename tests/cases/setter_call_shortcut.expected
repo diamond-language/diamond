@@ -7,6 +7,12 @@ expected Int, got String
 9
 frozen: frozen object cannot be modified
 9
+nil
+nil
+true
+nil
+expected Link | Nil, got Point
+expected Link | Nil, got Int
 1.75
 1.25
 0.375
