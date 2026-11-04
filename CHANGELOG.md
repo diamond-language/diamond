@@ -28,7 +28,9 @@ authoritative fine-grained record.
   benchmark suite, programs run about 3.5% fewer cycles on average. Calls and loops over
   collections gain the most: recursive `fib` and raising and rescuing exceptions each run about 8%
   fewer cycles, and block iteration (`each`, `times`, `reduce`) about 9% fewer. A bare integer
-  counting loop runs about 7% more.
+  counting loop runs about 7% more. With the JIT off, a call to a plain function also skips a
+  forwarding layer and two no-op frees: recursive `fib` runs another 8% fewer instructions, and
+  closures 5% fewer cycles.
 
 - **Faster setters and Float arithmetic.** A setter whose whole body stores its argument
   (`attr_accessor`'s `x=`, or a one-field `initialize`) is answered by writing the field,
