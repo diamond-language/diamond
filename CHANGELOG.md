@@ -39,6 +39,11 @@ authoritative fine-grained record.
   from a loop in C instead of the prelude's d6 loop, about 45% fewer instructions per block
   call. `break`, `next`, `return`, raises and errors behave as before.
 
+- **`sub`/`gsub` with a String pattern skip the Regexp.** When both the pattern and the
+  replacement are Strings and the replacement has no `\` escapes, the replace is a plain
+  substring search instead of compiling a Regexp on every call: a small-string workload
+  mixing `gsub` with `upcase`, `include?` and `slice` runs about 41% fewer instructions.
+
 ## 0.25.0 — 2026-11-03
 
 ### Changed
