@@ -51,7 +51,8 @@ authoritative fine-grained record.
   substring search instead of compiling a Regexp on every call: a small-string workload
   mixing `gsub` with `upcase`, `include?` and `slice` runs about 41% fewer instructions.
   Interpolating an Int (`"#{n}"`, `to_s`, `join`) no longer goes through `printf`: another
-  10% off that workload and 16% off a string-building one.
+  10% off that workload and 16% off a string-building one. Raising an exception builds its
+  backtrace entries the same way, about 15% off a loop that raises in one call of five.
 
 ## 0.25.0 — 2026-11-03
 

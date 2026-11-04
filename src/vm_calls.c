@@ -1471,10 +1471,16 @@ void backtrace_append_live_frames(DiamondVm *vm,DiamondArray *backtrace) {
             frame->chunk->lines[offset]:0;
         const uint32_t column=in_bounds&&frame->chunk->columns!=nullptr?
             frame->chunk->columns[offset]:0;
-        char text[256];
-        const int written=snprintf(text,sizeof text,"%s:%u:%u",name,line,column);
-        if(written<0)continue;
-        const size_t length=(size_t)written<sizeof text?(size_t)written:sizeof text-1;
+        /* "name:line:column", capped at 255 bytes as snprintf into this
+         * buffer used to be; built by hand since every raise pays for it. */
+        char text[256+48];
+        size_t length=strnlen(name,255);
+        memcpy(text,name,length);
+        text[length++]=':';
+        length+=format_int_decimal(text+length,line);
+        text[length++]=':';
+        length+=format_int_decimal(text+length,column);
+        if(length>255)length=255;
         DiamondString *entry=allocate_string(vm,text,length);
         if(entry==nullptr)return;
         if(!array_push(vm,backtrace,DIAMOND_OBJECT(entry)))return;
