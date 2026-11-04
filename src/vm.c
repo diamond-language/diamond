@@ -1418,6 +1418,11 @@ const DiamondMethod *lookup_method(const DiamondChunk *chunk,
     while (current != nullptr) {
         for(size_t index=current->method_count;index>0;index--) {
             const DiamondMethod *method=&current->methods[index-1];
+            /* The first byte rules out nearly every other method without a strlen: `Point.new`
+             * looks up "initialize" past each of the class's methods on every construction.
+             * An empty `name` compares against the terminator, so the result is unchanged. */
+            if (method->name[0] != (length > 0 ? name[0] : '\0'))
+                continue;
             if (strlen(method->name) == length &&
                 memcmp(method->name, name, length) == 0) {
                 return method;
