@@ -29,6 +29,11 @@ authoritative fine-grained record.
   instructions and a Mandelbrot loop about 37% fewer. Both shortcuts also settle class-typed
   fields (`-> Node | Nil`), so a binary-tree walk runs about 21% fewer.
 
+- **Faster Array indexing and `Array.new`.** Reading or writing an Array element at an
+  in-bounds Int index is answered in the interpreter's own instruction, and `Array * Int`
+  (which `Array.new(n, fill)` compiles to) fills the result natively instead of pushing one
+  element at a time: a sieve of Eratosthenes to a million runs about 63% fewer instructions.
+
 ## 0.25.0 — 2026-11-03
 
 ### Changed

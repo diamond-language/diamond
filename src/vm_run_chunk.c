@@ -3270,6 +3270,20 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 uint16_t destination=0,receiver=0,index_register=0;
                 READ_OPERANDS(6);
                 destination=OPERAND_SHORT(0); receiver=OPERAND_SHORT(2); index_register=OPERAND_SHORT(4);
+                /* An Array read at an in-bounds, non-negative Int index:
+                 * what diamond_jit_index_get answers last, after its Hash,
+                 * String, Instance and Range checks. Everything else (a
+                 * negative or out-of-bounds index raises there) goes on. */
+                if(registers[receiver].kind==DIAMOND_VALUE_OBJECT&&
+                   registers[receiver].as.object->kind==DIAMOND_OBJECT_ARRAY&&
+                   registers[index_register].kind==DIAMOND_VALUE_INT) {
+                    const DiamondArray *array=(const DiamondArray *)registers[receiver].as.object;
+                    const int64_t at=registers[index_register].as.integer;
+                    if(at>=0&&(uint64_t)at<array->count) {
+                        registers[destination]=array->values[at];
+                        DISPATCH_NEXT();
+                    }
+                }
                 const uint8_t *site=bytecode+instruction_offset;
                 DiamondValue indexed=DIAMOND_NIL;
                 const DiamondVmStatus status=diamond_jit_index_get(vm,chunk,depth,site,
@@ -3294,6 +3308,24 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 uint16_t receiver=0,index_register=0,source=0;
                 READ_OPERANDS(6);
                 receiver=OPERAND_SHORT(0); index_register=OPERAND_SHORT(2); source=OPERAND_SHORT(4);
+                /* An Array write at an in-bounds, non-negative Int index,
+                 * unfrozen and without element-type constraints: what
+                 * diamond_jit_index_set does last, write barrier included.
+                 * Everything else goes on to it, errors and all. */
+                if(registers[receiver].kind==DIAMOND_VALUE_OBJECT&&
+                   registers[receiver].as.object->kind==DIAMOND_OBJECT_ARRAY&&
+                   registers[index_register].kind==DIAMOND_VALUE_INT) {
+                    DiamondArray *array=(DiamondArray *)registers[receiver].as.object;
+                    const int64_t at=registers[index_register].as.integer;
+                    if(at>=0&&(uint64_t)at<array->count&&!array->object.frozen&&
+                       array->constraint_count==0) {
+                        array->values[at]=registers[source];
+                        if(array->object.old&&
+                           !gc_write_barrier_index(vm,(DiamondObject *)array,(size_t)at))
+                            VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                        DISPATCH_NEXT();
+                    }
+                }
                 const uint8_t *site=bytecode+instruction_offset;
                 const DiamondVmStatus status=diamond_jit_index_set(vm,chunk,depth,site,
                     &registers[receiver],&registers[index_register],&registers[source]);
