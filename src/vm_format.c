@@ -416,17 +416,31 @@ static bool builder_append_quoted(StringBuilder *builder,const char *chars,size_
     return builder_append(builder,"\"",1);
 }
 
+/* `value` in decimal into `out` (at least 21 bytes; no terminator), returning
+ * the length: what "%" PRId64 prints, without printf's machinery, which
+ * dominated Int interpolation. INT64_MIN negates safely as unsigned. */
+size_t format_int_decimal(char *out,int64_t value) {
+    char reversed[20];
+    size_t count=0;
+    uint64_t magnitude=value<0?(uint64_t)0-(uint64_t)value:(uint64_t)value;
+    do {
+        reversed[count++]=(char)('0'+magnitude%10);
+        magnitude/=10;
+    } while(magnitude!=0);
+    size_t length=0;
+    if(value<0)out[length++]='-';
+    while(count>0)out[length++]=reversed[--count];
+    return length;
+}
+
 bool builder_format_value(StringBuilder *builder,DiamondValue value) {
     char scalar[96];int length=0;
     if(value.kind==DIAMOND_VALUE_NIL)return builder_append(builder,"nil",3);
     if(value.kind==DIAMOND_VALUE_BOOL)
         return builder_append(builder,value.as.boolean?"true":"false",
                               value.as.boolean?4:5);
-    if(value.kind==DIAMOND_VALUE_INT) {
-        length=snprintf(scalar,sizeof scalar,"%" PRId64,value.as.integer);
-        return length>=0&&(size_t)length<sizeof scalar&&
-            builder_append(builder,scalar,(size_t)length);
-    }
+    if(value.kind==DIAMOND_VALUE_INT)
+        return builder_append(builder,scalar,format_int_decimal(scalar,value.as.integer));
     if(value_is_bignum(value)) {
         /* Writes into a freshly-sized buffer rather than through the
          * fixed 96-byte `scalar` array above -- a bignum has no bound
@@ -808,6 +822,13 @@ DiamondVmStatus stringify_value(DiamondVm *vm,const DiamondChunk *chunk,
             "to_s",sizeof("to_s")-1);
         if(method!=nullptr)
             return run_instance_string_method(vm,depth,owner,value,method,"to_s",out);
+    }
+    if(value.kind==DIAMOND_VALUE_INT) {
+        char digits[24];
+        const size_t length=format_int_decimal(digits,value.as.integer);
+        DiamondString *string=allocate_string(vm,digits,length);
+        if(string==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
+        *out=DIAMOND_OBJECT(string);return DIAMOND_VM_OK;
     }
     FormatContext context={.vm=vm,.chunk=chunk,.depth=depth,.status=DIAMOND_VM_OK};
     StringBuilder builder={.format_context=&context};

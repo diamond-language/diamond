@@ -356,6 +356,7 @@ DIAMOND_INTERNAL DiamondVmStatus json_stringify_document(DiamondVm *vm,const Dia
 DIAMOND_INTERNAL DiamondHash *allocate_hash(DiamondVm *vm);
 [[nodiscard]] DIAMOND_INTERNAL bool builder_append(StringBuilder *builder,const char *chars,size_t length);
 [[nodiscard]] DIAMOND_INTERNAL bool builder_format_value(StringBuilder *builder,DiamondValue value);
+DIAMOND_INTERNAL size_t format_int_decimal(char *out,int64_t value);
 [[nodiscard]] DIAMOND_INTERNAL bool grow_buffer_append(GrowBuffer *buffer,const char *text,size_t text_length);
 #define GROW_BUFFER_APPEND_LITERAL(buffer_,literal_) \
     grow_buffer_append((buffer_),(literal_),sizeof(literal_)-1)

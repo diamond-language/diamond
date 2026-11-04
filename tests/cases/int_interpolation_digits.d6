@@ -1,0 +1,5 @@
+# Int interpolation formats digits by hand; the edges printf used to handle.
+min = -9223372036854775807 - 1
+p("#{0} #{7} #{-1} #{10} #{-10} #{9223372036854775807} #{min}")
+p(min.to_s())
+p([min, 0, 123].join(","))
