@@ -1508,6 +1508,9 @@ DIAMOND_INTERNAL DiamondVmStatus invoke_resolved_method_helper(DiamondVm *vm,
         uint8_t argc,bool typed,uint8_t type_argument_count,
         const uint16_t *type_arguments,const DiamondChunk *caller_chunk,
         size_t depth,DiamondValue *result);
+DIAMOND_INTERNAL bool diamond_mono_accessor_shortcut(DiamondVm *vm,const uint8_t *site,
+        const DiamondStringConstant *method_name,const DiamondValue *registers,
+        uint16_t recv,uint16_t base,uint8_t argc,DiamondValue *result);
 
 DIAMOND_INTERNAL DiamondVmStatus diamond_jit_super_call(DiamondVm *vm, const DiamondChunk *chunk,
         uint16_t owner_index, uint16_t name, DiamondValue *registers, uint16_t base,

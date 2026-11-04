@@ -27,7 +27,9 @@ authoritative fine-grained record.
   without a call, the way getters already were; and Float-with-Float `+ - * /` no longer
   leaves the interpreter's arithmetic instruction. An n-body simulation runs about 19% fewer
   instructions and a Mandelbrot loop about 37% fewer. Both shortcuts also settle class-typed
-  fields (`-> Node | Nil`), so a binary-tree walk runs about 21% fewer.
+  fields (`-> Node | Nil`), so a binary-tree walk runs about 21% fewer. A warm call site
+  answers such a getter or setter before the method-call machinery is entered at all,
+  another 19% off the n-body simulation and 5-6% off object-heavy loops.
 
 - **Faster Array indexing and `Array.new`.** Reading or writing an Array element at an
   in-bounds Int index is answered in the interpreter's own instruction, and `Array * Int`

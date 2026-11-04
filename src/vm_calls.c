@@ -692,6 +692,47 @@ DiamondVmStatus invoke_resolved_method_helper(DiamondVm *vm,
         caller_chunk,depth,result);
 }
 
+/* run_chunk's first try for an INVOKE_MONO on an Instance: when the site's
+ * cache holds this receiver's class and the cached method is a trivial
+ * getter (no arguments) or setter (one), answer it here, before
+ * diamond_jit_invoke_instance's frame and checks. Everything that path would
+ * check first holds: the cache only holds a method lookup_method found on
+ * this class, the exception-field names it intercepts are left to it, and a
+ * private or protected method, bound values, a wrong arity or an attached
+ * debugger all fall through. Returns false, having changed nothing, whenever
+ * the full call is needed. */
+bool diamond_mono_accessor_shortcut(DiamondVm *vm,const uint8_t *site,
+        const DiamondStringConstant *method_name,const DiamondValue *registers,
+        uint16_t recv,uint16_t base,uint8_t argc,DiamondValue *result) {
+    if(argc>1||vm->debug_fd>=0)return false;
+    const DiamondInstance *instance=(const DiamondInstance *)registers[recv].as.object;
+    const size_t slot=diamond_cache_find(site,vm->method_caches,
+        sizeof vm->method_caches[0]);
+    if(slot==SIZE_MAX||vm->method_caches[slot].entry_count!=1||
+       vm->method_caches[slot].entries[0].receiver_class!=instance->class)
+        return false;
+    const DiamondMethod *method=vm->method_caches[slot].entries[0].method;
+    if(method==nullptr||method->is_private||method->is_protected||
+       method->bound_value_count!=0||argc<method->required_arity||
+       (argc>method->arity&&!method->has_variadic))
+        return false;
+    if((method_name->length==7&&memcmp(method_name->chars,"message",7)==0)||
+       (method_name->length==5&&memcmp(method_name->chars,"cause",5)==0)||
+       (method_name->length==9&&memcmp(method_name->chars,"backtrace",9)==0))
+        return false;
+    const DiamondChunk *owner=instance->owner!=nullptr?instance->owner:vm->root_chunk;
+    const DiamondChunk *function_chunk=
+        method->source_chunk!=nullptr?method->source_chunk:owner;
+    const DiamondFunction *fn=function_chunk->functions[method->function_index];
+    if(fn->code_count!=10&&fn->code_count!=15)return false;
+    if(!(argc==0?trivial_getter_result(vm,function_chunk,fn,registers[recv],result):
+          trivial_setter_result(vm,function_chunk,fn,registers[recv],registers[base],result)))
+        return false;
+    vm->inline_cache_hits++;
+    vm->monomorphic_dispatches++;
+    return true;
+}
+
 /* JIT trampoline for a plain DIAMOND_OP_CALL: the same validation and the same
  * callee chunk (plain_call_chunk) as the interpreter's case, dispatched through
  * jit_call_or_interpret so a compiled callee runs as native code. A real call

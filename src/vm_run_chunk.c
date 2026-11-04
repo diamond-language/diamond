@@ -2323,6 +2323,18 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 }
                 if((size_t)name>=chunk->string_count) VM_RETURN(DIAMOND_VM_TYPE_ERROR);
                 const DiamondStringConstant *method_name=&chunk->strings[name];
+                /* A warm site calling an attr getter or setter: the field
+                 * read or write, before any of the checks below. */
+                if((DiamondOpCode)instruction==DIAMOND_OP_INVOKE_MONO&&
+                   registers[recv].kind==DIAMOND_VALUE_OBJECT&&
+                   registers[recv].as.object->kind==DIAMOND_OBJECT_INSTANCE) {
+                    DiamondValue accessor_result;
+                    if(diamond_mono_accessor_shortcut(vm,bytecode+instruction_offset,
+                           method_name,registers,recv,base,argc,&accessor_result)) {
+                        registers[dest]=accessor_result;
+                        DISPATCH_NEXT();
+                    }
+                }
                 /* Array/Hash/String #length and Array#push first: none of the
                  * names tested below can be either, and loops make these two
                  * calls far more than any other, so they skip that chain. */
