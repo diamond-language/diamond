@@ -34,6 +34,11 @@ authoritative fine-grained record.
   (which `Array.new(n, fill)` compiles to) fills the result natively instead of pushing one
   element at a time: a sieve of Eratosthenes to a million runs about 63% fewer instructions.
 
+- **Native `each`, `each_with_index`, `reduce` and `times`.** Like `map` and `select` before
+  them, Array's `each`, `each_with_index` and `reduce` and Int's `times` call their block
+  from a loop in C instead of the prelude's d6 loop, about 45% fewer instructions per block
+  call. `break`, `next`, `return`, raises and errors behave as before.
+
 ## 0.25.0 — 2026-11-03
 
 ### Changed

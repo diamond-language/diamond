@@ -156,19 +156,150 @@ static inline uint16_t bridge_operand(const uint8_t *code) {
     return (uint16_t)((uint16_t)code[0]<<8|code[1]);
 }
 
-static bool native_array_map_select(DiamondVm *vm,const DiamondChunk *chunk,
+/* The block a native loop may call in place of a prelude function whose
+ * code opens with CHECK_TYPE r0 (the receiver) and CHECK_TYPE rN (the
+ * block): an ordinary closure of this program that both checks accept,
+ * evaluated with the prelude function's own type sets against the program
+ * tables forward_to_top_level_helper would give its frame. nullptr means
+ * "call the prelude function", so its errors and messages are its own. */
+static const DiamondClosure *native_loop_block(const DiamondChunk *chunk,
+        const DiamondFunction *target,DiamondValue receiver,DiamondValue callback) {
+    if(callback.kind!=DIAMOND_VALUE_OBJECT||
+       callback.as.object->kind!=DIAMOND_OBJECT_CLOSURE)
+        return nullptr;
+    const DiamondClosure *called=(const DiamondClosure *)callback.as.object;
+    if(called->foreign_chunk!=nullptr||called->function_index>=chunk->function_count)
+        return nullptr;
+    const uint8_t *code=target->code;
+    const DiamondChunk checks={.name=target->name,
+      .type_sets=target->type_sets,.type_set_count=target->type_set_count,
+      .functions=chunk->functions,.function_count=chunk->function_count,
+      .classes=chunk->classes,.class_count=chunk->class_count,
+      .interfaces=chunk->interfaces,.interface_count=chunk->interface_count};
+    const uint16_t receiver_set=bridge_operand(code+3);
+    const uint16_t callback_set=bridge_operand(code+8);
+    if(receiver_set>=target->type_set_count||callback_set>=target->type_set_count||
+       !value_matches_set(&checks,receiver,receiver_set,true)||
+       !value_matches_set(&checks,callback,callback_set,true))
+        return nullptr;
+    return called;
+}
+
+/* Int#times (integer_times in lib/core/numeric.d6: `callback(i)` for i from
+ * 0 below n, answering n), run here like Array#each. A big integer count,
+ * anything the prelude's checks would reject and an attached debugger take
+ * the prelude call. */
+static bool native_integer_times(DiamondVm *vm,const DiamondChunk *chunk,
         const DiamondFunction *target,const DiamondValue *registers,
         uint16_t recv,uint16_t base,uint8_t argc,size_t depth,
         DiamondValue *result,DiamondVmStatus *status) {
-    bool select;
-    if(strcmp(target->name,"array_map")==0)select=false;
-    else if(strcmp(target->name,"diamond_array_select")==0)select=true;
-    else return false;
-    if(argc!=1||vm->debug_fd>=0||target->code_count<10)return false;
+    if(argc!=1||vm->debug_fd>=0||target->code_count<10||
+       strcmp(target->name,"integer_times")!=0||
+       registers[recv].kind!=DIAMOND_VALUE_INT)
+        return false;
     const uint8_t *code=target->code;
     if(code[0]!=DIAMOND_OP_CHECK_TYPE||bridge_operand(code+1)!=0||
        code[5]!=DIAMOND_OP_CHECK_TYPE||bridge_operand(code+6)!=1)
         return false;
+    const DiamondClosure *called=native_loop_block(chunk,target,registers[recv],registers[base]);
+    if(called==nullptr)return false;
+    const DiamondValue receiver=registers[recv];
+    const int64_t count=receiver.as.integer;
+    DiamondBlockCall call;
+    const DiamondVmStatus prepared=block_call_prepare(chunk,
+        chunk->functions[called->function_index],called,1,&call);
+    *status=DIAMOND_VM_OK;
+    for(int64_t index=0;index<count;index++) {
+        if(prepared!=DIAMOND_VM_OK) {*status=prepared;break;}
+        const DiamondValue argument[1]={DIAMOND_INT(index)};
+        DiamondValue ignored=DIAMOND_NIL;
+        *status=block_call_run(vm,&call,argument,depth,&ignored);
+        if(*status!=DIAMOND_VM_OK)break;
+    }
+    if(*status==DIAMOND_VM_OK)*result=receiver;
+    return true;
+}
+
+/* The loop for each, each_with_index and reduce (see below); the caller has
+ * already matched the prelude function's two CHECK_TYPEs. */
+static bool native_array_each_reduce(DiamondVm *vm,const DiamondChunk *chunk,
+        const DiamondFunction *target,const DiamondValue *registers,
+        uint16_t recv,uint16_t base,bool with_index,bool reduce,size_t depth,
+        DiamondValue *result,DiamondVmStatus *status) {
+    const DiamondClosure *called=native_loop_block(chunk,target,registers[recv],
+        registers[base+(reduce?1:0)]);
+    if(called==nullptr)return false;
+    const DiamondFunction *fn=chunk->functions[called->function_index];
+    const DiamondArray *values=(const DiamondArray *)registers[recv].as.object;
+    const uint8_t block_argc=(reduce||with_index)?2:1;
+    DiamondBlockCall call;
+    const DiamondVmStatus prepared=block_call_prepare(chunk,fn,called,block_argc,&call);
+    DiamondValue accumulator=reduce?registers[base]:DIAMOND_NIL;
+    const size_t mark=vm->gc_protected_count;
+    *status=DIAMOND_VM_OK;
+    for(size_t index=0;index<values->count;index++) {
+        if(prepared!=DIAMOND_VM_OK) {*status=prepared;break;}
+        DiamondValue arguments[2];
+        if(reduce) {
+            arguments[0]=accumulator;
+            arguments[1]=values->values[index];
+        } else {
+            arguments[0]=values->values[index];
+            arguments[1]=DIAMOND_INT((int64_t)index);
+        }
+        DiamondValue value=DIAMOND_NIL;
+        *status=block_call_run(vm,&call,arguments,depth,&value);
+        if(*status!=DIAMOND_VM_OK)break;
+        if(reduce) {
+            /* Only this loop holds the running value between calls. */
+            gc_unprotect(vm,mark);
+            if(!gc_protect(vm,value)) {*status=DIAMOND_VM_OUT_OF_MEMORY;break;}
+            accumulator=value;
+        }
+    }
+    gc_unprotect(vm,mark);
+    if(*status==DIAMOND_VM_OK)*result=reduce?accumulator:DIAMOND_OBJECT(values);
+    return true;
+}
+
+/* each, each_with_index and reduce run here too, under the same rules: each
+ * and each_with_index (array_each, array_each_with_index) call the block
+ * with the element (and its index) and answer the array itself; reduce
+ * (diamond_array_reduce, `values.reduce(initial) { |acc, x| }`) takes the
+ * initial value and the block, whose CHECK_TYPE is on r2, and keeps the
+ * running value protected between calls, since only this loop holds it. */
+typedef enum {
+    NATIVE_ITERATE_MAP,
+    NATIVE_ITERATE_SELECT,
+    NATIVE_ITERATE_EACH,
+    NATIVE_ITERATE_EACH_WITH_INDEX,
+    NATIVE_ITERATE_REDUCE
+} NativeIterateKind;
+
+static bool native_array_map_select(DiamondVm *vm,const DiamondChunk *chunk,
+        const DiamondFunction *target,const DiamondValue *registers,
+        uint16_t recv,uint16_t base,uint8_t argc,size_t depth,
+        DiamondValue *result,DiamondVmStatus *status) {
+    NativeIterateKind kind;
+    if(strcmp(target->name,"array_map")==0)kind=NATIVE_ITERATE_MAP;
+    else if(strcmp(target->name,"diamond_array_select")==0)kind=NATIVE_ITERATE_SELECT;
+    else if(strcmp(target->name,"array_each")==0)kind=NATIVE_ITERATE_EACH;
+    else if(strcmp(target->name,"array_each_with_index")==0)kind=NATIVE_ITERATE_EACH_WITH_INDEX;
+    else if(strcmp(target->name,"diamond_array_reduce")==0)kind=NATIVE_ITERATE_REDUCE;
+    else return false;
+    const bool select=kind==NATIVE_ITERATE_SELECT;
+    const bool reduce=kind==NATIVE_ITERATE_REDUCE;
+    /* The block is the last argument: registers[base] for the others,
+     * registers[base+1] after reduce's initial value. */
+    const uint8_t callback_parameter=reduce?2:1;
+    if(argc!=callback_parameter||vm->debug_fd>=0||target->code_count<10)return false;
+    const uint8_t *code=target->code;
+    if(code[0]!=DIAMOND_OP_CHECK_TYPE||bridge_operand(code+1)!=0||
+       code[5]!=DIAMOND_OP_CHECK_TYPE||bridge_operand(code+6)!=callback_parameter)
+        return false;
+    if(kind!=NATIVE_ITERATE_MAP&&kind!=NATIVE_ITERATE_SELECT)
+        return native_array_each_reduce(vm,chunk,target,registers,recv,base,
+            kind==NATIVE_ITERATE_EACH_WITH_INDEX,reduce,depth,result,status);
     const DiamondValue callback=registers[base];
     if(callback.kind!=DIAMOND_VALUE_OBJECT||
        callback.as.object->kind!=DIAMOND_OBJECT_CLOSURE)
@@ -750,8 +881,11 @@ static DiamondVmStatus int_extension_method(DiamondVm *vm,const DiamondChunk *ch
         return DIAMOND_VM_TYPE_ERROR;
     }
     DiamondValue call_result=DIAMOND_NIL;
-    const DiamondVmStatus status=forward_to_top_level_helper(vm,
-        chunk,target,registers,recv,base,argc,depth,&call_result);
+    DiamondVmStatus status;
+    if(!native_integer_times(vm,chunk,target,registers,recv,base,argc,depth,
+            &call_result,&status))
+        status=forward_to_top_level_helper(vm,
+            chunk,target,registers,recv,base,argc,depth,&call_result);
     if(status!=DIAMOND_VM_OK)return status;
     registers[dest]=call_result;return DIAMOND_VM_OK;
 }
