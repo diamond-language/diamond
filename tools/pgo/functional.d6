@@ -1,0 +1,57 @@
+# PGO training: collection pipelines and closures. map, select, reject, reduce, each_with_index,
+# sort and sort_by, include?, nested arrays, hashes of arrays and captured variables.
+def make_counter()
+  count = 0
+  def increment(by)
+    count += by
+    count
+  end
+  increment
+end
+
+def pipeline(values, threshold)
+  values.select() do |v|
+    v % 3 != 0
+  end.map() do |v|
+    v * v - threshold
+  end.reject() do |v|
+    v < 0
+  end
+end
+
+total = 0
+counter = make_counter()
+rounds = 0
+while rounds < 40
+  values = []
+  2000.times() do |i|
+    values.push((i * 7919 + rounds) % 1000)
+  end
+  kept = pipeline(values, rounds * 10)
+  total += kept.reduce(0) do |sum, v|
+    sum + v % 101
+  end
+  sorted = values.sort()
+  total += sorted[0] + sorted[sorted.length() - 1]
+  pairs = values.slice(0, 300).map() do |v|
+    [v % 17, v]
+  end
+  by_key = {}
+  pairs.each() do |pair|
+    bucket = by_key[pair[0]]
+    if bucket == nil
+      bucket = []
+      by_key[pair[0]] = bucket
+    end
+    bucket.push(pair[1])
+  end
+  ordered = by_key.keys().sort_by() do |k|
+    by_key[k].length()
+  end
+  ordered.each_with_index() do |k, i|
+    total += i * by_key[k].length()
+  end
+  total += counter(1) if values.include?(rounds)
+  rounds += 1
+end
+puts(total)

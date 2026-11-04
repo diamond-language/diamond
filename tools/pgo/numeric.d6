@@ -1,0 +1,63 @@
+# PGO training: numeric loops. Int and Float arithmetic, comparisons, floored division and
+# modulo, a bignum, ranges, while loops, `times`, recursion and a small matrix multiply.
+def gcd(a, b)
+  b == 0 ? a : gcd(b, a % b)
+end
+
+def collatz_steps(n) -> Int
+  steps = 0
+  while n != 1
+    n = n % 2 == 0 ? n / 2 : 3 * n + 1
+    steps += 1
+  end
+  steps
+end
+
+def matmul(a, b, n)
+  c = []
+  n.times() do |i|
+    row = []
+    n.times() do |j|
+      sum = 0.0
+      k = 0
+      while k < n
+        sum += a[i][k] * b[k][j]
+        k += 1
+      end
+      row.push(sum)
+    end
+    c.push(row)
+  end
+  c
+end
+
+total = 0
+(1..20000).each() do |n|
+  total += collatz_steps(n % 500 + 1) + gcd(n, 360)
+end
+
+n = 40
+a = []
+b = []
+n.times() do |i|
+  ra = []
+  rb = []
+  n.times() do |j|
+    ra.push((i * j % 7).to_f() / 3.0)
+    rb.push((i + j) % 5 - 2.5)
+  end
+  a.push(ra)
+  b.push(rb)
+end
+c = matmul(a, b, n)
+total += c[3][7].to_i()
+
+x = 0.5
+i = 0
+while i < 200000
+  x = x * 3.7 * (1.0 - x)
+  total += -7 / 2 + 7 % -3 if x < 0.01
+  i += 1
+end
+big = 2 ** 80 + total
+puts(big % 1000003)

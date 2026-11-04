@@ -1,0 +1,82 @@
+# PGO training: object graphs. A binary search tree and an expression tree built from many small
+# objects, recursive traversal, polymorphic evaluation, instance variables and equality checks.
+class Node
+  attr key, left, right
+
+  def initialize(key)
+    @key = key
+    @left = nil
+    @right = nil
+  end
+
+  def insert(key)
+    if key < @key
+      if @left == nil
+        @left = Node.new(key)
+      else
+        @left.insert(key)
+      end
+    elsif key > @key
+      if @right == nil
+        @right = Node.new(key)
+      else
+        @right.insert(key)
+      end
+    end
+  end
+
+  def sum() -> Int
+    total = @key
+    total += @left.sum() if @left != nil
+    total += @right.sum() if @right != nil
+    total
+  end
+end
+
+class Num
+  def initialize(value)
+    @value = value
+  end
+
+  def eval() = @value
+end
+
+class Add
+  def initialize(a, b)
+    @a = a
+    @b = b
+  end
+
+  def eval() = @a.eval() + @b.eval()
+end
+
+class Mul
+  def initialize(a, b)
+    @a = a
+    @b = b
+  end
+
+  def eval() = @a.eval() * @b.eval() % 10007
+end
+
+def build(depth, seed)
+  return Num.new(seed % 10) if depth == 0
+  if seed % 2 == 0
+    Add.new(build(depth - 1, seed * 3 + 1), build(depth - 1, seed + 7))
+  else
+    Mul.new(build(depth - 1, seed + 5), build(depth - 1, seed * 7 + 3))
+  end
+end
+
+total = 0
+rounds = 0
+while rounds < 8
+  root = Node.new(5000)
+  4000.times() do |i|
+    root.insert((i * 7919 + rounds * 31) % 10000)
+  end
+  total += root.sum()
+  total += build(12, rounds).eval()
+  rounds += 1
+end
+puts(total)

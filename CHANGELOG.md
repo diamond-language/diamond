@@ -43,6 +43,14 @@ authoritative fine-grained record.
   counting loop's cost by 14% (more than winning back the 7% above), a sieve by 19%, Float-heavy
   `mandelbrot` by 14% and `fib` by 12%; across the suite, about 4% fewer cycles on average.
 
+- **Profile-guided release builds.** With GCC, `make release` (and so the .deb and .rpm packages)
+  now builds an instrumented binary, runs a few small training programs from `tools/pgo/`, and
+  rebuilds using the profile, which adds well under a minute. Hot code is packed together and cold
+  code moved out of the way, so the processor's instruction cache stops thrashing: object-heavy code
+  runs about 14% faster, text processing 15%, tree building 13% and JSON 10%, and the benchmark suite
+  about 6.6% faster on average; tight integer loops are 1-2% slower. `make release PGO=0` builds
+  without it. clang builds are unchanged.
+
 - **Faster setters and Float arithmetic.** A setter whose whole body stores its argument
   (`attr_accessor`'s `x=`, or a one-field `initialize`) is answered by writing the field,
   without a call, the way getters already were; and Float-with-Float `+ - * /` no longer

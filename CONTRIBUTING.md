@@ -79,7 +79,7 @@ docs/portability.md for exactly what's been checked on each platform.
 
 ```sh
 make            # debug build (default)
-make release    # -O3, no assertions
+make release    # -O3, no assertions; with GCC, profile-guided (PGO=0 skips the profile)
 make sanitize   # ASan/UBSan
 make tsan       # ThreadSanitizer
 make lsp        # build/d6-lsp

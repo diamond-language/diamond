@@ -309,11 +309,44 @@ ifneq ($(strip $(RUN_CHUNK_CFLAGS)),)
 $(BUILD_DIR)/vm_run_chunk.o: override CFLAGS := $(filter-out $(LTO_FLAGS),$(CFLAGS)) $(RUN_CHUNK_CFLAGS)
 endif
 
+# With GCC, `make release` is profile-guided: it builds an instrumented d6, runs the training programs in
+# tools/pgo/ (about two seconds), then builds the real binary from that profile. GCC then moves cold
+# blocks out of every function, groups hot functions together and inlines and lays out branches by
+# measured frequency. The point is the instruction cache: without it, hot helpers land wherever the
+# link puts them, and objects-heavy code lost 3-4% whenever a relink stacked too many hot lines in one
+# L1i set. The training programs are deliberately not the fistfight benchmarks, which stay a fair
+# measure. Measured against the plain release build on fistfight (cycles): geometric mean -6.6%;
+# objects -14%, text -15%, trees -13%, json -10%, strings -11%; loop +1%, sieve +2%.
+# -fprofile-partial-training keeps code the training never reached optimized as usual, not for size.
+# PGO=0 turns it off. It is off by default for clang, whose profiles need llvm-profdata; a cross build,
+# whose instrumented binary cannot run on the build machine, needs PGO=0.
+PGO ?= auto
+ifeq ($(PGO),auto)
+PGO_ENABLED := $(if $(findstring clang,$(CC)),0,1)
+else
+PGO_ENABLED := $(PGO)
+endif
+PGO_GENERATE_FLAGS := -fprofile-generate -fprofile-update=atomic
+PGO_USE_FLAGS := -fprofile-use -fprofile-partial-training -Wno-missing-profile
+PGO_TRAINING := $(sort $(wildcard tools/pgo/*.d6))
+
 release:
 	$(MAKE) clean-variant
+ifeq ($(PGO_ENABLED),1)
+	rm -f $(BUILD_DIR)/*.gcda
+	$(MAKE) $(TARGET) \
+		CFLAGS="$(CFLAGS_COMMON) $(CFLAGS_RELEASE) $(LTO_FLAGS) $(PGO_GENERATE_FLAGS)" \
+		LDFLAGS="$(LDFLAGS) $(CFLAGS_RELEASE) $(LTO_FLAGS) $(PGO_GENERATE_FLAGS)" \
+		RUN_CHUNK_CFLAGS="$(RUN_CHUNK_RELEASE_CFLAGS)"
+	@for program in $(PGO_TRAINING); do \
+		echo "PGO training: $$program"; \
+		DIAMOND_NO_CACHE=1 ./$(TARGET) $$program > /dev/null || exit 1; \
+	done
+	$(MAKE) clean-variant
+endif
 	$(MAKE) $(TARGET) $(BUILD_DIR)/run_cases \
-		CFLAGS="$(CFLAGS_COMMON) $(CFLAGS_RELEASE) $(LTO_FLAGS)" \
-		LDFLAGS="$(LDFLAGS) $(CFLAGS_RELEASE) $(LTO_FLAGS)" \
+		CFLAGS="$(CFLAGS_COMMON) $(CFLAGS_RELEASE) $(LTO_FLAGS) $(if $(filter 1,$(PGO_ENABLED)),$(PGO_USE_FLAGS))" \
+		LDFLAGS="$(LDFLAGS) $(CFLAGS_RELEASE) $(LTO_FLAGS) $(if $(filter 1,$(PGO_ENABLED)),$(PGO_USE_FLAGS))" \
 		RUN_CHUNK_CFLAGS="$(RUN_CHUNK_RELEASE_CFLAGS)"
 
 # What a variant switch must discard: the objects and binaries built with $(CFLAGS), which the

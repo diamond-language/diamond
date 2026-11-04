@@ -1,0 +1,38 @@
+# PGO training: text processing. Splitting, word counts in a hash, regex matching and capture,
+# substitution, case changes, searching, slicing, joining and a string builder.
+WORD = Regexp.new("^([a-z]+)(\\d*)$")
+DATE = Regexp.new("(\\d{4})-(\\d{2})-(\\d{2})")
+
+def make_line(n)
+  words = ["alpha", "bravo#{n % 7}", "charlie", "delta#{n % 13}", "echo", "fox"]
+  "#{n % 28 + 1990}-0#{n % 9 + 1}-1#{n % 9} #{words.join(" ")} #{words[n % 6].upcase()}"
+end
+
+total = 0
+rounds = 0
+while rounds < 6
+  counts = {}
+  out = []
+  3000.times() do |n|
+    line = make_line(n + rounds)
+    date = DATE.match(line)
+    total += date[1].to_i() + date[3].to_i() if date != nil
+    line.split(" ").each() do |token|
+      lower = token.downcase()
+      m = WORD.match(lower)
+      key = m == nil ? lower : m[1]
+      counts[key] = (counts[key] || 0) + 1
+    end
+    cleaned = line.gsub("-", "/").sub("alpha", "ALPHA")
+    total += cleaned.length() if cleaned.include?("ALPHA")
+    at = cleaned.index_of(" ")
+    total += cleaned.slice(0, at).length() if at != nil
+    out.push(cleaned.reverse()) if n % 10 == 0
+  end
+  summary = counts.keys().sort().map() do |key|
+    "#{key}=#{counts[key]}"
+  end
+  total += summary.join(",").length() + out.join("\n").length()
+  rounds += 1
+end
+puts(total)
