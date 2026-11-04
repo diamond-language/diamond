@@ -453,10 +453,11 @@ CPU-bound code.** The actual OS signal handler installed by `Signal.trap`
 only does what POSIX guarantees is async-signal-safe: set a
 `volatile sig_atomic_t` and return (`diamond_signal_handler`, `src/vm.c`)
 — resolving which d6 closure to call and actually calling it happens
-later, synchronously. For CPU-bound d6 code, "later" means the very
-next bytecode instruction: `run_chunk`'s own dispatch loop checks a
-single cheap flag once per instruction (almost always false, negligible
-steady-state cost) and, if set, invokes the pending handler(s) via the
+later, synchronously. For CPU-bound d6 code, "later" means within a
+few instructions: `run_chunk` checks a single cheap flag (almost always
+false, negligible steady-state cost) on every backward jump, every call
+and every pass through its dispatch loop's top, so any loop or recursion
+reaches a check promptly, and, if set, invokes the pending handler(s) via the
 same nested-`run_chunk` mechanism `DIAMOND_OP_CALL_CLOSURE` itself uses.
 But a program genuinely blocked in a native call — `TCPServer#accept`,
 `IO.poll`, `UDPSocket#receive` — might not reach "the next instruction"

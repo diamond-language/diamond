@@ -510,30 +510,51 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
 #define OPERAND_SHORT(offset_) \
     ((uint16_t)(((unsigned)operands[(offset_)] << 8) | operands[(offset_) + 1]))
 
-    /* Ends a hot handler: the loop-top checks (end of code, a pending
-     * signal, resource limits, which also covers opcode counting), then a
-     * jump straight to the next instruction's handler. Whenever any check
-     * needs the full loop top it goes there instead, so the slow paths run
-     * exactly as before. */
+    /* Ends a hot handler: the end-of-code check, then a jump straight to
+     * the next instruction's handler through `dispatch`. The loop top's
+     * other checks do not run here:
+     *   - A pending signal or an asynchronous stop (a supervisor or
+     *     Thread setting resource_limits_active from another thread) is
+     *     polled at back-edges instead (POLL_BACK_EDGE, in the jump
+     *     handlers) and at every pass through the loop top, which every
+     *     call, self tail call and slow path takes. Code that never
+     *     reaches one of those is straight-line and finishes on its own.
+     *   - While resource_limits_active is set (budgets, opcode counting,
+     *     a requested stop), the loop top points `dispatch` at
+     *     recheck_table, which sends every instruction back through the
+     *     loop top, so counting and budgets stay exact per instruction.
+     * Each check here was a load on every instruction; dropping two of
+     * the three cut the `loop` benchmark by about 6% in cycles. */
 #if DIAMOND_THREADED_DISPATCH
 #define DISPATCH_NEXT()                                                    \
     do {                                                                   \
-        if (__builtin_expect(ip < bytecode_count &&                        \
-                !atomic_load_explicit(&diamond_pending_signals,            \
-                    memory_order_relaxed) &&                               \
-                !atomic_load_explicit(&vm->resource_limits_active,         \
-                    memory_order_relaxed), 1)) {                           \
+        if (__builtin_expect(ip < bytecode_count, 1)) {                    \
             instruction_offset = ip;                                       \
             instruction = bytecode[ip++];                                  \
             _Pragma("GCC diagnostic push")                                 \
             _Pragma("GCC diagnostic ignored \"-Wpedantic\"")               \
-            goto *dispatch_table[instruction];                             \
+            goto *dispatch[instruction];                                   \
             _Pragma("GCC diagnostic pop")                                  \
         }                                                                  \
         goto dispatch_continue;                                            \
     } while (false)
+    /* A backward jump to target_: if a signal is pending or the limits
+     * flag was raised, go through the loop top (which handles both and
+     * switches `dispatch` to recheck_table) instead of DISPATCH_NEXT. */
+#define POLL_BACK_EDGE(target_)                                            \
+    do {                                                                   \
+        if ((target_) <= instruction_offset &&                             \
+            (atomic_load_explicit(&diamond_pending_signals,                \
+                 memory_order_relaxed) ||                                  \
+             atomic_load_explicit(&vm->resource_limits_active,             \
+                 memory_order_relaxed))) {                                 \
+            ip = (target_);                                                \
+            goto dispatch_continue;                                        \
+        }                                                                  \
+    } while (false)
 #else
 #define DISPATCH_NEXT() break
+#define POLL_BACK_EDGE(target_) ((void)(target_))
 #endif
 
     /* Threaded dispatch (GCC and clang): each opcode's case also carries a
@@ -749,6 +770,12 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
         [DIAMOND_OP_ADD_INT_K] = &&op_ADD_INT_K,
         [DIAMOND_OP_COUNT ... 255] = &&op_default,
     };
+    /* While resource_limits_active is set: every instruction goes back
+     * through the loop top's checks (see DISPATCH_NEXT). */
+    static const void *const recheck_table[256] = {
+        [0 ... 255] = &&op_recheck,
+    };
+    const void *const *dispatch = dispatch_table;
 #pragma GCC diagnostic pop
 #endif
 
@@ -788,6 +815,11 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
          * that rescued the error would run unbounded. */
         if (__builtin_expect(atomic_load_explicit(&vm->resource_limits_active,
                                                   memory_order_relaxed), 0)) {
+#if DIAMOND_THREADED_DISPATCH
+            /* Nothing clears resource_limits_active once set, so this
+             * frame stays on recheck_table from here on. */
+            dispatch = recheck_table;
+#endif
             vm->instructions_executed++;
             /* Opcode counting turns resource_limits_active on as well (see
              * DiamondVm.count_opcodes), so one hinted-false check covers both
@@ -1666,6 +1698,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 if (target > bytecode_count) {
                     VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
                 }
+                POLL_BACK_EDGE(target);
                 ip = target;
                 DISPATCH_NEXT();
             }
@@ -1680,6 +1713,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
                 }
                 if (!is_truthy(registers[condition])) {
+                    POLL_BACK_EDGE(target);
                     ip = target;
                 }
                 DISPATCH_NEXT();
@@ -1690,7 +1724,10 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 condition=OPERAND_SHORT(0); high=OPERAND_BYTE(2); low=OPERAND_BYTE(3);
                 const size_t target=((size_t)high<<8)|low;
                 if(target>bytecode_count) VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
-                if(is_truthy(registers[condition])) ip=target;
+                if(is_truthy(registers[condition])) {
+                    POLL_BACK_EDGE(target);
+                    ip=target;
+                }
                 DISPATCH_NEXT();
             }
             case DIAMOND_OP_CALL: op_CALL: {
@@ -4248,6 +4285,14 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
             default: op_default:
                 VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
         }
+#if DIAMOND_THREADED_DISPATCH
+        goto dispatch_continue;
+        /* recheck_table's target: DISPATCH_NEXT already read the opcode
+         * at instruction_offset, so step back and let the loop top read it
+         * again with its checks. */
+op_recheck:
+        ip = instruction_offset;
+#endif
 dispatch_continue:
         continue;
     }
@@ -4258,6 +4303,7 @@ dispatch_continue:
 #undef OPERAND_BYTE
 #undef OPERAND_SHORT
 #undef DISPATCH_NEXT
+#undef POLL_BACK_EDGE
 #undef VM_RETURN
 #undef VM_PROPAGATE
 #undef VM_PROPAGATE_SIGNAL
