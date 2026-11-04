@@ -668,7 +668,7 @@ jobs:
         run: |
           CPPFLAGS_EXTRA="-I$(brew --prefix openssl@3)/include -I$(brew --prefix sqlite)/include -I$(brew --prefix postgresql@16)/include -I$(brew --prefix mariadb-connector-c)/include -I$(brew --prefix mariadb-connector-c)/include/mariadb"
           LDFLAGS_EXTRA="-L$(brew --prefix openssl@3)/lib -L$(brew --prefix sqlite)/lib -L$(brew --prefix postgresql@16)/lib -L$(brew --prefix mariadb-connector-c)/lib -L$(brew --prefix mariadb-connector-c)/lib/mariadb"
-          DIAMOND_CASE_RUNNER=subprocess make CC=clang LDLIBS_CRYPT= CPPFLAGS_EXTRA="$CPPFLAGS_EXTRA" LDFLAGS_EXTRA="$LDFLAGS_EXTRA" test
+          DIAMOND_CASE_RUNNER=subprocess bash tools/ci_watchdog.sh 12 make CC=clang LDLIBS_CRYPT= CPPFLAGS_EXTRA="$CPPFLAGS_EXTRA" LDFLAGS_EXTRA="$LDFLAGS_EXTRA" test
       - name: Focused test targets (macOS)
         run: |
           CPPFLAGS_EXTRA="-I$(brew --prefix openssl@3)/include -I$(brew --prefix sqlite)/include -I$(brew --prefix postgresql@16)/include -I$(brew --prefix mariadb-connector-c)/include -I$(brew --prefix mariadb-connector-c)/include/mariadb"

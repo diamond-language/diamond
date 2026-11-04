@@ -229,8 +229,10 @@ mid-attempt unless `stop(timeout_ms)` is used.
 until the deadline, then, under `lock`, sets `stop_forced`, arms each running
 attempt and raises its `interrupt` flag. Arming means storing true to the
 attempt VM's `resource_limits_active`, which is why that field is atomic and
-read relaxed in `run_chunk`: the interrupt check costs every dispatched
-instruction, so an attempt pays for it only when a sibling strategy, a restart
+read relaxed in `run_chunk`: hot handlers poll it only on backward jumps (and
+every call and slow path passes the dispatch loop's top, which reads it too),
+but once it is set every instruction of that frame goes back through the loop
+top, so an attempt pays for it only when a sibling strategy, a restart
 policy or a forced stop asked for it. `DiamondSupervisorChild.running_vm` is
 published and cleared under `lock` around each attempt so the arming never
 touches a freed VM; an attempt that starts after the force sees `stop_forced`

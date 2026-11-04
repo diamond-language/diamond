@@ -37,7 +37,11 @@ authoritative fine-grained record.
   counting loop runs about 7% more. With the JIT off, a call to a plain function also skips a
   forwarding layer and two no-op frees: recursive `fib` runs another 8% fewer instructions, and
   closures 5% fewer cycles. Method calls and `new` skip the same layer: allocating objects and
-  calling their methods runs 5% fewer cycles.
+  calling their methods runs 5% fewer cycles. The interpreter now checks for pending signals and
+  for a supervisor or thread stop on backward jumps and calls instead of before every
+  instruction; resource limits and opcode counting still see every instruction. That cuts the
+  counting loop's cost by 14% (more than winning back the 7% above), a sieve by 19%, Float-heavy
+  `mandelbrot` by 14% and `fib` by 12%; across the suite, about 4% fewer cycles on average.
 
 - **Faster setters and Float arithmetic.** A setter whose whole body stores its argument
   (`attr_accessor`'s `x=`, or a one-field `initialize`) is answered by writing the field,
