@@ -5,7 +5,12 @@ The corrected A record is **142.93.192.149**. External health and catalog
 requests succeeded. Since 2026-09-25 nginx terminates TLS with certbot
 certificates (see "Proxy and certificates" below); Caddy was retired.
 
-Runtime revision: `8a43ef3b0aa13a329180ed154f08641afb51615b` (v0.23.0, the first d6 release,
+Runtime revision: `e42eba00dd8e3b51d51cf99083697ba3b69062d1` (v0.26.0, deployed 2026-11-05 with
+`tools/deploy_registry.sh --force` after a verified snapshot; the upgrade check called it optional,
+and the owner asked for it). No cut was published: none changed after v0.23.0. The deploy's public
+verification resolved, digest-checked, loaded and reinstalled all 20 public cuts.
+
+v0.23.0 (`8a43ef3b0aa13a329180ed154f08641afb51615b`, the first d6 release) was
 deployed 2026-11-02 with `tools/deploy_registry.sh` after a verified snapshot). The upgrade comes
 first this time because older registries predate `Cutfile`; its own public verification then failed
 as expected (the seed pins versions not yet published; `--no-verify` is the flag for this order).
