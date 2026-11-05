@@ -17,16 +17,16 @@
  * embedding these in a larger buffer would hide a successor overread. */
 static bool check_dispatch_ends(void) {
     static const struct {
-        uint8_t code[10];
+        uint8_t code[11];
         size_t size;
         bool falls_off;
     } cases[] = {
         {{DIAMOND_OP_NIL,0,0},3,true},
         {{DIAMOND_OP_CONSTANT,0,0,0,0},5,true},
-        {{DIAMOND_OP_JUMP,0,3},3,true},
-        {{DIAMOND_OP_JUMP_IF_FALSE,0,0,0,5},5,true},
+        {{DIAMOND_OP_JUMP,0,4,UINT8_MAX},4,true},
+        {{DIAMOND_OP_JUMP_IF_FALSE,0,0,0,6,UINT8_MAX},6,true},
         {{DIAMOND_OP_JUMP_IF_TRUE,0,0,0,5},5,true},
-        {{DIAMOND_OP_CONSTANT,0,0,0,0,DIAMOND_OP_JUMP_IF_TRUE,0,0,0,10},10,true},
+        {{DIAMOND_OP_CONSTANT,0,0,0,0,DIAMOND_OP_JUMP_IF_TRUE,0,0,0,11,UINT8_MAX},11,true},
         {{DIAMOND_OP_CONSTANT,0,0,0,0,DIAMOND_OP_JUMP_IF_FALSE,0,0,0,10},10,true},
         {{DIAMOND_OP_JUMP,0,4},3,false},
         {{DIAMOND_OP_NIL,0},2,false},
