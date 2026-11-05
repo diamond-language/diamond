@@ -732,6 +732,8 @@ DIAMOND_INTERNAL void note_capture_use(const Compiler *compiler,size_t index);
 DIAMOND_INTERNAL bool register_is_named(const Compiler *compiler, uint16_t reg);
 DIAMOND_INTERNAL bool try_rewrite_producer_destination(Compiler *compiler, uint16_t value,
                                               uint16_t destination);
+DIAMOND_INTERNAL uint16_t stage_call_arguments(Compiler *compiler,const uint16_t *arguments,
+                                               size_t argument_count);
 DIAMOND_INTERNAL uint16_t define_local_with_register(Compiler *compiler, DiamondSpan name,
                                             uint16_t preferred_register);
 DIAMOND_INTERNAL uint16_t define_local(Compiler *compiler, DiamondSpan name);
