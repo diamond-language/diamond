@@ -81,6 +81,37 @@ fill_match(OnigRegion *region, reginold_match *out)
     return REGINOLD_OK;
 }
 
+/* Onigmo always reserves at least ONIG_NREGION slots. Keep that common
+ * case on the call stack; larger capture sets retain its heap allocation.
+ * Both native Onigmo and our NFA resize to num_mem + 1, so this storage
+ * cannot be passed to realloc. Nothing is cached on the shared regex. */
+typedef struct {
+    OnigRegion region;
+    OnigPosition beg[ONIG_NREGION];
+    OnigPosition end[ONIG_NREGION];
+} MatchRegion;
+
+static void
+match_region_init(MatchRegion *scratch, const reginold_regex *re)
+{
+    onig_region_init(&scratch->region);
+    if (re->engine->onig->num_mem < ONIG_NREGION) {
+        scratch->region.allocated = ONIG_NREGION;
+        scratch->region.beg = scratch->beg;
+        scratch->region.end = scratch->end;
+    }
+}
+
+static void
+match_region_free(MatchRegion *scratch)
+{
+    if (scratch->region.beg == scratch->beg)
+        scratch->region.allocated = 0;
+    /* Also releases capture history, when enabled, without freeing the
+     * region itself or either of our stack buffers. */
+    onig_region_free(&scratch->region, 0);
+}
+
 /* ── Public API ───────────────────────────────────────────────────────────── */
 
 reginold_status
@@ -121,8 +152,12 @@ reginold_search(const reginold_regex *re,
     const UChar *str    = (const UChar *)bytes;
     const UChar *end    = str + len;
     const UChar *sptr   = str + start;
-    OnigRegion  *region = onig_region_new();
-    if (!region) return REGINOLD_ERROR;
+    MatchRegion scratch;
+    OnigRegion *region = NULL;
+    if (out) {
+        match_region_init(&scratch, re);
+        region = &scratch.region;
+    }
 
     int r = regold_search(re->engine, str, end, sptr, end, region, ONIG_OPTION_NONE);
 
@@ -137,7 +172,7 @@ reginold_search(const reginold_regex *re,
         status = REGINOLD_OK;
     }
 
-    onig_region_free(region, 1);
+    if (region) match_region_free(&scratch);
     return status;
 }
 
@@ -150,8 +185,12 @@ reginold_match_at(const reginold_regex *re,
     const UChar *str    = (const UChar *)bytes;
     const UChar *end    = str + len;
     const UChar *atptr  = str + at;
-    OnigRegion  *region = onig_region_new();
-    if (!region) return REGINOLD_ERROR;
+    MatchRegion scratch;
+    OnigRegion *region = NULL;
+    if (out) {
+        match_region_init(&scratch, re);
+        region = &scratch.region;
+    }
 
     int r = regold_match(re->engine, str, end, atptr, region, ONIG_OPTION_NONE);
 
@@ -166,7 +205,7 @@ reginold_match_at(const reginold_regex *re,
         status = REGINOLD_OK;
     }
 
-    onig_region_free(region, 1);
+    if (region) match_region_free(&scratch);
     return status;
 }
 

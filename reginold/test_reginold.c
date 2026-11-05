@@ -361,6 +361,59 @@ test_null_out(void)
     reginold_regex_free(re);
 }
 
+/* Exercise both sides of the small-region boundary, including Onigmo's
+ * backreference fallback and byte offsets in multibyte subjects. Retained
+ * captures must remain owned by the caller across later matches. */
+static void
+test_region_storage(void)
+{
+    static const struct {
+        const char *pattern;
+        const char *subject;
+        size_t captures;
+    } cases[] = {
+        {"(a)(b)(c)", "abc", 3},
+        {"(a)(b)(c)(d)", "abcd", 4},
+        {"(a)(b)(c)(d)(e)(f)(g)(h)", "abcdefgh", 8},
+        {"(a)(b)(c)\\3", "abcc", 3},
+        {"(a)(b)(c)(d)\\4", "abcdd", 4},
+        {"(é)(β)(🙂)", "éβ🙂", 3},
+        {"(a)(b)?(c)", "ac", 3},
+    };
+    printf("\nTemporary region storage:\n");
+    for (size_t i = 0; i < sizeof cases / sizeof cases[0]; i++) {
+        reginold_regex *re = compile_ok(cases[i].pattern);
+        if (!re) continue;
+        for (int anchored = 0; anchored < 2; anchored++) {
+            reginold_status (*run)(const reginold_regex *, const char *,
+                size_t, size_t, reginold_match *) = anchored ?
+                reginold_match_at : reginold_search;
+            char padded[64];
+            snprintf(padded, sizeof padded, "_%s", cases[i].subject);
+            size_t len = strlen(cases[i].subject);
+            reginold_match first = {0}, second = {0};
+            int ok = run(re, padded, len + 1, 1, &first) == REGINOLD_OK;
+            ok = ok && run(re, cases[i].subject, len, 0, NULL) == REGINOLD_OK;
+            ok = ok && run(re, "z", 1, 0, NULL) == REGINOLD_MISMATCH;
+            ok = ok && run(re, cases[i].subject, len, 0, &second) == REGINOLD_OK;
+            ok = ok && first.capture_count == cases[i].captures &&
+                second.capture_count == cases[i].captures &&
+                first.overall.beg == 1 && first.overall.end == (long)len + 1 &&
+                second.overall.beg == 0 && second.overall.end == (long)len &&
+                first.captures[0].beg == 1 && second.captures[0].beg == 0;
+            if (ok)
+                PASS("/%s/ %s retains captures across later calls",
+                     cases[i].pattern, anchored ? "match_at" : "search");
+            else
+                FAIL("/%s/ %s temporary region handling",
+                     cases[i].pattern, anchored ? "match_at" : "search");
+            reginold_match_free(&first);
+            reginold_match_free(&second);
+        }
+        reginold_regex_free(re);
+    }
+}
+
 /* ── main ─────────────────────────────────────────────────────────────────── */
 
 int
@@ -375,6 +428,7 @@ main(void)
     test_fallback();
     test_options();
     test_null_out();
+    test_region_storage();
 
     printf("\n%d passed, %d failed\n", g_pass, g_fail);
     return g_fail ? 1 : 0;

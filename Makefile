@@ -357,7 +357,8 @@ endif
 clean-variant:
 	rm -f $(BUILD_DIR)/*.o $(BUILD_DIR)/*.d $(TARGET) $(BUILD_DIR)/run_cases
 
-$(REGINOLD_LIB): $(REGINOLD_DIR)/Makefile
+$(REGINOLD_LIB): $(REGINOLD_DIR)/Makefile \
+    $(filter-out $(REGINOLD_DIR)/test_%,$(wildcard $(REGINOLD_DIR)/*.c))
 	$(MAKE) -C $(REGINOLD_DIR) libreginold.a
 
 $(TARGET): $(OBJECTS) $(REPL_COMPLETION_OBJECTS) $(REGINOLD_LIB)
@@ -516,10 +517,15 @@ $(BUILD_DIR)/aot_write_test: tests/aot_write_test.c src/main.c $(API_DBG_OBJECTS
 	@mkdir -p $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS_COMMON) $(CFLAGS_DEBUG) $(API_DBG_OBJECTS) $< $(LDLIBS) -o $@
 
-test-api: $(BUILD_DIR)/api_invalidation $(BUILD_DIR)/buffer_growth_test $(BUILD_DIR)/aot_write_test
+$(BUILD_DIR)/regexp_api_test: $(REGINOLD_DIR)/test_reginold.c $(REGINOLD_DIR)/reginold.h $(REGINOLD_LIB)
+	@mkdir -p $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS_COMMON) $(CFLAGS_DEBUG) $< $(LDLIBS) -o $@
+
+test-api: $(BUILD_DIR)/api_invalidation $(BUILD_DIR)/buffer_growth_test $(BUILD_DIR)/aot_write_test $(BUILD_DIR)/regexp_api_test
 	$(BUILD_DIR)/api_invalidation
 	$(BUILD_DIR)/buffer_growth_test
 	$(BUILD_DIR)/aot_write_test
+	$(BUILD_DIR)/regexp_api_test
 
 # src/semver.c has no compiler or VM dependency, so this test links only it.
 $(BUILD_DIR)/semver_test: tests/semver_test.c src/semver.c src/semver.h

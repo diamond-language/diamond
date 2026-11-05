@@ -22,6 +22,9 @@ authoritative fine-grained record.
 
 ### Changed
 
+- **Fewer regex allocations.** Matches use call-local temporary capture storage
+  for small patterns, and boolean matches skip unused result storage.
+
 - **Faster regular expressions.** The native regex library is now optimized in
   every build, reducing the work and instruction-cache pressure of matching.
 
