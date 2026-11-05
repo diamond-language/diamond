@@ -16,10 +16,13 @@ authoritative fine-grained record.
   ending in a ternary returns straight from each branch. Recursive `fib` runs about 11% fewer
   instructions and cycles, building and walking binary trees about 9% fewer instructions, and
   object-heavy code 2-3% fewer.
-- **Cheaper objects.** Reading or writing an instance variable no longer goes through a per-site
-  cache; it checks the instance's shape directly. Allocating a million small objects and calling a
-  method on each runs about 6% fewer instructions and 8% fewer cycles. `DIAMOND_TRACE_FIELDS`,
-  which reported that cache's hits and misses, is gone.
+- **Cheaper objects.** Reading or writing an instance variable checks the instance's shape directly
+  instead of going through a per-site cache, a trivial getter or setter is recognized once per
+  program instead of on every call, and the collector keeps swept small instances (up to eight
+  fields, at most one nursery's worth) for the next allocations instead of returning them to
+  `malloc`. Allocating a million small objects and calling a method on each runs about 16% fewer
+  cycles; struct-heavy code 15% fewer, building and walking trees 10% and an n-body simulation 18%.
+  `DIAMOND_TRACE_FIELDS`, which reported the field cache's hits and misses, is gone.
 
 ## 0.26.0 — 2026-11-05
 
