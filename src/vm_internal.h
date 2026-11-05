@@ -1566,6 +1566,10 @@ DIAMOND_INTERNAL DiamondVmStatus invoke_resolved_method_helper(DiamondVm *vm,
         uint8_t argc,bool typed,uint8_t type_argument_count,
         const uint16_t *type_arguments,const DiamondChunk *caller_chunk,
         size_t depth,DiamondValue *result);
+
+/* Fills a DiamondAccessor from a function's body (src/vm_calls.c). */
+DIAMOND_INTERNAL DiamondAccessor diamond_decode_accessor(const DiamondFunction *fn);
+
 DIAMOND_INTERNAL bool diamond_mono_accessor_shortcut(DiamondVm *vm,const uint8_t *site,
         const DiamondStringConstant *method_name,const DiamondValue *registers,
         uint16_t recv,uint16_t base,uint8_t argc,DiamondValue *result);

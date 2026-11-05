@@ -2136,8 +2136,11 @@ DiamondVmStatus diamond_vm_run(DiamondVm *vm, const DiamondChunk *chunk,
        vm->max_instructions==0) {
         for(size_t index=0;index<chunk->function_count;index++) {
             DiamondFunction *function=chunk->functions[index];
-            if(function!=nullptr&&!function->entry_check.computed)
+            if(function!=nullptr&&!function->entry_check.computed) {
+                /* The accessor first: a set entry_check.computed vouches for it. */
+                function->accessor=diamond_decode_accessor(function);
                 compute_entry_check(function,chunk->class_count);
+            }
         }
     }
     for (size_t index=0;index<vm->rewritten_site_count;index++)

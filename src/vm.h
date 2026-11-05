@@ -1234,6 +1234,20 @@ typedef struct DiamondEntryCheck {
     DiamondEntryParam params[DIAMOND_ENTRY_CHECK_MAX];
 } DiamondEntryCheck;
 
+/* A method whose whole body reads one field and returns it, or stores its
+ * one argument in a field and returns that, can be answered without a frame
+ * (trivial_getter_result and trivial_setter_result, src/vm_calls.c). The
+ * body's bytecode says which; diamond_vm_run reads it once, beside
+ * entry_check, so a call does not decode it again. `set` is the declared
+ * return or parameter type's set in the function's type_sets, or
+ * DIAMOND_NO_TYPE_SET. */
+enum { DIAMOND_ACCESSOR_NONE, DIAMOND_ACCESSOR_GETTER, DIAMOND_ACCESSOR_SETTER };
+typedef struct DiamondAccessor {
+    uint8_t kind;
+    uint8_t field;
+    uint16_t set;
+} DiamondAccessor;
+
 typedef struct DiamondFunction {
     char name[DIAMOND_MAX_FUNCTION_NAME];
     /* 1-based source position of the function/method's own name token
@@ -1481,6 +1495,9 @@ typedef struct DiamondFunction {
     /* The function's leading parameter CHECK_TYPEs as inline kind tests,
      * filled once per program by diamond_vm_run (see DiamondEntryCheck). */
     DiamondEntryCheck entry_check;
+    /* Whether the body is a trivial field getter or setter, filled with
+     * entry_check and valid once entry_check.computed (DiamondAccessor). */
+    DiamondAccessor accessor;
 } DiamondFunction;
 
 /* arity/required_arity above count an implicit self slot for a genuine
