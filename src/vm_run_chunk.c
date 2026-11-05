@@ -500,9 +500,18 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
      * plain reads through a local pointer. Every READ_BYTE/READ_SHORT checks
      * the bound and advances ip on its own; the hot opcodes decode this way
      * instead. */
+    /* Include the successor in the existing operand bounds check. At the
+     * exact end, dispatch through a local invalid opcode instead of reading
+     * past the allocation. No padding is required of caller-owned chunks. */
+    static const uint8_t end_opcode = UINT8_MAX;
 #define READ_OPERANDS(width_)                              \
-    if (ip + (width_) > bytecode_count) {                  \
-        VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);            \
+    [[maybe_unused]] const uint8_t *next_bytecode;           \
+    if (ip + (width_) >= bytecode_count) {                 \
+        if (ip + (width_) > bytecode_count)               \
+            VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);        \
+        next_bytecode = &end_opcode;                       \
+    } else {                                               \
+        next_bytecode = bytecode + ip + (width_);           \
     }                                                      \
     const uint8_t *const operands = bytecode + ip;         \
     ip += (width_)
@@ -510,8 +519,8 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
 #define OPERAND_SHORT(offset_) \
     ((uint16_t)(((unsigned)operands[(offset_)] << 8) | operands[(offset_) + 1]))
 
-    /* Ends a hot handler: the end-of-code check, then a jump straight to
-     * the next instruction's handler through `dispatch`. The loop top's
+    /* Ends a hot handler with a jump straight to the next instruction's
+     * handler through `dispatch`. The loop top's
      * other checks do not run here:
      *   - A pending signal or an asynchronous stop (a supervisor or
      *     Thread setting resource_limits_active from another thread) is
@@ -523,20 +532,20 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
      *     a requested stop), the loop top points `dispatch` at
      *     recheck_table, which sends every instruction back through the
      *     loop top, so counting and budgets stay exact per instruction.
-     * Each check here was a load on every instruction; dropping two of
-     * the three cut the `loop` benchmark by about 6% in cycles. */
+     * READ_OPERANDS prepares next_bytecode while checking the operands,
+     * including a safe sentinel at the exact end. Jumps and variable-width
+     * invokes update it after decoding their destination or extra operands,
+     * so dispatch needs no separate end-of-code check. */
 #if DIAMOND_THREADED_DISPATCH
 #define DISPATCH_NEXT()                                                    \
     do {                                                                   \
-        if (__builtin_expect(ip < bytecode_count, 1)) {                    \
-            instruction_offset = ip;                                       \
-            instruction = bytecode[ip++];                                  \
-            _Pragma("GCC diagnostic push")                                 \
-            _Pragma("GCC diagnostic ignored \"-Wpedantic\"")               \
-            goto *dispatch[instruction];                                   \
-            _Pragma("GCC diagnostic pop")                                  \
-        }                                                                  \
-        goto dispatch_continue;                                            \
+        instruction_offset = ip;                                           \
+        instruction = *next_bytecode;                                      \
+        ip++;                                                              \
+        _Pragma("GCC diagnostic push")                                     \
+        _Pragma("GCC diagnostic ignored \"-Wpedantic\"")                   \
+        goto *dispatch[instruction];                                       \
+        _Pragma("GCC diagnostic pop")                                      \
     } while (false)
     /* A backward jump to target_: if a signal is pending or the limits
      * flag was raised, go through the loop top (which handles both and
@@ -922,7 +931,8 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
             }
             case DIAMOND_OP_NIL: op_NIL: {
                 uint16_t destination = 0;
-                READ_SHORT(destination);
+                READ_OPERANDS(2);
+                destination=OPERAND_SHORT(0);
                 registers[destination] = DIAMOND_NIL;
                 DISPATCH_NEXT();
             }
@@ -1700,6 +1710,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 }
                 POLL_BACK_EDGE(target);
                 ip = target;
+                next_bytecode = target == bytecode_count ? &end_opcode : bytecode + target;
                 DISPATCH_NEXT();
             }
             case DIAMOND_OP_JUMP_IF_FALSE: op_JUMP_IF_FALSE: {
@@ -1715,6 +1726,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 if (!is_truthy(registers[condition])) {
                     POLL_BACK_EDGE(target);
                     ip = target;
+                    next_bytecode = target == bytecode_count ? &end_opcode : bytecode + target;
                 }
                 DISPATCH_NEXT();
             }
@@ -1727,6 +1739,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 if(is_truthy(registers[condition])) {
                     POLL_BACK_EDGE(target);
                     ip=target;
+                    next_bytecode = target == bytecode_count ? &end_opcode : bytecode + target;
                 }
                 DISPATCH_NEXT();
             }
@@ -2312,6 +2325,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     if(type_argument_count>8)VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
                     for(size_t index=0;index<type_argument_count;index++)
                         READ_SHORT(type_arguments[index]);
+                    next_bytecode = ip == bytecode_count ? &end_opcode : bytecode + ip;
                 }
                 if((size_t)name>=chunk->string_count) VM_RETURN(DIAMOND_VM_TYPE_ERROR);
                 const DiamondStringConstant *method_name=&chunk->strings[name];
@@ -4283,6 +4297,10 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
 #undef INT_K_SLOW
 #undef INT_K_OPERANDS
             default: op_default:
+                if (instruction_offset == bytecode_count) {
+                    ip = bytecode_count;
+                    goto dispatch_continue;
+                }
                 VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
         }
 #if DIAMOND_THREADED_DISPATCH
