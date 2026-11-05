@@ -221,6 +221,13 @@ typedef struct Compiler {
     uint16_t last_plain_call_destination;
     uint16_t last_plain_call_function_index;
     DiamondFunction *last_plain_call_function;
+    /* The last ternary's end-of-true-branch JUMP (its opcode offset) and the
+     * join it lands on, in last_ternary_function. When a body's RETURN is
+     * emitted right at that join, fold_join_jump_into_return turns the JUMP
+     * into the same RETURN. */
+    size_t last_ternary_jump;
+    size_t last_ternary_join;
+    DiamondFunction *last_ternary_function;
     TailCallCandidate *tail_call_candidates;
     size_t tail_call_candidate_count;
     size_t tail_call_candidate_capacity;
@@ -734,6 +741,7 @@ DIAMOND_INTERNAL bool try_rewrite_producer_destination(Compiler *compiler, uint1
                                               uint16_t destination);
 DIAMOND_INTERNAL uint16_t stage_call_arguments(Compiler *compiler,const uint16_t *arguments,
                                                size_t argument_count);
+DIAMOND_INTERNAL void fold_join_jump_into_return(Compiler *compiler,uint16_t reg);
 DIAMOND_INTERNAL uint16_t define_local_with_register(Compiler *compiler, DiamondSpan name,
                                             uint16_t preferred_register);
 DIAMOND_INTERNAL uint16_t define_local(Compiler *compiler, DiamondSpan name);

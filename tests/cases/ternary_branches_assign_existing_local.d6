@@ -1,0 +1,27 @@
+# Both branches of a ternary compute a new value for a local that already
+# exists. Each branch's arithmetic writes the ternary's result directly, so the
+# assignment must still copy that result into the local whichever branch ran.
+def collatz_steps(start: Int) -> Int
+  n = start
+  steps = 0
+  while n != 1
+    n = n % 2 == 0 ? n / 2 : 3 * n + 1
+    steps += 1
+  end
+  steps
+end
+
+puts(collatz_steps(27))
+
+x = 10
+flag = true
+x = flag ? x + 1 : x * 2
+puts(x)
+flag = false
+x = flag ? x + 1 : x * 2
+puts(x)
+
+# A ternary as a function's whole body returns from either branch.
+def pick(n: Int) -> Int = n < 2 ? n + 100 : n * 3
+puts(pick(1))
+puts(pick(5))
