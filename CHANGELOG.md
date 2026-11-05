@@ -4,6 +4,19 @@ d6 is currently pre-release. This file records user-visible capability
 milestones rather than every implementation step; the Git history remains the
 authoritative fine-grained record.
 
+## Unreleased
+
+### Changed
+
+- **Cheaper calls.** A call no longer copies its arguments into a fresh register block when they
+  already sit in order, which a single argument always does. A typed function's parameter checks
+  run as a few inline tests on entry instead of one dispatched instruction each when the types are
+  simple (Int, Float, Bool, String, Symbol, an exact class, or one of these or Nil); anything else,
+  such as a subclass instance, still goes through the full check with the same error. And a body
+  ending in a ternary returns straight from each branch. Recursive `fib` runs about 11% fewer
+  instructions and cycles, building and walking binary trees about 9% fewer instructions, and
+  object-heavy code 2-3% fewer.
+
 ## 0.26.0 — 2026-11-05
 
 ### Added
