@@ -13,7 +13,61 @@
 #include <stdlib.h>
 #include <string.h>
 
+/* Exact allocations exercise dispatch at the boundary under ASan too:
+ * embedding these in a larger buffer would hide a successor overread. */
+static bool check_dispatch_ends(void) {
+    static const struct {
+        uint8_t code[11];
+        size_t size;
+        bool falls_off;
+    } cases[] = {
+        {{DIAMOND_OP_NIL,0,0},3,true},
+        {{DIAMOND_OP_CONSTANT,0,0,0,0},5,true},
+        {{DIAMOND_OP_JUMP,0,4,UINT8_MAX},4,true},
+        {{DIAMOND_OP_JUMP_IF_FALSE,0,0,0,6,UINT8_MAX},6,true},
+        {{DIAMOND_OP_JUMP_IF_TRUE,0,0,0,5},5,true},
+        {{DIAMOND_OP_CONSTANT,0,0,0,0,DIAMOND_OP_JUMP_IF_TRUE,0,0,0,11,UINT8_MAX},11,true},
+        {{DIAMOND_OP_CONSTANT,0,0,0,0,DIAMOND_OP_JUMP_IF_FALSE,0,0,0,10},10,true},
+        {{DIAMOND_OP_JUMP,0,4},3,false},
+        {{DIAMOND_OP_NIL,0},2,false},
+        {{DIAMOND_OP_CONSTANT,0,0,0},4,false},
+        {{DIAMOND_OP_NIL,0,0,UINT8_MAX},4,false},
+    };
+    const DiamondValue constant=DIAMOND_INT(42);
+    for(size_t i=0;i<sizeof cases/sizeof cases[0];i++) {
+        uint8_t *code=malloc(cases[i].size);
+        if(code==nullptr)return false;
+        memcpy(code,cases[i].code,cases[i].size);
+        const DiamondChunk chunk={.name="dispatch end",.code=code,
+            .code_count=cases[i].size,.register_count=1,
+            .constants=&constant,.constant_count=1};
+        DiamondVm vm;
+        diamond_vm_init(&vm);
+        DiamondValue result=DIAMOND_NIL;
+        bool ok=diamond_vm_run(&vm,&chunk,&result)==DIAMOND_VM_INVALID_BYTECODE;
+        DiamondFiber *fiber=diamond_fiber_new(&chunk);
+        ok=ok&&fiber!=nullptr&&
+            diamond_fiber_bind_vm(fiber,&vm)==DIAMOND_FIBER_OK&&
+            diamond_fiber_prepare(fiber)==DIAMOND_FIBER_OK&&
+            diamond_fiber_resume(fiber,DIAMOND_NIL)==DIAMOND_FIBER_OK;
+        if(ok) {
+            (void)diamond_fiber_run(fiber);
+            ok=diamond_fiber_status(fiber)==(cases[i].falls_off?
+                DIAMOND_VM_OK:DIAMOND_VM_INVALID_BYTECODE);
+        }
+        diamond_fiber_free(fiber);
+        diamond_vm_free(&vm);
+        free(code);
+        if(!ok) {
+            fprintf(stderr,"dispatch boundary case %zu failed\n",i);
+            return false;
+        }
+    }
+    return true;
+}
+
 int main(void) {
+    if(!check_dispatch_ends())return 20;
     static const char source[] =
         "class Parent\n"
         "  def value()\n"
