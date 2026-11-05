@@ -54,6 +54,12 @@ the workflow's manual dispatch with the tag; the release is updated in place,
 replacing files of the same name. Tags before 0.20 have no `packaging/` and
 cannot be published this way.
 
+Between releases `main` carries the next minor version with a `-dev` suffix: right
+after tagging `vX.Y.0`, `src/main.c` (and the version `tests/run.sh` expects) moves
+to `X.(Y+1).0-dev`, and the release PR drops the suffix. Packages built from a
+development version are labelled `X.(Y+1).0~dev`, because RPM forbids `-` in a
+version and `~` sorts a development build before its release.
+
 ## Timeout budgets
 
 Budgets are the longest successful job durations seen across recent `main` runs, including
