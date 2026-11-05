@@ -1,0 +1,65 @@
+# Exercises the instance pool: short-lived objects of several field counts,
+# some kept alive across collections, frozen ones, and reuse after a sweep.
+class One
+  def initialize(a: Int)
+    @a = a
+  end
+
+  def a() -> Int = @a
+end
+
+class Three
+  def initialize(a: Int, b: String, c: One)
+    @a = a
+    @b = b
+    @c = c
+  end
+
+  def total() -> Int = @a + @c.a() + @b.length()
+end
+
+class Nine
+  def initialize(n: Int)
+    @f1 = n
+    @f2 = n
+    @f3 = n
+    @f4 = n
+    @f5 = n
+    @f6 = n
+    @f7 = n
+    @f8 = n
+    @f9 = n
+  end
+
+  def last() -> Int = @f9
+end
+
+class Empty
+end
+
+kept = []
+total = 0
+i = 0
+while i < 3000
+  one = One.new(i)
+  three = Three.new(i, "x#{i}", one)
+  total += three.total() + Nine.new(i).last()
+  Empty.new()
+  if i % 97 == 0
+    kept.push(three)
+  end
+  if i % 211 == 0
+    frozen = One.new(i).freeze()
+    total += frozen.a()
+  end
+  i += 1
+end
+
+# The kept objects must still hold their own values after many sweeps.
+check = 0
+kept.each() do |three|
+  check += three.total()
+end
+puts(total)
+puts(check)
+puts(kept.length())

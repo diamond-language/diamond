@@ -83,6 +83,9 @@ enum {
     DIAMOND_MAX_TYPE_SETS = UINT16_MAX,
     DIAMOND_NO_TYPE_SET = UINT16_MAX,
     DIAMOND_MAX_UNION_TYPES = 8,
+    /* Instances with at most this many fields and no type parameters are
+     * pooled for reuse after a sweep (DiamondVm.instance_pool). */
+    DIAMOND_INSTANCE_POOL_FIELDS = 8,
     /* The real ceiling: every wire-format argument/parameter count
      * (DIAMOND_OP_CALL's call_argument_count, INVOKE/NEW/SUPER's argc,
      * DiamondFunction/DiamondMethod's arity/required_arity, DiamondMethod's
@@ -2269,6 +2272,15 @@ struct DiamondVm {
      * so this is never read concurrently with a write). */
     DiamondValue *extra_roots;
     size_t extra_root_count;
+    /* Swept instances kept for allocate_instance to reuse, one list per
+     * field count (see instance_pool_index, vm_internal.h), linked through
+     * DiamondObject.next and freed by diamond_vm_free. A burst of small,
+     * short-lived objects otherwise overflows malloc's per-thread cache and
+     * pays its slow path on every allocation and free. instance_pool_bytes
+     * stays within minor_gc_threshold_bytes, about one nursery's worth, and
+     * is not counted in bytes_allocated. */
+    DiamondObject *instance_pool[DIAMOND_INSTANCE_POOL_FIELDS+1];
+    size_t instance_pool_bytes;
     /* Keep the site tables after VM control state, so their size does not
      * spread the dispatch counters, quickening/JIT flags and instruction
      * budgets across the tables' working set. */

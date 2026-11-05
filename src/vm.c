@@ -489,6 +489,12 @@ void diamond_vm_free(DiamondVm *vm) {
     budget_unregister(vm);
     free_object_list(vm,vm->young_objects);
     free_object_list(vm,vm->old_objects);
+    for(size_t pool=0;pool<=DIAMOND_INSTANCE_POOL_FIELDS;pool++) {
+        DiamondObject *object=vm->instance_pool[pool];
+        while(object!=nullptr) {DiamondObject *next=object->next;free(object);object=next;}
+        vm->instance_pool[pool]=nullptr;
+    }
+    vm->instance_pool_bytes=0;
     free_adopted_programs(vm->adopted_programs);
     free(vm->class_variables);
     free(vm->namespace_constants);
@@ -892,7 +898,15 @@ DiamondInstance *allocate_instance(DiamondVm *vm,const DiamondClass *class,
     const bool generic=class->type_parameter[0]!='\0';
     const size_t size=sizeof(DiamondInstance)+class->field_count*sizeof(DiamondValue)+
         DIAMOND_CLASS_TYPE_PARAMETER_COUNT(class)*sizeof(DiamondTypeBinding);
-    DiamondInstance *instance=malloc(size); if(instance==nullptr)return nullptr;
+    const int pool=instance_pool_index(class->field_count,generic);
+    DiamondInstance *instance;
+    if(pool>=0&&vm->instance_pool[pool]!=nullptr) {
+        instance=(DiamondInstance *)vm->instance_pool[pool];
+        vm->instance_pool[pool]=instance->object.next;
+        vm->instance_pool_bytes-=size;
+    } else {
+        instance=malloc(size); if(instance==nullptr)return nullptr;
+    }
     instance->object=(DiamondObject){.next=vm->young_objects,.kind=DIAMOND_OBJECT_INSTANCE};
     instance->class=class; instance->shape=&class->shapes[0]; instance->owner=chunk;
     instance->field_count=class->field_count;

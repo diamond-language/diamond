@@ -387,6 +387,16 @@ static void sweep_list(DiamondVm *vm, DiamondObject **list_head,
             const DiamondInstance *instance=(const DiamondInstance *)unreached;
             size=sizeof(DiamondInstance)+instance->field_count*sizeof(DiamondValue)+
                 DIAMOND_CLASS_TYPE_PARAMETER_COUNT(instance->class)*sizeof(DiamondTypeBinding);
+            /* Kept for allocate_instance to reuse (DiamondVm.instance_pool). */
+            const int pool=instance_pool_index(instance->field_count,
+                instance->class->type_parameter[0]!='\0');
+            if(pool>=0&&vm->instance_pool_bytes+size<=vm->minor_gc_threshold_bytes) {
+                vm->bytes_allocated-=size;
+                vm->instance_pool_bytes+=size;
+                unreached->next=vm->instance_pool[pool];
+                vm->instance_pool[pool]=unreached;
+                continue;
+            }
         } else if(unreached->kind==DIAMOND_OBJECT_ARRAY) {
             DiamondArray *array=(DiamondArray *)unreached;
             size=sizeof(DiamondArray)+array->capacity*sizeof(DiamondValue);

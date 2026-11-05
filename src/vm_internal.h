@@ -68,6 +68,21 @@ static inline int diamond_pipe(int descriptors[2]) {
 #include <sanitizer/common_interface_defs.h>
 #endif
 
+/* The DiamondVm.instance_pool list an instance with `field_count` fields
+ * belongs to, or -1 when it is not pooled: one with more fields or with
+ * type parameters (whose size differs by class). Under ASan nothing is
+ * pooled, so a stale reference to a swept instance still faults. */
+static inline int instance_pool_index(size_t field_count,bool generic) {
+#if defined(__SANITIZE_ADDRESS__) || \
+    (defined(__has_feature) && __has_feature(address_sanitizer))
+    (void)field_count;(void)generic;
+    return -1;
+#else
+    if(generic||field_count>DIAMOND_INSTANCE_POOL_FIELDS)return -1;
+    return (int)field_count;
+#endif
+}
+
 /* Types shared by the files split out of vm.c. */
 /* Native backing struct for DiamondChannelHandle (object.h) -- see docs/
  * threads.md's Channels section. Unlike DiamondThread (owned one-to-one
