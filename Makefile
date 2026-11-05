@@ -357,7 +357,7 @@ endif
 clean-variant:
 	rm -f $(BUILD_DIR)/*.o $(BUILD_DIR)/*.d $(TARGET) $(BUILD_DIR)/run_cases
 
-$(REGINOLD_LIB):
+$(REGINOLD_LIB): $(REGINOLD_DIR)/Makefile
 	$(MAKE) -C $(REGINOLD_DIR) libreginold.a
 
 $(TARGET): $(OBJECTS) $(REPL_COMPLETION_OBJECTS) $(REGINOLD_LIB)

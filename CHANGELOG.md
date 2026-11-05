@@ -22,6 +22,9 @@ authoritative fine-grained record.
 
 ### Changed
 
+- **Faster regular expressions.** The native regex library is now optimized in
+  every build, reducing the work and instruction-cache pressure of matching.
+
 - **Faster interpreter dispatch.** Hot instructions reuse their operand bounds
   check to prepare the next opcode, removing a separate end-of-code check.
 

@@ -29,7 +29,9 @@ UNICODE_DIR = $(ONIGMO_DIR)/enc/unicode/17.0.0
 # top-level Makefile used target-specific variables instead of a
 # command-line-style override, so this propagation never used to happen,
 # but that was incidental, not a deliberate protection.
-override CFLAGS = -Wall -Wextra -std=c11 -g -fPIC
+# Keep this archive optimized even in consumers' debug builds. Its flags stay
+# isolated from consumer instrumentation so build-time tools can also link it.
+override CFLAGS = -O2 -Wall -Wextra -std=c11 -g -fPIC
 
 # ONIGMO_CFLAGS is INTERNAL to reginold's build only.
 # It is never needed by consumers — they include only reginold.h,
@@ -59,6 +61,9 @@ REGINOLD_OBJS = classify.o nfa.o exec.o engine.o reginold.o
 .PHONY: all test clean
 
 all: libreginold.a test_classify test_engine test_reginold
+
+# Flag changes must also rebuild an archive left by an earlier checkout.
+$(REGINOLD_OBJS) $(ONIGMO_OBJS): Makefile
 
 onig_regcomp.o: $(ONIGMO_DIR)/regcomp.c
 	$(CC) $(CFLAGS_INTERNAL) -c $< -o $@
