@@ -1,0 +1,50 @@
+# run_chunk skips a function's leading parameter checks when quick inline tests
+# pass, and runs the real checks otherwise. Each call below takes one of those
+# paths; the results and error messages must be the same either way.
+class Animal
+  def initialize(name: String)
+    @name = name
+  end
+
+  def name() -> String = @name
+end
+
+class Dog < Animal
+end
+
+def describe(animal: Animal) -> String = animal.name()
+def label(animal: Animal | Nil) -> String = animal == nil ? "nobody" : "someone"
+def twice(n: Int) -> Int = n * 2
+def ratio(x: Float, y: Float) -> Float = x / y
+def shout(word: String, loud: Bool) -> String = loud ? word + "!" : word
+
+# Exact class and a subclass (the subclass takes the full check).
+puts(describe(Animal.new("cat")))
+puts(describe(Dog.new("rex")))
+
+# A union with Nil, both ways.
+puts(label(nil))
+puts(label(Dog.new("fido")))
+
+# A small Int, and a big one (an Int that is not stored inline).
+puts(twice(21))
+puts(twice(9223372036854775807))
+
+puts(ratio(1.0, 4.0))
+puts(shout("hey", true))
+puts(shout("hey", false))
+
+# Wrong types still fail with the real check's message. `opaque` hides each
+# value's type from the compiler so the check happens at run time.
+def opaque(value) = value
+begin
+  twice(opaque("seven"))
+rescue error: TypeError
+  puts(error.message())
+end
+
+begin
+  describe(opaque(nil))
+rescue error: TypeError
+  puts(error.message())
+end

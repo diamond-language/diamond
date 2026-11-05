@@ -566,7 +566,7 @@ static void diamond_fiber_trampoline(void) {
           .class_type_variable=fn->class_type_variable,
         .binding_owner_plus_one=(uint16_t)(fn->owner_class+1u),
           .parameter_offset=fn->owner_class==DIAMOND_OWNER_NONE?0:1,
-          .register_count=fn->register_count};
+          .entry_check=&fn->entry_check,.register_count=fn->register_count};
         self->status=run_chunk(&child,self->vm,nullptr,0,0,self->entry_closure,&self->result);
     } else {
         self->status = run_chunk(self->chunk, self->vm, nullptr, 0, 0, nullptr,
@@ -2099,8 +2099,91 @@ void set_uncaught_exception_error(DiamondVm *vm) {
 
 
 
+/* One type-set member as an inline test, or false when it has none. */
+static bool entry_member_test(uint16_t id,size_t class_count,DiamondEntryParam *param) {
+    switch(id) {
+        case DIAMOND_TYPE_INT: param->value_kind=DIAMOND_VALUE_INT; return true;
+        case DIAMOND_TYPE_FLOAT: param->value_kind=DIAMOND_VALUE_FLOAT; return true;
+        case DIAMOND_TYPE_BOOL: param->value_kind=DIAMOND_VALUE_BOOL; return true;
+        case DIAMOND_TYPE_STRING:
+            param->value_kind=DIAMOND_VALUE_OBJECT; param->object_kind=DIAMOND_OBJECT_STRING;
+            return true;
+        case DIAMOND_TYPE_SYMBOL:
+            param->value_kind=DIAMOND_VALUE_OBJECT; param->object_kind=DIAMOND_OBJECT_SYMBOL;
+            return true;
+        default: break;
+    }
+    if(id<DIAMOND_TYPE_CLASS_BASE||id>=DIAMOND_TYPE_VARIABLE_BASE)return false;
+    const size_t class_index=(size_t)(id-DIAMOND_TYPE_CLASS_BASE);
+    if(class_index>=class_count)return false;
+    param->value_kind=DIAMOND_VALUE_OBJECT;
+    param->object_kind=DIAMOND_OBJECT_INSTANCE;
+    param->class_index=(uint16_t)class_index;
+    return true;
+}
+
+/* A CHECK_TYPE's set as an inline test: one simple member, or one simple
+ * member and Nil, with no type arguments. Each test only accepts values
+ * value_quickly_matches_set accepts for the same set. */
+static bool entry_set_test(const DiamondTypeSet *set,size_t class_count,DiamondEntryParam *param) {
+    if(set->count==0||set->count>2)return false;
+    bool have_member=false;
+    for(size_t index=0;index<set->count;index++) {
+        const DiamondTypeMember *member=&set->members[index];
+        if(member->argument_set!=DIAMOND_NO_TYPE_SET||
+           member->second_argument_set!=DIAMOND_NO_TYPE_SET)return false;
+        if(member->id==DIAMOND_TYPE_NIL) {
+            if(param->allow_nil)return false;
+            param->allow_nil=true;
+            continue;
+        }
+        if(have_member||!entry_member_test(member->id,class_count,param))return false;
+        have_member=true;
+    }
+    if(!have_member) {
+        param->value_kind=DIAMOND_VALUE_NIL;
+        param->allow_nil=false;
+    }
+    return true;
+}
+
+/* Fills function->entry_check from the CHECK_TYPEs its body opens with (see
+ * DiamondEntryCheck). The shortcut is only taken by run_chunk; generic
+ * functions are left out because their sets can bind type variables. */
+static void compute_entry_check(DiamondFunction *function,size_t class_count) {
+    DiamondEntryCheck check={.computed=true};
+    if(function->type_variable_count==0&&!function->class_type_variable) {
+        constexpr size_t width=5;
+        size_t offset=0;
+        while(check.count<DIAMOND_ENTRY_CHECK_MAX&&offset+width<=function->code_count&&
+              function->code[offset]==DIAMOND_OP_CHECK_TYPE) {
+            const uint16_t reg=(uint16_t)((function->code[offset+1]<<8)|function->code[offset+2]);
+            const uint16_t set_index=(uint16_t)((function->code[offset+3]<<8)|function->code[offset+4]);
+            if(set_index>=function->type_set_count||reg>=function->register_count)break;
+            DiamondEntryParam param={.reg=reg};
+            if(!entry_set_test(&function->type_sets[set_index],class_count,&param))break;
+            check.params[check.count++]=param;
+            offset+=width;
+        }
+        if(check.count>0)check.skip_to=(uint16_t)offset;
+    }
+    function->entry_check=check;
+}
+
 DiamondVmStatus diamond_vm_run(DiamondVm *vm, const DiamondChunk *chunk,
                                DiamondValue *result) {
+    /* Entry checks are skipped only without a debugger (a breakpoint can sit
+     * on a def's line), opcode counting or an instruction budget, so those
+     * see every instruction. Each function is filled once; a later run (the
+     * REPL's next line) leaves filled ones alone. */
+    if(vm->debug_fd<0&&vm->debug_active_line_count==0&&!vm->count_opcodes&&
+       vm->max_instructions==0) {
+        for(size_t index=0;index<chunk->function_count;index++) {
+            DiamondFunction *function=chunk->functions[index];
+            if(function!=nullptr&&!function->entry_check.computed)
+                compute_entry_check(function,chunk->class_count);
+        }
+    }
     for (size_t index=0;index<vm->rewritten_site_count;index++)
         ((uint8_t *)(void *)vm->rewritten_sites[index])[0]=(uint8_t)DIAMOND_OP_INVOKE;
     vm->rewritten_site_count=0;

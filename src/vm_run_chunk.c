@@ -314,7 +314,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
      * across the dispatch loop. Helpers that move it (catch_exception, the
      * outlined_* bodies, ...) take &ip_slot instead; IP_CALL syncs the two
      * around each such call. */
-    size_t ip = 0;
+    size_t ip = entry_check_start(chunk, registers);
     /* The decode macros read these instead of chunk->code/code_count, so the
      * dispatch loop needs no register for `chunk`. A cross-function
      * TAIL_CALL reloads them when it switches chunks. */

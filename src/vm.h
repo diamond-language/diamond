@@ -1211,6 +1211,29 @@ typedef struct DiamondInvokeSiteFact {
     uint16_t known_type;
 } DiamondInvokeSiteFact;
 
+/* A function body usually opens with one CHECK_TYPE per typed parameter, and
+ * each costs a full dispatch. When those checks name simple types (Int,
+ * Float, Bool, Nil, String, Symbol, an exact class, or one of these or Nil),
+ * run_chunk tests the parameter registers inline and starts at skip_to,
+ * past them. A test it cannot pass, such as a subclass instance, starts at 0
+ * instead, so the real CHECK_TYPE decides and reports. Every inline test is
+ * at least as strict as the CHECK_TYPE it stands for. skip_to 0 means no
+ * shortcut; zero-initialized functions get none. */
+enum { DIAMOND_ENTRY_CHECK_MAX = 4 };
+typedef struct DiamondEntryParam {
+    uint16_t reg;
+    uint8_t value_kind;   /* DiamondValueKind the register must hold */
+    uint8_t object_kind;  /* DiamondObjectKind when value_kind is OBJECT */
+    bool allow_nil;
+    uint16_t class_index; /* exact class for an INSTANCE object_kind */
+} DiamondEntryParam;
+typedef struct DiamondEntryCheck {
+    uint16_t skip_to;
+    uint8_t count;
+    bool computed;
+    DiamondEntryParam params[DIAMOND_ENTRY_CHECK_MAX];
+} DiamondEntryCheck;
+
 typedef struct DiamondFunction {
     char name[DIAMOND_MAX_FUNCTION_NAME];
     /* 1-based source position of the function/method's own name token
@@ -1455,6 +1478,9 @@ typedef struct DiamondFunction {
     size_t scope_local_count;
     DiamondScopeTypeFact scope_type_facts[DIAMOND_MAX_SCOPE_TYPE_FACTS];
     size_t scope_type_fact_count;
+    /* The function's leading parameter CHECK_TYPEs as inline kind tests,
+     * filled once per program by diamond_vm_run (see DiamondEntryCheck). */
+    DiamondEntryCheck entry_check;
 } DiamondFunction;
 
 /* arity/required_arity above count an implicit self slot for a genuine
@@ -1540,6 +1566,9 @@ struct DiamondChunk {
      * existing -- recognizing a Range receiver for arr[range] slicing
      * without a native VM value kind for Range at all. */
     uint16_t range_class_index;
+    /* The running function's DiamondFunction.entry_check, or nullptr where a
+     * chunk builder does not set it (no shortcut: the checks run). */
+    const DiamondEntryCheck *entry_check;
 };
 
 typedef enum DiamondVmStatus : uint8_t {

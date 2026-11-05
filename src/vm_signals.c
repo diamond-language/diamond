@@ -101,7 +101,7 @@ DiamondVmStatus dispatch_pending_signals(DiamondVm *vm,const DiamondChunk *chunk
           .class_type_variable=fn->class_type_variable,
         .binding_owner_plus_one=(uint16_t)(fn->owner_class+1u),
           .parameter_offset=fn->owner_class==DIAMOND_OWNER_NONE?0:1,
-          .register_count=fn->register_count};
+          .entry_check=&fn->entry_check,.register_count=fn->register_count};
         DiamondValue ignored=DIAMOND_NIL;
         const DiamondVmStatus status=run_chunk(&child,vm,nullptr,0,depth+1,handler,&ignored);
         if(status!=DIAMOND_VM_OK)return status;

@@ -226,7 +226,7 @@ void *thread_entry_trampoline(void *argument) {
         .class_type_variable=target_fn->class_type_variable,
         .binding_owner_plus_one=(uint16_t)(target_fn->owner_class+1u),
         .parameter_offset=target_fn->owner_class==DIAMOND_OWNER_NONE?0:1,
-        .register_count=target_fn->register_count,
+        .entry_check=&target_fn->entry_check,.register_count=target_fn->register_count,
         .has_variadic=target_fn->has_variadic,
         .range_class_index=thread->child_program->range_class_index};
     /* This trampoline calls run_chunk directly rather than through
@@ -286,7 +286,7 @@ static DiamondChunk supervisor_child_chunk(const DiamondSupervisorChild *child) 
         .class_type_variable=target_fn->class_type_variable,
         .binding_owner_plus_one=(uint16_t)(target_fn->owner_class+1u),
         .parameter_offset=target_fn->owner_class==DIAMOND_OWNER_NONE?0:1,
-        .register_count=target_fn->register_count,
+        .entry_check=&target_fn->entry_check,.register_count=target_fn->register_count,
         .has_variadic=target_fn->has_variadic,
         .range_class_index=child->program_template->range_class_index};
 }
