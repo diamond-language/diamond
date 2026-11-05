@@ -545,10 +545,7 @@ static uint16_t parse_class_new_call_impl(Compiler *compiler, int class_index) {
         }
         args[count++]=block;
     }
-    const uint16_t base = allocate_register(compiler);
-    for (size_t i = 1; i < count; i++) (void)allocate_register(compiler);
-    for (size_t i = 0; i < count; i++)
-        emit_instruction(compiler, DIAMOND_OP_MOVE, (uint16_t)(base+i), args[i], 0, 2);
+    const uint16_t base = stage_call_arguments(compiler, args, count);
     const uint16_t dest = allocate_register(compiler);
     emit_opcode(compiler, DIAMOND_OP_NEW); emit_register(compiler,dest);
     emit_register(compiler,(uint16_t)class_index); emit_register(compiler,base);
@@ -866,10 +863,7 @@ uint16_t emit_invoke_named(Compiler *compiler, uint16_t receiver,
 static uint16_t emit_invoke_with_name(Compiler *compiler, uint16_t receiver,
         uint16_t method, const uint16_t *type_arguments, size_t type_argument_count,
         const uint16_t *args, size_t count) {
-    const uint16_t base = allocate_register(compiler);
-    for (size_t i=1;i<count;i++) (void)allocate_register(compiler);
-    for (size_t i=0;i<count;i++) emit_instruction(compiler, DIAMOND_OP_MOVE,
-        (uint16_t)(base+i), args[i], 0, 2);
+    const uint16_t base = stage_call_arguments(compiler, args, count);
     const uint16_t dest=allocate_register(compiler);
     /* Phases 15 and 17 (docs/internal/jit-design.md): record this specific
      * call site's own receiver type, if the compiler's real known_types
@@ -2876,10 +2870,7 @@ uint16_t parse_self_class_method_arguments(Compiler *compiler,
         }
         args[count++]=compile_block(compiler);
     }
-    const uint16_t base=allocate_register(compiler);
-    for(size_t i=1;i<count;i++)(void)allocate_register(compiler);
-    for(size_t i=0;i<count;i++)
-        emit_instruction(compiler,DIAMOND_OP_MOVE,(uint16_t)(base+i),args[i],0,2);
+    const uint16_t base=stage_call_arguments(compiler,args,count);
     const uint16_t dest=allocate_register(compiler);
     const uint16_t method=add_name_string(compiler,name);
     if(writer_name&&!compiler->failed) {
@@ -2936,12 +2927,7 @@ uint16_t parse_super(Compiler *compiler) {
         return 0;
     }
     advance_token(compiler);
-    const uint16_t base = allocate_register(compiler);
-    for (size_t index = 1; index < count; index++) (void)allocate_register(compiler);
-    for (size_t index = 0; index < count; index++) {
-        emit_instruction(compiler, DIAMOND_OP_MOVE, (uint16_t)(base + index),
-                         arguments[index], 0, 2);
-    }
+    const uint16_t base = stage_call_arguments(compiler, arguments, count);
     const uint16_t destination = allocate_register(compiler);
     const uint16_t method = add_name_string(compiler, compiler->current_method);
     emit_opcode(compiler, DIAMOND_OP_SUPER);

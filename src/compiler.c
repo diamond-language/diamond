@@ -1914,6 +1914,11 @@ static bool opcode_is_rewritable_arithmetic(DiamondOpCode opcode) {
 bool try_rewrite_producer_destination(Compiler *compiler, uint16_t value,
                                               uint16_t destination) {
     if (register_is_named(compiler, value)) return false;
+    /* A jump landing right after the producer means another path reaches
+     * here with `value` written elsewhere (a ternary's other branch), so this
+     * instruction is not its only producer. */
+    if (compiler->last_label_function == compiler->function &&
+        compiler->last_label_offset == compiler->function->code_count) return false;
     const size_t offset = compiler->last_instruction_offset;
     if (offset >= compiler->function->code_count) return false;
     const size_t operand_offset = offset + 1;
@@ -1928,6 +1933,43 @@ bool try_rewrite_producer_destination(Compiler *compiler, uint16_t value,
     compiler->function->code[operand_offset + 1] = (uint8_t)(destination & UINT8_MAX);
     if (value == compiler->next_register - 1) compiler->next_register--;
     return true;
+}
+
+/* The first register of a CALL's contiguous argument block. When the argument
+ * registers already sit in order (always so for a single argument), the
+ * block starts at the first of them and no MOVE is emitted: CALL only reads
+ * the block, and nothing runs between the last argument and the CALL that
+ * could change those registers. Otherwise a fresh block is allocated and each
+ * argument MOVEd into it. */
+uint16_t stage_call_arguments(Compiler *compiler,const uint16_t *arguments,
+                              size_t argument_count) {
+    bool contiguous=argument_count>0;
+    for(size_t index=1;index<argument_count&&contiguous;index++)
+        contiguous=arguments[index]==arguments[0]+index;
+    if(contiguous)return arguments[0];
+    const uint16_t base=allocate_register(compiler);
+    for(size_t index=1;index<argument_count;index++)(void)allocate_register(compiler);
+    for(size_t index=0;index<argument_count;index++)
+        emit_instruction(compiler,DIAMOND_OP_MOVE,(uint16_t)(base+index),arguments[index],0,2);
+    return base;
+}
+
+/* Called just before a body's `RETURN reg` is emitted. If that RETURN lands
+ * exactly on the last ternary's join (nothing emitted since the ternary) and
+ * the true branch's JUMP still goes there, the JUMP becomes `RETURN reg`:
+ * jumping to a RETURN and returning are the same, and both are 3 bytes, so
+ * no offset moves. The true branch already put its value in `reg`. */
+void fold_join_jump_into_return(Compiler *compiler,uint16_t reg) {
+    DiamondFunction *function=compiler->function;
+    if(compiler->last_ternary_function!=function||
+       compiler->last_ternary_join!=function->code_count)return;
+    const size_t at=compiler->last_ternary_jump;
+    if(at+2>=function->code_count||function->code[at]!=DIAMOND_OP_JUMP)return;
+    const size_t target=((size_t)function->code[at+1]<<8)|function->code[at+2];
+    if(target!=function->code_count)return;
+    function->code[at]=DIAMOND_OP_RETURN;
+    function->code[at+1]=(uint8_t)(reg>>8);
+    function->code[at+2]=(uint8_t)(reg&UINT8_MAX);
 }
 
 /* `preferred_register` lets a caller that already has a register ready to

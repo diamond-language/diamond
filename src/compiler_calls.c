@@ -485,9 +485,7 @@ uint16_t parse_closure_call_arguments(Compiler *compiler, uint16_t callable) {
         }
         arguments[argument_count++]=block;
     }
-    const uint16_t base=allocate_register(compiler);
-    for(size_t i=1;i<argument_count;i++)(void)allocate_register(compiler);
-    for(size_t i=0;i<argument_count;i++)emit_instruction(compiler,DIAMOND_OP_MOVE,(uint16_t)(base+i),arguments[i],0,2);
+    const uint16_t base=stage_call_arguments(compiler,arguments,argument_count);
     const uint16_t destination=allocate_register(compiler);
     emit_opcode(compiler,DIAMOND_OP_CALL_CLOSURE);emit_register(compiler,destination);
     emit_register(compiler,callable);emit_register(compiler,base);emit_byte(compiler,(uint8_t)argument_count);
@@ -1722,14 +1720,7 @@ uint16_t parse_call(Compiler *compiler, DiamondSpan name) {
 
     if(type_argument_count==0)
         check_call_argument_types(compiler,function,slot_registers,argument_count,0,name);
-    const uint16_t argument_base = allocate_register(compiler);
-    for (size_t index = 1; index < argument_count; index++) {
-        (void)allocate_register(compiler);
-    }
-    for (size_t index = 0; index < argument_count; index++) {
-        emit_instruction(compiler, DIAMOND_OP_MOVE,
-                         (uint16_t)(argument_base + index), slot_registers[index], 0, 2);
-    }
+    const uint16_t argument_base=stage_call_arguments(compiler,slot_registers,argument_count);
     const uint16_t destination = allocate_register(compiler);
     const size_t call_opcode_offset=compiler->function->code_count;
     emit_opcode(compiler,type_argument_count==0?
@@ -1789,22 +1780,26 @@ static uint16_t emit_singleton_call(Compiler *compiler,const DiamondMethod *meth
         fail(compiler,name,"wrong number of arguments");return 0;
     }
     const size_t call_count=argument_count+(method->needs_receiver?1:0);
-    const uint16_t base=allocate_register(compiler);
-    for(size_t index=1;index<call_count;index++)(void)allocate_register(compiler);
-    /* No NIL for `base` when needs_receiver and there's no literal class
-     * (a module call): sole writer, already zero-inited by run_chunk's
-     * [0, register_count) init. A class singleton call instead loads the
-     * literal receiver class right here, the one place this slot gets a
-     * real value instead of relying on zero-init. */
-    if(method->needs_receiver&&receiver_class_index>=0) {
-        emit_opcode(compiler,DIAMOND_OP_LOAD_CLASS);
-        emit_register(compiler,base);
-        emit_register(compiler,(uint16_t)receiver_class_index);
+    uint16_t base;
+    if(!method->needs_receiver) {
+        base=stage_call_arguments(compiler,arguments,argument_count);
+    } else {
+        base=allocate_register(compiler);
+        for(size_t index=1;index<call_count;index++)(void)allocate_register(compiler);
+        /* No NIL for `base` when there's no literal class (a module
+         * call): sole writer, already zero-inited by run_chunk's
+         * [0, register_count) init. A class singleton call instead loads
+         * the literal receiver class right here, the one place this slot
+         * gets a real value instead of relying on zero-init. */
+        if(receiver_class_index>=0) {
+            emit_opcode(compiler,DIAMOND_OP_LOAD_CLASS);
+            emit_register(compiler,base);
+            emit_register(compiler,(uint16_t)receiver_class_index);
+        }
+        for(size_t index=0;index<argument_count;index++)
+            emit_instruction(compiler,DIAMOND_OP_MOVE,(uint16_t)(base+index+1),
+                             arguments[index],0,2);
     }
-    for(size_t index=0;index<argument_count;index++)
-        emit_instruction(compiler,DIAMOND_OP_MOVE,
-                         (uint16_t)(base+index+(method->needs_receiver?1:0)),
-                         arguments[index],0,2);
     const uint16_t destination=allocate_register(compiler);
     emit_opcode(compiler,type_argument_count==0?DIAMOND_OP_CALL:
                 DIAMOND_OP_CALL_TYPED);

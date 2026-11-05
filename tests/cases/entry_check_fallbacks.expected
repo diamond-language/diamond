@@ -1,0 +1,12 @@
+cat
+rex
+nobody
+someone
+42
+18446744073709551614
+0.25
+hey!
+hey
+expected Int, got String
+expected Animal, got Nil
+nil

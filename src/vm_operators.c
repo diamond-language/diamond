@@ -77,7 +77,7 @@ DiamondVmStatus invoke_operator_method(DiamondVm *vm,
       .class_type_variable=fn->class_type_variable,
         .binding_owner_plus_one=(uint16_t)(fn->owner_class+1u),
       .parameter_offset=fn->owner_class==DIAMOND_OWNER_NONE?0:1,
-      .register_count=fn->register_count,.has_variadic=fn->has_variadic};
+      .entry_check=&fn->entry_check,.register_count=fn->register_count,.has_variadic=fn->has_variadic};
     return run_chunk(&child,vm,args,argument_count,depth+1,nullptr,result);
 }
 
@@ -257,7 +257,7 @@ DiamondVmStatus method_missing_helper(DiamondVm *vm,const DiamondChunk *owner,
       .class_type_variable=fn->class_type_variable,
         .binding_owner_plus_one=(uint16_t)(fn->owner_class+1u),
       .parameter_offset=fn->owner_class==DIAMOND_OWNER_NONE?0:1,
-      .register_count=fn->register_count,.has_variadic=fn->has_variadic};
+      .entry_check=&fn->entry_check,.register_count=fn->register_count,.has_variadic=fn->has_variadic};
     return run_chunk(&child,vm,args,3,depth+1,nullptr,result);
 }
 

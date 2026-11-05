@@ -1524,7 +1524,8 @@ static uint16_t parse_ternary(Compiler *compiler) {
     const uint16_t true_result=parse_expression(compiler);
     const uint16_t true_type=compiler->known_types[true_result];
     const int32_t true_set=compiler->known_type_sets[true_result];
-    emit_instruction(compiler,DIAMOND_OP_MOVE,destination,true_result,0,2);
+    if(!try_rewrite_producer_destination(compiler,true_result,destination))
+        emit_instruction(compiler,DIAMOND_OP_MOVE,destination,true_result,0,2);
     const size_t end_jump=emit_jump(compiler,DIAMOND_OP_JUMP,0);
     patch_jump(compiler,false_jump,compiler->function->code_count);
     if(narrowing.valid)
@@ -1539,8 +1540,12 @@ static uint16_t parse_ternary(Compiler *compiler) {
     const uint16_t false_result=parse_expression(compiler);
     const uint16_t false_type=compiler->known_types[false_result];
     const int32_t false_set=compiler->known_type_sets[false_result];
-    emit_instruction(compiler,DIAMOND_OP_MOVE,destination,false_result,0,2);
+    if(!try_rewrite_producer_destination(compiler,false_result,destination))
+        emit_instruction(compiler,DIAMOND_OP_MOVE,destination,false_result,0,2);
     patch_jump(compiler,end_jump,compiler->function->code_count);
+    compiler->last_ternary_function=compiler->function;
+    compiler->last_ternary_jump=end_jump-1;
+    compiler->last_ternary_join=compiler->function->code_count;
     for(size_t index=touched_count;index>0;index--) {
         const uint16_t reg=touched[index-1].reg;
         compiler->known_types[reg]=saved_types[index-1];

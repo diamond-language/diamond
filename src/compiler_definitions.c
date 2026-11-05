@@ -1787,6 +1787,7 @@ static void finish_definition_body(Compiler *compiler,DiamondFunction *function,
         infer_definition_return(compiler,function,body_result,body_diverges);
     }
     maybe_rewrite_self_tail_call(compiler,body_result);
+    fold_join_jump_into_return(compiler,body_result);
     emit_instruction(compiler, DIAMOND_OP_RETURN, body_result, 0, 0, 1);
     if (!endless&&compiler->current.kind != DIAMOND_TOKEN_END) {
         fail(compiler, compiler->current.span, "expected 'end' after function body");

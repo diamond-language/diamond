@@ -73,7 +73,7 @@ DiamondVmStatus block_call_prepare(const DiamondChunk *chunk,
       .class_type_variable=fn->class_type_variable,
         .binding_owner_plus_one=(uint16_t)(fn->owner_class+1u),
       .parameter_offset=fn->owner_class==DIAMOND_OWNER_NONE?0:1,
-      .register_count=fn->register_count,.has_variadic=fn->has_variadic};
+      .entry_check=&fn->entry_check,.register_count=fn->register_count,.has_variadic=fn->has_variadic};
     call->called=called;
     call->argc=argc;
     call->self_slot=needs_self_slot;
@@ -141,7 +141,7 @@ DiamondVmStatus forward_to_top_level_helper(DiamondVm *vm,
       .class_type_variable=target->class_type_variable,
         .binding_owner_plus_one=(uint16_t)(target->owner_class+1u),
       .parameter_offset=target->owner_class==DIAMOND_OWNER_NONE?0:1,
-      .register_count=target->register_count};
+      .entry_check=&target->entry_check,.register_count=target->register_count};
     return run_chunk(&child,vm,forward_args,total_argc,depth+1,nullptr,result);
 }
 
@@ -603,7 +603,7 @@ static DiamondVmStatus invoke_resolved_method_general(DiamondVm *vm,
         .binding_owner_plus_one=(uint16_t)(fn->owner_class+1u),
       .parameter_offset=fn->owner_class==DIAMOND_OWNER_NONE?0:1,
       .type_variable_bindings=type_argument_count==0?nullptr:explicit_bindings,
-      .register_count=fn->register_count,.has_variadic=fn->has_variadic};
+      .entry_check=&fn->entry_check,.register_count=fn->register_count,.has_variadic=fn->has_variadic};
     return jit_call_or_interpret(vm,fn,&child,args,total_args,depth,nullptr,result);
 }
 
@@ -637,7 +637,7 @@ static inline DiamondVmStatus invoke_resolved_method_plain(DiamondVm *vm,
       .class_type_variable=fn->class_type_variable,
         .binding_owner_plus_one=(uint16_t)(fn->owner_class+1u),
       .parameter_offset=fn->owner_class==DIAMOND_OWNER_NONE?0:1,
-      .register_count=fn->register_count,.has_variadic=fn->has_variadic};
+      .entry_check=&fn->entry_check,.register_count=fn->register_count,.has_variadic=fn->has_variadic};
     return jit_call_or_interpret(vm,fn,&child,args,(size_t)argc+1,depth,nullptr,result);
 }
 
@@ -1440,7 +1440,7 @@ DiamondVmStatus call_closure_spread_helper(DiamondVm *vm,
       .class_type_variable=fn->class_type_variable,
         .binding_owner_plus_one=(uint16_t)(fn->owner_class+1u),
       .parameter_offset=fn->owner_class==DIAMOND_OWNER_NONE?0:1,
-      .register_count=fn->register_count,.has_variadic=fn->has_variadic};
+      .entry_check=&fn->entry_check,.register_count=fn->register_count,.has_variadic=fn->has_variadic};
     const DiamondVmStatus status=run_chunk(&child,vm,arguments,argument_count,
         depth+1,called,result);
     free(padded);return status;

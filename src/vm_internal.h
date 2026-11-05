@@ -819,6 +819,7 @@ static inline DiamondChunk plain_call_chunk(const DiamondFunction *function,
         .parameter_offset = function->owner_class == DIAMOND_OWNER_NONE ? 0 : 1,
         .register_count = function->register_count,
         .has_variadic = function->has_variadic,
+        .entry_check = &function->entry_check,
     };
 }
 
@@ -1332,6 +1333,29 @@ static inline bool value_quickly_matches_set(const DiamondChunk *chunk,
     const size_t class_index=(size_t)(member->id-DIAMOND_TYPE_CLASS_BASE);
     return class_index<chunk->class_count&&
         ((const DiamondInstance *)value.as.object)->class==chunk->classes[class_index];
+}
+
+/* Where run_chunk starts `chunk`: past its leading parameter CHECK_TYPEs when
+ * every inline test in chunk->entry_check passes, else 0 so they run. */
+static inline size_t entry_check_start(const DiamondChunk *chunk,
+        const DiamondValue *registers) {
+    const DiamondEntryCheck *check=chunk->entry_check;
+    if(check==nullptr||check->skip_to==0)return 0;
+    for(size_t index=0;index<check->count;index++) {
+        const DiamondEntryParam *param=&check->params[index];
+        const DiamondValue value=registers[param->reg];
+        if(value.kind!=param->value_kind) {
+            if(value.kind==DIAMOND_VALUE_NIL&&param->allow_nil)continue;
+            return 0;
+        }
+        if(value.kind!=DIAMOND_VALUE_OBJECT)continue;
+        if(value.as.object->kind!=param->object_kind)return 0;
+        if(param->object_kind==DIAMOND_OBJECT_INSTANCE&&
+           (param->class_index>=chunk->class_count||
+            ((const DiamondInstance *)value.as.object)->class!=chunk->classes[param->class_index]))
+            return 0;
+    }
+    return check->skip_to;
 }
 
 DIAMOND_INTERNAL bool array_value_satisfies_constraints(DiamondArray *array,

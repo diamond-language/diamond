@@ -1994,7 +1994,7 @@ DiamondVmStatus outlined_call_typed(DiamondVm *vm,const DiamondChunk *chunk,Diam
         .binding_owner_plus_one=(uint16_t)(function->owner_class+1u),
         .parameter_offset=function->owner_class==DIAMOND_OWNER_NONE?0:1,
         .type_variable_bindings=explicit_bindings,
-        .register_count=function->register_count,
+        .entry_check=&function->entry_check,.register_count=function->register_count,
         .has_variadic=function->has_variadic};
     DiamondValue call_result=DIAMOND_NIL;
     const DiamondVmStatus status=run_chunk(&called_chunk,vm,
@@ -2131,7 +2131,7 @@ DiamondVmStatus outlined_call_spread(DiamondVm *vm,const DiamondChunk *chunk,Dia
         .parameter_offset=function->owner_class==DIAMOND_OWNER_NONE?0:1,
         .type_variable_bindings=type_argument_count==0?nullptr:
             explicit_bindings,
-        .register_count=function->register_count,
+        .entry_check=&function->entry_check,.register_count=function->register_count,
         .has_variadic=function->has_variadic,
     };
     DiamondValue spread_result=DIAMOND_NIL;
@@ -2240,7 +2240,7 @@ DiamondVmStatus outlined_call_singleton_keywords(DiamondVm *vm,const DiamondChun
         .binding_owner_plus_one=(uint16_t)(function->owner_class+1u),
         .parameter_offset=function->owner_class==DIAMOND_OWNER_NONE?0:1,
         .type_variable_bindings=type_count==0?nullptr:singleton_bindings,
-        .register_count=function->register_count,
+        .entry_check=&function->entry_check,.register_count=function->register_count,
         .has_variadic=function->has_variadic};
     DiamondValue singleton_result=DIAMOND_NIL;
     status=run_chunk(&child,vm,singleton_arguments,total,depth+1,
@@ -2336,7 +2336,7 @@ DiamondVmStatus outlined_call_singleton_spread(DiamondVm *vm,const DiamondChunk 
         .parameter_offset=function->owner_class==DIAMOND_OWNER_NONE?0:1,
         .type_variable_bindings=type_argument_count==0?nullptr:
             explicit_bindings,
-        .register_count=function->register_count,
+        .entry_check=&function->entry_check,.register_count=function->register_count,
         .has_variadic=function->has_variadic};
     DiamondValue call_result=DIAMOND_NIL;
     const DiamondVmStatus status=run_chunk(&called_chunk,vm,
@@ -2436,7 +2436,7 @@ DiamondVmStatus new_instance_from_array(DiamondVm *vm,const DiamondChunk *chunk,
           .class_type_variable=fn->class_type_variable,
         .binding_owner_plus_one=(uint16_t)(fn->owner_class+1u),
           .parameter_offset=fn->owner_class==DIAMOND_OWNER_NONE?0:1,
-          .register_count=fn->register_count,
+          .entry_check=&fn->entry_check,.register_count=fn->register_count,
           .has_variadic=fn->has_variadic};
         DiamondValue ignored=DIAMOND_NIL;
         const DiamondVmStatus status=run_chunk(&child,vm,args,total,
@@ -2834,7 +2834,7 @@ DiamondVmStatus outlined_invoke_spread(DiamondVm *vm,const DiamondChunk *chunk,D
         .parameter_offset=fn->owner_class==DIAMOND_OWNER_NONE?0:1,
         .type_variable_bindings=type_argument_count==0?nullptr:
             explicit_bindings,
-        .register_count=fn->register_count,
+        .entry_check=&fn->entry_check,.register_count=fn->register_count,
         .has_variadic=fn->has_variadic};
     DiamondValue call_result=DIAMOND_NIL;
     const DiamondVmStatus spread_status=run_chunk(&child,vm,args,
