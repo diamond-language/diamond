@@ -1,5 +1,5 @@
 /* Unit test for diamond_cache_slot / diamond_cache_find (src/vm_internal.h),
- * the site-to-slot mapping shared by the method, extension and field caches.
+ * the site-to-slot mapping shared by the method and extension caches.
  * Both are static inline, so this links nothing of the VM. */
 #include "vm_internal.h"
 

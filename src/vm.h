@@ -83,6 +83,9 @@ enum {
     DIAMOND_MAX_TYPE_SETS = UINT16_MAX,
     DIAMOND_NO_TYPE_SET = UINT16_MAX,
     DIAMOND_MAX_UNION_TYPES = 8,
+    /* Instances with at most this many fields and no type parameters are
+     * pooled for reuse after a sweep (DiamondVm.instance_pool). */
+    DIAMOND_INSTANCE_POOL_FIELDS = 8,
     /* The real ceiling: every wire-format argument/parameter count
      * (DIAMOND_OP_CALL's call_argument_count, INVOKE/NEW/SUPER's argc,
      * DiamondFunction/DiamondMethod's arity/required_arity, DiamondMethod's
@@ -1234,6 +1237,20 @@ typedef struct DiamondEntryCheck {
     DiamondEntryParam params[DIAMOND_ENTRY_CHECK_MAX];
 } DiamondEntryCheck;
 
+/* A method whose whole body reads one field and returns it, or stores its
+ * one argument in a field and returns that, can be answered without a frame
+ * (trivial_getter_result and trivial_setter_result, src/vm_calls.c). The
+ * body's bytecode says which; diamond_vm_run reads it once, beside
+ * entry_check, so a call does not decode it again. `set` is the declared
+ * return or parameter type's set in the function's type_sets, or
+ * DIAMOND_NO_TYPE_SET. */
+enum { DIAMOND_ACCESSOR_NONE, DIAMOND_ACCESSOR_GETTER, DIAMOND_ACCESSOR_SETTER };
+typedef struct DiamondAccessor {
+    uint8_t kind;
+    uint8_t field;
+    uint16_t set;
+} DiamondAccessor;
+
 typedef struct DiamondFunction {
     char name[DIAMOND_MAX_FUNCTION_NAME];
     /* 1-based source position of the function/method's own name token
@@ -1481,6 +1498,9 @@ typedef struct DiamondFunction {
     /* The function's leading parameter CHECK_TYPEs as inline kind tests,
      * filled once per program by diamond_vm_run (see DiamondEntryCheck). */
     DiamondEntryCheck entry_check;
+    /* Whether the body is a trivial field getter or setter, filled with
+     * entry_check and valid once entry_check.computed (DiamondAccessor). */
+    DiamondAccessor accessor;
 } DiamondFunction;
 
 /* arity/required_arity above count an implicit self slot for a genuine
@@ -1720,11 +1740,6 @@ typedef struct DiamondMethodCache {
     size_t misses;
 } DiamondMethodCache;
 
-typedef struct DiamondFieldCacheEntry {
-    const DiamondShape *input_shape;
-    const DiamondShape *output_shape;
-    bool materialized;
-} DiamondFieldCacheEntry;
 /* Site-keyed cache for the collection/value extension protocol
  * (find_collection_extension/find_value_extension, src/vm.c): resolving
  * `arr.max()` and similar means scanning every top-level function in the
@@ -1750,13 +1765,6 @@ typedef struct DiamondExtensionCache {
     uint8_t next_replace;
 } DiamondExtensionCache;
 
-
-typedef struct DiamondFieldCache {
-    const uint8_t *site;
-    DiamondFieldCacheEntry entries[DIAMOND_INLINE_CACHE_WIDTH];
-    uint8_t entry_count;
-    uint8_t next_replace;
-} DiamondFieldCache;
 
 typedef enum DiamondFiberState : uint8_t {
     DIAMOND_FIBER_NEW,
@@ -1922,8 +1930,6 @@ struct DiamondVm {
     const uint8_t **rewritten_sites;
     size_t rewritten_site_count;
     size_t rewritten_site_capacity;
-    size_t field_cache_hits;
-    size_t field_cache_misses;
     size_t shape_transitions;
     size_t opcode_counts[DIAMOND_OP_COUNT];
     /* opcode_counts is only kept when a trace that reads it is on: the
@@ -2266,13 +2272,21 @@ struct DiamondVm {
      * so this is never read concurrently with a write). */
     DiamondValue *extra_roots;
     size_t extra_root_count;
+    /* Swept instances kept for allocate_instance to reuse, one list per
+     * field count (see instance_pool_index, vm_internal.h), linked through
+     * DiamondObject.next and freed by diamond_vm_free. A burst of small,
+     * short-lived objects otherwise overflows malloc's per-thread cache and
+     * pays its slow path on every allocation and free. instance_pool_bytes
+     * stays within minor_gc_threshold_bytes, about one nursery's worth, and
+     * is not counted in bytes_allocated. */
+    DiamondObject *instance_pool[DIAMOND_INSTANCE_POOL_FIELDS+1];
+    size_t instance_pool_bytes;
     /* Keep the site tables after VM control state, so their size does not
      * spread the dispatch counters, quickening/JIT flags and instruction
      * budgets across the tables' working set. */
     uint8_t cache_victim_cursor;
     DiamondMethodCache method_caches[DIAMOND_INLINE_CACHE_COUNT];
     DiamondExtensionCache extension_caches[DIAMOND_INLINE_CACHE_COUNT];
-    DiamondFieldCache field_caches[DIAMOND_INLINE_CACHE_COUNT];
 };
 
 /* Tells the VM that the calling OS thread's native stack is `stack_bytes`

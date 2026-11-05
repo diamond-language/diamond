@@ -108,9 +108,8 @@ class pointer -- `diamond_vm_collect` traces the whole flat array directly
 
 ## Metaprogramming boundaries
 
-Runtime shapes, polymorphic method inline caches, and field caches keyed by
-shape identity (above) are all implemented, not planned. Modules/mixins,
-singleton classes, and visibility are implemented too (see `docs/internal/design.md`).
+Runtime shapes and polymorphic method inline caches (above) are implemented, not
+planned. Modules/mixins, singleton classes, and visibility are implemented too (see `docs/internal/design.md`).
 Runtime method *redefinition* — repointing an existing method to a different
 already-compiled function via `ClassName.redefine_method(name, callable)` —
 is also implemented, as is adding a brand-new method slot via

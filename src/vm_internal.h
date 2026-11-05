@@ -68,6 +68,21 @@ static inline int diamond_pipe(int descriptors[2]) {
 #include <sanitizer/common_interface_defs.h>
 #endif
 
+/* The DiamondVm.instance_pool list an instance with `field_count` fields
+ * belongs to, or -1 when it is not pooled: one with more fields or with
+ * type parameters (whose size differs by class). Under ASan nothing is
+ * pooled, so a stale reference to a swept instance still faults. */
+static inline int instance_pool_index(size_t field_count,bool generic) {
+#if defined(__SANITIZE_ADDRESS__) || \
+    (defined(__has_feature) && __has_feature(address_sanitizer))
+    (void)field_count;(void)generic;
+    return -1;
+#else
+    if(generic||field_count>DIAMOND_INSTANCE_POOL_FIELDS)return -1;
+    return (int)field_count;
+#endif
+}
+
 /* Types shared by the files split out of vm.c. */
 /* Native backing struct for DiamondChannelHandle (object.h) -- see docs/
  * threads.md's Channels section. Unlike DiamondThread (owned one-to-one
@@ -1191,7 +1206,7 @@ DIAMOND_INTERNAL DiamondVmStatus exit_helper(DiamondVm *vm,DiamondValue code_val
 
 /* Picks the slot a call or field site uses in one of the VM's site tables.
  * `table` is an array of structs whose first member is the `const uint8_t *`
- * site tag (DiamondMethodCache, DiamondExtensionCache, DiamondFieldCache),
+ * site tag (DiamondMethodCache, DiamondExtensionCache),
  * `stride` is their size. The site's set is chosen by a multiplicative hash
  * of its bytecode address -- the old `address>>2 % N` mapped the neighboring
  * call sites of one function to neighboring slots, so unrelated code shifting
@@ -1283,9 +1298,23 @@ DIAMOND_INTERNAL DiamondVmStatus forward_to_top_level_helper(DiamondVm *vm,
         const DiamondValue *registers,uint16_t recv,uint16_t base,uint8_t argc,
         size_t depth,DiamondValue *result);
 
-DIAMOND_INTERNAL DiamondFieldCacheEntry *lookup_field_cached(
-    DiamondVm *vm, const uint8_t *site, const DiamondInstance *instance,
-    uint8_t field, bool write);
+/* An instance's shape is class->shapes[n]: fields 0..n-1 are materialized
+ * (written, or below a field that was). A read past the shape is nil, and
+ * a write past it moves the instance to shapes[field + 1]. Both used to go
+ * through a per-site cache keyed by shape, but its only answers were these
+ * two comparisons, which cost less than the cache's hash and probe. */
+static inline DiamondValue instance_field_value(const DiamondInstance *instance,
+        uint8_t field) {
+    return (size_t)field<instance->shape->field_count?instance->fields[field]:DIAMOND_NIL;
+}
+
+static inline void instance_materialize_field(DiamondVm *vm,DiamondInstance *instance,
+        uint8_t field) {
+    if((size_t)field>=instance->shape->field_count) {
+        instance->shape=&instance->class->shapes[(size_t)field+1];
+        vm->shape_transitions++;
+    }
+}
 
 DIAMOND_INTERNAL DiamondVmStatus diamond_jit_set_ivar(DiamondVm *vm, const uint8_t *site,
         const DiamondValue *receiver, uint8_t field, const DiamondValue *value);
@@ -1552,6 +1581,10 @@ DIAMOND_INTERNAL DiamondVmStatus invoke_resolved_method_helper(DiamondVm *vm,
         uint8_t argc,bool typed,uint8_t type_argument_count,
         const uint16_t *type_arguments,const DiamondChunk *caller_chunk,
         size_t depth,DiamondValue *result);
+
+/* Fills a DiamondAccessor from a function's body (src/vm_calls.c). */
+DIAMOND_INTERNAL DiamondAccessor diamond_decode_accessor(const DiamondFunction *fn);
+
 DIAMOND_INTERNAL bool diamond_mono_accessor_shortcut(DiamondVm *vm,const uint8_t *site,
         const DiamondStringConstant *method_name,const DiamondValue *registers,
         uint16_t recv,uint16_t base,uint8_t argc,DiamondValue *result);

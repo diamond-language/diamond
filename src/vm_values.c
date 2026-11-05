@@ -141,10 +141,9 @@ static bool copy_instance_step(DiamondVm *dest_vm, DiamondValue value,
     }
     /* allocate_instance always starts a fresh instance at
      * class->shapes[0] (nothing "materialized" yet, in the
-     * gradual-field-initialization sense GET_IVAR's own inline
-     * cache relies on -- see lookup_field_cached/DIAMOND_OP_
-     * GET_IVAR) since it has no way to know how many fields this
-     * particular caller is about to fill in. Writing `fields[]`
+     * gradual-field-initialization sense GET_IVAR relies
+     * on -- see instance_field_value in vm_internal.h) since it
+     * has no way to know how many fields this particular caller is about to fill in. Writing `fields[]`
      * directly above (never going through the real SET_IVAR
      * opcode, which is what normally advances an instance's shape
      * one field at a time) leaves that shape stuck at 0 -- every

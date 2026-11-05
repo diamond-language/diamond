@@ -274,7 +274,18 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
      * live_register_count actually exceeds that inline width heap-
      * allocates instead -- see DIAMOND_INLINE_REGISTER_COUNT's own
      * comment above for why this isn't a VLA. */
-    DiamondValue inline_registers[DIAMOND_INLINE_REGISTER_COUNT];
+    /* One spare slot, so the registers can start 32-byte aligned. The array
+     * is only 16-byte aligned, and which of the two it lands on depends on
+     * how deep the stack is when run_chunk is entered. Half the time the
+     * C library's 32-byte stores clearing the block below straddle a cache
+     * line, and the frame's first register loads then cannot be forwarded
+     * from them: an unrelated change that moved a caller's frame by 16
+     * bytes cost the block benchmarks 5-10% of their cycles that way. An
+     * alignas(32) array would make GCC realign the whole frame and give up
+     * rbp (see the Makefile's RUN_CHUNK_RELEASE_CFLAGS). */
+    DiamondValue inline_register_storage[DIAMOND_INLINE_REGISTER_COUNT + 1];
+    DiamondValue *inline_registers = inline_register_storage +
+        (((uintptr_t)inline_register_storage & 31u) != 0);
     DiamondValue *heap_registers = nullptr;
     DiamondValue *registers = inline_registers;
     if (live_register_count > DIAMOND_INLINE_REGISTER_COUNT) {
@@ -289,7 +300,11 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
      * when that count exceeds this. */
     size_t register_capacity = live_register_count > DIAMOND_INLINE_REGISTER_COUNT
         ? live_register_count : DIAMOND_INLINE_REGISTER_COUNT;
-    diamond_zero_bytes(registers, live_register_count * sizeof(DiamondValue));
+    /* Inline registers are cleared in whole 32-byte pairs (the spare slot
+     * above leaves room): an odd count would end in an overlapping 32-byte
+     * store that is misaligned again. */
+    diamond_zero_bytes(registers, (registers == inline_registers
+        ? (live_register_count + 1) & ~(size_t)1 : live_register_count) * sizeof(DiamondValue));
     /* Bounded at live_register_count, not argument_count -- a variadic
      * call (see the has_variadic check above) can pass more arguments
      * than this callee has registers for; DIAMOND_OP_COLLECT_VARIADIC
@@ -1885,7 +1900,9 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 }
                 arguments = tail_buffer;
                 argument_count = call_argument_count;
-                diamond_zero_bytes(registers, live_register_count * sizeof(DiamondValue));
+                diamond_zero_bytes(registers, (registers == inline_registers
+                    ? (live_register_count + 1) & ~(size_t)1 : live_register_count)
+                    * sizeof(DiamondValue));
                 /* The same copy a fresh call makes at entry. */
                 const size_t copied = (size_t)call_argument_count < live_register_count
                     ? (size_t)call_argument_count : live_register_count;
@@ -2672,7 +2689,6 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
             }
             case DIAMOND_OP_GET_IVAR_NAME: op_GET_IVAR_NAME:
             case DIAMOND_OP_SET_IVAR_NAME: op_SET_IVAR_NAME: {
-                const uint8_t *site=&bytecode[instruction_offset];
                 uint16_t first=0,receiver=0,name=0;
                 READ_SHORT(first);READ_SHORT(receiver);READ_SHORT(name);
                 const bool write=(DiamondOpCode)instruction==DIAMOND_OP_SET_IVAR_NAME;
@@ -2689,19 +2705,13 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 if(resolved<0||(size_t)resolved>=instance->field_count)
                     VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
                 const uint8_t field=(uint8_t)resolved;
-                DiamondFieldCacheEntry *cached=lookup_field_cached(
-                    vm,site,instance,field,write);
                 if(write) {
                     if(instance->object.frozen)VM_RETURN(DIAMOND_VM_FROZEN_ERROR);
-                    if(instance->shape!=cached->output_shape) {
-                        instance->shape=cached->output_shape;
-                        vm->shape_transitions++;
-                    }
+                    instance_materialize_field(vm,instance,field);
                     instance->fields[field]=registers[source];
                     if(!gc_write_barrier(vm,(DiamondObject *)instance))
                         VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
-                } else registers[first]=cached->materialized?
-                    instance->fields[field]:DIAMOND_NIL;
+                } else registers[first]=instance_field_value(instance,field);
                 break;
             }
             case DIAMOND_OP_GET_NAMESPACE_CONSTANT: op_GET_NAMESPACE_CONSTANT: {

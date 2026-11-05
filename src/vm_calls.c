@@ -398,99 +398,109 @@ static inline bool shortcut_type_matches(const DiamondChunk *function_chunk,
     return false;
 }
 
-/* A method whose whole body reads one instance variable and returns it
- * (`def x() = @x`, optionally with a declared return type):
+/* Recognizes a trivial accessor body (DiamondAccessor). A getter reads one
+ * instance variable and returns it (`def x() = @x`, optionally with a
+ * declared return type):
  *
  *     GET_IVAR  rD, r0, field          7 bytes
  *     CHECK_TYPE rD, set               5 bytes, only with a return type
  *     RETURN    rD                     3 bytes
  *
- * Calling it costs a whole frame for one field read, so a call with no
- * arguments reads the field here instead, through diamond_jit_get_ivar
- * with the body's own instruction as the cache site, exactly what the
- * body would do. Every case where the body could fail or behave otherwise
- * returns false and the method is called as usual, so errors, messages and
- * backtraces are the ordinary ones: a receiver that isn't an instance, a
- * field past the instance's, a value the declared type rejects (or that
- * needs the full type matcher), and arities that make a no-argument call
- * an error. The caller skips this with a debugger attached, which can
- * stop inside the body. */
-static bool trivial_getter_result(DiamondVm *vm,const DiamondChunk *function_chunk,
-        const DiamondFunction *fn,
-        DiamondValue self_value,DiamondValue *result) {
-    const uint8_t *code=fn->code;
-    if((fn->code_count!=10&&fn->code_count!=15)||code[0]!=DIAMOND_OP_GET_IVAR)return false;
-    const uint16_t dest=getter_operand(code+1);
-    const uint16_t field=getter_operand(code+5);
-    if(getter_operand(code+3)!=0||field>UINT8_MAX)return false;
-    size_t at=7;
-    uint16_t set=DIAMOND_NO_TYPE_SET;
-    if(fn->code_count==15) {
-        if(code[7]!=DIAMOND_OP_CHECK_TYPE||getter_operand(code+8)!=dest)return false;
-        set=getter_operand(code+10);
-        if((size_t)set>=fn->type_set_count)return false;
-        at=12;
-    }
-    if(code[at]!=DIAMOND_OP_RETURN||getter_operand(code+at+1)!=dest)return false;
-    /* The call passes one argument, self. */
-    if(fn->required_arity>1||(fn->arity<1&&!fn->has_variadic))return false;
-    if(self_value.kind!=DIAMOND_VALUE_OBJECT||
-       self_value.as.object->kind!=DIAMOND_OBJECT_INSTANCE||
-       field>=((const DiamondInstance *)self_value.as.object)->field_count)
-        return false;
-    DiamondValue value=DIAMOND_NIL;
-    if(diamond_jit_get_ivar(vm,code,&self_value,(uint8_t)field,&value)!=DIAMOND_VM_OK)
-        return false;
-    if(set!=DIAMOND_NO_TYPE_SET&&!shortcut_type_matches(function_chunk,&fn->type_sets[set],value))
-        return false;
-    *result=value;
-    return true;
-}
-
-/* The setter twin of trivial_getter_result: a method whose whole body
- * stores its one argument in an instance variable and returns it
- * (`attr_accessor`'s `x=`, or `def x=(v) = @x = v`):
+ * and takes self alone without an arity error. A setter stores its one
+ * argument and returns it (`attr_accessor`'s `x=`, or `def x=(v) = @x = v`):
  *
  *     CHECK_TYPE r1, set               5 bytes, only with a parameter type
  *     SET_IVAR  r0, field, r1          7 bytes
  *     RETURN    r1                     3 bytes
  *
- * A one-argument call stores the field here, through diamond_jit_set_ivar
- * with the body's own SET_IVAR as the cache site. Whenever the body could
- * fail or behave otherwise -- an argument the parameter type rejects (or
- * that needs the full matcher), a frozen receiver, a field past the
- * instance's, any arity but exactly self plus one -- it returns false
- * before writing anything and the method is called as usual, so errors
- * and backtraces are the ordinary ones. A failed write barrier (out of
- * memory) after the store also falls back: the call stores the same value
- * again and reports the error itself. */
-static bool trivial_setter_result(DiamondVm *vm,const DiamondChunk *function_chunk,
-        const DiamondFunction *fn,
-        DiamondValue self_value,DiamondValue argument,DiamondValue *result) {
+ * and takes exactly self plus one argument. diamond_vm_run stores the
+ * answer in fn->accessor; a function it has not filled (a debugger run, or
+ * a compile_method chunk) is decoded on each call by function_accessor. */
+DiamondAccessor diamond_decode_accessor(const DiamondFunction *fn) {
+    const DiamondAccessor none={.kind=DIAMOND_ACCESSOR_NONE,.set=DIAMOND_NO_TYPE_SET};
+    if(fn->code_count!=10&&fn->code_count!=15)return none;
     const uint8_t *code=fn->code;
-    if(fn->code_count!=10&&fn->code_count!=15)return false;
-    if(fn->arity!=2||fn->required_arity!=2||fn->has_variadic)return false;
+    const bool typed=fn->code_count==15;
+    if(code[0]==DIAMOND_OP_GET_IVAR) {
+        const uint16_t dest=getter_operand(code+1);
+        const uint16_t field=getter_operand(code+5);
+        if(getter_operand(code+3)!=0||field>UINT8_MAX)return none;
+        size_t at=7;
+        uint16_t set=DIAMOND_NO_TYPE_SET;
+        if(typed) {
+            if(code[7]!=DIAMOND_OP_CHECK_TYPE||getter_operand(code+8)!=dest)return none;
+            set=getter_operand(code+10);
+            if((size_t)set>=fn->type_set_count)return none;
+            at=12;
+        }
+        if(code[at]!=DIAMOND_OP_RETURN||getter_operand(code+at+1)!=dest)return none;
+        /* The call passes one argument, self. */
+        if(fn->required_arity>1||(fn->arity<1&&!fn->has_variadic))return none;
+        return (DiamondAccessor){.kind=DIAMOND_ACCESSOR_GETTER,.field=(uint8_t)field,.set=set};
+    }
+    if(fn->arity!=2||fn->required_arity!=2||fn->has_variadic)return none;
     size_t at=0;
     uint16_t set=DIAMOND_NO_TYPE_SET;
-    if(fn->code_count==15) {
-        if(code[0]!=DIAMOND_OP_CHECK_TYPE||getter_operand(code+1)!=1)return false;
+    if(typed) {
+        if(code[0]!=DIAMOND_OP_CHECK_TYPE||getter_operand(code+1)!=1)return none;
         set=getter_operand(code+3);
-        if((size_t)set>=fn->type_set_count)return false;
+        if((size_t)set>=fn->type_set_count)return none;
         at=5;
     }
     if(code[at]!=DIAMOND_OP_SET_IVAR||getter_operand(code+at+1)!=0||
-       getter_operand(code+at+5)!=1)return false;
+       getter_operand(code+at+5)!=1)return none;
     const uint16_t field=getter_operand(code+at+3);
-    if(field>UINT8_MAX)return false;
-    if(code[at+7]!=DIAMOND_OP_RETURN||getter_operand(code+at+8)!=1)return false;
+    if(field>UINT8_MAX)return none;
+    if(code[at+7]!=DIAMOND_OP_RETURN||getter_operand(code+at+8)!=1)return none;
+    return (DiamondAccessor){.kind=DIAMOND_ACCESSOR_SETTER,.field=(uint8_t)field,.set=set};
+}
+
+static inline DiamondAccessor function_accessor(const DiamondFunction *fn) {
+    return fn->entry_check.computed?fn->accessor:diamond_decode_accessor(fn);
+}
+
+/* A getter call answered without a frame: the field read the body would
+ * make. Every case where the body could fail or behave otherwise returns
+ * false and the method is called as usual, so errors, messages and
+ * backtraces are the ordinary ones: a receiver that isn't an instance, a
+ * field past the instance's, or a value the declared type rejects (or that
+ * needs the full type matcher). The caller skips this with a debugger
+ * attached, which can stop inside the body. */
+static bool trivial_getter_result(const DiamondChunk *function_chunk,
+        const DiamondFunction *fn,DiamondAccessor accessor,
+        DiamondValue self_value,DiamondValue *result) {
     if(self_value.kind!=DIAMOND_VALUE_OBJECT||
        self_value.as.object->kind!=DIAMOND_OBJECT_INSTANCE)
         return false;
     const DiamondInstance *instance=(const DiamondInstance *)self_value.as.object;
-    if(instance->object.frozen||field>=instance->field_count)return false;
-    if(set!=DIAMOND_NO_TYPE_SET&&!shortcut_type_matches(function_chunk,&fn->type_sets[set],argument))
+    if(accessor.field>=instance->field_count)return false;
+    const DiamondValue value=instance_field_value(instance,accessor.field);
+    if(accessor.set!=DIAMOND_NO_TYPE_SET&&
+       !shortcut_type_matches(function_chunk,&fn->type_sets[accessor.set],value))
         return false;
-    if(diamond_jit_set_ivar(vm,code+at,&self_value,(uint8_t)field,&argument)!=DIAMOND_VM_OK)
+    *result=value;
+    return true;
+}
+
+/* The setter twin of trivial_getter_result, storing through
+ * diamond_jit_set_ivar as the body would. Whenever the body could fail or
+ * behave otherwise -- an argument the parameter type rejects (or that needs
+ * the full matcher), a frozen receiver, a field past the instance's -- it
+ * returns false before writing anything and the method is called as usual.
+ * A failed write barrier (out of memory) after the store also falls back:
+ * the call stores the same value again and reports the error itself. */
+static bool trivial_setter_result(DiamondVm *vm,const DiamondChunk *function_chunk,
+        const DiamondFunction *fn,DiamondAccessor accessor,
+        DiamondValue self_value,DiamondValue argument,DiamondValue *result) {
+    if(self_value.kind!=DIAMOND_VALUE_OBJECT||
+       self_value.as.object->kind!=DIAMOND_OBJECT_INSTANCE)
+        return false;
+    const DiamondInstance *instance=(const DiamondInstance *)self_value.as.object;
+    if(instance->object.frozen||accessor.field>=instance->field_count)return false;
+    if(accessor.set!=DIAMOND_NO_TYPE_SET&&
+       !shortcut_type_matches(function_chunk,&fn->type_sets[accessor.set],argument))
+        return false;
+    if(diamond_jit_set_ivar(vm,nullptr,&self_value,accessor.field,&argument)!=DIAMOND_VM_OK)
         return false;
     *result=argument;
     return true;
@@ -663,15 +673,21 @@ invoke_resolved_method_dispatch(DiamondVm *vm,
      * every other method from paying for the calls. */
     const bool shortcut_sized=fn->code_count==10||fn->code_count==15;
     if(argc==0&&vm->debug_fd<0) {
-        if(shortcut_sized&&trivial_getter_result(vm,function_chunk,fn,self_value,result))
-            return DIAMOND_VM_OK;
+        if(shortcut_sized) {
+            const DiamondAccessor accessor=function_accessor(fn);
+            if(accessor.kind==DIAMOND_ACCESSOR_GETTER&&
+               trivial_getter_result(function_chunk,fn,accessor,self_value,result))
+                return DIAMOND_VM_OK;
+        }
         if(method->source_chunk==nullptr) {
             DiamondVmStatus range_status;
             if(native_range_to_a(vm,owner_chunk,method,self_value,result,&range_status))
                 return range_status;
         }
     } else if(argc==1&&shortcut_sized&&vm->debug_fd<0) {
-        if(trivial_setter_result(vm,function_chunk,fn,self_value,registers[base],result))
+        const DiamondAccessor accessor=function_accessor(fn);
+        if(accessor.kind==DIAMOND_ACCESSOR_SETTER&&
+           trivial_setter_result(vm,function_chunk,fn,accessor,self_value,registers[base],result))
             return DIAMOND_VM_OK;
     }
     return invoke_resolved_method_plain(vm,function_chunk,fn,self_value,
@@ -709,7 +725,16 @@ bool diamond_mono_accessor_shortcut(DiamondVm *vm,const uint8_t *site,
        vm->method_caches[slot].entries[0].receiver_class!=instance->class)
         return false;
     const DiamondMethod *method=vm->method_caches[slot].entries[0].method;
-    if(method==nullptr||method->is_private||method->is_protected||
+    if(method==nullptr)return false;
+    const DiamondChunk *owner=instance->owner!=nullptr?instance->owner:vm->root_chunk;
+    const DiamondChunk *function_chunk=
+        method->source_chunk!=nullptr?method->source_chunk:owner;
+    const DiamondFunction *fn=function_chunk->functions[method->function_index];
+    /* Most methods are not accessors, so this test comes before the rest. */
+    if(fn->code_count!=10&&fn->code_count!=15)return false;
+    const DiamondAccessor accessor=function_accessor(fn);
+    if(accessor.kind!=(argc==0?DIAMOND_ACCESSOR_GETTER:DIAMOND_ACCESSOR_SETTER))return false;
+    if(method->is_private||method->is_protected||
        method->bound_value_count!=0||argc<method->required_arity||
        (argc>method->arity&&!method->has_variadic))
         return false;
@@ -717,13 +742,8 @@ bool diamond_mono_accessor_shortcut(DiamondVm *vm,const uint8_t *site,
        (method_name->length==5&&memcmp(method_name->chars,"cause",5)==0)||
        (method_name->length==9&&memcmp(method_name->chars,"backtrace",9)==0))
         return false;
-    const DiamondChunk *owner=instance->owner!=nullptr?instance->owner:vm->root_chunk;
-    const DiamondChunk *function_chunk=
-        method->source_chunk!=nullptr?method->source_chunk:owner;
-    const DiamondFunction *fn=function_chunk->functions[method->function_index];
-    if(fn->code_count!=10&&fn->code_count!=15)return false;
-    if(!(argc==0?trivial_getter_result(vm,function_chunk,fn,registers[recv],result):
-          trivial_setter_result(vm,function_chunk,fn,registers[recv],registers[base],result)))
+    if(!(argc==0?trivial_getter_result(function_chunk,fn,accessor,registers[recv],result):
+          trivial_setter_result(vm,function_chunk,fn,accessor,registers[recv],registers[base],result)))
         return false;
     vm->inline_cache_hits++;
     vm->monomorphic_dispatches++;
