@@ -17,6 +17,9 @@ esac
 repo="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$repo"
 version="$(sed -n 's/.*DIAMOND_VERSION\[\] = "\(.*\)";/\1/p' src/main.c)"
+# A development version (0.27.0-dev) is packaged as 0.27.0~dev: RPM forbids '-' in
+# Version, and '~' sorts it before the 0.27.0 release in both dpkg and rpm.
+package_version="${version//-/\~}"
 jobs="$(nproc 2>/dev/null || echo 4)"
 
 # The Makefile defaults to -march=native, which ties a binary to the CPU that
@@ -71,7 +74,7 @@ if [[ "$format" == deb ]]; then
         printf 'Provides: diamond-lang\n'
         printf 'Replaces: diamond-lang\n'
         printf 'Conflicts: diamond-lang\n'
-        printf 'Version: %s-1\n' "$version"
+        printf 'Version: %s-1\n' "$package_version"
         printf 'Architecture: %s\n' "$arch"
         printf 'Maintainer: d6 maintainers <https://github.com/diamond-language/diamond/issues>\n'
         printf 'Installed-Size: %s\n' "$(du -sk "$stage/usr" | cut -f1)"
@@ -84,8 +87,8 @@ if [[ "$format" == deb ]]; then
         printf 'Description: The d6 programming language\n'
         sed 's/^/ /' <<<"$description"
     } > "$stage/DEBIAN/control"
-    dpkg-deb --root-owner-group --build "$stage" "$out/d6-lang_${version}-1_${arch}.deb" >/dev/null
-    echo "$out/d6-lang_${version}-1_${arch}.deb"
+    dpkg-deb --root-owner-group --build "$stage" "$out/d6-lang_${package_version}-1_${arch}.deb" >/dev/null
+    echo "$out/d6-lang_${package_version}-1_${arch}.deb"
 else
     mkdir -p "$stage/usr/share/licenses/d6-lang" "$stage/usr/share/doc/d6-lang"
     cp LICENSE "$stage/usr/share/licenses/d6-lang/LICENSE"
@@ -94,7 +97,7 @@ else
         --define "_topdir $work/rpm" \
         --define "_rpmdir $out" \
         --define "_build_name_fmt %%{NAME}-%%{VERSION}-%%{RELEASE}.%%{ARCH}.rpm" \
-        --define "diamond_version $version" \
+        --define "diamond_version $package_version" \
         --define "diamond_stage $stage" >/dev/null
-    ls "$out"/d6-lang-"$version"-*.rpm
+    ls "$out"/d6-lang-"$package_version"-*.rpm
 fi
