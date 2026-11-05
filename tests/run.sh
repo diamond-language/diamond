@@ -740,12 +740,6 @@ grep -q 'shape transitions: 1' "$error_file"
 rm -f "$error_file"
 
 error_file="$(mktemp)"
-actual="$(DIAMOND_TRACE_FIELDS=1 "$diamond" tests/cases/runtime_shapes.d6 2>"$error_file")"
-[[ "$actual" == "42" ]]
-grep -q 'field caches: 2 hits, 4 misses' "$error_file"
-rm -f "$error_file"
-
-error_file="$(mktemp)"
 if DIAMOND_STRESS_GC=1 "$diamond" tests/cases/raise_stack.d6 >/dev/null 2>"$error_file"; then
     echo "raised value unexpectedly returned" >&2
     exit 1
@@ -3340,7 +3334,7 @@ if [[ "${DIAMOND_CASE_RUNNER:-batch}" == "subprocess" ]]; then
             DIAMOND_INVALIDATE_IC_EACH_RUN DIAMOND_TRACE_IC_EACH_RUN DIAMOND_TRACE_IC \
             DIAMOND_TRACE_IC_SITES DIAMOND_TRACE_IC_FAST DIAMOND_TRACE_IC_PROBES \
             DIAMOND_TRACE_IC_REWRITES DIAMOND_TRACE_IC_POLICY DIAMOND_TRACE_SHAPES \
-            DIAMOND_TRACE_FIELDS DIAMOND_TRACE_OPCODES DIAMOND_TRACE_TAIL_CALLS DIAMOND_TRACE_QUICKEN \
+            DIAMOND_TRACE_OPCODES DIAMOND_TRACE_TAIL_CALLS DIAMOND_TRACE_QUICKEN \
             DIAMOND_FORCE_REPL DIAMOND_SANDBOX DIAMOND_SANDBOX_ALLOW DIAMOND_NO_CACHE \
             DIAMOND_TRACE_CACHE DIAMOND_MAX_INSTRUCTIONS DIAMOND_MAX_WALL_MILLISECONDS \
             DIAMOND_MAX_MEMORY_BYTES DIAMOND_GRACE_INSTRUCTIONS DIAMOND_GRACE_WALL_MILLISECONDS \

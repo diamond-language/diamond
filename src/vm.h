@@ -1720,11 +1720,6 @@ typedef struct DiamondMethodCache {
     size_t misses;
 } DiamondMethodCache;
 
-typedef struct DiamondFieldCacheEntry {
-    const DiamondShape *input_shape;
-    const DiamondShape *output_shape;
-    bool materialized;
-} DiamondFieldCacheEntry;
 /* Site-keyed cache for the collection/value extension protocol
  * (find_collection_extension/find_value_extension, src/vm.c): resolving
  * `arr.max()` and similar means scanning every top-level function in the
@@ -1750,13 +1745,6 @@ typedef struct DiamondExtensionCache {
     uint8_t next_replace;
 } DiamondExtensionCache;
 
-
-typedef struct DiamondFieldCache {
-    const uint8_t *site;
-    DiamondFieldCacheEntry entries[DIAMOND_INLINE_CACHE_WIDTH];
-    uint8_t entry_count;
-    uint8_t next_replace;
-} DiamondFieldCache;
 
 typedef enum DiamondFiberState : uint8_t {
     DIAMOND_FIBER_NEW,
@@ -1922,8 +1910,6 @@ struct DiamondVm {
     const uint8_t **rewritten_sites;
     size_t rewritten_site_count;
     size_t rewritten_site_capacity;
-    size_t field_cache_hits;
-    size_t field_cache_misses;
     size_t shape_transitions;
     size_t opcode_counts[DIAMOND_OP_COUNT];
     /* opcode_counts is only kept when a trace that reads it is on: the
@@ -2272,7 +2258,6 @@ struct DiamondVm {
     uint8_t cache_victim_cursor;
     DiamondMethodCache method_caches[DIAMOND_INLINE_CACHE_COUNT];
     DiamondExtensionCache extension_caches[DIAMOND_INLINE_CACHE_COUNT];
-    DiamondFieldCache field_caches[DIAMOND_INLINE_CACHE_COUNT];
 };
 
 /* Tells the VM that the calling OS thread's native stack is `stack_bytes`

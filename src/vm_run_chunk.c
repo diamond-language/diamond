@@ -2672,7 +2672,6 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
             }
             case DIAMOND_OP_GET_IVAR_NAME: op_GET_IVAR_NAME:
             case DIAMOND_OP_SET_IVAR_NAME: op_SET_IVAR_NAME: {
-                const uint8_t *site=&bytecode[instruction_offset];
                 uint16_t first=0,receiver=0,name=0;
                 READ_SHORT(first);READ_SHORT(receiver);READ_SHORT(name);
                 const bool write=(DiamondOpCode)instruction==DIAMOND_OP_SET_IVAR_NAME;
@@ -2689,19 +2688,13 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 if(resolved<0||(size_t)resolved>=instance->field_count)
                     VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
                 const uint8_t field=(uint8_t)resolved;
-                DiamondFieldCacheEntry *cached=lookup_field_cached(
-                    vm,site,instance,field,write);
                 if(write) {
                     if(instance->object.frozen)VM_RETURN(DIAMOND_VM_FROZEN_ERROR);
-                    if(instance->shape!=cached->output_shape) {
-                        instance->shape=cached->output_shape;
-                        vm->shape_transitions++;
-                    }
+                    instance_materialize_field(vm,instance,field);
                     instance->fields[field]=registers[source];
                     if(!gc_write_barrier(vm,(DiamondObject *)instance))
                         VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
-                } else registers[first]=cached->materialized?
-                    instance->fields[field]:DIAMOND_NIL;
+                } else registers[first]=instance_field_value(instance,field);
                 break;
             }
             case DIAMOND_OP_GET_NAMESPACE_CONSTANT: op_GET_NAMESPACE_CONSTANT: {

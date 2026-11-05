@@ -217,10 +217,6 @@ static int run_compiled_chunk(const char *name, DiamondChunk chunk, DiamondBytec
     if (diamond_env_flag("DIAMOND_TRACE_SHAPES")) {
         fprintf(stderr,"shape transitions: %zu\n",vm.shape_transitions);
     }
-    if (diamond_env_flag("DIAMOND_TRACE_FIELDS")) {
-        fprintf(stderr,"field caches: %zu hits, %zu misses\n",
-                vm.field_cache_hits,vm.field_cache_misses);
-    }
     if (diamond_env_flag("DIAMOND_TRACE_OPCODES")) {
         for (size_t opcode=0;opcode<DIAMOND_OP_COUNT;opcode++)
             if (vm.opcode_counts[opcode]!=0)

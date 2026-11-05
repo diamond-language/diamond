@@ -320,7 +320,6 @@ one class is rewritten to dispatch directly.
   `monomorphic threshold`.
 - `DIAMOND_IC_MONO_THRESHOLD=N` -- how many cache hits a site needs before it counts
   as monomorphic and may be rewritten. Default 1.
-- `DIAMOND_TRACE_FIELDS` -- `field caches: H hits, M misses`.
 - `DIAMOND_TRACE_SHAPES` -- `shape transitions: N`, the times an instance's field
   layout changed.
 - `DIAMOND_INVALIDATE_IC_EACH_RUN` -- with `DIAMOND_REPEAT`, clear the method caches

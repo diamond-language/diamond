@@ -1191,7 +1191,7 @@ DIAMOND_INTERNAL DiamondVmStatus exit_helper(DiamondVm *vm,DiamondValue code_val
 
 /* Picks the slot a call or field site uses in one of the VM's site tables.
  * `table` is an array of structs whose first member is the `const uint8_t *`
- * site tag (DiamondMethodCache, DiamondExtensionCache, DiamondFieldCache),
+ * site tag (DiamondMethodCache, DiamondExtensionCache),
  * `stride` is their size. The site's set is chosen by a multiplicative hash
  * of its bytecode address -- the old `address>>2 % N` mapped the neighboring
  * call sites of one function to neighboring slots, so unrelated code shifting
@@ -1283,9 +1283,23 @@ DIAMOND_INTERNAL DiamondVmStatus forward_to_top_level_helper(DiamondVm *vm,
         const DiamondValue *registers,uint16_t recv,uint16_t base,uint8_t argc,
         size_t depth,DiamondValue *result);
 
-DIAMOND_INTERNAL DiamondFieldCacheEntry *lookup_field_cached(
-    DiamondVm *vm, const uint8_t *site, const DiamondInstance *instance,
-    uint8_t field, bool write);
+/* An instance's shape is class->shapes[n]: fields 0..n-1 are materialized
+ * (written, or below a field that was). A read past the shape is nil, and
+ * a write past it moves the instance to shapes[field + 1]. Both used to go
+ * through a per-site cache keyed by shape, but its only answers were these
+ * two comparisons, which cost less than the cache's hash and probe. */
+static inline DiamondValue instance_field_value(const DiamondInstance *instance,
+        uint8_t field) {
+    return (size_t)field<instance->shape->field_count?instance->fields[field]:DIAMOND_NIL;
+}
+
+static inline void instance_materialize_field(DiamondVm *vm,DiamondInstance *instance,
+        uint8_t field) {
+    if((size_t)field>=instance->shape->field_count) {
+        instance->shape=&instance->class->shapes[(size_t)field+1];
+        vm->shape_transitions++;
+    }
+}
 
 DIAMOND_INTERNAL DiamondVmStatus diamond_jit_set_ivar(DiamondVm *vm, const uint8_t *site,
         const DiamondValue *receiver, uint8_t field, const DiamondValue *value);

@@ -1929,51 +1929,16 @@ bool record_rewritten_site(DiamondVm *vm, const uint8_t *site) {
     return true;
 }
 
-DiamondFieldCacheEntry *lookup_field_cached(
-    DiamondVm *vm, const uint8_t *site, const DiamondInstance *instance,
-    uint8_t field, bool write) {
-    const size_t slot=diamond_cache_slot(site,vm->field_caches,
-        sizeof vm->field_caches[0],&vm->cache_victim_cursor);
-    DiamondFieldCache *cache=&vm->field_caches[slot];
-    if(cache->site!=site) {
-        *cache=(DiamondFieldCache){.site=site};
-    } else {
-        for(size_t index=0;index<cache->entry_count;index++) {
-            if(cache->entries[index].input_shape!=instance->shape)continue;
-            vm->field_cache_hits++;
-            return &cache->entries[index];
-        }
-    }
-    vm->field_cache_misses++;
-    size_t entry=cache->entry_count;
-    if(entry<DIAMOND_INLINE_CACHE_WIDTH) {
-        cache->entry_count++;
-    } else {
-        entry=cache->next_replace;
-        cache->next_replace=(uint8_t)((cache->next_replace+1)%DIAMOND_INLINE_CACHE_WIDTH);
-    }
-    const size_t needed=(size_t)field+1;
-    cache->entries[entry]=(DiamondFieldCacheEntry){
-        .input_shape=instance->shape,
-        .output_shape=write && instance->shape->field_count<needed
-            ? &instance->class->shapes[needed] : instance->shape,
-        .materialized=(size_t)field<instance->shape->field_count};
-    return &cache->entries[entry];
-}
-
 /* JIT trampoline for DIAMOND_OP_SET_IVAR -- see jit.h's own comment for why
  * this exists as a real C function generated code calls into rather than a
  * hand-rolled native field write: shape transitions and the GC write
- * barrier both need to stay exactly correct, and this is a direct copy of
- * the interpreter's own DIAMOND_OP_SET_IVAR case (src/vm.c's opcode
- * dispatch) with `site` threaded in from the caller instead of read off
- * `chunk`/`instruction_offset`, since generated code has neither -- see
- * this function's own caller in jit.c for what it passes instead (the
- * function's own bytecode offset at JIT-compile time, giving the same
- * per-occurrence cache-key stability an interpreted execution would have
- * gotten from `&chunk->code[instruction_offset]`). */
+ * barrier both need to stay exactly correct, and the interpreter's own
+ * DIAMOND_OP_SET_IVAR case calls this same function. `site` is unused: it
+ * keyed the per-site field cache, which instance_materialize_field
+ * (vm_internal.h) replaced, and stays so jit.c's call needs no change. */
 DiamondVmStatus diamond_jit_set_ivar(DiamondVm *vm, const uint8_t *site,
         const DiamondValue *receiver, uint8_t field, const DiamondValue *value) {
+    (void)site;
     if (receiver->kind != DIAMOND_VALUE_OBJECT ||
         receiver->as.object->kind != DIAMOND_OBJECT_INSTANCE) {
         return DIAMOND_VM_TYPE_ERROR;
@@ -1981,36 +1946,27 @@ DiamondVmStatus diamond_jit_set_ivar(DiamondVm *vm, const uint8_t *site,
     DiamondInstance *instance = (DiamondInstance *)receiver->as.object;
     if (instance->object.frozen) return DIAMOND_VM_FROZEN_ERROR;
     if (field >= instance->field_count) return DIAMOND_VM_INVALID_BYTECODE;
-    const DiamondFieldCacheEntry *cached = lookup_field_cached(vm, site, instance, field, true);
-    if (instance->shape != cached->output_shape) {
-        instance->shape = cached->output_shape;
-        vm->shape_transitions++;
-    }
+    instance_materialize_field(vm, instance, field);
     instance->fields[field] = *value;
     if (!gc_write_barrier(vm, (DiamondObject *)instance)) return DIAMOND_VM_OUT_OF_MEMORY;
     return DIAMOND_VM_OK;
 }
 
-/* JIT trampoline for DIAMOND_OP_GET_IVAR -- see diamond_jit_set_ivar's own
- * comment just above for why this exists as a real C function rather than
- * hand-rolled generated code: the field cache lookup is the same shared
- * machinery either way. A direct copy of the interpreter's own
- * DIAMOND_OP_GET_IVAR case (src/vm.c's opcode dispatch), with `site`
- * threaded in from the caller (generated code has no `chunk`/
- * instruction_offset to compute it from) exactly like diamond_jit_set_ivar.
- * Unlike SET_IVAR, this can never allocate or invoke user code (no operator
- * overload exists for plain field access), so its caller in jit.c needs
- * neither a DiamondFrame nor jc->has_called. */
+/* JIT trampoline for DIAMOND_OP_GET_IVAR, shared with the interpreter's
+ * own case like diamond_jit_set_ivar above (and, like it, with `site`
+ * unused). Unlike SET_IVAR, this can never allocate or invoke user code (no
+ * operator overload exists for plain field access), so its caller in
+ * jit.c needs neither a DiamondFrame nor jc->has_called. */
 DiamondVmStatus diamond_jit_get_ivar(DiamondVm *vm, const uint8_t *site,
         const DiamondValue *receiver, uint8_t field, DiamondValue *out) {
+    (void)vm;(void)site;
     if (receiver->kind != DIAMOND_VALUE_OBJECT ||
         receiver->as.object->kind != DIAMOND_OBJECT_INSTANCE) {
         return DIAMOND_VM_TYPE_ERROR;
     }
     const DiamondInstance *instance = (const DiamondInstance *)receiver->as.object;
     if (field >= instance->field_count) return DIAMOND_VM_INVALID_BYTECODE;
-    const DiamondFieldCacheEntry *cached = lookup_field_cached(vm, site, instance, field, false);
-    *out = cached->materialized ? instance->fields[field] : DIAMOND_NIL;
+    *out = instance_field_value(instance, field);
     return DIAMOND_VM_OK;
 }
 
@@ -2190,17 +2146,14 @@ DiamondVmStatus diamond_vm_run(DiamondVm *vm, const DiamondChunk *chunk,
     vm->error[0]='\0';
     vm->has_exception=false;
     diamond_vm_invalidate_method_caches(vm);
-    memset(vm->field_caches,0,sizeof(vm->field_caches));
     /* Never strictly needed to invalidate for correctness (see
      * DiamondExtensionCache's own comment, src/vm.h -- its resolution
      * never changes after compilation), but cleared here for the same
-     * reason field_caches is: a fresh diamond_vm_run (a DIAMOND_REPEAT
+     * reason the method caches are: a fresh diamond_vm_run (a DIAMOND_REPEAT
      * rerun, the REPL, ...) starts with predictable, empty caches rather
      * than ones a previous run happened to warm. */
     memset(vm->extension_caches,0,sizeof(vm->extension_caches));
     vm->direct_dispatch_rewrites=0;
-    vm->field_cache_hits=0;
-    vm->field_cache_misses=0;
     vm->shape_transitions=0;
     vm->quickened_sites=0;
     vm->deoptimized_sites=0;

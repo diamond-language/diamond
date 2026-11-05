@@ -158,11 +158,11 @@ void diamond_jit_tail_reset(DiamondValue *registers, size_t base, size_t argc,
 void diamond_jit_free(void *jit_code, size_t jit_code_size);
 
 /* Trampolines called *from* generated machine code for the operations too
- * risky to hand-roll directly in x86-64 (field-cache/shape-transition
- * bookkeeping + the GC write barrier for SET_IVAR; the matching field-cache
- * lookup for GET_IVAR; Hash lookup for INDEX_GET) -- all defined in vm.c,
+ * risky to hand-roll directly in x86-64 (shape-transition
+ * bookkeeping + the GC write barrier for SET_IVAR; the shape check for
+ * GET_IVAR; Hash lookup for INDEX_GET) -- all defined in vm.c,
  * where the internal helpers they
- * reuse (lookup_field_cached, gc_write_barrier, hash_find) already live
+ * reuse (gc_write_barrier, hash_find) already live
  * with internal linkage. Every DiamondValue is passed by pointer, not by
  * value, specifically to keep every argument a plain 8-byte pointer for
  * the SysV calling convention generated code uses -- passing a 16-byte
