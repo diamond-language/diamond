@@ -1,0 +1,60 @@
+# Each class below writes only Ints to @value, but a read can still see
+# something else, so `-> Int` must keep checking its result.
+
+# A call runs before initialize assigns the field: the read sees nil.
+class EarlyRead
+  def initialize()
+    peek()
+    @value = 1
+  end
+
+  def peek() -> Int = @value
+end
+
+# The assignment sits inside a branch, so it may never happen.
+class MaybeAssigned
+  def initialize(set: Bool)
+    if set
+      @value = 1
+    end
+  end
+
+  def value() -> Int = @value
+end
+
+# A subclass inherits the reader but skips the parent's initialize.
+class Parent
+  def initialize()
+    @value = 1
+  end
+
+  def value() -> Int = @value
+end
+
+class Child < Parent
+  def initialize()
+  end
+end
+
+begin
+  EarlyRead.new()
+  puts("early read: no error")
+rescue TypeError
+  puts("early read: TypeError")
+end
+
+begin
+  MaybeAssigned.new(false).value()
+  puts("maybe assigned: no error")
+rescue TypeError
+  puts("maybe assigned: TypeError")
+end
+puts(MaybeAssigned.new(true).value())
+
+begin
+  Child.new().value()
+  puts("child: no error")
+rescue TypeError
+  puts("child: TypeError")
+end
+puts(Parent.new().value())

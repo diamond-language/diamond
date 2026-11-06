@@ -32,6 +32,21 @@ authoritative fine-grained record.
   instance variable no longer makes a function call (polymorphic shape code 4% fewer
   instructions), and a body ending in a ternary returns a parameter or local from its true branch
   without copying it first (recursive `fib` 3% fewer).
+- **Typed fields.** The compiler now tracks Int and Float instance variables. When every write to
+  a field stores an Int (or every write a Float), the class's own `initialize` sets the field
+  before anything else runs, and nothing else can write it (no subclass, no module writing fields
+  by name, no `define_method` or `compile_method`), reading the field is known to give that type.
+  Arithmetic on such fields uses the Int fast paths, and a method or generated `attr_reader`
+  that returns one skips its return check. A call to a method defined further down the class now
+  knows that method's declared Int, Float, String, Bool or Symbol return, as it already did for a
+  method defined above. Object-heavy code runs about 5% fewer instructions, polymorphic shape code
+  6% and an n-body simulation 3%.
+
+### Fixed
+
+- A program with more than about 245 classes could fail to compile with an error like
+  `expected Target, got Int` on a method returning an instance variable of class type: the
+  field's class was stored as an 8-bit type id.
 
 ## 0.26.0 — 2026-11-05
 

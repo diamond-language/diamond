@@ -53,6 +53,16 @@ int main(int argc, char **argv) {
         return 1;
     }
     free(prelude_source);
+    /* User programs compile against this prelude as a template, so their
+     * compute_scalar_field_facts (src/compiler_program.c) never sees these
+     * flags. A prelude that wrote fields by name or installed methods at
+     * run time would make those facts wrong for every program. */
+    if (program->writes_fields_by_name || program->uses_dynamic_methods) {
+        fprintf(stderr, "gen_compiled_prelude: the prelude must not write fields by name "
+            "or use define_method/compile_method/redefine_method (see "
+            "compute_scalar_field_facts)\n");
+        return 1;
+    }
 
     FILE *file = fopen(argv[1], "wb");
     if (file == nullptr) {

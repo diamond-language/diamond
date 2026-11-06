@@ -1,0 +1,812 @@
+# A field's class fact once published its type id cut to 8 bits: past
+# about 245 classes a field of class type read as Int, Float, String...
+# and its `-> Target` reader failed to compile. Targets 0-69 span the
+# 256 boundary with room for the prelude's class count to change.
+class Filler0
+end
+class Filler1
+end
+class Filler2
+end
+class Filler3
+end
+class Filler4
+end
+class Filler5
+end
+class Filler6
+end
+class Filler7
+end
+class Filler8
+end
+class Filler9
+end
+class Filler10
+end
+class Filler11
+end
+class Filler12
+end
+class Filler13
+end
+class Filler14
+end
+class Filler15
+end
+class Filler16
+end
+class Filler17
+end
+class Filler18
+end
+class Filler19
+end
+class Filler20
+end
+class Filler21
+end
+class Filler22
+end
+class Filler23
+end
+class Filler24
+end
+class Filler25
+end
+class Filler26
+end
+class Filler27
+end
+class Filler28
+end
+class Filler29
+end
+class Filler30
+end
+class Filler31
+end
+class Filler32
+end
+class Filler33
+end
+class Filler34
+end
+class Filler35
+end
+class Filler36
+end
+class Filler37
+end
+class Filler38
+end
+class Filler39
+end
+class Filler40
+end
+class Filler41
+end
+class Filler42
+end
+class Filler43
+end
+class Filler44
+end
+class Filler45
+end
+class Filler46
+end
+class Filler47
+end
+class Filler48
+end
+class Filler49
+end
+class Filler50
+end
+class Filler51
+end
+class Filler52
+end
+class Filler53
+end
+class Filler54
+end
+class Filler55
+end
+class Filler56
+end
+class Filler57
+end
+class Filler58
+end
+class Filler59
+end
+class Filler60
+end
+class Filler61
+end
+class Filler62
+end
+class Filler63
+end
+class Filler64
+end
+class Filler65
+end
+class Filler66
+end
+class Filler67
+end
+class Filler68
+end
+class Filler69
+end
+class Filler70
+end
+class Filler71
+end
+class Filler72
+end
+class Filler73
+end
+class Filler74
+end
+class Filler75
+end
+class Filler76
+end
+class Filler77
+end
+class Filler78
+end
+class Filler79
+end
+class Filler80
+end
+class Filler81
+end
+class Filler82
+end
+class Filler83
+end
+class Filler84
+end
+class Filler85
+end
+class Filler86
+end
+class Filler87
+end
+class Filler88
+end
+class Filler89
+end
+class Filler90
+end
+class Filler91
+end
+class Filler92
+end
+class Filler93
+end
+class Filler94
+end
+class Filler95
+end
+class Filler96
+end
+class Filler97
+end
+class Filler98
+end
+class Filler99
+end
+class Filler100
+end
+class Filler101
+end
+class Filler102
+end
+class Filler103
+end
+class Filler104
+end
+class Filler105
+end
+class Filler106
+end
+class Filler107
+end
+class Filler108
+end
+class Filler109
+end
+class Filler110
+end
+class Filler111
+end
+class Filler112
+end
+class Filler113
+end
+class Filler114
+end
+class Filler115
+end
+class Filler116
+end
+class Filler117
+end
+class Filler118
+end
+class Filler119
+end
+class Filler120
+end
+class Filler121
+end
+class Filler122
+end
+class Filler123
+end
+class Filler124
+end
+class Filler125
+end
+class Filler126
+end
+class Filler127
+end
+class Filler128
+end
+class Filler129
+end
+class Filler130
+end
+class Filler131
+end
+class Filler132
+end
+class Filler133
+end
+class Filler134
+end
+class Filler135
+end
+class Filler136
+end
+class Filler137
+end
+class Filler138
+end
+class Filler139
+end
+class Filler140
+end
+class Filler141
+end
+class Filler142
+end
+class Filler143
+end
+class Filler144
+end
+class Filler145
+end
+class Filler146
+end
+class Filler147
+end
+class Filler148
+end
+class Filler149
+end
+class Filler150
+end
+class Filler151
+end
+class Filler152
+end
+class Filler153
+end
+class Filler154
+end
+class Filler155
+end
+class Filler156
+end
+class Filler157
+end
+class Filler158
+end
+class Filler159
+end
+class Filler160
+end
+class Filler161
+end
+class Filler162
+end
+class Filler163
+end
+class Filler164
+end
+class Filler165
+end
+class Filler166
+end
+class Filler167
+end
+class Filler168
+end
+class Filler169
+end
+class Filler170
+end
+class Filler171
+end
+class Filler172
+end
+class Filler173
+end
+class Filler174
+end
+class Filler175
+end
+class Filler176
+end
+class Filler177
+end
+class Filler178
+end
+class Filler179
+end
+class Filler180
+end
+class Filler181
+end
+class Filler182
+end
+class Filler183
+end
+class Filler184
+end
+class Filler185
+end
+class Filler186
+end
+class Filler187
+end
+class Filler188
+end
+class Filler189
+end
+class Target0
+  def name() -> String = "t0"
+end
+class Target1
+  def name() -> String = "t1"
+end
+class Target2
+  def name() -> String = "t2"
+end
+class Target3
+  def name() -> String = "t3"
+end
+class Target4
+  def name() -> String = "t4"
+end
+class Target5
+  def name() -> String = "t5"
+end
+class Target6
+  def name() -> String = "t6"
+end
+class Target7
+  def name() -> String = "t7"
+end
+class Target8
+  def name() -> String = "t8"
+end
+class Target9
+  def name() -> String = "t9"
+end
+class Target10
+  def name() -> String = "t10"
+end
+class Target11
+  def name() -> String = "t11"
+end
+class Target12
+  def name() -> String = "t12"
+end
+class Target13
+  def name() -> String = "t13"
+end
+class Target14
+  def name() -> String = "t14"
+end
+class Target15
+  def name() -> String = "t15"
+end
+class Target16
+  def name() -> String = "t16"
+end
+class Target17
+  def name() -> String = "t17"
+end
+class Target18
+  def name() -> String = "t18"
+end
+class Target19
+  def name() -> String = "t19"
+end
+class Target20
+  def name() -> String = "t20"
+end
+class Target21
+  def name() -> String = "t21"
+end
+class Target22
+  def name() -> String = "t22"
+end
+class Target23
+  def name() -> String = "t23"
+end
+class Target24
+  def name() -> String = "t24"
+end
+class Target25
+  def name() -> String = "t25"
+end
+class Target26
+  def name() -> String = "t26"
+end
+class Target27
+  def name() -> String = "t27"
+end
+class Target28
+  def name() -> String = "t28"
+end
+class Target29
+  def name() -> String = "t29"
+end
+class Target30
+  def name() -> String = "t30"
+end
+class Target31
+  def name() -> String = "t31"
+end
+class Target32
+  def name() -> String = "t32"
+end
+class Target33
+  def name() -> String = "t33"
+end
+class Target34
+  def name() -> String = "t34"
+end
+class Target35
+  def name() -> String = "t35"
+end
+class Target36
+  def name() -> String = "t36"
+end
+class Target37
+  def name() -> String = "t37"
+end
+class Target38
+  def name() -> String = "t38"
+end
+class Target39
+  def name() -> String = "t39"
+end
+class Target40
+  def name() -> String = "t40"
+end
+class Target41
+  def name() -> String = "t41"
+end
+class Target42
+  def name() -> String = "t42"
+end
+class Target43
+  def name() -> String = "t43"
+end
+class Target44
+  def name() -> String = "t44"
+end
+class Target45
+  def name() -> String = "t45"
+end
+class Target46
+  def name() -> String = "t46"
+end
+class Target47
+  def name() -> String = "t47"
+end
+class Target48
+  def name() -> String = "t48"
+end
+class Target49
+  def name() -> String = "t49"
+end
+class Target50
+  def name() -> String = "t50"
+end
+class Target51
+  def name() -> String = "t51"
+end
+class Target52
+  def name() -> String = "t52"
+end
+class Target53
+  def name() -> String = "t53"
+end
+class Target54
+  def name() -> String = "t54"
+end
+class Target55
+  def name() -> String = "t55"
+end
+class Target56
+  def name() -> String = "t56"
+end
+class Target57
+  def name() -> String = "t57"
+end
+class Target58
+  def name() -> String = "t58"
+end
+class Target59
+  def name() -> String = "t59"
+end
+class Target60
+  def name() -> String = "t60"
+end
+class Target61
+  def name() -> String = "t61"
+end
+class Target62
+  def name() -> String = "t62"
+end
+class Target63
+  def name() -> String = "t63"
+end
+class Target64
+  def name() -> String = "t64"
+end
+class Target65
+  def name() -> String = "t65"
+end
+class Target66
+  def name() -> String = "t66"
+end
+class Target67
+  def name() -> String = "t67"
+end
+class Target68
+  def name() -> String = "t68"
+end
+class Target69
+  def name() -> String = "t69"
+end
+
+class Holder
+  def initialize()
+    @target0 = Target0.new()
+    @target1 = Target1.new()
+    @target2 = Target2.new()
+    @target3 = Target3.new()
+    @target4 = Target4.new()
+    @target5 = Target5.new()
+    @target6 = Target6.new()
+    @target7 = Target7.new()
+    @target8 = Target8.new()
+    @target9 = Target9.new()
+    @target10 = Target10.new()
+    @target11 = Target11.new()
+    @target12 = Target12.new()
+    @target13 = Target13.new()
+    @target14 = Target14.new()
+    @target15 = Target15.new()
+    @target16 = Target16.new()
+    @target17 = Target17.new()
+    @target18 = Target18.new()
+    @target19 = Target19.new()
+    @target20 = Target20.new()
+    @target21 = Target21.new()
+    @target22 = Target22.new()
+    @target23 = Target23.new()
+    @target24 = Target24.new()
+    @target25 = Target25.new()
+    @target26 = Target26.new()
+    @target27 = Target27.new()
+    @target28 = Target28.new()
+    @target29 = Target29.new()
+    @target30 = Target30.new()
+    @target31 = Target31.new()
+    @target32 = Target32.new()
+    @target33 = Target33.new()
+    @target34 = Target34.new()
+    @target35 = Target35.new()
+    @target36 = Target36.new()
+    @target37 = Target37.new()
+    @target38 = Target38.new()
+    @target39 = Target39.new()
+    @target40 = Target40.new()
+    @target41 = Target41.new()
+    @target42 = Target42.new()
+    @target43 = Target43.new()
+    @target44 = Target44.new()
+    @target45 = Target45.new()
+    @target46 = Target46.new()
+    @target47 = Target47.new()
+    @target48 = Target48.new()
+    @target49 = Target49.new()
+    @target50 = Target50.new()
+    @target51 = Target51.new()
+    @target52 = Target52.new()
+    @target53 = Target53.new()
+    @target54 = Target54.new()
+    @target55 = Target55.new()
+    @target56 = Target56.new()
+    @target57 = Target57.new()
+    @target58 = Target58.new()
+    @target59 = Target59.new()
+    @target60 = Target60.new()
+    @target61 = Target61.new()
+    @target62 = Target62.new()
+    @target63 = Target63.new()
+    @target64 = Target64.new()
+    @target65 = Target65.new()
+    @target66 = Target66.new()
+    @target67 = Target67.new()
+    @target68 = Target68.new()
+    @target69 = Target69.new()
+  end
+
+  def target0() -> Target0 = @target0
+
+  def target1() -> Target1 = @target1
+
+  def target2() -> Target2 = @target2
+
+  def target3() -> Target3 = @target3
+
+  def target4() -> Target4 = @target4
+
+  def target5() -> Target5 = @target5
+
+  def target6() -> Target6 = @target6
+
+  def target7() -> Target7 = @target7
+
+  def target8() -> Target8 = @target8
+
+  def target9() -> Target9 = @target9
+
+  def target10() -> Target10 = @target10
+
+  def target11() -> Target11 = @target11
+
+  def target12() -> Target12 = @target12
+
+  def target13() -> Target13 = @target13
+
+  def target14() -> Target14 = @target14
+
+  def target15() -> Target15 = @target15
+
+  def target16() -> Target16 = @target16
+
+  def target17() -> Target17 = @target17
+
+  def target18() -> Target18 = @target18
+
+  def target19() -> Target19 = @target19
+
+  def target20() -> Target20 = @target20
+
+  def target21() -> Target21 = @target21
+
+  def target22() -> Target22 = @target22
+
+  def target23() -> Target23 = @target23
+
+  def target24() -> Target24 = @target24
+
+  def target25() -> Target25 = @target25
+
+  def target26() -> Target26 = @target26
+
+  def target27() -> Target27 = @target27
+
+  def target28() -> Target28 = @target28
+
+  def target29() -> Target29 = @target29
+
+  def target30() -> Target30 = @target30
+
+  def target31() -> Target31 = @target31
+
+  def target32() -> Target32 = @target32
+
+  def target33() -> Target33 = @target33
+
+  def target34() -> Target34 = @target34
+
+  def target35() -> Target35 = @target35
+
+  def target36() -> Target36 = @target36
+
+  def target37() -> Target37 = @target37
+
+  def target38() -> Target38 = @target38
+
+  def target39() -> Target39 = @target39
+
+  def target40() -> Target40 = @target40
+
+  def target41() -> Target41 = @target41
+
+  def target42() -> Target42 = @target42
+
+  def target43() -> Target43 = @target43
+
+  def target44() -> Target44 = @target44
+
+  def target45() -> Target45 = @target45
+
+  def target46() -> Target46 = @target46
+
+  def target47() -> Target47 = @target47
+
+  def target48() -> Target48 = @target48
+
+  def target49() -> Target49 = @target49
+
+  def target50() -> Target50 = @target50
+
+  def target51() -> Target51 = @target51
+
+  def target52() -> Target52 = @target52
+
+  def target53() -> Target53 = @target53
+
+  def target54() -> Target54 = @target54
+
+  def target55() -> Target55 = @target55
+
+  def target56() -> Target56 = @target56
+
+  def target57() -> Target57 = @target57
+
+  def target58() -> Target58 = @target58
+
+  def target59() -> Target59 = @target59
+
+  def target60() -> Target60 = @target60
+
+  def target61() -> Target61 = @target61
+
+  def target62() -> Target62 = @target62
+
+  def target63() -> Target63 = @target63
+
+  def target64() -> Target64 = @target64
+
+  def target65() -> Target65 = @target65
+
+  def target66() -> Target66 = @target66
+
+  def target67() -> Target67 = @target67
+
+  def target68() -> Target68 = @target68
+
+  def target69() -> Target69 = @target69
+end
+
+holder = Holder.new()
+puts(holder.target0().name() + holder.target35().name() + holder.target69().name())

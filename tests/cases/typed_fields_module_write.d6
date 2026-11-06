@@ -1,0 +1,26 @@
+# A module method writes @value by name into whatever class includes it.
+module Spoiler
+  def spoil()
+    @value = "text"
+  end
+end
+
+class Counter
+  include Spoiler
+
+  def initialize()
+    @value = 1
+  end
+
+  def value() -> Int = @value
+end
+
+counter = Counter.new()
+puts(counter.value())
+counter.spoil()
+begin
+  counter.value()
+  puts("module write: no error")
+rescue TypeError
+  puts("module write: TypeError")
+end

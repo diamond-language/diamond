@@ -1961,7 +1961,7 @@ int diamond_reader_return_class(DiamondClass *const *classes,size_t class_count,
             const uint16_t known=class->declared_by_discovery?
                 class->field_known_class[field]:
                 class->discovered_field_known_class[field];
-            if(status==2)return -1;
+            if(status!=DIAMOND_FIELD_UNSEEN&&status!=DIAMOND_FIELD_CLASS)return -1;
             if(status==1) {
                 if(known>=class_count||(result>=0&&result!=known))return -1;
                 result=known;
@@ -2042,6 +2042,50 @@ static const DiamondFunction *tooling_forward_instance_target(
     return nullptr;
 }
 
+/* The declared return type of a method on a known-class receiver that
+ * this pass has not compiled yet (defined further down the class), read
+ * from the discovery pass's copy of it. Only a lone built-in type: an
+ * annotation naming a class can still be discovery's Nil placeholder for
+ * a class declared later (see resolve_type_name), while Int, Float,
+ * String, Bool and Symbol resolve the same in both passes. The last
+ * definition wins, as it does at run time. DIAMOND_TYPE_NONE otherwise. */
+static uint16_t forward_builtin_return_type(const Compiler *compiler,
+        uint16_t receiver,DiamondSpan name) {
+    const uint16_t type=compiler->known_types[receiver];
+    if(type<DIAMOND_TYPE_CLASS_BASE||type>=DIAMOND_TYPE_CLASS_LIMIT)
+        return DIAMOND_TYPE_NONE;
+    size_t class_index=(size_t)(type-DIAMOND_TYPE_CLASS_BASE);
+    for(size_t depth=0;class_index<compiler->program->class_count&&
+            depth<compiler->program->class_count;depth++) {
+        const DiamondClass *class=compiler->program->classes[class_index];
+        for(size_t index=0;index<class->method_count;index++)
+            if(singleton_call_name_equals(compiler,class->methods[index].name,name))
+                return DIAMOND_TYPE_NONE;
+        const DiamondFunction *found=nullptr;
+        for(size_t index=0;index<class->discovered_method_count;index++) {
+            const uint16_t id=class->discovered_methods[index];
+            if(id>=compiler->program->function_count)continue;
+            const DiamondFunction *target=compiler->program->functions[id];
+            if(target->declared_by_discovery&&
+               singleton_call_name_equals(compiler,target->name,name))found=target;
+        }
+        if(found!=nullptr) {
+            if(found->type_variable_count>0||found->class_type_variable||
+               found->returns_self||found->return_type_set>=found->type_set_count)
+                return DIAMOND_TYPE_NONE;
+            const DiamondTypeSet *set=&found->type_sets[found->return_type_set];
+            if(set->count!=1||set->members[0].argument_set!=DIAMOND_NO_TYPE_SET)
+                return DIAMOND_TYPE_NONE;
+            const uint16_t id=set->members[0].id;
+            return id==DIAMOND_TYPE_INT||id==DIAMOND_TYPE_FLOAT||
+                   id==DIAMOND_TYPE_STRING||id==DIAMOND_TYPE_BOOL||
+                   id==DIAMOND_TYPE_SYMBOL?id:DIAMOND_TYPE_NONE;
+        }
+        class_index=class->superclass;
+    }
+    return DIAMOND_TYPE_NONE;
+}
+
 void publish_instance_return_type(Compiler *compiler,uint16_t reg,
         uint16_t receiver,
         int32_t receiver_set_index,DiamondSpan name,
@@ -2098,6 +2142,9 @@ void publish_instance_return_type(Compiler *compiler,uint16_t reg,
         }
         publish_union_instance_return_type(compiler,reg,effective_set,
             name,bindings,binding_count,tooling_only);
+        if(compiler->known_types[reg]==TYPE_UNKNOWN&&!compiler->discovery_pass)
+            compiler->known_types[reg]=
+                forward_builtin_return_type(compiler,receiver,name);
     }
     /* Phase 12 (docs/internal/jit-design.md): snapshot whatever known_
      * types[reg] the real (non-tooling) branches just above set -- either

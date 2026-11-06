@@ -1079,6 +1079,117 @@ static bool seed_program_from_template(DiamondProgram *destination,
 
 /* Moves the discovery pass's class, interface, module and namespace-constant tables into
  * `program`. Part of diamond_compile_impl. */
+/* The fields `initialize` assigns before anything else can run: the scan
+ * walks the opening run of argument checks, default-argument plumbing,
+ * constants, moves and `@field = value` stores, and stops at the first
+ * other instruction (a call, an operator, a return...). A store counts
+ * only past every forward jump seen so far, so a default argument's skip
+ * cannot hide it and a store inside an `if` never counts. Nothing in that
+ * run can call out, so no code observes the instance before these fields
+ * hold their values. */
+static void initialize_assigned_fields(const DiamondFunction *function,uint64_t assigned[4]) {
+    const uint8_t *code=function->code;
+    size_t ip=0,joined=0;
+    while(ip<function->code_count) {
+        size_t length=5;
+        switch((DiamondOpCode)code[ip]) {
+        case DIAMOND_OP_CHECK_TYPE: case DIAMOND_OP_ARGUMENT_PROVIDED:
+        case DIAMOND_OP_CONSTANT: case DIAMOND_OP_MOVE:
+            break;
+        case DIAMOND_OP_JUMP_IF_TRUE: case DIAMOND_OP_JUMP_IF_FALSE: {
+            if(ip+length>function->code_count)return;
+            const size_t target=((size_t)code[ip+3]<<8)|code[ip+4];
+            if(target<=ip)return;
+            if(target>joined)joined=target;
+            break;
+        }
+        case DIAMOND_OP_SET_IVAR: {
+            length=7;
+            if(ip+length>function->code_count)return;
+            const unsigned receiver=((unsigned)code[ip+1]<<8)|code[ip+2];
+            const unsigned field=((unsigned)code[ip+3]<<8)|code[ip+4];
+            if(receiver!=0||field>=DIAMOND_MAX_FIELDS)return;
+            if(ip>=joined)assigned[field/64]|=UINT64_C(1)<<(field%64);
+            break;
+        }
+        default:
+            return;
+        }
+        ip+=length;
+    }
+}
+
+static bool class_descends_from(const DiamondProgram *program,size_t index,size_t ancestor) {
+    for(size_t depth=0;index<program->class_count&&depth<program->class_count;depth++) {
+        if(index==ancestor)return true;
+        index=program->classes[index]->superclass;
+    }
+    return false;
+}
+
+static bool ancestor_has_field(const DiamondProgram *program,const DiamondClass *class,
+                               const char *name) {
+    size_t index=class->superclass;
+    for(size_t depth=0;index<program->class_count&&depth<program->class_count;depth++) {
+        const DiamondClass *ancestor=program->classes[index];
+        for(size_t field=0;field<ancestor->field_count;field++)
+            if(strcmp(ancestor->fields[field],name)==0)return true;
+        index=ancestor->superclass;
+    }
+    return false;
+}
+
+/* Fills every class's scalar_int_fields/scalar_float_fields from the
+ * finished discovery pass. A field gets a bit only when every read of it
+ * must yield that type:
+ *   - every compiled write to it stores an Int (or every one a Float), so
+ *     record_field_known_type left it DIAMOND_FIELD_INT (or FLOAT);
+ *   - the class's own initialize assigns it before anything can run
+ *     (initialize_assigned_fields), so no read sees the starting nil;
+ *   - no other class can store into it: the class has no subclasses (one
+ *     could skip that initialize or write the field differently), no
+ *     ancestor declares the same field, and the program never writes
+ *     fields by name or installs methods at run time;
+ *   - the class is the program's own, not a template (prelude) class or
+ *     an Exception, whose fields the runtime also sets natively. */
+static void compute_scalar_field_facts(DiamondProgram *program,size_t first_class) {
+    for(size_t index=0;index<program->class_count;index++) {
+        DiamondClass *class=program->classes[index];
+        memset(class->scalar_int_fields,0,sizeof class->scalar_int_fields);
+        memset(class->scalar_float_fields,0,sizeof class->scalar_float_fields);
+    }
+    if(program->uses_dynamic_methods||program->writes_fields_by_name)return;
+    for(size_t index=first_class;index<program->class_count;index++) {
+        DiamondClass *class=program->classes[index];
+        if(class->field_count==0||
+           class_descends_from(program,index,DIAMOND_CLASS_EXCEPTION))continue;
+        bool has_subclass=false;
+        for(size_t other=0;other<program->class_count&&!has_subclass;other++)
+            has_subclass=program->classes[other]->superclass==index;
+        if(has_subclass)continue;
+        const DiamondFunction *initialize=nullptr;
+        for(size_t method=0;method<class->method_count;method++) {
+            const DiamondMethod *entry=&class->methods[method];
+            if(entry->included||strcmp(entry->name,"initialize")!=0||
+               entry->function_index>=program->function_count)continue;
+            const DiamondFunction *function=program->functions[entry->function_index];
+            if(function->owner_class==index)initialize=function;
+        }
+        if(initialize==nullptr)continue;
+        uint64_t assigned[4]={0};
+        initialize_assigned_fields(initialize,assigned);
+        for(size_t field=0;field<class->field_count;field++) {
+            const uint64_t bit=UINT64_C(1)<<(field%64);
+            if(!(assigned[field/64]&bit)||
+               ancestor_has_field(program,class,class->fields[field]))continue;
+            if(class->field_type_status[field]==DIAMOND_FIELD_INT)
+                class->scalar_int_fields[field/64]|=bit;
+            else if(class->field_type_status[field]==DIAMOND_FIELD_FLOAT)
+                class->scalar_float_fields[field/64]|=bit;
+        }
+    }
+}
+
 static void adopt_discovered_tables(DiamondProgram *program,DiamondProgram *discovery) {
     /* Carry discovery's fully-populated class/module/interface tables
      * (names, fields, methods -- everything but real bytecode) into the
@@ -1240,6 +1351,8 @@ bool diamond_compile_impl(const char *source, DiamondProgram *program,
         return false;
     }
 
+    compute_scalar_field_facts(discovery,
+        template!=nullptr?template->class_count:DIAMOND_BUILTIN_CLASS_COUNT);
     adopt_discovered_tables(program,discovery);
 
     /* Reserve every compiler-created function at its discovery-pass index.

@@ -55,15 +55,41 @@ static int type_set_single_class(const Compiler *compiler, int type_set) {
  * first concrete class seen for a field is trusted; a second, different
  * concrete class, or any non-concrete write at all, permanently marks the
  * field "unknown" (status 2) -- once poisoned, never re-trusted, matching
- * this field's own pre-existing status==0/1/2 semantics exactly. */
-static void record_field_known_type(DiamondClass *class, size_t field, int known_class) {
-    const bool concrete = known_class >= 0;
-    if (class->field_type_status[field] == 0 && concrete) {
-        class->field_type_status[field] = 1;
-        class->field_known_class[field] = (uint16_t)known_class;
-    } else if (!concrete || class->field_known_class[field] != (uint16_t)known_class) {
-        class->field_type_status[field] = 2;
+ * this field's own pre-existing status==0/1/2 semantics exactly. Int and
+ * Float writes get their own facts (DiamondFieldFact) under the same rule,
+ * for compute_scalar_field_facts. `type` is the written value's type id,
+ * or DIAMOND_TYPE_NONE when it has no single known type. */
+static void record_field_known_type(const Compiler *compiler, DiamondClass *class,
+                                    size_t field, uint16_t type) {
+    DiamondFieldFact fact = DIAMOND_FIELD_MIXED;
+    uint16_t known_class = 0;
+    if (type == DIAMOND_TYPE_INT) fact = DIAMOND_FIELD_INT;
+    else if (type == DIAMOND_TYPE_FLOAT) fact = DIAMOND_FIELD_FLOAT;
+    else if (type >= DIAMOND_TYPE_CLASS_BASE && type < DIAMOND_TYPE_CLASS_LIMIT &&
+             (size_t)(type - DIAMOND_TYPE_CLASS_BASE) < compiler->program->class_count) {
+        fact = DIAMOND_FIELD_CLASS;
+        known_class = (uint16_t)(type - DIAMOND_TYPE_CLASS_BASE);
     }
+    const uint8_t status = class->field_type_status[field];
+    if (status == DIAMOND_FIELD_UNSEEN && fact != DIAMOND_FIELD_MIXED) {
+        class->field_type_status[field] = fact;
+        class->field_known_class[field] = known_class;
+    } else if (status != fact || class->field_known_class[field] != known_class) {
+        class->field_type_status[field] = DIAMOND_FIELD_MIXED;
+    }
+}
+
+/* The one type a type set names, as a type id for record_field_known_type:
+ * a lone concrete class, Int or Float; DIAMOND_TYPE_NONE otherwise. */
+static uint16_t type_set_single_type(const Compiler *compiler, int type_set) {
+    const int class_index = type_set_single_class(compiler, type_set);
+    if (class_index >= 0) return (uint16_t)(DIAMOND_TYPE_CLASS_BASE + class_index);
+    if (type_set < 0 || (size_t)type_set >= compiler->function->type_set_count)
+        return DIAMOND_TYPE_NONE;
+    const DiamondTypeSet *set = &compiler->function->type_sets[(size_t)type_set];
+    if (set->count != 1) return DIAMOND_TYPE_NONE;
+    const uint16_t id = set->members[0].id;
+    return id == DIAMOND_TYPE_INT || id == DIAMOND_TYPE_FLOAT ? id : DIAMOND_TYPE_NONE;
 }
 
 static void compile_attribute_named(Compiler *compiler,bool writer,bool predicate,
@@ -224,6 +250,7 @@ static void compile_attribute_named(Compiler *compiler,bool writer,bool predicat
         function->code[code++]=0;function->code[code++]=writer?0:1;
         function->code[code++]=0;function->code[code++]=0;
         function->code[code++]=0;function->code[code++]=writer?1:0;
+        if(writer)compiler->program->writes_fields_by_name=true;
     } else {
         function->code[code++]=(uint8_t)(writer?DIAMOND_OP_SET_IVAR:
                                           DIAMOND_OP_GET_IVAR);
@@ -238,11 +265,24 @@ static void compile_attribute_named(Compiler *compiler,bool writer,bool predicat
          * only assignment to a field is through a generated writer would
          * wrongly look "never assigned" (status 0) instead of either a real
          * concrete class or "unknown" (status 2). */
-        if(writer)record_field_known_type(
+        if(writer)record_field_known_type(compiler,
             compiler->program->classes[(size_t)compiler->current_class],
-            (size_t)field,type_set_single_class(compiler,type_set));
+            (size_t)field,type_set_single_type(compiler,type_set));
     }
-    if(!writer&&type_set>=0) {
+    /* A reader of an Int or Float field (compute_scalar_field_facts)
+     * already returns its declared type, so it skips the check and stays a
+     * plain getter the call path can answer inline. */
+    bool proven=false;
+    if(!writer&&type_set>=0&&!compiler->discovery_pass&&
+       compiler->current_class>=0&&field!=UINT8_MAX) {
+        const DiamondClass *class=
+            compiler->program->classes[(size_t)compiler->current_class];
+        const uint64_t bit=UINT64_C(1)<<(field%64);
+        const uint16_t declared=type_set_single_type(compiler,type_set);
+        proven=(declared==DIAMOND_TYPE_INT&&(class->scalar_int_fields[field/64]&bit))||
+               (declared==DIAMOND_TYPE_FLOAT&&(class->scalar_float_fields[field/64]&bit));
+    }
+    if(!writer&&type_set>=0&&!proven) {
         function->code[code++]=DIAMOND_OP_CHECK_TYPE;
         function->code[code++]=0;function->code[code++]=1;
         function->code[code++]=(uint8_t)((uint16_t)type_set>>8);
@@ -1845,10 +1885,10 @@ static void emit_struct_initialize(Compiler *compiler, DiamondClass *class,
          * by this phase's own verification methodology (compared JIT
          * eligibility with/without this fix on a real struct case, not
          * assumed), not proven correct by inspection alone. */
-        int field_known_classes[DIAMOND_MAX_DECLARED_PARAMETERS];
+        uint16_t field_known_types[DIAMOND_MAX_DECLARED_PARAMETERS];
         for(size_t field=0;field<own_field_count;field++)
-            field_known_classes[inherited_count+field]=
-                type_set_single_class(compiler,field_type_sets[field]);
+            field_known_types[inherited_count+field]=
+                type_set_single_type(compiler,field_type_sets[field]);
         const DiamondFunction *struct_outer=compiler->function;
         StructMethodState state;
         if(!begin_struct_method(compiler,init,&state)) {
@@ -1892,7 +1932,7 @@ static void emit_struct_initialize(Compiler *compiler, DiamondClass *class,
                  * bare `self.field =` assignment would, so this field
                  * doesn't wrongly look "never assigned" (status 0). */
                 if(!inherited)
-                    record_field_known_type(class,field,field_known_classes[field]);
+                    record_field_known_type(compiler,class,field,field_known_types[field]);
             }
             emit_instruction(compiler,DIAMOND_OP_RETURN,0,0,0,1);
             end_struct_method(compiler,&state);
@@ -2936,6 +2976,7 @@ uint16_t compile_assignment_store(Compiler *compiler, DiamondSpan name,
         if(compiler->current_module>=0&&compiler->current_class<0) {
             const uint16_t field=module_field_name(compiler,name);
             emit_instruction(compiler,DIAMOND_OP_SET_IVAR_NAME,0,field,value,3);
+            compiler->program->writes_fields_by_name=true;
         } else {
             const int field=field_index(compiler,name,true);
             emit_instruction(compiler,DIAMOND_OP_SET_IVAR,0,(uint8_t)field,
@@ -2943,13 +2984,8 @@ uint16_t compile_assignment_store(Compiler *compiler, DiamondSpan name,
             if(field>=0) {
                 DiamondClass *class=
                     compiler->program->classes[(size_t)compiler->current_class];
-                const uint16_t known=compiler->known_types[value];
-                const bool concrete=known>=DIAMOND_TYPE_CLASS_BASE&&
-                    known<DIAMOND_TYPE_VARIABLE_BASE&&
-                    (size_t)(known-DIAMOND_TYPE_CLASS_BASE)<
-                        compiler->program->class_count;
-                record_field_known_type(class,(size_t)field,
-                    concrete?(int)(known-DIAMOND_TYPE_CLASS_BASE):-1);
+                record_field_known_type(compiler,class,(size_t)field,
+                    compiler->known_types[value]);
             }
         }
         return value;
