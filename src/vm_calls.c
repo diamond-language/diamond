@@ -692,6 +692,68 @@ static DiamondVmStatus mono_invoke_call(DiamondVm *vm,const DiamondChunk *owner,
         registers,base,argc,false,0,nullptr,chunk,depth,result);
 }
 
+/* Fills a monomorphic cache entry's shortcut the first time
+ * diamond_mono_invoke gets past its method checks with it: GETTER or
+ * SETTER when the method is an attr accessor this site calls with the
+ * accessor's own argument count, NONE for anything else. The caller has
+ * already ruled out a private or protected method, a wrong arity and the
+ * exception field names, all fixed for one site and method. */
+__attribute__((noinline,cold))
+static void classify_mono_shortcut(DiamondMethodCacheEntry *entry,
+        const DiamondChunk *owner,const DiamondMethod *method,uint8_t argc) {
+    entry->shortcut=DIAMOND_SHORTCUT_NONE;
+    if(argc>1||method->bound_value_count!=0)return;
+    const DiamondChunk *function_chunk=
+        method->source_chunk!=nullptr?method->source_chunk:owner;
+    const DiamondFunction *fn=function_chunk->functions[method->function_index];
+    if(fn->code_count!=10&&fn->code_count!=15)return;
+    const DiamondAccessor accessor=function_accessor(fn);
+    if(accessor.kind!=(argc==0?DIAMOND_ACCESSOR_GETTER:DIAMOND_ACCESSOR_SETTER))return;
+    uint8_t check=DIAMOND_SHORTCUT_CHECK_NONE;
+    if(accessor.set!=DIAMOND_NO_TYPE_SET) {
+        const DiamondTypeSet *set=&fn->type_sets[accessor.set];
+        const bool lone=set->count==1&&
+            set->members[0].argument_set==DIAMOND_NO_TYPE_SET&&
+            set->members[0].second_argument_set==DIAMOND_NO_TYPE_SET;
+        check=lone&&set->members[0].id==DIAMOND_TYPE_FLOAT?DIAMOND_SHORTCUT_CHECK_FLOAT:
+            lone&&set->members[0].id==DIAMOND_TYPE_INT?DIAMOND_SHORTCUT_CHECK_INT:
+            DIAMOND_SHORTCUT_CHECK_FULL;
+    }
+    entry->shortcut_field=accessor.field;
+    entry->shortcut_check=check;
+    entry->shortcut=argc==0?DIAMOND_SHORTCUT_GETTER:DIAMOND_SHORTCUT_SETTER;
+}
+
+/* DIAMOND_SHORTCUT_CHECK_FULL: the accessor's declared type is more than a
+ * lone Int or Float (`Node | Nil`, a class, a String), so the value goes
+ * through shortcut_type_matches on the method's own type set, exactly as
+ * trivial_getter_result and trivial_setter_result judge it. */
+__attribute__((noinline))
+static bool shortcut_full_check(const DiamondVm *vm,const DiamondInstance *instance,
+        const DiamondMethod *method,DiamondValue value) {
+    const DiamondChunk *owner=instance->owner!=nullptr?instance->owner:vm->root_chunk;
+    const DiamondChunk *function_chunk=
+        method->source_chunk!=nullptr?method->source_chunk:owner;
+    const DiamondFunction *fn=function_chunk->functions[method->function_index];
+    const DiamondAccessor accessor=function_accessor(fn);
+    return accessor.set!=DIAMOND_NO_TYPE_SET&&
+        shortcut_type_matches(function_chunk,&fn->type_sets[accessor.set],value);
+}
+
+/* Whether a classified accessor's value passes the check its declared type
+ * asks for (DiamondMethodCacheEntry.shortcut_check). */
+__attribute__((always_inline))
+static inline bool shortcut_value_passes(const DiamondVm *vm,
+        const DiamondMethodCacheEntry *entry,const DiamondInstance *instance,
+        DiamondValue value) {
+    switch(entry->shortcut_check) {
+        case DIAMOND_SHORTCUT_CHECK_NONE: return true;
+        case DIAMOND_SHORTCUT_CHECK_FLOAT: return value.kind==DIAMOND_VALUE_FLOAT;
+        case DIAMOND_SHORTCUT_CHECK_INT: return value.kind==DIAMOND_VALUE_INT;
+        default: return shortcut_full_check(vm,instance,entry->method,value);
+    }
+}
+
 /* run_chunk's INVOKE_MONO on an Instance whose site cache holds the
  * receiver's class: the whole call, in one cache lookup and without
  * diamond_jit_invoke_instance's frame. Everything that path checks before
@@ -718,7 +780,39 @@ DiamondVmStatus diamond_mono_invoke(DiamondVm *vm,const DiamondChunk *chunk,
     if(slot==SIZE_MAX||vm->method_caches[slot].entry_count!=1||
        vm->method_caches[slot].entries[0].receiver_class!=instance->class)
         return DIAMOND_VM_NOT_CACHED;
-    const DiamondMethod *method=vm->method_caches[slot].entries[0].method;
+    DiamondMethodCacheEntry *entry=&vm->method_caches[slot].entries[0];
+    /* A getter or setter this entry has already classified: everything
+     * below would come to the same answer for this site and method, so
+     * only the per-value checks trivial_getter_result and
+     * trivial_setter_result make are left. A value that fails them takes
+     * the ordinary call further down, as it would have before. */
+    if(entry->shortcut>=DIAMOND_SHORTCUT_GETTER&&vm->debug_fd<0) {
+        const uint8_t field=entry->shortcut_field;
+        if(entry->shortcut==DIAMOND_SHORTCUT_GETTER) {
+            if(field<instance->field_count) {
+                const DiamondValue value=instance_field_value(instance,field);
+                if(shortcut_value_passes(vm,entry,instance,value)) {
+                    vm->inline_cache_hits++;
+                    vm->monomorphic_dispatches++;
+                    *result=value;
+                    return DIAMOND_VM_OK;
+                }
+            }
+        } else {
+            const DiamondValue argument=registers[base];
+            if(!instance->object.frozen&&field<instance->field_count&&
+               shortcut_value_passes(vm,entry,instance,argument)) {
+                DiamondValue self_value=registers[recv];
+                if(diamond_jit_set_ivar(vm,nullptr,&self_value,field,&argument)==DIAMOND_VM_OK) {
+                    vm->inline_cache_hits++;
+                    vm->monomorphic_dispatches++;
+                    *result=argument;
+                    return DIAMOND_VM_OK;
+                }
+            }
+        }
+    }
+    const DiamondMethod *method=entry->method;
     if(method==nullptr||method->is_private||method->is_protected||
        argc<method->required_arity||(argc>method->arity&&!method->has_variadic))
         return DIAMOND_VM_NOT_CACHED;
@@ -729,6 +823,8 @@ DiamondVmStatus diamond_mono_invoke(DiamondVm *vm,const DiamondChunk *chunk,
     vm->inline_cache_hits++;
     vm->monomorphic_dispatches++;
     const DiamondChunk *owner=instance->owner!=nullptr?instance->owner:vm->root_chunk;
+    if(entry->shortcut==DIAMOND_SHORTCUT_UNKNOWN)
+        classify_mono_shortcut(entry,owner,method,argc);
     /* An attr getter or setter is answered here, in this small frame; most
      * methods are not one, so the size test comes first. */
     if(argc<=1&&method->bound_value_count==0&&vm->debug_fd<0) {

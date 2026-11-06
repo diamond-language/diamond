@@ -1,0 +1,15 @@
+expected Float, got String
+3.0
+expected Int, got Float
+3
+sym
+3.0
+expected Float, got String
+frozen: frozen object cannot be modified
+5.0
+true
+expected Node | Nil, got Body
+1.5
+2.5
+other x
+[#<Body>, #<Body>, #<Other>]

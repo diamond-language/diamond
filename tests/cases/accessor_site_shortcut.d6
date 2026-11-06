@@ -1,0 +1,135 @@
+# A call site that keeps reaching the same getter or setter remembers that it
+# is one and reads or writes the field directly. Each site below runs warm
+# first; then a value or receiver turns up that the shortcut must not settle,
+# and the ordinary call has to produce the ordinary answer or error.
+class Body
+  attr_accessor x: Float
+  attr_accessor count: Int
+  attr_accessor label
+
+  def initialize(x: Float, count: Int, label)
+    @x = x
+    @count = count
+    @label = label
+  end
+end
+
+class Node
+  attr_accessor next_node: Node | Nil
+
+  def initialize(next_node: Node | Nil)
+    @next_node = next_node
+  end
+end
+
+class SpecialNode < Node
+end
+
+# The setter runs warm, then gets a value its declared type rejects.
+def store_all(body: Body, values)
+  values.each() do |value|
+    body.x = value
+  end
+end
+
+body = Body.new(0.0, 0, "b")
+begin
+  store_all(body, [1.0, 2.0, 3.0, "four"])
+rescue error: TypeError
+  puts(error.message())
+end
+puts(body.x())
+
+# The Int setter, warm, then a Float.
+def count_all(body: Body, values)
+  values.each() do |value|
+    body.count = value
+  end
+end
+
+begin
+  count_all(body, [1, 2, 3, 4.5])
+rescue error: TypeError
+  puts(error.message())
+end
+puts(body.count())
+
+# An untyped accessor takes anything.
+def label_all(body: Body, values)
+  values.each() do |value|
+    body.label = value
+  end
+  body.label()
+end
+
+puts(label_all(body, ["a", 2, nil, :sym]))
+
+# A getter, warm, then a field holding a value its declared type rejects
+# (the initializer here takes anything; only the reader is typed).
+class Loose
+  attr_reader x: Float
+
+  def initialize(x)
+    @x = x
+  end
+end
+
+def sum_x(values) -> Float
+  total = 0.0
+  values.each() do |value|
+    total += value.x()
+  end
+  total
+end
+
+puts(sum_x([Loose.new(1.0), Loose.new(2.0)]))
+begin
+  sum_x([Loose.new(1.0), Loose.new(2.0), Loose.new("not a float")])
+rescue error: TypeError
+  puts(error.message())
+end
+
+# The same setter site, warm, then a frozen receiver.
+def shift_all(bodies)
+  bodies.each() do |each_body|
+    each_body.x = each_body.x() + 1.0
+  end
+end
+
+frozen = Body.new(5.0, 0, "f")
+frozen.freeze()
+begin
+  shift_all([Body.new(1.0, 0, "a"), Body.new(2.0, 0, "b"), frozen])
+rescue error: FrozenError
+  puts("frozen: #{error.message()}")
+end
+puts(frozen.x())
+
+# A union-typed accessor: exact instances and nil, warm, then a subclass
+# instance (the full type check) and finally a wrong class.
+def link_all(node: Node, values)
+  values.each() do |value|
+    node.next_node = value
+  end
+  node.next_node()
+end
+
+head = Node.new(nil)
+puts(link_all(head, [Node.new(nil), nil, Node.new(nil), SpecialNode.new(nil)]) is SpecialNode)
+begin
+  link_all(head, [nil, Node.new(nil), body])
+rescue error: TypeError
+  puts(error.message())
+end
+
+# The getter on a site that later sees a different class falls back to the
+# ordinary lookup and still finds the right method.
+class Other
+  def x() = "other x"
+end
+
+def read_x(value) = value.x()
+
+[Body.new(1.5, 0, "a"), Body.new(2.5, 0, "b"), Other.new()].each() do |value|
+  puts(read_x(value))
+end
