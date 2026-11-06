@@ -856,7 +856,9 @@ static inline int diamond_plain_type_match(DiamondValue value, uint16_t id) {
  * residency no longer depends on where its bytecode happens to sit. 256 is
  * the smallest size measured to hold the Arel render path's working set
  * (see docs/internal/orm-return-annotations.md); 64 and 128 still thrash on
- * capacity alone. */
+ * capacity alone. Eight ways rather than four: with four, five hot sites
+ * hashing to one set (nbody, depending on heap addresses) evicted each other
+ * on every call. */
 enum { DIAMOND_INLINE_CACHE_COUNT = 256 };
 
 /* An on/off DIAMOND_ environment flag: off when unset, empty or "0". */
@@ -872,7 +874,7 @@ static inline bool diamond_sandbox_enabled(void) {
     return value != nullptr && strcmp(value, "0") != 0;
 }
 
-enum { DIAMOND_INLINE_CACHE_WAYS = 4 };
+enum { DIAMOND_INLINE_CACHE_WAYS = 8 };
 enum { DIAMOND_INLINE_CACHE_WIDTH = 4 };
 /* INT, TERM, HUP -- see docs/io.md's signals section for why this
  * specific small, fixed set rather than every signal name POSIX knows
