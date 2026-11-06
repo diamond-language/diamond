@@ -1970,6 +1970,19 @@ void fold_join_jump_into_return(Compiler *compiler,uint16_t reg) {
     function->code[at]=DIAMOND_OP_RETURN;
     function->code[at+1]=(uint8_t)(reg>>8);
     function->code[at+2]=(uint8_t)(reg&UINT8_MAX);
+    /* `MOVE reg, value; RETURN reg` (5 + 3 bytes) becomes `RETURN value;
+     * MOVE reg, value`: the same bytes, one dispatch fewer, and the MOVE,
+     * now unreachable, still decodes. Nothing jumps to the old RETURN: the
+     * MOVE was emitted right before it and the JUMP straight after. A jump
+     * to the MOVE now finds a RETURN of the same value. */
+    if(!compiler->last_ternary_true_move||at<5||
+       function->code[at-5]!=DIAMOND_OP_MOVE||
+       function->code[at-4]!=(uint8_t)(reg>>8)||
+       function->code[at-3]!=(uint8_t)(reg&UINT8_MAX))return;
+    const uint8_t value_high=function->code[at-2],value_low=function->code[at-1];
+    const uint8_t folded[8]={DIAMOND_OP_RETURN,value_high,value_low,
+        DIAMOND_OP_MOVE,(uint8_t)(reg>>8),(uint8_t)(reg&UINT8_MAX),value_high,value_low};
+    memcpy(&function->code[at-5],folded,sizeof folded);
 }
 
 /* `preferred_register` lets a caller that already has a register ready to

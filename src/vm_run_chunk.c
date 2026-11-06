@@ -2634,28 +2634,24 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 break;
             }
             case DIAMOND_OP_GET_IVAR: op_GET_IVAR: {
-                /* A thin wrapper around diamond_jit_get_ivar -- the same
-                 * function src/jit.c's own ivar-read codegen calls --
-                 * mirroring DIAMOND_OP_SET_IVAR's own treatment just below.
-                 * As there, the field_operand bounds check happens here,
-                 * before narrowing to the trampoline's own uint8_t, since a
-                 * hand-built (ProgramBuilder) field_operand wider than 255
-                 * must be rejected as invalid rather than silently
-                 * truncated into some other, smaller, valid-looking field
-                 * index. */
-                const uint8_t *site=&bytecode[instruction_offset];
+                /* The same read as diamond_jit_get_ivar (what src/jit.c's
+                 * ivar-read codegen calls), done here: its checks are these
+                 * two, so the call only repeated them. The field_operand
+                 * bound is checked before anything narrows it, since a
+                 * hand-built (ProgramBuilder) operand wider than 255 must be
+                 * rejected rather than truncated to a smaller valid-looking
+                 * field index. */
                 uint16_t dest=0,recv=0,field_operand=0;
                 READ_OPERANDS(6);
                 dest=OPERAND_SHORT(0); recv=OPERAND_SHORT(2); field_operand=OPERAND_SHORT(4);
                 if(registers[recv].kind!=DIAMOND_VALUE_OBJECT||
                    registers[recv].as.object->kind!=DIAMOND_OBJECT_INSTANCE)
                     VM_RETURN(DIAMOND_VM_TYPE_ERROR);
-                if(field_operand>=
-                   ((DiamondInstance *)registers[recv].as.object)->field_count)
+                const DiamondInstance *ivar_instance=
+                    (const DiamondInstance *)registers[recv].as.object;
+                if(field_operand>=ivar_instance->field_count)
                     VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
-                const DiamondVmStatus get_ivar_status=diamond_jit_get_ivar(vm,site,
-                    &registers[recv],(uint8_t)field_operand,&registers[dest]);
-                VM_PROPAGATE(get_ivar_status);
+                registers[dest]=instance_field_value(ivar_instance,(uint8_t)field_operand);
                 DISPATCH_NEXT();
             }
             case DIAMOND_OP_SET_IVAR: op_SET_IVAR: {

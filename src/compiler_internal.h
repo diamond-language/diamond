@@ -228,6 +228,9 @@ typedef struct Compiler {
     size_t last_ternary_jump;
     size_t last_ternary_join;
     DiamondFunction *last_ternary_function;
+    /* The true branch ended in `MOVE destination, value` right before that
+     * JUMP (the value could not be written into the destination directly). */
+    bool last_ternary_true_move;
     TailCallCandidate *tail_call_candidates;
     size_t tail_call_candidate_count;
     size_t tail_call_candidate_capacity;

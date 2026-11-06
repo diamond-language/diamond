@@ -1,0 +1,18 @@
+# A body ending in a ternary whose true branch is a plain value returns that
+# value directly. Nested ternaries put a join (a jump target) right at the
+# true branch's copy, which must still return the inner result.
+
+def pick(n: Int) -> Int = n < 2 ? n : pick(n - 1) + pick(n - 2)
+def nested_true(c: Bool, x: Int) -> Int = c ? (x > 3 ? x : 0) : 5
+def nested_false(c: Bool, x: Int) -> Int = c ? x : (x > 3 ? 1 : 2)
+def label(n: Int) -> String = n == 0 ? "zero" : "other"
+
+puts(pick(15))
+puts(nested_true(true, 7))
+puts(nested_true(true, 1))
+puts(nested_true(false, 7))
+puts(nested_false(true, 9))
+puts(nested_false(false, 9))
+puts(nested_false(false, 0))
+puts(label(0))
+puts(label(3))
