@@ -615,7 +615,13 @@ static inline DiamondVmStatus invoke_resolved_method_plain(DiamondVm *vm,
         uint8_t argc,size_t depth,DiamondValue *result) {
     DiamondValue args[DIAMOND_PLAIN_METHOD_ARGUMENTS+1];
     args[0]=self_value;
-    for(size_t i=0;i<argc;i++)args[i+1]=registers[(size_t)base+i];
+    /* At most seven values: copied one by one, since GCC would otherwise turn
+     * the loop into a memcpy call that costs more than the copy. The empty asm
+     * is what stops it. */
+    for(size_t i=0;i<argc;i++) {
+        args[i+1]=registers[(size_t)base+i];
+        __asm__ volatile("" : : "r"(args) : "memory");
+    }
     DiamondChunk scratch;
     const DiamondChunk *child=function_call_chunk(function_chunk,fn,&scratch);
     return jit_call_or_interpret(vm,fn,child,args,(size_t)argc+1,depth,nullptr,result);
