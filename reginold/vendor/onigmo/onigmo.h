@@ -359,12 +359,21 @@ int onigenc_ascii_only_case_map(OnigCaseFoldType* flagP, const OnigUChar** pp, c
 ONIG_EXTERN
 int onigenc_mbclen(const OnigUChar* p,const OnigUChar* e, const struct OnigEncodingTypeST* enc);
 
-#define ONIGENC_MBC_ENC_LEN(enc,p,e)           onigenc_mbclen(p,e,enc)
+/* reginold: an ASCII byte is a whole one-byte character in every encoding
+ * built here (UTF-8 and ASCII, both with a minimum length of 1), which is
+ * what onigenc_mbclen would answer after an indirect call. Arguments may
+ * be evaluated more than once; no caller passes one with side effects. */
+#define ONIGENC_MBC_ENC_LEN(enc,p,e) \
+  (((p) < (e) && *(p) < 0x80 && ONIGENC_MBC_MINLEN(enc) == 1) ? 1 : \
+   onigenc_mbclen(p,e,enc))
 #define ONIGENC_MBC_MAXLEN(enc)               ((enc)->max_enc_len)
 #define ONIGENC_MBC_MAXLEN_DIST(enc)           ONIGENC_MBC_MAXLEN(enc)
 #define ONIGENC_MBC_MINLEN(enc)               ((enc)->min_enc_len)
 #define ONIGENC_IS_MBC_NEWLINE(enc,p,end)      (enc)->is_mbc_newline((p),(end),enc)
-#define ONIGENC_MBC_TO_CODE(enc,p,end)         (enc)->mbc_to_code((p),(end),enc)
+/* reginold: likewise, an ASCII byte decodes to itself in both encodings. */
+#define ONIGENC_MBC_TO_CODE(enc,p,end) \
+  (((p) < (end) && *(p) < 0x80 && ONIGENC_MBC_MINLEN(enc) == 1) ? \
+   (OnigCodePoint)*(p) : (enc)->mbc_to_code((p),(end),enc))
 #define ONIGENC_CODE_TO_MBCLEN(enc,code)       (enc)->code_to_mbclen(code,enc)
 #define ONIGENC_CODE_TO_MBC(enc,code,buf)      (enc)->code_to_mbc(code,buf,enc)
 #define ONIGENC_PROPERTY_NAME_TO_CTYPE(enc,p,end) \

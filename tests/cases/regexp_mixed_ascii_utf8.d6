@@ -1,0 +1,15 @@
+# Matching steps over ASCII bytes without asking the encoding, and over
+# anything else with it. Text mixing the two must match exactly as before:
+# group boundaries land on character boundaries, `.` takes a whole
+# multibyte character, and \w (ASCII word characters only) stops at é.
+puts(Regexp.new("(\\w+) (\\w+)").match("héllo wörld"))
+puts(Regexp.new("^(.)(.)(.)$").match("aé🙂"))
+puts(Regexp.new("b(.)d").match("abéd and bxd"))
+puts(Regexp.new("[a-z]+").match("ÄÖÜabc"))
+puts(Regexp.new("(\\d+)€").match("price: 42€"))
+puts(Regexp.new("\\bcafé\\b").match?("un café noir"))
+puts(Regexp.new("CAFÉ", 1).match("café"))
+puts(Regexp.new("é+").match("aééé!"))
+puts("naïve résumé".gsub(Regexp.new("[éï]"), "_"))
+puts("a1→b2→c3".scan(Regexp.new("\\w\\d")))
+puts("α,β;γ".split(Regexp.new("[,;]")))
