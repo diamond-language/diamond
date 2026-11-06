@@ -4,6 +4,18 @@ d6 is currently pre-release. This file records user-visible capability
 milestones rather than every implementation step; the Git history remains the
 authoritative fine-grained record.
 
+## Unreleased
+
+### Changed
+
+- **Cheaper getter and setter calls.** A call site that keeps reaching the same `attr_reader`,
+  `attr_writer` or `attr_accessor` method on the same class now remembers that it is one, and
+  later calls read or write the field after a class check and a value check, skipping the method
+  lookup's per-call checks. Typed and untyped receivers both benefit, and errors (a wrong-typed
+  value, a frozen receiver) are the same as before. The n-body simulation runs about 13% fewer
+  instructions (8% fewer cycles), building and walking trees 5% fewer cycles, and struct- and
+  object-heavy code 2-5% fewer.
+
 ## 0.27.0 — 2026-11-05
 
 ### Changed

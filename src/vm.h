@@ -1754,9 +1754,35 @@ typedef enum DiamondVmStatus : uint8_t {
     DIAMOND_VM_RESOURCE_EXHAUSTED,
 } DiamondVmStatus;
 
+/* What diamond_mono_invoke learned about a monomorphic site's method the
+ * first time it ran it (DiamondMethodCacheEntry.shortcut). A new entry is
+ * zeroed, so it starts UNKNOWN. */
+enum {
+    DIAMOND_SHORTCUT_UNKNOWN,
+    DIAMOND_SHORTCUT_NONE,
+    DIAMOND_SHORTCUT_GETTER,
+    DIAMOND_SHORTCUT_SETTER,
+};
+/* The value check a getter or setter shortcut makes: none for an untyped
+ * accessor, a kind test for a lone Int or Float, and otherwise the full
+ * shortcut_type_matches walk on the method's own type set. */
+enum {
+    DIAMOND_SHORTCUT_CHECK_NONE,
+    DIAMOND_SHORTCUT_CHECK_INT,
+    DIAMOND_SHORTCUT_CHECK_FLOAT,
+    DIAMOND_SHORTCUT_CHECK_FULL,
+};
+
 typedef struct DiamondMethodCacheEntry {
     const DiamondClass *receiver_class;
     const DiamondMethod *method;
+    /* For diamond_mono_invoke only: DIAMOND_SHORTCUT_*, the accessor's
+     * field and its DIAMOND_SHORTCUT_CHECK_*. Everything the hit path would
+     * otherwise re-derive per call (visibility, arity, the exception field
+     * names, the accessor's body) is fixed for one site and one method. */
+    uint8_t shortcut;
+    uint8_t shortcut_field;
+    uint8_t shortcut_check;
 } DiamondMethodCacheEntry;
 
 typedef struct DiamondMethodCache {
