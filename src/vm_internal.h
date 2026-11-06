@@ -1604,9 +1604,12 @@ DIAMOND_INTERNAL DiamondVmStatus invoke_resolved_method_helper(DiamondVm *vm,
 /* Fills a DiamondAccessor from a function's body (src/vm_calls.c). */
 DIAMOND_INTERNAL DiamondAccessor diamond_decode_accessor(const DiamondFunction *fn);
 
-DIAMOND_INTERNAL bool diamond_mono_accessor_shortcut(DiamondVm *vm,const uint8_t *site,
-        const DiamondStringConstant *method_name,const DiamondValue *registers,
-        uint16_t recv,uint16_t base,uint8_t argc,DiamondValue *result);
+/* diamond_mono_invoke's answer when the site's cache cannot make the call.
+ * Never a real status: it does not leave run_chunk. */
+#define DIAMOND_VM_NOT_CACHED ((DiamondVmStatus)UINT8_MAX)
+DIAMOND_INTERNAL DiamondVmStatus diamond_mono_invoke(DiamondVm *vm,const DiamondChunk *chunk,
+        const DiamondValue *registers,const uint8_t *site,size_t depth,
+        DiamondValue *result);
 
 DIAMOND_INTERNAL DiamondVmStatus diamond_jit_super_call(DiamondVm *vm, const DiamondChunk *chunk,
         uint16_t owner_index, uint16_t name, DiamondValue *registers, uint16_t base,

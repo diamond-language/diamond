@@ -2346,16 +2346,20 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 }
                 if((size_t)name>=chunk->string_count) VM_RETURN(DIAMOND_VM_TYPE_ERROR);
                 const DiamondStringConstant *method_name=&chunk->strings[name];
-                /* A warm site calling an attr getter or setter: the field
-                 * read or write, before any of the checks below. */
+                /* A warm site on an Instance: the cached method, called before
+                 * any of the checks below (diamond_mono_invoke). */
                 if((DiamondOpCode)instruction==DIAMOND_OP_INVOKE_MONO&&
                    registers[recv].kind==DIAMOND_VALUE_OBJECT&&
                    registers[recv].as.object->kind==DIAMOND_OBJECT_INSTANCE) {
-                    DiamondValue accessor_result;
-                    if(diamond_mono_accessor_shortcut(vm,bytecode+instruction_offset,
-                           method_name,registers,recv,base,argc,&accessor_result)) {
-                        registers[dest]=accessor_result;
+                    DiamondValue mono_result;
+                    const DiamondVmStatus mono_status=diamond_mono_invoke(vm,chunk,
+                        registers,bytecode+instruction_offset,depth,&mono_result);
+                    if(mono_status==DIAMOND_VM_OK) {
+                        registers[dest]=mono_result;
                         DISPATCH_NEXT();
+                    }
+                    if(mono_status!=DIAMOND_VM_NOT_CACHED) {
+                        VM_PROPAGATE(mono_status);
                     }
                 }
                 /* Array/Hash/String #length and Array#push first: none of the
