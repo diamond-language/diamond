@@ -28,7 +28,10 @@ authoritative fine-grained record.
   a method call's arguments are copied without a library call. A method call costs about 150 fewer
   instructions. Closures and object-heavy code run about 8% fewer instructions, struct-heavy code
   4%, exceptions 6% and an n-body simulation 4%. The call-site caches are now 8-way, so a program
-  whose hot call sites happen to share a set no longer evicts one on every pass.
+  whose hot call sites happen to share a set no longer evicts one on every pass. Reading an
+  instance variable no longer makes a function call (polymorphic shape code 4% fewer
+  instructions), and a body ending in a ternary returns a parameter or local from its true branch
+  without copying it first (recursive `fib` 3% fewer).
 
 ## 0.26.0 — 2026-11-05
 
