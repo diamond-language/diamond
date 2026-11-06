@@ -1966,9 +1966,9 @@ DiamondVmStatus diamond_jit_set_ivar(DiamondVm *vm, const uint8_t *site,
     return DIAMOND_VM_OK;
 }
 
-/* JIT trampoline for DIAMOND_OP_GET_IVAR, shared with the interpreter's
- * own case like diamond_jit_set_ivar above (and, like it, with `site`
- * unused). Unlike SET_IVAR, this can never allocate or invoke user code (no
+/* JIT trampoline for DIAMOND_OP_GET_IVAR (`site` unused). The interpreter's
+ * case makes the same checks and read inline, since that is all this does;
+ * keep the two alike. Unlike SET_IVAR, this can never allocate or invoke user code (no
  * operator overload exists for plain field access), so its caller in
  * jit.c needs neither a DiamondFrame nor jc->has_called. */
 DiamondVmStatus diamond_jit_get_ivar(DiamondVm *vm, const uint8_t *site,
