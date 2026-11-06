@@ -56,6 +56,15 @@ rb_enc_asciicompat(OnigEncoding enc)
     (rb_enc_asciicompat(enc) ? (ISALNUM(*s) || *s=='_') : \
    onigenc_ascii_is_code_ctype( \
         ONIGENC_MBC_TO_CODE(enc,s,end),ONIGENC_CTYPE_WORD,enc))
+#else
+/* reginold: the same shortcut as Ruby's build above, by table lookup, for
+ * an ASCII byte in an ASCII-compatible encoding (every one built here). */
+# undef ONIGENC_IS_MBC_ASCII_WORD
+# define ONIGENC_IS_MBC_ASCII_WORD(enc,s,end) \
+    ((ONIGENC_MBC_MINLEN(enc) == 1 && *(s) < 0x80) ? \
+     ONIGENC_IS_ASCII_CODE_CTYPE(*(s), ONIGENC_CTYPE_WORD) : \
+     onigenc_ascii_is_code_ctype( \
+        ONIGENC_MBC_TO_CODE(enc,s,end),ONIGENC_CTYPE_WORD,enc))
 #endif /* RUBY */
 
 #ifdef USE_CRNL_AS_LINE_TERMINATOR

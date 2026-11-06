@@ -21,6 +21,9 @@ authoritative fine-grained record.
   nursery's worth of memory. `Regexp#match` also collects its group positions on the stack and
   builds its result Array at its final size. Text processing runs about 34% fewer cycles, regular
   expressions 28%, Hash-heavy code 23%, String building 20% and exception handling 17%.
+- **Faster regular expressions on ASCII text.** The matcher steps over an ASCII character and
+  tests `\w` against it without asking the UTF-8 decoder, which it used to call for every
+  character. Results are unchanged for all text; mostly-ASCII input matches about 15% faster.
 
 ## 0.27.0 — 2026-11-05
 
