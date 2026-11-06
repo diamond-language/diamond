@@ -838,7 +838,21 @@ static inline DiamondChunk plain_call_chunk(const DiamondFunction *function,
     };
 }
 
-/* The chunk a plain CALL of `function` runs in. A function calling itself
+/* plain_call_chunk(fn, function_chunk) without building it: fn->call_chunk,
+ * which diamond_vm_run fills for the program it runs, when function_chunk
+ * carries that program's tables. Otherwise it is built into `scratch`. The
+ * entry_check test catches a DiamondFunction copied from another one. */
+static inline const DiamondChunk *function_call_chunk(const DiamondChunk *function_chunk,
+        const DiamondFunction *fn,DiamondChunk *scratch) {
+    if(__builtin_expect(fn->call_chunk.functions==function_chunk->functions&&
+                        fn->call_chunk.entry_check==&fn->entry_check,1))
+        return &fn->call_chunk;
+    *scratch=plain_call_chunk(fn,function_chunk);
+    return scratch;
+}
+
+/* The chunk a plain CALL of `function` runs in. Usually the cached one
+ * (function_call_chunk). Otherwise a function calling itself
  * (recursion) already runs in exactly that chunk: every builder takes the
  * function's own fields from the function, and the tables come from the
  * caller either way, so the caller's chunk is reused instead of building
@@ -848,6 +862,9 @@ static inline DiamondChunk plain_call_chunk(const DiamondFunction *function,
  * through their chunk pointer, and nothing compares chunk pointers. */
 static inline const DiamondChunk *plain_call_chunk_for(const DiamondFunction *function,
         const DiamondChunk *caller, DiamondChunk *storage) {
+    if (__builtin_expect(function->call_chunk.functions == caller->functions &&
+                         function->call_chunk.entry_check == &function->entry_check, 1))
+        return &function->call_chunk;
     if (caller->code == function->code && caller->modules == nullptr &&
         caller->range_class_index == 0 && caller->type_variable_bindings == nullptr)
         return caller;

@@ -634,21 +634,9 @@ static inline DiamondVmStatus invoke_resolved_method_plain(DiamondVm *vm,
     DiamondValue args[DIAMOND_PLAIN_METHOD_ARGUMENTS+1];
     args[0]=self_value;
     for(size_t i=0;i<argc;i++)args[i+1]=registers[(size_t)base+i];
-    const DiamondChunk child={.name=fn->name,.code=fn->code,
-      .lines=fn->lines,.columns=fn->columns,.code_count=fn->code_count,
-      .constants=fn->constants,.constant_count=fn->constant_count,
-      .strings=fn->strings,.string_count=fn->string_count,
-      .type_sets=fn->type_sets,.type_set_count=fn->type_set_count,
-      .functions=function_chunk->functions,.function_count=function_chunk->function_count,
-      .classes=function_chunk->classes,.class_count=function_chunk->class_count,
-      .interfaces=function_chunk->interfaces,.interface_count=function_chunk->interface_count,
-      .parameter_type_sets=fn->parameter_type_sets,
-      .type_variable_count=fn->type_variable_count,
-      .class_type_variable=fn->class_type_variable,
-        .binding_owner_plus_one=(uint16_t)(fn->owner_class+1u),
-      .parameter_offset=fn->owner_class==DIAMOND_OWNER_NONE?0:1,
-      .entry_check=&fn->entry_check,.register_count=fn->register_count,.has_variadic=fn->has_variadic};
-    return jit_call_or_interpret(vm,fn,&child,args,(size_t)argc+1,depth,nullptr,result);
+    DiamondChunk scratch;
+    const DiamondChunk *child=function_call_chunk(function_chunk,fn,&scratch);
+    return jit_call_or_interpret(vm,fn,child,args,(size_t)argc+1,depth,nullptr,result);
 }
 
 /* Calls `method` on `self_value` with the caller's registers[base..base+argc)

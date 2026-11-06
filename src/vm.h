@@ -1251,6 +1251,56 @@ typedef struct DiamondAccessor {
     uint16_t set;
 } DiamondAccessor;
 
+struct DiamondChunk {
+    const char *name;
+    const uint8_t *code;
+    const uint32_t *lines;
+    const uint32_t *columns;
+    size_t code_count;
+    const DiamondValue *constants;
+    size_t constant_count;
+    const DiamondStringConstant *strings;
+    size_t string_count;
+    const DiamondTypeSet *type_sets;
+    size_t type_set_count;
+    struct DiamondFunction *const *functions;
+    size_t function_count;
+    DiamondClass *const *classes;
+    size_t class_count;
+    DiamondInterface *const *interfaces;
+    size_t interface_count;
+    DiamondModule *const *modules;
+    size_t module_count;
+    const uint16_t *parameter_type_sets;
+    uint8_t type_variable_count;
+    uint8_t class_type_variable;
+    /* Zero for entry/synthetic chunks; otherwise the method owner + 1. */
+    uint16_t binding_owner_plus_one;
+    uint8_t parameter_offset;
+    const DiamondTypeBinding *type_variable_bindings;
+    uint16_t register_count;
+    /* Mirrors DiamondFunction/DiamondMethod.has_variadic for whichever
+     * function/method run_chunk is currently executing -- omitted (so
+     * false) at every DiamondChunk literal that isn't a real, possibly-
+     * variadic user function/method dispatch (Fiber/Thread bootstrap,
+     * ProgramBuilder-adopted programs, the top-level program entry,
+     * etc.), which is every construction site except the handful of
+     * actual call/invoke opcode handlers in src/vm.c. */
+    bool has_variadic;
+    /* Index into `classes` of the class named "Range" (lib/core.d6),
+     * resolved once at the end of diamond_compile (by name, never
+     * hardcoded -- confirmed directly that its index can shift with
+     * conservative prelude module selection, so nothing may assume a
+     * fixed value), UINT8_MAX if not found (a scratch/partial compile
+     * without the prelude). DIAMOND_OP_INDEX_GET/SET's only reason for
+     * existing -- recognizing a Range receiver for arr[range] slicing
+     * without a native VM value kind for Range at all. */
+    uint16_t range_class_index;
+    /* The running function's DiamondFunction.entry_check, or nullptr where a
+     * chunk builder does not set it (no shortcut: the checks run). */
+    const DiamondEntryCheck *entry_check;
+};
+
 typedef struct DiamondFunction {
     char name[DIAMOND_MAX_FUNCTION_NAME];
     /* 1-based source position of the function/method's own name token
@@ -1501,6 +1551,11 @@ typedef struct DiamondFunction {
     /* Whether the body is a trivial field getter or setter, filled with
      * entry_check and valid once entry_check.computed (DiamondAccessor). */
     DiamondAccessor accessor;
+    /* The chunk a call into this function runs, built once per program by
+     * diamond_vm_run instead of on every call (function_call_chunk,
+     * src/vm_internal.h). Valid only while call_chunk.functions is the
+     * calling program's table and call_chunk.entry_check points back here. */
+    DiamondChunk call_chunk;
 } DiamondFunction;
 
 /* arity/required_arity above count an implicit self slot for a genuine
@@ -1540,56 +1595,6 @@ static inline bool diamond_block_ignores_arguments(const DiamondClosure *closure
     return closure!=nullptr&&closure->is_block&&!fn->has_variadic&&
         fn->arity==diamond_function_self_offset(fn);
 }
-
-struct DiamondChunk {
-    const char *name;
-    const uint8_t *code;
-    const uint32_t *lines;
-    const uint32_t *columns;
-    size_t code_count;
-    const DiamondValue *constants;
-    size_t constant_count;
-    const DiamondStringConstant *strings;
-    size_t string_count;
-    const DiamondTypeSet *type_sets;
-    size_t type_set_count;
-    DiamondFunction *const *functions;
-    size_t function_count;
-    DiamondClass *const *classes;
-    size_t class_count;
-    DiamondInterface *const *interfaces;
-    size_t interface_count;
-    DiamondModule *const *modules;
-    size_t module_count;
-    const uint16_t *parameter_type_sets;
-    uint8_t type_variable_count;
-    uint8_t class_type_variable;
-    /* Zero for entry/synthetic chunks; otherwise the method owner + 1. */
-    uint16_t binding_owner_plus_one;
-    uint8_t parameter_offset;
-    const DiamondTypeBinding *type_variable_bindings;
-    uint16_t register_count;
-    /* Mirrors DiamondFunction/DiamondMethod.has_variadic for whichever
-     * function/method run_chunk is currently executing -- omitted (so
-     * false) at every DiamondChunk literal that isn't a real, possibly-
-     * variadic user function/method dispatch (Fiber/Thread bootstrap,
-     * ProgramBuilder-adopted programs, the top-level program entry,
-     * etc.), which is every construction site except the handful of
-     * actual call/invoke opcode handlers in src/vm.c. */
-    bool has_variadic;
-    /* Index into `classes` of the class named "Range" (lib/core.d6),
-     * resolved once at the end of diamond_compile (by name, never
-     * hardcoded -- confirmed directly that its index can shift with
-     * conservative prelude module selection, so nothing may assume a
-     * fixed value), UINT8_MAX if not found (a scratch/partial compile
-     * without the prelude). DIAMOND_OP_INDEX_GET/SET's only reason for
-     * existing -- recognizing a Range receiver for arr[range] slicing
-     * without a native VM value kind for Range at all. */
-    uint16_t range_class_index;
-    /* The running function's DiamondFunction.entry_check, or nullptr where a
-     * chunk builder does not set it (no shortcut: the checks run). */
-    const DiamondEntryCheck *entry_check;
-};
 
 typedef enum DiamondVmStatus : uint8_t {
     DIAMOND_VM_OK,
