@@ -350,9 +350,11 @@ DIAMOND_INTERNAL DiamondVmStatus call_closure_helper(DiamondVm *vm,const Diamond
  * times with the same argument count (Array#map/#select): block_call_prepare
  * checks the arity and builds the block's chunk once, block_call_run makes
  * each call. A prepared call is valid while `chunk`'s tables and the closure
- * are; its `child` points into the block's function, never at the caller. */
+ * are. Its `child` is the block function's call_chunk or `child_storage`,
+ * never the caller's chunk, so a prepared call is not copied. */
 typedef struct {
-    DiamondChunk child;
+    DiamondChunk child_storage;
+    const DiamondChunk *child;
     const DiamondClosure *called;
     uint8_t argc;
     bool self_slot;

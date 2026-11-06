@@ -720,25 +720,13 @@ DiamondVmStatus run_instance_string_method(DiamondVm *vm,size_t depth,
     const DiamondChunk *function_chunk=
         method->source_chunk!=nullptr?method->source_chunk:owner;
     const DiamondFunction *fn=function_chunk->functions[method->function_index];
-    const DiamondChunk child={.name=fn->name,.code=fn->code,
-      .lines=fn->lines,.columns=fn->columns,.code_count=fn->code_count,
-      .constants=fn->constants,.constant_count=fn->constant_count,
-      .strings=fn->strings,.string_count=fn->string_count,
-      .type_sets=fn->type_sets,.type_set_count=fn->type_set_count,
-      .functions=function_chunk->functions,.function_count=function_chunk->function_count,
-      .classes=function_chunk->classes,.class_count=function_chunk->class_count,
-      .interfaces=function_chunk->interfaces,.interface_count=function_chunk->interface_count,
-      .parameter_type_sets=fn->parameter_type_sets,
-      .type_variable_count=fn->type_variable_count,
-      .class_type_variable=fn->class_type_variable,
-        .binding_owner_plus_one=(uint16_t)(fn->owner_class+1u),
-      .parameter_offset=fn->owner_class==DIAMOND_OWNER_NONE?0:1,
-      .entry_check=&fn->entry_check,.register_count=fn->register_count,.has_variadic=fn->has_variadic};
+    DiamondChunk child_storage;
+    const DiamondChunk *child=function_call_chunk(function_chunk,fn,&child_storage);
     DiamondValue args[1+DIAMOND_MAX_BOUND_VALUES]={value};
     for(size_t i=0;i<method->bound_value_count;i++)
         args[1+i]=method->bound_values[i];
     DiamondValue converted=DIAMOND_NIL;
-    DiamondVmStatus status=run_chunk(&child,vm,args,
+    DiamondVmStatus status=run_chunk(child,vm,args,
                                       (size_t)1+method->bound_value_count,
                                       depth+1,nullptr,&converted);
     if(status!=DIAMOND_VM_OK)return status;

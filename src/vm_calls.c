@@ -61,19 +61,7 @@ DiamondVmStatus block_call_prepare(const DiamondChunk *chunk,
     if(arity_check_count<fn->required_arity||
        (arity_check_count>fn->arity && !fn->has_variadic))
         return DIAMOND_VM_ARITY_ERROR;
-    call->child=(DiamondChunk){.name=fn->name,.code=fn->code,.lines=fn->lines,
-      .columns=fn->columns,.code_count=fn->code_count,.constants=fn->constants,
-      .constant_count=fn->constant_count,.strings=fn->strings,.string_count=fn->string_count,
-      .type_sets=fn->type_sets,.type_set_count=fn->type_set_count,
-      .functions=chunk->functions,.function_count=chunk->function_count,
-      .classes=chunk->classes,.class_count=chunk->class_count,
-      .interfaces=chunk->interfaces,.interface_count=chunk->interface_count,
-      .parameter_type_sets=fn->parameter_type_sets,
-      .type_variable_count=fn->type_variable_count,
-      .class_type_variable=fn->class_type_variable,
-        .binding_owner_plus_one=(uint16_t)(fn->owner_class+1u),
-      .parameter_offset=fn->owner_class==DIAMOND_OWNER_NONE?0:1,
-      .entry_check=&fn->entry_check,.register_count=fn->register_count,.has_variadic=fn->has_variadic};
+    call->child=function_call_chunk(chunk,fn,&call->child_storage);
     call->called=called;
     call->argc=argc;
     call->self_slot=needs_self_slot;
@@ -83,7 +71,7 @@ DiamondVmStatus block_call_prepare(const DiamondChunk *chunk,
 DiamondVmStatus block_call_run(DiamondVm *vm,const DiamondBlockCall *call,
         const DiamondValue *arguments,size_t depth,DiamondValue *result) {
     if(!call->self_slot)
-        return run_chunk(&call->child,vm,arguments,call->argc,depth+1,
+        return run_chunk(call->child,vm,arguments,call->argc,depth+1,
             call->called,result);
     /* No argc>DIAMOND_MAX_ARGUMENTS guard needed here: argc is a plain
      * uint8_t (the wire format's own argument-count width), so it can
@@ -93,7 +81,7 @@ DiamondVmStatus block_call_run(DiamondVm *vm,const DiamondBlockCall *call,
     call_arguments[0]=DIAMOND_NIL;
     for(size_t index=0;index<call->argc;index++)
         call_arguments[index+1]=arguments[index];
-    return run_chunk(&call->child,vm,call_arguments,(size_t)call->argc+1,
+    return run_chunk(call->child,vm,call_arguments,(size_t)call->argc+1,
         depth+1,call->called,result);
 }
 
@@ -599,22 +587,16 @@ static DiamondVmStatus invoke_resolved_method_general(DiamondVm *vm,
         bind_context_set(binding,0,caller_chunk,
             caller_chunk->type_sets,type_arguments[index]);
     }
-    const DiamondChunk child={.name=fn->name,.code=fn->code,
-      .lines=fn->lines,.columns=fn->columns,.code_count=fn->code_count,
-      .constants=fn->constants,.constant_count=fn->constant_count,
-      .strings=fn->strings,.string_count=fn->string_count,
-      .type_sets=fn->type_sets,.type_set_count=fn->type_set_count,
-      .functions=function_chunk->functions,.function_count=function_chunk->function_count,
-      .classes=function_chunk->classes,.class_count=function_chunk->class_count,
-      .interfaces=function_chunk->interfaces,.interface_count=function_chunk->interface_count,
-      .parameter_type_sets=fn->parameter_type_sets,
-      .type_variable_count=fn->type_variable_count,
-      .class_type_variable=fn->class_type_variable,
-        .binding_owner_plus_one=(uint16_t)(fn->owner_class+1u),
-      .parameter_offset=fn->owner_class==DIAMOND_OWNER_NONE?0:1,
-      .type_variable_bindings=type_argument_count==0?nullptr:explicit_bindings,
-      .entry_check=&fn->entry_check,.register_count=fn->register_count,.has_variadic=fn->has_variadic};
-    return jit_call_or_interpret(vm,fn,&child,args,total_args,depth,nullptr,result);
+    DiamondChunk child_storage;
+    const DiamondChunk *child;
+    if(type_argument_count==0) {
+        child=function_call_chunk(function_chunk,fn,&child_storage);
+    } else {
+        child_storage=plain_call_chunk(fn,function_chunk);
+        child_storage.type_variable_bindings=explicit_bindings;
+        child=&child_storage;
+    }
+    return jit_call_or_interpret(vm,fn,child,args,total_args,depth,nullptr,result);
 }
 
 /* Methods with at most this many arguments, called without type arguments or
@@ -1435,21 +1417,9 @@ DiamondVmStatus call_closure_spread_helper(DiamondVm *vm,
             padded[index+1]=spread->values[index];
         arguments=padded;argument_count++;
     }
-    const DiamondChunk child={.name=fn->name,.code=fn->code,.lines=fn->lines,
-      .columns=fn->columns,.code_count=fn->code_count,.constants=fn->constants,
-      .constant_count=fn->constant_count,.strings=fn->strings,
-      .string_count=fn->string_count,.type_sets=fn->type_sets,
-      .type_set_count=fn->type_set_count,.functions=chunk->functions,
-      .function_count=chunk->function_count,.classes=chunk->classes,
-      .class_count=chunk->class_count,.interfaces=chunk->interfaces,
-      .interface_count=chunk->interface_count,
-      .parameter_type_sets=fn->parameter_type_sets,
-      .type_variable_count=fn->type_variable_count,
-      .class_type_variable=fn->class_type_variable,
-        .binding_owner_plus_one=(uint16_t)(fn->owner_class+1u),
-      .parameter_offset=fn->owner_class==DIAMOND_OWNER_NONE?0:1,
-      .entry_check=&fn->entry_check,.register_count=fn->register_count,.has_variadic=fn->has_variadic};
-    const DiamondVmStatus status=run_chunk(&child,vm,arguments,argument_count,
+    DiamondChunk child_storage;
+    const DiamondChunk *child=function_call_chunk(chunk,fn,&child_storage);
+    const DiamondVmStatus status=run_chunk(child,vm,arguments,argument_count,
         depth+1,called,result);
     free(padded);return status;
 }
