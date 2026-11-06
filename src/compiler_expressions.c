@@ -897,9 +897,21 @@ uint16_t parse_prefix(Compiler *compiler) {
                     const DiamondClass *class=compiler->program->classes[
                         (size_t)compiler->current_class];
                     if(class->discovered_field_type_status[(size_t)field]==1)
-                        compiler->known_types[destination]=(uint8_t)(
+                        compiler->known_types[destination]=(uint16_t)(
                             DIAMOND_TYPE_CLASS_BASE+
                             class->discovered_field_known_class[(size_t)field]);
+                    /* An Int or Float field (compute_scalar_field_facts)
+                     * read through self, when self is known to be an
+                     * instance of this class: never inside a singleton
+                     * method or a closure, where register 0 is not that. */
+                    const uint64_t bit=UINT64_C(1)<<((size_t)field%64);
+                    if(compiler->known_types[0]==
+                       DIAMOND_TYPE_CLASS_BASE+compiler->current_class) {
+                        if(class->scalar_int_fields[(size_t)field/64]&bit)
+                            compiler->known_types[destination]=DIAMOND_TYPE_INT;
+                        else if(class->scalar_float_fields[(size_t)field/64]&bit)
+                            compiler->known_types[destination]=DIAMOND_TYPE_FLOAT;
+                    }
                 }
             }
             if(compiler->current.kind==DIAMOND_TOKEN_LEFT_PAREN)

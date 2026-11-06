@@ -1,0 +1,20 @@
+# A method compiled and installed at run time writes @value.
+class Counter
+  def initialize()
+    @value = 1
+  end
+
+  def value() -> Int = @value
+end
+
+Counter.define_method("spoil", Counter.compile_method("spoil", [], "@value = \"text\"", {}))
+
+counter = Counter.new()
+puts(counter.value())
+counter.spoil()
+begin
+  counter.value()
+  puts("compile_method write: no error")
+rescue TypeError
+  puts("compile_method write: TypeError")
+end

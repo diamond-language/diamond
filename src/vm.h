@@ -764,6 +764,19 @@ enum { DIAMOND_CLASS_FROM_SELF = 0xFFFF };
  * every real class index (class operands and indices are 16 bits). */
 enum { DIAMOND_NO_CLASS = UINT16_MAX };
 
+/* DiamondClass.field_type_status values. A field starts UNSEEN; the first
+ * write sets CLASS, INT or FLOAT; any write that disagrees, or stores a
+ * value of no single known type, makes it MIXED for good. */
+typedef enum DiamondFieldFact : uint8_t {
+    DIAMOND_FIELD_UNSEEN,
+    DIAMOND_FIELD_CLASS,
+    DIAMOND_FIELD_MIXED,
+    DIAMOND_FIELD_INT,
+    DIAMOND_FIELD_FLOAT,
+} DiamondFieldFact;
+
+static_assert(DIAMOND_MAX_FIELDS <= 256, "scalar field masks hold 256 bits");
+
 /* DiamondFunction.owner_class is a real class index for a method, or one of
  * these sentinels: NONE for a plain function, MODULE for a module method,
  * CAPTURED_SELF for a closure that gets `self` through its captures. */
@@ -1114,8 +1127,10 @@ struct DiamondClass {
     char (*fields)[DIAMOND_MAX_FUNCTION_NAME];
     size_t field_count;
     size_t field_capacity;
-    /* LSP-only conservative receiver metadata: 0 unseen, 1 every compiled
-     * assignment agreed on field_known_class, 2 unknown/conflicting. */
+    /* What every compiled assignment to a field stored, one
+     * DiamondFieldFact per field. DIAMOND_FIELD_CLASS keeps the class in
+     * field_known_class; INT and FLOAT feed scalar_int_fields/
+     * scalar_float_fields below. */
     uint8_t *field_type_status;
     uint16_t *field_known_class;
     /* Final field facts from the declaration-discovery pass. Unlike the
@@ -1135,6 +1150,12 @@ struct DiamondClass {
      * flight may still hold a DiamondMethod pointer into one. */
     DiamondMethod **retired_methods;
     size_t retired_method_count;
+    /* Bit `field` set: every read of that field yields an Int (or a
+     * Float). Computed once from the discovery pass's tables by
+     * compute_scalar_field_facts (src/compiler_program.c), which lists the
+     * conditions; read by the real pass's GET_IVAR and generated readers. */
+    uint64_t scalar_int_fields[4];
+    uint64_t scalar_float_fields[4];
     /* Inline, unlike the tables above: instances and inline caches point
      * at these entries, so they must never move. */
     DiamondShape shapes[DIAMOND_MAX_FIELDS + 1];

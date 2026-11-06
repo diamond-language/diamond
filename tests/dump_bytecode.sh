@@ -56,6 +56,23 @@ DIAMOND_DEBUG_BREAKPOINTS='' "$diamond" --dump-bytecode=user -e 'def app() = 42;
 [[ "$(grep -c '^== ' "$work/debug")" == 2 ]]
 [[ "$(tail -1 "$work/debug")" == 42 ]]
 
+# Proven Int/Float fields (tests/cases/typed_fields_proven.d6): readers are
+# plain getters with no return check, and Int arithmetic on them uses the
+# Int forms, including through calls to methods defined further down.
+"$diamond" --dump-bytecode=user tests/cases/typed_fields_proven.d6 > "$work/typed"
+function_body() { awk -v name="== $1 ==" '$0==name{on=1;next} /^== /{on=0} on' "$work/typed"; }
+for name in x y mass vx; do
+    [[ "$(function_body "$name" | grep -c '^[0-9]')" == 2 ]]
+done
+function_body dot | grep -q 'MULTIPLY_INT'
+function_body dot | grep -q 'ADD_INT'
+! function_body dot | grep -q 'CHECK_TYPE'
+! function_body momentum | grep -q 'CHECK_TYPE'
+! function_body total | grep -q 'CHECK_TYPE'
+"$diamond" --dump-bytecode=user tests/cases/typed_fields_unproven.d6 > "$work/typed"
+function_body value | grep -q 'CHECK_TYPE'
+function_body peek | grep -q 'CHECK_TYPE'
+
 status=0
 "$diamond" --dump-bytecode=bogus -e 1 >/dev/null 2>&1 || status=$?
 [[ "$status" == 64 ]]

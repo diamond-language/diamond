@@ -53,6 +53,13 @@ typedef struct DiamondProgram {
      * a reused DiamondProgram (tests/run_cases.c's own batch loop) starts
      * fresh each compile, never inheriting a previous program's flag. */
     bool uses_redefine_method;
+    /* Writes to instance fields the compiler cannot attribute to a class
+     * field: define_method/compile_method/redefine_method install code at
+     * run time, and SET_IVAR_NAME (module methods and attributes) writes a
+     * field by name into whatever class includes the module. Either one
+     * turns compute_scalar_field_facts off for the whole program. */
+    bool uses_dynamic_methods;
+    bool writes_fields_by_name;
 } DiamondProgram;
 
 typedef struct DiamondDiagnostic {

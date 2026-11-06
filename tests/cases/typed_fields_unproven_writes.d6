@@ -1,0 +1,46 @@
+# A closure inside a method writes a String: every write counts.
+class ClosureWrite
+  def initialize()
+    @value = 1
+  end
+
+  def spoil()
+    [1].each() do |item|
+      @value = "text"
+    end
+  end
+
+  def value() -> Int = @value
+end
+
+# Int and Float writes to one field: neither fact holds.
+class Mixed
+  def initialize()
+    @value = 1
+  end
+
+  def make_float()
+    @value = 1.5
+  end
+
+  def value() -> Int = @value
+end
+
+c = ClosureWrite.new()
+c.spoil()
+begin
+  c.value()
+  puts("closure write: no error")
+rescue TypeError
+  puts("closure write: TypeError")
+end
+
+m = Mixed.new()
+puts(m.value() + 1)
+m.make_float()
+begin
+  m.value()
+  puts("mixed: no error")
+rescue TypeError
+  puts("mixed: TypeError")
+end

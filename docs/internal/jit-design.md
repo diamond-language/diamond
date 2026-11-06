@@ -1923,6 +1923,38 @@ path and a later conflicting-write rejection. The release benchmark
 3.90–4.73s JIT compiled across three alternating runs, about a 49% reduction
 using the run averages.
 
+### Int and Float fields (interpreter, not JIT)
+
+The same table now also records Int and Float writes
+(`DiamondFieldFact` in `src/vm.h`). A class fact only needs every write to
+agree, because a wrong or nil receiver still fails the JIT's guard. An Int
+fact is used to drop return `CHECK_TYPE`s, so it must also hold for every
+read, including the nil a field holds before its first write.
+`compute_scalar_field_facts` (`src/compiler_program.c`) runs on the finished
+discovery pass and sets a field's bit in `scalar_int_fields` or
+`scalar_float_fields` only when:
+
+- every write stores an Int, or every write stores a Float;
+- the class's own `initialize` assigns the field before any instruction that
+  could call out (argument checks, default-argument jumps, constants and
+  stores only, and only past every forward jump);
+- the class has no subclasses, no ancestor declares the field, and it is
+  not an Exception;
+- the program never writes fields by name (module methods and attributes)
+  and never calls `define_method`, `compile_method` or `redefine_method`. The
+  prelude is compiled separately and used as a template, so
+  `tools/gen_compiled_prelude.c` refuses to build one that does either.
+
+A real-pass `GET_IVAR` through `self` then publishes `DIAMOND_TYPE_INT` or
+`DIAMOND_TYPE_FLOAT`. That fact selects the `*_INT` operators, which still fall
+back to the general operation for anything that is not a small Int. It also
+drops a matching return check, including the one in a generated
+`attr_reader x: Float`. Separately, a call on a known-class receiver to a method
+defined further down the class now publishes that method's declared return
+when it is a lone built-in type (`forward_builtin_return_type`,
+`src/compiler_names.c`). A class-typed return is skipped because discovery can
+still hold its Nil placeholder.
+
 ## Threading
 
 Every `Thread.new`/`gremlin_serve(threads: N)` worker gets its own

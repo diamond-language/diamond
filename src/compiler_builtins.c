@@ -24,6 +24,7 @@ static uint16_t parse_file_path_binary_call(Compiler *compiler,DiamondFilePathFu
 
 uint16_t parse_redefine_method_call(Compiler *compiler, int class_index) {
     advance_token(compiler); /* consume 'redefine_method' */
+    compiler->program->uses_dynamic_methods = true;
     if (compiler->current.kind != DIAMOND_TOKEN_LEFT_PAREN) {
         fail(compiler, compiler->current.span, "expected '(' after 'redefine_method'");
         return 0;
@@ -64,6 +65,7 @@ uint16_t parse_redefine_method_call(Compiler *compiler, int class_index) {
  * absent method slot, see vm.c's own handler comments for both). */
 uint16_t parse_define_method_call(Compiler *compiler, int class_index) {
     advance_token(compiler); /* consume 'define_method' */
+    compiler->program->uses_dynamic_methods = true;
     if (compiler->current.kind != DIAMOND_TOKEN_LEFT_PAREN) {
         fail(compiler, compiler->current.span, "expected '(' after 'define_method'");
         return 0;
@@ -109,6 +111,7 @@ uint16_t parse_define_method_call(Compiler *compiler, int class_index) {
  * otherwise the same shape. */
 uint16_t parse_compile_method_call(Compiler *compiler, int class_index) {
     advance_token(compiler); /* consume 'compile_method' */
+    compiler->program->uses_dynamic_methods = true;
     if (compiler->current.kind != DIAMOND_TOKEN_LEFT_PAREN) {
         fail(compiler, compiler->current.span, "expected '(' after 'compile_method'");
         return 0;
