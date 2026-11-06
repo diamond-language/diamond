@@ -177,6 +177,48 @@ reginold_search(const reginold_regex *re,
 }
 
 reginold_status
+reginold_search_spans(const reginold_regex *re,
+                      const char *bytes, size_t len,
+                      size_t start,
+                      reginold_span *spans, size_t capacity,
+                      size_t *group_count)
+{
+    const size_t groups = (size_t)re->engine->onig->num_mem + 1;
+    *group_count = groups;
+    if (groups > capacity) return REGINOLD_ERROR;
+
+    const UChar *str  = (const UChar *)bytes;
+    const UChar *end  = str + len;
+    const UChar *sptr = str + start;
+    MatchRegion scratch;
+    match_region_init(&scratch, re);
+
+    int r = regold_search(re->engine, str, end, sptr, end, &scratch.region,
+                          ONIG_OPTION_NONE);
+
+    reginold_status status;
+    if (r == ONIG_MISMATCH) {
+        status = REGINOLD_MISMATCH;
+    } else if (r < 0) {
+        status = REGINOLD_ERROR;
+    } else {
+        /* A region can report fewer registers than the pattern has groups
+         * (the NFA's Tier 1 fills only the overall match); the rest did
+         * not participate. */
+        const size_t filled = scratch.region.num_regs > 0
+            ? (size_t)scratch.region.num_regs : 0;
+        for (size_t i = 0; i < groups; i++) {
+            spans[i].beg = i < filled ? scratch.region.beg[i] : -1;
+            spans[i].end = i < filled ? scratch.region.end[i] : -1;
+        }
+        status = REGINOLD_OK;
+    }
+
+    match_region_free(&scratch);
+    return status;
+}
+
+reginold_status
 reginold_match_at(const reginold_regex *re,
                   const char *bytes, size_t len,
                   size_t at,

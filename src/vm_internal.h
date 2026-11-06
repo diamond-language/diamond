@@ -83,6 +83,32 @@ static inline int instance_pool_index(size_t field_count,bool generic) {
 #endif
 }
 
+/* DiamondVm.string_pool's list for a String of `length` bytes, or -1 when
+ * such a String is not pooled (too long, or under ASan, which should see
+ * every block freed). List i holds blocks of (i + 1) * 16 bytes. */
+static inline int string_pool_index(size_t length) {
+#if defined(__SANITIZE_ADDRESS__) || \
+    (defined(__has_feature) && __has_feature(address_sanitizer))
+    (void)length;
+    return -1;
+#else
+    if(length>DIAMOND_STRING_POOL_CLASSES*16)return -1;
+    const size_t units=(sizeof(DiamondString)+length+1+15)/16;
+    return units<=DIAMOND_STRING_POOL_CLASSES?(int)units-1:-1;
+#endif
+}
+
+/* Whether swept Array headers are kept in DiamondVm.array_pool (not under
+ * ASan, as above). */
+static inline bool array_pool_enabled(void) {
+#if defined(__SANITIZE_ADDRESS__) || \
+    (defined(__has_feature) && __has_feature(address_sanitizer))
+    return false;
+#else
+    return true;
+#endif
+}
+
 /* Types shared by the files split out of vm.c. */
 /* Native backing struct for DiamondChannelHandle (object.h) -- see docs/
  * threads.md's Channels section. Unlike DiamondThread (owned one-to-one

@@ -86,6 +86,10 @@ enum {
     /* Instances with at most this many fields and no type parameters are
      * pooled for reuse after a sweep (DiamondVm.instance_pool). */
     DIAMOND_INSTANCE_POOL_FIELDS = 8,
+    /* Strings whose block (header, characters and terminator, rounded up
+     * to 16 bytes) is at most this many 16-byte units are pooled the same
+     * way (DiamondVm.string_pool). */
+    DIAMOND_STRING_POOL_CLASSES = 8,
     /* The real ceiling: every wire-format argument/parameter count
      * (DIAMOND_OP_CALL's call_argument_count, INVOKE/NEW/SUPER's argc,
      * DiamondFunction/DiamondMethod's arity/required_arity, DiamondMethod's
@@ -2334,7 +2338,15 @@ struct DiamondVm {
      * stays within minor_gc_threshold_bytes, about one nursery's worth, and
      * is not counted in bytes_allocated. */
     DiamondObject *instance_pool[DIAMOND_INSTANCE_POOL_FIELDS+1];
-    size_t instance_pool_bytes;
+    /* The same for Strings, one list per 16-byte block size (see
+     * string_pool_index, vm_internal.h: allocate_string rounds a small
+     * String's block up so any block of its class can hold it), and for
+     * Array headers, which are all one size (their values live apart). */
+    DiamondObject *string_pool[DIAMOND_STRING_POOL_CLASSES];
+    DiamondObject *array_pool;
+    /* Bytes held by all three pools together, kept within
+     * minor_gc_threshold_bytes. */
+    size_t pool_bytes;
     /* Keep the site tables after VM control state, so their size does not
      * spread the dispatch counters, quickening/JIT flags and instruction
      * budgets across the tables' working set. */

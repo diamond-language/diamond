@@ -414,6 +414,57 @@ test_region_storage(void)
     }
 }
 
+/* reginold_search_spans agrees with reginold_search span for span, reports
+ * the group count on a mismatch, and refuses a buffer that is too small
+ * without writing to it. */
+static void
+test_search_spans(void)
+{
+    static const struct {
+        const char *pattern;
+        const char *subject;
+    } cases[] = {
+        {"b", "abc"},
+        {"(a)(b)(c)", "_abc"},
+        {"(a)(b)?(c)", "xac"},
+        {"^(\\w+)-(\\d+)@(\\w+)\\.com$", "user-42@site3.com"},
+        {"(?<year>\\d+)-(?<month>\\d+)", "on 2026-11"},
+        {"(é)(β)(🙂)", "xéβ🙂"},
+        {"(a)(b)(c)\\3", "abcc"},
+    };
+    printf("\nCaller-buffer spans:\n");
+    for (size_t i = 0; i < sizeof cases / sizeof cases[0]; i++) {
+        reginold_regex *re = compile_ok(cases[i].pattern);
+        if (!re) continue;
+        const size_t len = strlen(cases[i].subject);
+        reginold_match m = {0};
+        reginold_span spans[8];
+        size_t groups = 0;
+        int ok = reginold_search(re, cases[i].subject, len, 0, &m) == REGINOLD_OK &&
+            reginold_search_spans(re, cases[i].subject, len, 0, spans, 8, &groups) == REGINOLD_OK &&
+            groups == m.capture_count + 1 &&
+            spans[0].beg == m.overall.beg && spans[0].end == m.overall.end;
+        for (size_t g = 0; ok && g < m.capture_count; g++)
+            ok = spans[g + 1].beg == m.captures[g].beg &&
+                 spans[g + 1].end == m.captures[g].end;
+        reginold_span untouched[1] = {{.beg = 7, .end = 7}};
+        size_t needed = 0;
+        if (ok && groups > 1)
+            ok = reginold_search_spans(re, cases[i].subject, len, 0, untouched, 1,
+                                       &needed) == REGINOLD_ERROR &&
+                 needed == groups && untouched[0].beg == 7 && untouched[0].end == 7;
+        size_t mismatch_groups = 0;
+        ok = ok && reginold_search_spans(re, "zz", 2, 0, spans, 8, &mismatch_groups) ==
+                REGINOLD_MISMATCH && mismatch_groups == groups;
+        if (ok)
+            PASS("/%s/ spans match reginold_search", cases[i].pattern);
+        else
+            FAIL("/%s/ spans differ from reginold_search", cases[i].pattern);
+        reginold_match_free(&m);
+        reginold_regex_free(re);
+    }
+}
+
 /* ── main ─────────────────────────────────────────────────────────────────── */
 
 int
@@ -429,6 +480,7 @@ main(void)
     test_options();
     test_null_out();
     test_region_storage();
+    test_search_spans();
 
     printf("\n%d passed, %d failed\n", g_pass, g_fail);
     return g_fail ? 1 : 0;

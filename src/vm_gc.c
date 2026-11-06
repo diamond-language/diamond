@@ -383,6 +383,17 @@ static void sweep_list(DiamondVm *vm, DiamondObject **list_head,
         if(unreached->kind==DIAMOND_OBJECT_STRING) {
             const DiamondString *string=(const DiamondString *)unreached;
             size=sizeof(DiamondString)+string->length+1;
+            /* Kept for allocate_string to reuse (DiamondVm.string_pool);
+             * allocate_string gave it a whole block of its class. */
+            const int pool=string_pool_index(string->length);
+            const size_t block=(size_t)(pool+1)*16;
+            if(pool>=0&&vm->pool_bytes+block<=vm->minor_gc_threshold_bytes) {
+                vm->bytes_allocated-=size;
+                vm->pool_bytes+=block;
+                unreached->next=vm->string_pool[pool];
+                vm->string_pool[pool]=unreached;
+                continue;
+            }
         } else if(unreached->kind==DIAMOND_OBJECT_INSTANCE) {
             const DiamondInstance *instance=(const DiamondInstance *)unreached;
             size=sizeof(DiamondInstance)+instance->field_count*sizeof(DiamondValue)+
@@ -390,9 +401,9 @@ static void sweep_list(DiamondVm *vm, DiamondObject **list_head,
             /* Kept for allocate_instance to reuse (DiamondVm.instance_pool). */
             const int pool=instance_pool_index(instance->field_count,
                 instance->class->type_parameter[0]!='\0');
-            if(pool>=0&&vm->instance_pool_bytes+size<=vm->minor_gc_threshold_bytes) {
+            if(pool>=0&&vm->pool_bytes+size<=vm->minor_gc_threshold_bytes) {
                 vm->bytes_allocated-=size;
-                vm->instance_pool_bytes+=size;
+                vm->pool_bytes+=size;
                 unreached->next=vm->instance_pool[pool];
                 vm->instance_pool[pool]=unreached;
                 continue;
@@ -403,6 +414,16 @@ static void sweep_list(DiamondVm *vm, DiamondObject **list_head,
             for(size_t index=0;index<array->constraint_count;index++)
                 free(array->constraints[index].type_variable_bindings);
             free(array->values);free(array->dirty_cards);
+            /* The header is kept for allocate_array_uninitialized to reuse
+             * (DiamondVm.array_pool). */
+            if(array_pool_enabled()&&
+               vm->pool_bytes+sizeof(DiamondArray)<=vm->minor_gc_threshold_bytes) {
+                vm->bytes_allocated-=size;
+                vm->pool_bytes+=sizeof(DiamondArray);
+                unreached->next=vm->array_pool;
+                vm->array_pool=unreached;
+                continue;
+            }
         } else if(unreached->kind==DIAMOND_OBJECT_HASH) {
             DiamondHash *hash=(DiamondHash *)unreached;
             size=sizeof(DiamondHash)+hash->capacity*sizeof(DiamondHashEntry)+

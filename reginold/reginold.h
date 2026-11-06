@@ -87,6 +87,24 @@ reginold_status reginold_search(const reginold_regex *re,
                                 reginold_match       *out);
 
 /*
+ * reginold_search_spans: reginold_search without a heap-allocated result.
+ *
+ * Sets *group_count to 1 + the pattern's capture-group count whatever the
+ * outcome. On a match with *group_count <= capacity, writes spans[0] (the
+ * full match) through spans[*group_count - 1] (the groups) and returns
+ * REGINOLD_OK; with a smaller buffer it writes nothing and returns
+ * REGINOLD_ERROR, so the caller can use reginold_search instead.
+ * Otherwise returns REGINOLD_MISMATCH or REGINOLD_ERROR as reginold_search.
+ */
+reginold_status reginold_search_spans(const reginold_regex *re,
+                                      const char           *bytes,
+                                      size_t                len,
+                                      size_t                start,
+                                      reginold_span        *spans,
+                                      size_t                capacity,
+                                      size_t               *group_count);
+
+/*
  * reginold_match_at: attempt a match anchored at byte offset `at`.
  *
  * Returns REGINOLD_OK if the pattern matches at that exact position,
