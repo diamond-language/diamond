@@ -214,7 +214,8 @@ direct-mapped and address-sensitive. The next section replaces the mapping.
 
 ## Set-associative site tables
 
-The three tables are now 256 slots organized as 64 sets of 4 ways
+The three tables are now 256 slots organized as 32 sets of 8 ways (64 sets of 4
+until the change described at the end of this section)
 (`diamond_cache_slot`, `src/vm_internal.h`). A site's set comes from a
 multiplicative hash of its bytecode address, and it may take any way of that
 set: the way already tagged with it, else an empty way, else a victim rotated by a
@@ -244,6 +245,15 @@ where code lands.
 
 `DIAMOND_INLINE_CACHE_COUNT` must stay a multiple of `DIAMOND_INLINE_CACHE_WAYS`;
 `tests/inline_cache_slots.c` checks placement, residency and eviction.
+
+Four ways still left one set short now and then. Once `DiamondFunction` grew by
+an embedded call chunk, fistfight's `nbody` placed five hot call sites in one
+set in about half of its runs, depending on heap addresses: every iteration
+evicted one, and that site fell back to `INVOKE` and was rewritten again
+(500,028 misses instead of 33, about 7% more instructions). With 32 sets of 8
+ways no run of `nbody`, `objects`, `poly`, `structs` or `trees` in 20 tries
+thrashed, `arel_render` keeps its 60 misses, and the fistfight timings do not
+move.
 
 Fourteen other controls were measured in three interleaved pairs per mode,
 pinned to CPU 0, with in-process `DIAMOND_REPEAT` execution. The percentages

@@ -23,6 +23,12 @@ authoritative fine-grained record.
   `malloc`. Allocating a million small objects and calling a method on each runs about 16% fewer
   cycles; struct-heavy code 15% fewer, building and walking trees 10% and an n-body simulation 18%.
   `DIAMOND_TRACE_FIELDS`, which reported the field cache's hits and misses, is gone.
+- **Cheaper call setup.** Each function's call context is built once when a program starts instead
+  of on every call into it, a warm method call site makes the whole call in one cache lookup, and
+  a method call's arguments are copied without a library call. A method call costs about 150 fewer
+  instructions. Closures and object-heavy code run about 8% fewer instructions, struct-heavy code
+  4%, exceptions 6% and an n-body simulation 4%. The call-site caches are now 8-way, so a program
+  whose hot call sites happen to share a set no longer evicts one on every pass.
 
 ## 0.26.0 — 2026-11-05
 

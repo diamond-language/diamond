@@ -350,9 +350,11 @@ DIAMOND_INTERNAL DiamondVmStatus call_closure_helper(DiamondVm *vm,const Diamond
  * times with the same argument count (Array#map/#select): block_call_prepare
  * checks the arity and builds the block's chunk once, block_call_run makes
  * each call. A prepared call is valid while `chunk`'s tables and the closure
- * are; its `child` points into the block's function, never at the caller. */
+ * are. Its `child` is the block function's call_chunk or `child_storage`,
+ * never the caller's chunk, so a prepared call is not copied. */
 typedef struct {
-    DiamondChunk child;
+    DiamondChunk child_storage;
+    const DiamondChunk *child;
     const DiamondClosure *called;
     uint8_t argc;
     bool self_slot;
@@ -838,7 +840,21 @@ static inline DiamondChunk plain_call_chunk(const DiamondFunction *function,
     };
 }
 
-/* The chunk a plain CALL of `function` runs in. A function calling itself
+/* plain_call_chunk(fn, function_chunk) without building it: fn->call_chunk,
+ * which diamond_vm_run fills for the program it runs, when function_chunk
+ * carries that program's tables. Otherwise it is built into `scratch`. The
+ * entry_check test catches a DiamondFunction copied from another one. */
+static inline const DiamondChunk *function_call_chunk(const DiamondChunk *function_chunk,
+        const DiamondFunction *fn,DiamondChunk *scratch) {
+    if(__builtin_expect(fn->call_chunk.functions==function_chunk->functions&&
+                        fn->call_chunk.entry_check==&fn->entry_check,1))
+        return &fn->call_chunk;
+    *scratch=plain_call_chunk(fn,function_chunk);
+    return scratch;
+}
+
+/* The chunk a plain CALL of `function` runs in. Usually the cached one
+ * (function_call_chunk). Otherwise a function calling itself
  * (recursion) already runs in exactly that chunk: every builder takes the
  * function's own fields from the function, and the tables come from the
  * caller either way, so the caller's chunk is reused instead of building
@@ -848,6 +864,9 @@ static inline DiamondChunk plain_call_chunk(const DiamondFunction *function,
  * through their chunk pointer, and nothing compares chunk pointers. */
 static inline const DiamondChunk *plain_call_chunk_for(const DiamondFunction *function,
         const DiamondChunk *caller, DiamondChunk *storage) {
+    if (__builtin_expect(function->call_chunk.functions == caller->functions &&
+                         function->call_chunk.entry_check == &function->entry_check, 1))
+        return &function->call_chunk;
     if (caller->code == function->code && caller->modules == nullptr &&
         caller->range_class_index == 0 && caller->type_variable_bindings == nullptr)
         return caller;
@@ -1585,9 +1604,12 @@ DIAMOND_INTERNAL DiamondVmStatus invoke_resolved_method_helper(DiamondVm *vm,
 /* Fills a DiamondAccessor from a function's body (src/vm_calls.c). */
 DIAMOND_INTERNAL DiamondAccessor diamond_decode_accessor(const DiamondFunction *fn);
 
-DIAMOND_INTERNAL bool diamond_mono_accessor_shortcut(DiamondVm *vm,const uint8_t *site,
-        const DiamondStringConstant *method_name,const DiamondValue *registers,
-        uint16_t recv,uint16_t base,uint8_t argc,DiamondValue *result);
+/* diamond_mono_invoke's answer when the site's cache cannot make the call.
+ * Never a real status: it does not leave run_chunk. */
+#define DIAMOND_VM_NOT_CACHED ((DiamondVmStatus)UINT8_MAX)
+DIAMOND_INTERNAL DiamondVmStatus diamond_mono_invoke(DiamondVm *vm,const DiamondChunk *chunk,
+        const DiamondValue *registers,const uint8_t *site,size_t depth,
+        DiamondValue *result);
 
 DIAMOND_INTERNAL DiamondVmStatus diamond_jit_super_call(DiamondVm *vm, const DiamondChunk *chunk,
         uint16_t owner_index, uint16_t name, DiamondValue *registers, uint16_t base,

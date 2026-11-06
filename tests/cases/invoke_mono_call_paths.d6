@@ -1,0 +1,53 @@
+# A warm (monomorphic) site makes the whole call itself: accessors, ordinary
+# methods with any number of arguments, and methods that raise. Each loop runs
+# its sites well past the first hit that makes them monomorphic.
+
+class Account
+  attr_accessor balance: Int
+
+  def initialize(balance: Int)
+    @balance = balance
+  end
+
+  def deposit(amount: Int) -> Int
+    @balance += amount
+    @balance
+  end
+
+  def transfer(other: Account, amount: Int, fee: Int) -> Int
+    raise "insufficient funds" if amount + fee > @balance
+    @balance -= amount + fee
+    other.deposit(amount)
+  end
+
+  # Raises from one call further down, so the error crosses two warm frames.
+  def checked_transfer(other: Account, amount: Int) -> Int = transfer(other, amount, 1)
+end
+
+a = Account.new(10)
+b = Account.new(0)
+i = 0
+while i < 4
+  # Setter then getter on the same receiver.
+  a.balance = a.balance() + 1
+  puts(a.balance())
+  # Three arguments, one of them another instance.
+  puts(a.transfer(b, 2, 1))
+  i += 1
+end
+
+# A warm site whose method raises: the rescue in this frame catches it, and
+# the loop goes on calling through the same site.
+caught = 0
+j = 0
+while j < 5
+  begin
+    puts(a.checked_transfer(b, 3))
+  rescue e
+    caught += 1
+  end
+  j += 1
+end
+puts(caught)
+puts(a.balance())
+puts(b.balance())

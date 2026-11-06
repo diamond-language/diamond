@@ -2157,6 +2157,20 @@ DiamondVmStatus diamond_vm_run(DiamondVm *vm, const DiamondChunk *chunk,
             }
         }
     }
+    /* Checked every run, since the REPL's next line can grow the tables in
+     * place. Written only when the tables changed (a function's own fields
+     * are fixed once compiled), so running a program again while another
+     * thread still calls into it does not rewrite what that thread reads. */
+    for(size_t index=0;index<chunk->function_count;index++) {
+        DiamondFunction *function=chunk->functions[index];
+        if(function==nullptr)continue;
+        const DiamondChunk *cached=&function->call_chunk;
+        if(cached->entry_check!=&function->entry_check||
+           cached->functions!=chunk->functions||cached->function_count!=chunk->function_count||
+           cached->classes!=chunk->classes||cached->class_count!=chunk->class_count||
+           cached->interfaces!=chunk->interfaces||cached->interface_count!=chunk->interface_count)
+            function->call_chunk=plain_call_chunk(function,chunk);
+    }
     for (size_t index=0;index<vm->rewritten_site_count;index++)
         ((uint8_t *)(void *)vm->rewritten_sites[index])[0]=(uint8_t)DIAMOND_OP_INVOKE;
     vm->rewritten_site_count=0;

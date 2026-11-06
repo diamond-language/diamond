@@ -81,6 +81,7 @@ static bool write_function_image(FILE *file, const DiamondFunction *function) {
     image.jit_code = nullptr;
     image.jit_code_size = 0;
     image.jit_call_count = 0;
+    image.call_chunk = (DiamondChunk){};
     const uint8_t *bytes = (const uint8_t *)&image;
     size_t position = 0;
     while (position < sizeof image) {
