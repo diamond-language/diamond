@@ -1,0 +1,34 @@
+# Regexp#match returns the whole match followed by every group, with nil for
+# a group that did not take part. Most patterns have their groups collected
+# on the stack; one with sixteen or more groups takes another path, and both
+# must agree.
+fifteen = Regexp.new("(a)(b)(c)(d)(e)(f)(g)(h)(i)(j)(k)(l)(m)(n)(o)")
+groups = fifteen.match("xabcdefghijklmnoy")
+puts(groups.length())
+puts(groups[0])
+puts(groups[15])
+
+sixteen = Regexp.new("(a)(b)(c)(d)(e)(f)(g)(h)(i)(j)(k)(l)(m)(n)(o)(p)")
+groups = sixteen.match("xabcdefghijklmnopy")
+puts(groups.length())
+puts(groups[0])
+puts(groups[16])
+puts(sixteen.match("nothing here"))
+
+# An optional group that did not match is nil on either path.
+puts(Regexp.new("(a)(z)?(b)").match("ab"))
+puts(Regexp.new("(a)(b)(c)(d)(e)(f)(g)(h)(i)(j)(k)(l)(m)(n)(o)(z)?(p)").match("abcdefghijklmnop")[16])
+
+# Named groups are counted the same way.
+puts(Regexp.new("(?<year>\\d+)-(?<month>\\d+)").match("on 2026-11"))
+
+# Many matches in a row, each building fresh Strings.
+email = Regexp.new("^(\\w+)-(\\d+)@(\\w+)\\.com$")
+total = 0
+i = 0
+while i < 200
+  found = email.match("user-#{i}@site#{i % 10}.com")
+  total += found[2].to_i() + found[3].length()
+  i += 1
+end
+puts(total)

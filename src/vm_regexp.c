@@ -112,6 +112,41 @@ DiamondVmStatus regexp_match_helper(DiamondVm *vm, const DiamondRegexp *regexp,
         registers[dest]=DIAMOND_BOOL(search_status==REGINOLD_OK);
         return DIAMOND_VM_OK;
     }
+    /* Patterns with up to 15 groups (nearly all) get their spans in this
+     * buffer and their result Array at its final size up front; larger
+     * ones take the heap-allocated reginold_search result below. */
+    enum { SPAN_CAPACITY = 16 };
+    reginold_span spans[SPAN_CAPACITY];
+    size_t groups=0;
+    const reginold_status span_status=reginold_search_spans(regexp->handle,
+        subject->chars,subject->length,0,spans,SPAN_CAPACITY,&groups);
+    if(span_status==REGINOLD_MISMATCH) {
+        registers[dest]=DIAMOND_NIL;
+        return DIAMOND_VM_OK;
+    }
+    if(span_status==REGINOLD_OK) {
+        /* Every slot is nil before the first String allocation can collect,
+         * and the Array is rooted in registers[dest] throughout. */
+        DiamondArray *array=allocate_array_uninitialized(vm,groups);
+        if(array==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
+        for(size_t index=0;index<groups;index++)array->values[index]=DIAMOND_NIL;
+        registers[dest]=DIAMOND_OBJECT(array);
+        for(size_t index=0;index<groups;index++) {
+            if(spans[index].beg<0||spans[index].end<0)continue;
+            DiamondString *group_string=allocate_string(vm,
+                subject->chars+spans[index].beg,
+                (size_t)(spans[index].end-spans[index].beg));
+            if(group_string==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
+            array->values[index]=DIAMOND_OBJECT(group_string);
+            if(!gc_write_barrier_index(vm,(DiamondObject *)array,index))
+                return DIAMOND_VM_OUT_OF_MEMORY;
+        }
+        return DIAMOND_VM_OK;
+    }
+    if(groups<=SPAN_CAPACITY) {
+        snprintf(vm->error,sizeof vm->error,"regexp match failed");
+        return DIAMOND_VM_REGEXP_ERROR;
+    }
     reginold_match match_result={0};
     const reginold_status search_status=reginold_search(regexp->handle,
         subject->chars,subject->length,0,&match_result);

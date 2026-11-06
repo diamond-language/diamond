@@ -494,7 +494,16 @@ void diamond_vm_free(DiamondVm *vm) {
         while(object!=nullptr) {DiamondObject *next=object->next;free(object);object=next;}
         vm->instance_pool[pool]=nullptr;
     }
-    vm->instance_pool_bytes=0;
+    for(size_t pool=0;pool<DIAMOND_STRING_POOL_CLASSES;pool++) {
+        DiamondObject *object=vm->string_pool[pool];
+        while(object!=nullptr) {DiamondObject *next=object->next;free(object);object=next;}
+        vm->string_pool[pool]=nullptr;
+    }
+    for(DiamondObject *object=vm->array_pool;object!=nullptr;) {
+        DiamondObject *next=object->next;free(object);object=next;
+    }
+    vm->array_pool=nullptr;
+    vm->pool_bytes=0;
     free_adopted_programs(vm->adopted_programs);
     free(vm->class_variables);
     free(vm->namespace_constants);
@@ -833,7 +842,18 @@ DiamondFiberStatus diamond_fiber_scheduler_run_all(DiamondFiberQueue *queue) {
 DiamondString *allocate_string(DiamondVm *vm, const char *chars,
                                       size_t length) {
     if (!maybe_collect(vm)) return nullptr;
-    DiamondString *string = malloc(sizeof(DiamondString) + length + 1);
+    /* A small String takes a pooled block of its class, or a fresh one
+     * rounded up to the class size so the sweep can pool it later. */
+    const int pool = string_pool_index(length);
+    DiamondString *string;
+    if (pool >= 0 && vm->string_pool[pool] != nullptr) {
+        string = (DiamondString *)vm->string_pool[pool];
+        vm->string_pool[pool] = string->object.next;
+        vm->pool_bytes -= (size_t)(pool + 1) * 16;
+    } else {
+        string = malloc(pool >= 0 ? (size_t)(pool + 1) * 16
+                                  : sizeof(DiamondString) + length + 1);
+    }
     if (string == nullptr) return nullptr;
     string->object = (DiamondObject){
         .next = vm->young_objects,
@@ -903,7 +923,7 @@ DiamondInstance *allocate_instance(DiamondVm *vm,const DiamondClass *class,
     if(pool>=0&&vm->instance_pool[pool]!=nullptr) {
         instance=(DiamondInstance *)vm->instance_pool[pool];
         vm->instance_pool[pool]=instance->object.next;
-        vm->instance_pool_bytes-=size;
+        vm->pool_bytes-=size;
     } else {
         instance=malloc(size); if(instance==nullptr)return nullptr;
     }
@@ -935,7 +955,14 @@ DiamondArray *allocate_array_uninitialized(DiamondVm *vm,size_t count) {
     if (!maybe_collect(vm)) return nullptr;
     const size_t capacity=count;
     const size_t size=sizeof(DiamondArray)+capacity*sizeof(DiamondValue);
-    DiamondArray *array=malloc(sizeof(DiamondArray)); if(array==nullptr)return nullptr;
+    DiamondArray *array;
+    if(vm->array_pool!=nullptr) {
+        array=(DiamondArray *)vm->array_pool;
+        vm->array_pool=array->object.next;
+        vm->pool_bytes-=sizeof(DiamondArray);
+    } else {
+        array=malloc(sizeof(DiamondArray)); if(array==nullptr)return nullptr;
+    }
     array->values=capacity==0?nullptr:malloc(capacity*sizeof(DiamondValue));
     if(capacity>0&&array->values==nullptr){free(array);return nullptr;}
     array->object=(DiamondObject){.next=vm->young_objects,.kind=DIAMOND_OBJECT_ARRAY};

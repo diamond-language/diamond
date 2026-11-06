@@ -15,6 +15,12 @@ authoritative fine-grained record.
   value, a frozen receiver) are the same as before. The n-body simulation runs about 13% fewer
   instructions (8% fewer cycles), building and walking trees 5% fewer cycles, and struct- and
   object-heavy code 2-5% fewer.
+- **Cheaper short Strings and Arrays.** The collector keeps swept Strings of up to about 100
+  bytes, sorted by size, and swept Array headers for the next allocations instead of returning
+  them to `malloc`, as it already did for small instances; together the pools stay within one
+  nursery's worth of memory. `Regexp#match` also collects its group positions on the stack and
+  builds its result Array at its final size. Text processing runs about 34% fewer cycles, regular
+  expressions 28%, Hash-heavy code 23%, String building 20% and exception handling 17%.
 
 ## 0.27.0 — 2026-11-05
 
