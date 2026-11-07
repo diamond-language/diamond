@@ -289,6 +289,43 @@ def contextual_block_member(function_entry, slot)
   member
 end
 
+# An annotation with each type variable named in `names` replaced by the
+# matching member list in `bound`, or nil when one is left unbound.
+def bind_annotation(annotation, names, bound)
+  return nil if annotation == nil
+  result = []
+  index = 0
+  while index < annotation.length()
+    member = annotation[index]
+    variable = names.index(member[0])
+    if variable != nil
+      return nil if bound[variable] == nil
+      bound[variable].each() do |bound_member| result.push(bound_member) end
+    else
+      copy = member.dup()
+      slot = 1
+      while slot < copy.length()
+        part = copy[slot]
+        if part.is_a?(Array)
+          if slot == 5
+            parameters = []
+            part.each() do |parameter| parameters.push(bind_annotation(parameter, names, bound)) end
+            return nil if parameters.include?(nil)
+            copy[slot] = parameters
+          else
+            copy[slot] = bind_annotation(part, names, bound)
+            return nil if copy[slot] == nil
+          end
+        end
+        slot = slot + 1
+      end
+      result.push(copy)
+    end
+    index = index + 1
+  end
+  result
+end
+
 # A class entry's type parameters. Builtin entries (below) have none.
 def class_type_parameters(entry)
   if entry.length() > 4 then entry[4] else [] end
@@ -1814,7 +1851,8 @@ class Parser
     if at_top_level
       @functions.push([name, function_index, arity, parameter_names,
                        @current_type_variables.length(), return_type,
-                       required_arity, parameter_types, has_block_parameter])
+                       required_arity, parameter_types, has_block_parameter,
+                       @current_type_variables])
     end
     # Every entry currently in scope becomes a capture candidate,
     # unconditionally -- mirroring compiler.c's own eager design (not
@@ -5736,6 +5774,41 @@ class Parser
   # tracking: a keyword fills its named slot directly; a positional
   # argument fills the next not-yet-seen slot in order; a positional
   # argument can't follow a keyword one.
+  # A do block passed to a generic function takes its Callable contract with
+  # each type variable bound from an argument typed by that variable alone,
+  # as `generic_collect(21) do [] end` binds T to Int. Nil while one is
+  # unbound.
+  def generic_block_context(function_entry, block_slot, slot_values, slot_filled)
+    member = contextual_block_member(function_entry, block_slot)
+    return nil if member == nil || function_entry.length() < 10
+    names = function_entry[9]
+    types = function_entry[7]
+    bound = names.map() do |name| nil end
+    index = 0
+    while index < block_slot
+      annotation = types[index]
+      if slot_filled[index] && annotation != nil && annotation.length() == 1 && annotation[0][1] == nil
+        variable = names.index(annotation[0][0])
+        type_name = self.fact_type_name(self.type_fact(slot_values[index]))
+        if variable != nil && type_name != nil && bound[variable] == nil
+          bound[variable] = [[type_name, nil, nil, -1, nil, nil]]
+        end
+      end
+      index = index + 1
+    end
+    bound_members = bind_annotation([member], names, bound)
+    if bound_members == nil then nil else bound_members[0] end
+  end
+
+  def fact_type_name(fact)
+    return "Int" if fact == Type::INT
+    return "Float" if fact == Type::FLOAT
+    return "String" if fact == Type::STRING
+    return "Bool" if fact == Type::BOOL
+    return "Symbol" if fact == Type::SYMBOL
+    nil
+  end
+
   def parse_keyword_call_arguments(function_entry, name_token)
     arity = if self.variadic_function?(function_entry[1])
       255
@@ -5837,8 +5910,12 @@ class Parser
         self.fail("too many call arguments")
         return nil
       end
-      # A generic callee's type variables mean nothing at this call site.
-      @block_context = if function_entry[4] > 0 then nil else contextual_block_member(function_entry, block_slot) end
+      # A generic callee binds its type variables from earlier arguments.
+      @block_context = if function_entry[4] > 0
+        self.generic_block_context(function_entry, block_slot, slot_values, slot_filled)
+      else
+        contextual_block_member(function_entry, block_slot)
+      end
       slot_values[block_slot] = self.compile_block()
       slot_filled[block_slot] = true
       argument_count = block_slot + 1

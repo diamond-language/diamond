@@ -223,11 +223,11 @@ but do not duplicate every native optimization unless it advances a specific boo
 language-design goal.
 
 Running every `tests/cases` program through the self-hosted compiler
-(`tools/self_host_survey.sh`, 2026-11-06): 1,364 of 1,586 compile and run, with 47 skipped because
-they set a limit the compiler itself would hit. 218 of the 222 failures use runtime builtins
-(below). The other four need static type inference for blocks: a generic function's block typed
-from its other arguments, Callable signatures inferred for constructor blocks, and return-type
-errors native reports for blocks and collection callbacks.
+(`tools/self_host_survey.sh`, 2026-11-06): 1,365 of 1,586 compile and run, with 47 skipped because
+they set a limit the compiler itself would hit. 218 of the 221 failures use runtime builtins
+(below). The other three need static type inference for blocks: Callable signatures for a block
+passed through a union of callables or a generic parent's method reference, and the return-type
+errors native reports for collection callbacks.
 
 The runtime builtin surfaces (Time, Thread, Channel, Process, IO, SQLite3, Supervisor, UDP and
 TLS sockets, Tensor, crypto) are not ported; `File`, `Dir`, `Fiber` and TCP are. Time comes first if
