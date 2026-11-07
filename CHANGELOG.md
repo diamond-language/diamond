@@ -13,10 +13,10 @@ authoritative fine-grained record.
   module (`Relation[T]`), every `File` and `Dir` method, `Fiber.yield`,
   `TCPServer.listen`'s `host:`/`backlog:` options with the non-blocking TCP forms, and do-block
   contracts on generic functions (`generic_collect(21) do [] end` binds T to Int). It also
-  compiles `Time`, `Thread.new`, `SQLite3.open`, `SecureRandom` and `BCrypt` calls, so Active
-  Record runs through it. Run through it, 1,484 of the 1,586 `tests/cases` programs now compile
-  and run (up from 1,342), and most of the rest stop at Channel, Process or Supervisor, which it
-  doesn't port yet.
+  compiles `Time`, `Thread.new`, `Channel.new`/`select`/`select_send`, `Supervisor.new`,
+  `SQLite3.open`, `SecureRandom` and `BCrypt` calls, so Active Record runs through it. Run
+  through it, 1,526 of the 1,586 `tests/cases` programs now compile and run (up from 1,342), and
+  most of the rest stop at `Process`, which it doesn't port yet.
 
 ### Fixed
 
