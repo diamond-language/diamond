@@ -80,6 +80,7 @@ module Opcode
   GET_IVAR = 44
   SET_IVAR = 45
   CHECK_TYPE = 50
+  CHECK_SELF_RETURN = 188
   ARRAY = 51
   INDEX_GET = 52
   INDEX_SET = 53
@@ -678,6 +679,11 @@ class Parser
     # and its declared return type.
     @method_function_index = -1
     @method_return_type = nil
+    # `-> Self`: [others] (the union's other members, or nil) for the def
+    # being compiled and for the def a block's `return` returns from.
+    @current_self_return = nil
+    @method_self_return = nil
+    @pending_self_return = nil
     # The `Callable[[params], R]` member a do block about to be compiled
     # fills, from the callee's parameter: its parameter and result types.
     @block_context = nil
@@ -1563,6 +1569,8 @@ class Parser
     outer_function_index = @current_function_index
     outer_enclosing_locals = @enclosing_locals
     outer_return_type = @current_return_type
+    outer_self_return = @current_self_return
+    @current_self_return = nil
     outer_type_facts = @type_facts
     outer_declared_types = @declared_types
 
@@ -1660,6 +1668,7 @@ class Parser
     @current_function_index = outer_function_index
     @enclosing_locals = outer_enclosing_locals
     @current_return_type = outer_return_type
+    @current_self_return = outer_self_return
     @type_facts = outer_type_facts
     @declared_types = outer_declared_types
     @function_nesting_depth = @function_nesting_depth - 1
@@ -2218,7 +2227,7 @@ class Parser
         token = @type_name_tokens[name]
         self.fail_at(token.start(), token.line(), token.column(), "unknown type annotation")
       else
-        self.check_class_type_arguments(entry[4]) if entry[4][1] != nil
+        self.check_class_type_arguments(entry[4], entry[5]) if entry[4][1] != nil
         @builder.patch_type_set_member(entry[0], entry[1], entry[2], type_id) unless @failed
       end
       index = index + 1
@@ -2344,10 +2353,11 @@ class Parser
     end
   end
 
-  # `Box[Int]`: Box must take exactly that many type arguments.
-  def check_class_type_arguments(member)
+  # `Box[Int]`: Box must take exactly that many type arguments. Inside a
+  # module, Box is looked up from that module outward like any class name.
+  def check_class_type_arguments(member, module_name)
     return if member[0] == "Array" || member[0] == "Hash"
-    entry = self.find_class(member[0])
+    entry = self.find_forward_class(member[0], module_name)
     count = if member[2] == nil then 1 else 2 end
     if entry == nil || class_type_parameters(entry).length() != count || entry[5]
       self.fail("this type does not accept arguments")
@@ -2365,7 +2375,7 @@ class Parser
         forward_members.push([index, member])
         type_id = Type::CLASS_BASE
       elsif member[1] != nil
-        self.check_class_type_arguments(member)
+        self.check_class_type_arguments(member, @current_module_name)
       end
       argument_set = if member[1] == nil
         -1
@@ -2610,6 +2620,8 @@ class Parser
     outer_function_index = @current_function_index
     outer_enclosing_locals = @enclosing_locals
     outer_return_type = @current_return_type
+    outer_self_return = @current_self_return
+    @current_self_return = nil
     outer_type_facts = @type_facts
     outer_declared_types = @declared_types
     outer_in_method = @in_method
@@ -2632,9 +2644,11 @@ class Parser
     @enclosing_locals = enclosing_locals
     outer_method_function_index = @method_function_index
     outer_method_return_type = @method_return_type
+    outer_method_self_return = @method_self_return
     @current_return_type = return_type
     @method_function_index = function_index
     @method_return_type = return_type
+    @method_self_return = @current_self_return
     @type_facts = []
     @declared_types = []
     @function_nesting_depth = @function_nesting_depth + 1
@@ -2739,8 +2753,10 @@ class Parser
     @current_function_index = outer_function_index
     @enclosing_locals = outer_enclosing_locals
     @current_return_type = outer_return_type
+    @current_self_return = outer_self_return
     @method_function_index = outer_method_function_index
     @method_return_type = outer_method_return_type
+    @method_self_return = outer_method_self_return
     @type_facts = outer_type_facts
     @declared_types = outer_declared_types
     @in_method = outer_in_method
@@ -4677,6 +4693,10 @@ class Parser
     outer_method_name = @current_method_name
     @current_method_name = name
     @current_method_uses_state = false
+    self_return = self.split_self_return(return_type)
+    return if @failed
+    return_type = nil if self_return != nil
+    @pending_self_return = self_return
     self.compile_method_body(function_index, parameter_names, parameter_types, parameter_defaults, return_type, module_singleton)
     @current_method_name = outer_method_name
     signature = [parameter_types, return_type, @current_type_variables, parameter_names]
@@ -4769,6 +4789,60 @@ class Parser
     end
   end
 
+  # A method body's result: checked against `-> Self` or its declared type,
+  # and a tail call to itself rewritten when nothing is left to check.
+  def finish_method_return(function_index, body_result, return_type)
+    if @current_self_return != nil
+      self.emit_self_return_check(body_result, @current_self_return)
+      return
+    end
+    before_check = @code_count
+    if return_type != nil
+      set_index = self.emit_type_check(body_result, return_type)
+      @builder.set_return_type(function_index, set_index) unless @failed
+    end
+    self.maybe_rewrite_tail_call(body_result, before_check, return_type)
+  end
+
+  # `-> Self`'s check, as compiler.c's emit_self_return_check: an instance
+  # method returning `self` needs none, while a singleton's register 0 holds
+  # the class, so returning `self` there still fails. Returns whether it
+  # emitted one.
+  def emit_self_return_check(reg, self_return)
+    return false if reg == 0 && !@in_singleton_method && !@in_block
+    others = if self_return[0] == nil then 65535 else self.declare_annotation(self_return[0]) end
+    return false if @failed
+    self.emit_instruction3(Opcode::CHECK_SELF_RETURN, reg, others, 0)
+    true
+  end
+
+  # `-> Self` or `-> Self | Nil` on a class's method: [others], where others
+  # is the rest of the union (nil when Self stands alone), or nil when the
+  # annotation has no Self member or the program declares its own Self.
+  def split_self_return(annotation)
+    return nil if @current_class_index == nil || annotation == nil
+    return nil if self.find_interface("Self") != nil || self.find_forward_class("Self", @current_module_name) != nil
+    others = []
+    found = false
+    index = 0
+    while index < annotation.length() && !@failed
+      member = annotation[index]
+      if member[0] == "Self"
+        if found
+          self.fail("duplicate type in union")
+        elsif member[1] != nil
+          self.fail("this type does not accept arguments")
+        end
+        found = true
+      else
+        others.push(member)
+      end
+      index = index + 1
+    end
+    return nil if !found
+    [if others.length() == 0 then nil else others end]
+  end
+
   def compile_method_body(function_index, parameter_names, parameter_types, parameter_defaults, return_type, module_singleton)
     outer_locals = @locals
     outer_loop_captures_pending = @loop_captures_pending
@@ -4781,6 +4855,9 @@ class Parser
     outer_code_count = @code_count
     outer_function_index = @current_function_index
     outer_return_type = @current_return_type
+    outer_self_return = @current_self_return
+    @current_self_return = @pending_self_return
+    @pending_self_return = nil
     outer_type_facts = @type_facts
     outer_declared_types = @declared_types
     outer_in_method = @in_method
@@ -4800,9 +4877,11 @@ class Parser
     @current_function_index = function_index
     outer_method_function_index = @method_function_index
     outer_method_return_type = @method_return_type
+    outer_method_self_return = @method_self_return
     @current_return_type = return_type
     @method_function_index = function_index
     @method_return_type = return_type
+    @method_self_return = @current_self_return
     @type_facts = []
     @declared_types = []
     index_offset = if module_singleton && @current_class_index == nil
@@ -4861,21 +4940,11 @@ class Parser
           body_result = postfix_result
         end
       end
-      before_check = @code_count
-      if return_type != nil
-        set_index = self.emit_type_check(body_result, return_type)
-        @builder.set_return_type(function_index, set_index) unless @failed
-      end
-      self.maybe_rewrite_tail_call(body_result, before_check, return_type)
+      self.finish_method_return(function_index, body_result, return_type)
       self.emit_instruction1(Opcode::RETURN, body_result)
     elsif self.consume_block_start()
       body_result = self.compile_body()
-      before_check = @code_count
-      if return_type != nil
-        set_index = self.emit_type_check(body_result, return_type)
-        @builder.set_return_type(function_index, set_index) unless @failed
-      end
-      self.maybe_rewrite_tail_call(body_result, before_check, return_type)
+      self.finish_method_return(function_index, body_result, return_type)
       self.emit_instruction1(Opcode::RETURN, body_result)
       if @current.kind() != :end
         self.fail("expected 'end' after function body")
@@ -4896,8 +4965,10 @@ class Parser
     @code_count = outer_code_count
     @current_function_index = outer_function_index
     @current_return_type = outer_return_type
+    @current_self_return = outer_self_return
     @method_function_index = outer_method_function_index
     @method_return_type = outer_method_return_type
+    @method_self_return = outer_method_self_return
     @type_facts = outer_type_facts
     @declared_types = outer_declared_types
     @in_method = outer_in_method
@@ -4912,7 +4983,16 @@ class Parser
   # type itself is unaffected -- confirmed against compile_attribute_named,
   # which only ever changes the method_name suffix, never adds any
   # Bool-specific behavior), never a writer.
+  # A generic class's `attr_reader item: T` names the class's own type
+  # variables, as its methods' annotations do.
   def compile_attribute()
+    outer_type_variables = @current_type_variables
+    @current_type_variables = self.current_class_type_parameters()
+    self.compile_attribute_names()
+    @current_type_variables = outer_type_variables
+  end
+
+  def compile_attribute_names()
     predicate = @current.kind() == :attr_predicate
     reader = @current.kind() != :attr_writer
     writer = @current.kind() == :attr_writer || @current.kind() == :attr_accessor
@@ -4983,6 +5063,7 @@ class Parser
       0
     end
     function_index = @builder.declare_function(method_name, arity + 1, arity + 1)
+    @builder.set_type_variables(function_index, @current_type_variables, @current_type_variables.length())
 
     outer_locals = @locals
     outer_loop_captures_pending = @loop_captures_pending
@@ -4995,6 +5076,8 @@ class Parser
     outer_code_count = @code_count
     outer_function_index = @current_function_index
     outer_return_type = @current_return_type
+    outer_self_return = @current_self_return
+    @current_self_return = nil
     outer_type_facts = @type_facts
     outer_declared_types = @declared_types
 
@@ -5060,6 +5143,7 @@ class Parser
     @code_count = outer_code_count
     @current_function_index = outer_function_index
     @current_return_type = outer_return_type
+    @current_self_return = outer_self_return
     @type_facts = outer_type_facts
     @declared_types = outer_declared_types
 
@@ -7322,7 +7406,11 @@ class Parser
     else
       self.parse_expression()
     end
-    self.emit_type_check(value, @method_return_type) if @method_return_type != nil
+    if @method_self_return != nil
+      self.emit_self_return_check(value, @method_self_return)
+    elsif @method_return_type != nil
+      self.emit_type_check(value, @method_return_type)
+    end
     @nonlocal_landing_functions.push(@method_function_index)
     @builder.set_nonlocal_landing(@method_function_index)
     self.emit_instruction1(Opcode::BLOCK_RETURN, value)
@@ -7346,9 +7434,13 @@ class Parser
     else
       self.allocate_register()
     end
-    before_check = @code_count
-    self.emit_type_check(value, @current_return_type) if @current_return_type != nil
-    self.maybe_rewrite_tail_call(value, before_check, @current_return_type)
+    if @current_self_return != nil
+      self.emit_self_return_check(value, @current_self_return)
+    else
+      before_check = @code_count
+      self.emit_type_check(value, @current_return_type) if @current_return_type != nil
+      self.maybe_rewrite_tail_call(value, before_check, @current_return_type)
+    end
     self.emit_instruction1(Opcode::RETURN, value)
     value
   end

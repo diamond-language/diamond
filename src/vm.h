@@ -650,7 +650,7 @@ typedef enum DiamondOpCode : uint8_t {
     DIAMOND_OP_NEW_TYPED,
     /* value, type-set or DIAMOND_NO_TYPE_SET, receiver: `-> Self`. The value must be an
      * instance of the receiver's class, or match the set holding the union's other members.
-     * selfhost/parser.d6 does not emit it, and the JIT leaves such a function interpreted. */
+     * The JIT leaves a function that has it interpreted. */
     DIAMOND_OP_CHECK_SELF_RETURN,
     /* dest, first, second, selector: `SemVer.*`, see DiamondSemverFunction. */
     DIAMOND_OP_SEMVER,
