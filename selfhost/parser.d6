@@ -10197,7 +10197,14 @@ class Parser
     member = pattern[0]
     variable = names.index(member[0])
     if variable != nil
-      bound[variable] = actual if bound[variable] == nil
+      # A variable bound twice joins both, as the runtime binds it.
+      if bound[variable] == nil
+        bound[variable] = actual
+      else
+        joined = bound[variable].dup()
+        actual.each() do |member| joined.push(member) unless joined.include?(member) end
+        bound[variable] = joined
+      end
       return
     end
     return if actual.length() != 1
