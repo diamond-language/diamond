@@ -2,10 +2,13 @@ name: release
 
 # Pushing a vX.Y.Z tag builds the .deb and .rpm from the tagged tree on x86-64
 # and on arm64 hardware, installs each into a clean container and smoke-tests it
-# (packaging/ci.sh), then creates the GitHub release with all four packages
-# attached and the changelog section as its notes. Nothing is published unless
-# every package passed. A release is only tagged after the PR run for the same
-# tree passed, so this workflow does not repeat the test matrix.
+# (packaging/ci.sh). It also builds the portable static tools
+# (d6-VERSION-linux-x86_64.tar.gz and -aarch64; tools/build_portable.sh) and
+# smoke-tests them on several distributions. Then it creates the GitHub release
+# with all four packages and both tarballs attached and the changelog section as
+# its notes. Nothing is published unless every package and tarball passed. A
+# release is only tagged after the PR run for the same tree passed, so this
+# workflow does not repeat the test matrix.
 # workflow_dispatch reruns it for an existing tag; the tag must contain
 # packaging/ (0.20 and later).
 on:
@@ -45,8 +48,31 @@ jobs:
           path: build/packages/${{ matrix.format }}/*.${{ matrix.format }}
           if-no-files-found: error
 
+  # The portable tools: static musl d6, facet, d6-lsp and d6-dap per architecture,
+  # smoke-tested in clean containers of several distributions before attaching.
+  portable:
+    strategy:
+      matrix:
+        runner: [ubuntu-latest, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: refs/tags/${{ inputs.tag || github.ref_name }}
+          fetch-depth: 1
+      - name: Build the portable tools
+        run: tools/build_portable.sh
+      - name: Smoke-test them on each distribution
+        run: tools/test_portable_distros.sh
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: portable-${{ matrix.runner }}
+          path: build/portable/d6-*-linux-*.tar.gz
+          if-no-files-found: error
+
   publish:
-    needs: package
+    needs: [package, portable]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     # Creating the release and uploading its files is the only write.
@@ -66,4 +92,4 @@ jobs:
       - name: Create the release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: bash packaging/publish_release.sh "$TAG" packages/*.deb packages/*.rpm
+        run: bash packaging/publish_release.sh "$TAG" packages/*.deb packages/*.rpm packages/d6-*-linux-*.tar.gz

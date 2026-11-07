@@ -6,6 +6,17 @@ authoritative fine-grained record.
 
 ## Unreleased
 
+### Added
+
+- **A portable d6 for any Linux.** Each release now attaches `d6-VERSION-linux-x86_64.tar.gz`
+  and `d6-VERSION-linux-aarch64.tar.gz`. They hold `d6`, `facet`, `d6-lsp` and `d6-dap` as
+  fully static musl executables, with SQLite, PostgreSQL, MySQL/MariaDB (MySQL 8 and MariaDB
+  authentication plugins included), TLS, zlib and BCrypt linked in. Before each release they
+  are checked in clean Ubuntu 26.04 and 22.04, Debian 12, Fedora 44, Arch, Alpine and
+  openSUSE Leap containers. They target baseline x86-64 rather than x86-64-v3, have no JIT
+  and cannot run `d6 build`. `tools/build_portable.sh` builds them in an Alpine container
+  ([deployment](docs/deployment.md#the-portable-d6)).
+
 ### Changed
 
 - **Self-hosted compiler closer to native.** `selfhost/parser.d6` now compiles `-> Self` return

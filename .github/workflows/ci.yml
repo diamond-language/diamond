@@ -413,6 +413,25 @@ jobs:
       - name: Build, install and smoke-test the ${{ matrix.format }}
         run: bash packaging/ci.sh ${{ matrix.format }}
 
+  # Builds the portable tools (static musl d6, facet, d6-lsp, d6-dap, in an
+  # Alpine container) and runs packaging/portable_tools_smoke.sh with them in clean
+  # Ubuntu, Debian, Fedora, Arch, Alpine and openSUSE containers.
+  test-portable:
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-latest, ubuntu-24.04-arm]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 1
+      - name: Build the portable tools
+        run: tools/build_portable.sh
+      - name: Smoke-test them on each distribution
+        run: tools/test_portable_distros.sh
+
   test-musl:
     runs-on: ubuntu-latest
     timeout-minutes: 20
