@@ -1,0 +1,9 @@
+# Thread.new passes its trailing arguments to the callable, which runs on
+# its own VM; join returns the callable's result.
+def add(left: Int, right: Int) -> Int = left + right
+def greet() = "hello from a thread"
+
+puts(Thread.new(add, 40, 2).join())
+puts(Thread.new(greet).join())
+workers = [1, 2, 3].map() do |n| Thread.new(add, n, n) end
+puts(workers.map() do |worker| worker.join() end)

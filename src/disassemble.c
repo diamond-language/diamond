@@ -1755,8 +1755,11 @@ static bool disassemble_patterns_and_types(DisassemblyWalk *walk) {
             out_printf(stream,"%-18s r%u, r%u, ","IS_TYPE",
                     checked_register(chunk,stream,read_operand(chunk,offset+1),&valid),
                     checked_register(chunk,stream,read_operand(chunk,offset+3),&valid));
-            const uint16_t type=(uint8_t)read_operand(chunk,offset+5);
-            if(type==DIAMOND_TYPE_INT) out_puts("Int",stream);
+            /* A 16-bit type id: interfaces, type variables and native kinds sit far above 255. */
+            const uint16_t type=read_operand(chunk,offset+5);
+            if(diamond_type_operand_is_native(type))
+                out_puts(diamond_native_type_name((uint8_t)(type-DIAMOND_NATIVE_TYPE_OPERAND_BASE)),stream);
+            else if(type==DIAMOND_TYPE_INT) out_puts("Int",stream);
             else if(type==DIAMOND_TYPE_FLOAT) out_puts("Float",stream);
             else if(type==DIAMOND_TYPE_STRING) out_puts("String",stream);
             else if(type==DIAMOND_TYPE_BOOL) out_puts("Bool",stream);

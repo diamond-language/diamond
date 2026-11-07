@@ -91,6 +91,7 @@ module Opcode
   BCRYPT_HASH = 112
   BCRYPT_VERIFY = 113
   SQLITE3_OPEN = 94
+  THREAD_NEW = 91
   FILE_DELETE = 73
   TCP_LISTEN_NONBLOCK = 76
   FILE_PATH = 156
@@ -179,19 +180,9 @@ module Opcode
   MATH_UNARY = 88
   MATH_BINARY = 89
   PROGRAM_BUILDER_NEW = 90
-  # 91 (THREAD_NEW)
-  # in src/vm.h's DiamondOpCode enum have no entry of
-  # their own here -- none of them are constructs this self-hosted
-  # parser emits (Thread isn't part of its
-  # supported grammar). 92-93 (GET_CVAR/SET_CVAR) *are* named below:
-  # class variables; 95 (CHECK_DESTRUCTURE_COUNT) is named above.
-  # SHIFT_LEFT below still has to account for the full original 8-opcode
-  # gap (91-98) to match the real enum value -- same class of bug the
-  # comment above (REGEXP_NEW's own gap) already flags. Confirmed
-  # against the real value with a throwaway C probe (printf("%d",
-  # (int)DIAMOND_OP_SHIFT_LEFT)) rather than counted by hand a second
-  # time, after counting by hand got it wrong once already (missed
-  # SQLITE3_OPEN, landed on 97 instead of 98).
+  # Opcode values are explicit and must match src/vm.h's DiamondOpCode enum.
+  # Check a new one with a C probe (printf("%d", (int)DIAMOND_OP_NAME)):
+  # counting enum lines by hand has gone wrong more than once.
   GET_CVAR = 92
   SET_CVAR = 93
   SHIFT_LEFT = 99
@@ -10104,6 +10095,7 @@ class Parser
     return 6 if name == "SecureRandom"
     return 7 if name == "BCrypt"
     return 8 if name == "SQLite3"
+    return 9 if name == "Thread"
     -1
   end
 
@@ -10116,6 +10108,7 @@ class Parser
     return self.parse_secure_random_call() if id == 6
     return self.parse_bcrypt_call() if id == 7
     return self.parse_sqlite3_open_call() if id == 8
+    return self.parse_thread_new_call() if id == 9
     self.parse_program_builder_new_call()
   end
 
@@ -10356,6 +10349,58 @@ class Parser
     self.advance_token()
     destination = self.allocate_register()
     self.emit_instruction3(Opcode::SQLITE3_OPEN, destination, path, mode)
+    destination
+  end
+
+  # `Thread.new(callable, *args)`: THREAD_NEW dest, callable, base, count, the
+  # arguments moved into a contiguous run, as compiler_builtins.c's
+  # parse_thread_new_call.
+  def parse_thread_new_call()
+    self.advance_token()
+    if @current.kind() != :identifier || self.token_text(@current) != "new"
+      self.fail("expected 'new' after 'Thread'")
+      return 0
+    end
+    self.advance_token()
+    if @current.kind() != :left_paren
+      self.fail("expected '(' after 'Thread.new'")
+      return 0
+    end
+    self.advance_token()
+    self.skip_newlines()
+    callable = self.parse_expression()
+    self.skip_newlines()
+    arguments = []
+    while @current.kind() == :comma && !@failed
+      self.advance_token()
+      self.skip_newlines()
+      if arguments.length() == 255
+        self.fail("too many Thread.new arguments")
+        return 0
+      end
+      arguments.push(self.parse_expression())
+      self.skip_newlines()
+    end
+    return 0 if @failed
+    if @current.kind() != :right_paren
+      self.fail("expected ')' after Thread.new arguments")
+      return 0
+    end
+    self.advance_token()
+    base = self.allocate_register()
+    index = 1
+    while index < arguments.length()
+      self.allocate_register()
+      index = index + 1
+    end
+    index = 0
+    while index < arguments.length()
+      self.emit_instruction2(Opcode::MOVE, base + index, arguments[index])
+      index = index + 1
+    end
+    destination = self.allocate_register()
+    self.emit_instruction3(Opcode::THREAD_NEW, destination, callable, base)
+    self.emit_byte(arguments.length())
     destination
   end
 
