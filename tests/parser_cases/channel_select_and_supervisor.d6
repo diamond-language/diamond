@@ -1,0 +1,17 @@
+# Channel.new, Channel.select (with and without a deadline), Channel.select_send
+# and Supervisor.new: the native-only call forms the self-hosted compiler builds.
+def produce(channel, value) = channel.send(value)
+
+first = Channel.new(1)
+second = Channel.new(1)
+Thread.new(produce, second, "from second").join()
+puts(Channel.select([first, second]))
+puts(Channel.select([first], Time.monotonic() + 0.01))
+
+open = Channel.new(1)
+puts(Channel.select_send([open], "queued"))
+puts(open.receive())
+
+supervisor = Supervisor.new()
+puts(supervisor.class())
+puts(Supervisor.new(:one_for_all).class())

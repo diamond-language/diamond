@@ -92,6 +92,10 @@ module Opcode
   BCRYPT_VERIFY = 113
   SQLITE3_OPEN = 94
   THREAD_NEW = 91
+  CHANNEL_NEW = 169
+  CHANNEL_SELECT = 179
+  CHANNEL_SELECT_SEND = 181
+  SUPERVISOR_NEW = 170
   FILE_DELETE = 73
   TCP_LISTEN_NONBLOCK = 76
   FILE_PATH = 156
@@ -10096,6 +10100,8 @@ class Parser
     return 7 if name == "BCrypt"
     return 8 if name == "SQLite3"
     return 9 if name == "Thread"
+    return 10 if name == "Channel"
+    return 11 if name == "Supervisor"
     -1
   end
 
@@ -10109,6 +10115,8 @@ class Parser
     return self.parse_bcrypt_call() if id == 7
     return self.parse_sqlite3_open_call() if id == 8
     return self.parse_thread_new_call() if id == 9
+    return self.parse_channel_call() if id == 10
+    return self.parse_supervisor_new_call() if id == 11
     self.parse_program_builder_new_call()
   end
 
@@ -10401,6 +10409,104 @@ class Parser
     destination = self.allocate_register()
     self.emit_instruction3(Opcode::THREAD_NEW, destination, callable, base)
     self.emit_byte(arguments.length())
+    destination
+  end
+
+  # `Channel.new(capacity)`, `Channel.select(channels, deadline = nil)` and
+  # `Channel.select_send(channels, value, deadline = nil)`, as
+  # compiler_builtins.c's parse_channel_new_call.
+  def parse_channel_call()
+    self.advance_token()
+    method = if @current.kind() == :identifier then self.token_text(@current) else "" end
+    return self.parse_channel_select_call(method == "select_send") if method == "select" || method == "select_send"
+    if method != "new"
+      self.fail("expected 'new', 'select' or 'select_send' after 'Channel'")
+      return 0
+    end
+    self.advance_token()
+    capacity = self.parse_single_argument("Channel.new")
+    return 0 if @failed
+    destination = self.allocate_register()
+    self.emit_instruction2(Opcode::CHANNEL_NEW, destination, capacity)
+    destination
+  end
+
+  def parse_channel_select_call(send)
+    call = if send then "Channel.select_send" else "Channel.select" end
+    self.advance_token()
+    if @current.kind() != :left_paren
+      self.fail("expected '(' after '#{call}'")
+      return 0
+    end
+    self.advance_token()
+    self.skip_newlines()
+    channels = self.parse_expression()
+    self.skip_newlines()
+    value = 0
+    if send
+      if @current.kind() != :comma
+        self.fail("Channel.select_send takes a channels Array and a value")
+        return 0
+      end
+      self.advance_token()
+      self.skip_newlines()
+      value = self.parse_expression()
+      self.skip_newlines()
+    end
+    deadline = 0
+    if @current.kind() == :comma
+      self.advance_token()
+      self.skip_newlines()
+      deadline = self.parse_expression()
+      self.skip_newlines()
+    else
+      deadline = self.allocate_register()
+      self.emit_instruction1(Opcode::NIL, deadline)
+    end
+    if @current.kind() != :right_paren
+      self.fail("expected ')' after #{call} arguments")
+      return 0
+    end
+    self.advance_token()
+    destination = self.allocate_register()
+    if send
+      self.emit_instruction3(Opcode::CHANNEL_SELECT_SEND, destination, channels, value)
+      self.emit_register(deadline)
+    else
+      self.emit_instruction3(Opcode::CHANNEL_SELECT, destination, channels, deadline)
+    end
+    destination
+  end
+
+  # `Supervisor.new(strategy = nil)`; nil is read as :one_for_one.
+  def parse_supervisor_new_call()
+    self.advance_token()
+    if @current.kind() != :identifier || self.token_text(@current) != "new"
+      self.fail("expected 'new' after 'Supervisor'")
+      return 0
+    end
+    self.advance_token()
+    if @current.kind() != :left_paren
+      self.fail("expected '(' after 'Supervisor.new'")
+      return 0
+    end
+    self.advance_token()
+    self.skip_newlines()
+    strategy = 0
+    if @current.kind() == :right_paren
+      strategy = self.allocate_register()
+      self.emit_instruction1(Opcode::NIL, strategy)
+    else
+      strategy = self.parse_expression()
+      self.skip_newlines()
+    end
+    if @current.kind() != :right_paren
+      self.fail("expected ')' after Supervisor.new arguments")
+      return 0
+    end
+    self.advance_token()
+    destination = self.allocate_register()
+    self.emit_instruction2(Opcode::SUPERVISOR_NEW, destination, strategy)
     destination
   end
 
