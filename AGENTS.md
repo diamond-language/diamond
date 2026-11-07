@@ -46,7 +46,7 @@ The latest release is v0.28.0. v0.23.0 was the first under the d6 name (`d6` com
 1. **Language server receiver precision across imported files** (docs/roadmap.md, "Improve receiver-aware tooling").
 2. Needs an owner decision or a driving use case first: sandbox path and host allow-lists (`docs/sandbox.md` says why they were left out; a JSON policy of exact resolved-path prefixes and exact hostnames was proposed), supervisors that cross threads, and endless-def conversion of `packages/` (143 methods; do it with the next release of each package, not on its own).
 3. Literate programming: investigated and piloted on the `lp` branch (PR #250, unmerged) and then put on hold by the owner; do not merge or delete it unasked. Memo: `docs/internal/literate-programming-investigation.md` on that branch.
-4. Reminder: check that the TLS certificates renew (dilang.tech about 2026-11-17, cuts.dilang.tech about 2026-11-22; `docs/registry-release-plan.md`).
+4. Reminder: confirm the first certbot renewals after about 2026-11-24 (dilang.tech, cuts.dilang.tech, skindicate.art, modartist.app; readiness passed 2026-11-07, see `applications/registry/deploy/PRODUCTION.md`).
 5. Cleanup: the example web UIs have only been tested over HTTP.
 
 CI lessons from adding jobs: the source needs gcc 15 (`#embed`, C23), so jobs run in `ubuntu:26.04`; the plain `make` target carries none of the `-std=c23` flags (use `make debug` first, as `test-integration` does); tests that need cuts must install them into a temporary project (`tools/install_local_cuts.sh`); a database container is not ready when `pg_isready` first answers, so wait for a real query.

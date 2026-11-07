@@ -112,8 +112,17 @@ and `verify_registry_launch.di` reinstalled all 18 cuts. Outage was about 30 s.
 `/etc/letsencrypt/renewal-hooks/deploy/reload-nginx` reloads nginx afterwards.
 The certificates issued 2026-09-25 expire 2026-12-24, so the first real renewals
 are due around 2026-11-24. `certbot renew --dry-run --no-random-sleep-on-renew`
-succeeded for all four names on 2026-09-25; confirm the new expiry
-(`certbot certificates`) after the first real renewal.
+succeeded for all four names on 2026-09-25.
+
+**Renewal readiness check, 2026-11-07:** the host now holds six certbot
+certificates: the four above, `pheint.skindicate.art` (expires 2027-01-29) and
+`getdiamond.codes` (expires 2027-01-20). An external `openssl s_client` showed each
+name serving its certbot certificate (Let's Encrypt), `certbot.timer` was enabled and
+active (twice daily), its last run exited cleanly, the deploy hook was in place,
+`nginx -t` passed, and `certbot renew --dry-run --no-random-sleep-on-renew` succeeded
+for all six. The first real renewals are still ahead (about 2026-11-24 for the four
+names expiring 2026-12-24); after that, confirm the new expiry
+(`certbot certificates`, or `openssl s_client` from outside) and record it here.
 
 The initial seed contained 24 cuts. At the operator's request, `dials`,
 `active_auth`, `active_discussion`, `active_karma`, `active_social`, and

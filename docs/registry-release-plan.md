@@ -55,8 +55,8 @@ existing droplet. See the [production record](../applications/registry/deploy/PR
 for the installed revision, service layout, verification, and operational limits.
 The first manual laptop snapshot has passed restore verification. Automatic
 alerts are deferred by the operator. Diamond 0.7.0 is tagged. The production reboot drill passed on 2026-09-24; the
-first Diamond certificate renewals (dilang.tech ~2026-11-17, cuts.dilang.tech
-~2026-11-22) remain to be confirmed.
+first certbot renewals (due about 2026-11-24; readiness checked 2026-11-07, see the
+production record) remain to be confirmed.
 
 ## Public launch inventory
 
@@ -135,9 +135,9 @@ The selected version is 0.7.0.
 - **Deferred by operator:** automatic alerts and receiver selection. Manual
   `monitor.d6` probes remain available; automatic notification is not a release gate.
 - **Deferred past 0.7.0, since resolved in part:** the production reboot drill
-  passed on 2026-09-24. The first Diamond certificate renewals (dilang.tech
-  ~2026-11-17, cuts.dilang.tech ~2026-11-22) have not yet happened; confirm them
-  afterwards.
+  passed on 2026-09-24. The first certbot certificate renewals
+  (due about 2026-11-24, after the move from Caddy) have not yet happened; confirm
+  them afterwards.
 - [x] Choose 0.7.0 and finalize the release notes.
 - [x] Update `DIAMOND_VERSION` in `src/main.c` and move the selected Unreleased
   changelog entries under the version/date heading.
