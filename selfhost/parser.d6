@@ -81,6 +81,12 @@ module Opcode
   SET_IVAR = 45
   CHECK_TYPE = 50
   CHECK_SELF_RETURN = 188
+  FILE_DELETE = 73
+  TCP_LISTEN_NONBLOCK = 76
+  FILE_PATH = 156
+  FILE_JOIN = 157
+  DIR_ENTRIES = 160
+  TCP_CONNECT_NONBLOCK = 175
   ARRAY = 51
   INDEX_GET = 52
   INDEX_SET = 53
@@ -9138,7 +9144,7 @@ class Parser
     return self.compile_specialized_new(class_entry) if self.specialized_new_ahead?(class_entry)
     local = self.find_local(name)
     return self.parse_array_new_call() if name == "Array" && class_entry == nil && local == nil && @current.kind() == :dot
-    return self.parse_file_open_call() if self.is_file_open_target(name, class_entry, local)
+    return self.parse_file_open_call(name) if self.is_file_open_target(name, class_entry, local)
     dot_construct = self.dot_construct_id(name, class_entry, local)
     return self.parse_dot_construct_call(dot_construct) if dot_construct >= 0
     if local == nil
@@ -10041,28 +10047,41 @@ class Parser
     destination
   end
 
+  # `Fiber.new(callable)` or `Fiber.yield(value = nil)`.
   def parse_fiber_new_call()
     self.advance_token()
-    if @current.kind() != :identifier || self.token_text(@current) != "new"
-      self.fail("expected 'new' after 'Fiber'")
+    creates = @current.kind() == :identifier && self.token_text(@current) == "new"
+    yields = @current.kind() == :yield
+    if !creates && !yields
+      self.fail("expected 'new' or 'yield' after 'Fiber'")
       return 0
     end
     self.advance_token()
     if @current.kind() != :left_paren
-      self.fail("expected '(' after 'Fiber.new'")
+      self.fail(if creates then "expected '(' after 'Fiber.new'" else "expected '(' after 'Fiber.yield'" end)
       return 0
     end
     self.advance_token()
     self.skip_newlines()
-    callable = self.parse_expression()
+    value = 0
+    if @current.kind() == :right_paren
+      if creates
+        self.fail("Fiber.new requires a Callable argument")
+        return 0
+      end
+      value = self.allocate_register()
+      self.emit_instruction1(Opcode::NIL, value)
+    else
+      value = self.parse_expression()
+    end
     self.skip_newlines()
     if @current.kind() != :right_paren
-      self.fail("expected ')' after Fiber.new argument")
+      self.fail(if creates then "expected ')' after Fiber.new argument" else "Fiber.yield accepts at most one value" end)
       return 0
     end
     self.advance_token()
     destination = self.allocate_register()
-    self.emit_instruction2(Opcode::FIBER_NEW, destination, callable)
+    self.emit_instruction2(if creates then Opcode::FIBER_NEW else Opcode::YIELD end, destination, value)
     destination
   end
 
@@ -10102,10 +10121,14 @@ class Parser
     destination
   end
 
+  # `TCPSocket.connect(host, port, options = nil)` or
+  # `TCPSocket.connect_nonblocking(host, port)`.
   def parse_tcp_connect_call()
     self.advance_token()
-    if @current.kind() != :identifier || self.token_text(@current) != "connect"
-      self.fail("expected 'connect' after 'TCPSocket'")
+    method = if @current.kind() == :identifier then self.token_text(@current) else "" end
+    nonblocking = method == "connect_nonblocking"
+    if !nonblocking && method != "connect"
+      self.fail("expected 'connect' or 'connect_nonblocking' after 'TCPSocket'")
       return 0
     end
     self.advance_token()
@@ -10125,20 +10148,40 @@ class Parser
     self.skip_newlines()
     port = self.parse_expression()
     self.skip_newlines()
+    options = 0
+    if !nonblocking && @current.kind() == :comma
+      self.advance_token()
+      self.skip_newlines()
+      options = self.parse_expression()
+      self.skip_newlines()
+    elsif !nonblocking
+      options = self.allocate_register()
+      self.emit_instruction1(Opcode::NIL, options)
+    end
     if @current.kind() != :right_paren
       self.fail("expected ')' after TCPSocket.connect arguments")
       return 0
     end
     self.advance_token()
     destination = self.allocate_register()
-    self.emit_instruction3(Opcode::TCP_CONNECT, destination, host, port)
+    if nonblocking
+      self.emit_instruction3(Opcode::TCP_CONNECT_NONBLOCK, destination, host, port)
+    else
+      self.emit_instruction3(Opcode::TCP_CONNECT, destination, host, port)
+      self.emit_register(options)
+    end
     destination
   end
 
+  # `TCPServer.listen(port, ...)` or `listen_nonblocking(port, ...)`, with
+  # `reuse_port:`, `host:` and `backlog:` in any order. The third operand is
+  # the reuse_port Bool alone, or a Hash once host or backlog is given.
   def parse_tcp_listen_call()
     self.advance_token()
-    if @current.kind() != :identifier || self.token_text(@current) != "listen"
-      self.fail("expected 'listen' after 'TCPServer'")
+    method = if @current.kind() == :identifier then self.token_text(@current) else "" end
+    nonblocking = method == "listen_nonblocking"
+    if !nonblocking && method != "listen"
+      self.fail("expected 'listen' or 'listen_nonblocking' after 'TCPServer'")
       return 0
     end
     self.advance_token()
@@ -10150,35 +10193,74 @@ class Parser
     self.skip_newlines()
     port = self.parse_expression()
     self.skip_newlines()
-    reuse_port = if @current.kind() == :comma
+    names = ["reuse_port", "host", "backlog"]
+    registers = [nil, nil, nil]
+    while @current.kind() == :comma && !@failed
       self.advance_token()
       self.skip_newlines()
-      if @current.kind() != :identifier || self.token_text(@current) != "reuse_port"
-        self.fail("expected 'reuse_port' after ',' in TCPServer.listen arguments")
+      option = if @current.kind() == :identifier then names.index(self.token_text(@current)) else nil end
+      if option == nil
+        self.fail("expected 'reuse_port', 'host' or 'backlog' after ',' in TCPServer.listen arguments")
+        return 0
+      end
+      if registers[option] != nil
+        self.fail("duplicate option in TCPServer.listen arguments")
         return 0
       end
       self.advance_token()
       if @current.kind() != :colon
-        self.fail("expected ':' after 'reuse_port'")
+        self.fail("expected ':' after TCPServer.listen option name")
         return 0
       end
       self.advance_token()
       self.skip_newlines()
-      result = self.parse_expression()
+      registers[option] = self.parse_expression()
       self.skip_newlines()
-      result
-    else
-      destination = self.allocate_register()
-      self.emit_instruction2(Opcode::BOOL, destination, 0)
-      destination
     end
     if @current.kind() != :right_paren
       self.fail("expected ')' after TCPServer.listen arguments")
       return 0
     end
     self.advance_token()
+    options = 0
+    if registers[1] == nil && registers[2] == nil
+      if registers[0] != nil
+        options = registers[0]
+      else
+        options = self.allocate_register()
+        self.emit_instruction2(Opcode::BOOL, options, 0)
+      end
+    else
+      keys = []
+      values = []
+      index = 0
+      while index < 3
+        if registers[index] != nil
+          key = self.allocate_register()
+          self.emit_instruction2(Opcode::STRING, key, self.add_string(names[index]))
+          keys.push(key)
+          values.push(registers[index])
+        end
+        index = index + 1
+      end
+      base = self.allocate_register()
+      index = 1
+      while index < keys.length() * 2
+        self.allocate_register()
+        index = index + 1
+      end
+      index = 0
+      while index < keys.length()
+        self.emit_instruction2(Opcode::MOVE, base + index * 2, keys[index])
+        self.emit_instruction2(Opcode::MOVE, base + index * 2 + 1, values[index])
+        index = index + 1
+      end
+      options = self.allocate_register()
+      self.emit_instruction3(Opcode::HASH, options, base, keys.length())
+      self.set_type_fact(options, Type::HASH)
+    end
     destination = self.allocate_register()
-    self.emit_instruction3(Opcode::TCP_LISTEN, destination, port, reuse_port)
+    self.emit_instruction3(if nonblocking then Opcode::TCP_LISTEN_NONBLOCK else Opcode::TCP_LISTEN end, destination, port, options)
     destination
   end
 
@@ -10187,13 +10269,73 @@ class Parser
     return false if local != nil
     return false if self.find_function(name) != nil
     return false if @current.kind() != :dot
-    name == "File"
+    name == "File" || name == "Dir"
   end
 
-  def parse_file_open_call()
+  # FILE_PATH selectors (src/vm.h's DiamondFilePathFunction) for File's
+  # fixed-arity methods: [name, id, binary, result type].
+  def file_path_methods() = [
+    ["sync", 7, false, nil], ["publish", 6, true, nil], ["exist?", 9, false, Type::BOOL],
+    ["rename", 8, true, Type::STRING], ["dirname", 0, false, Type::STRING],
+    ["extname", 2, false, Type::STRING], ["absolute?", 3, false, Type::BOOL],
+    ["directory?", 5, false, Type::BOOL], ["basename", 1, true, Type::STRING],
+    ["expand_path", 4, true, Type::STRING], ["read", 10, false, Type::STRING],
+    ["copy", 12, true, Type::STRING], ["size", 13, false, Type::INT],
+    ["sha256", 20, false, Type::STRING], ["chmod", 23, true, Type::STRING],
+    ["mode", 19, false, Type::INT], ["file?", 14, false, Type::BOOL],
+    ["symlink?", 15, false, Type::BOOL], ["write", 11, true, Type::INT]
+  ]
+
+  def dir_path_methods() = [
+    ["mkdir", 16, true, Type::STRING], ["mkdir_p", 21, true, Type::STRING],
+    ["delete", 17, false, Type::STRING], ["sync", 18, false, Type::STRING]
+  ]
+
+  # `File.<method>(...)` and `Dir.<method>(...)`, as compiler_builtins.c's
+  # parse_file_call and parse_dir_entries_call.
+  def parse_file_open_call(namespace)
     self.advance_token()
-    if @current.kind() != :identifier || self.token_text(@current) != "open"
-      self.fail("expected 'open' after 'File'")
+    if @current.kind() != :identifier
+      self.fail("expected a method name after '#{namespace}.'")
+      return 0
+    end
+    method = self.token_text(@current)
+    table = if namespace == "File" then self.file_path_methods() else self.dir_path_methods() end
+    index = 0
+    while index < table.length()
+      entry = table[index]
+      if entry[0] == method
+        self.advance_token()
+        return self.parse_file_path_call(namespace + "." + method, entry[1], entry[2], entry[3])
+      end
+      index = index + 1
+    end
+    if namespace == "Dir"
+      if method != "entries"
+        self.fail("expected 'entries', 'mkdir', 'mkdir_p', 'delete' or 'sync' after 'Dir'")
+        return 0
+      end
+      self.advance_token()
+      path_register = self.parse_single_argument("Dir.entries")
+      return 0 if @failed
+      destination = self.allocate_register()
+      self.emit_instruction2(Opcode::DIR_ENTRIES, destination, path_register)
+      self.set_type_fact(destination, Type::ARRAY)
+      return destination
+    end
+    if method == "delete"
+      self.advance_token()
+      path_register = self.parse_single_argument("File.delete")
+      return 0 if @failed
+      destination = self.allocate_register()
+      self.emit_instruction2(Opcode::FILE_DELETE, destination, path_register)
+      self.set_type_fact(destination, Type::BOOL)
+      return destination
+    end
+    return self.parse_file_join_call() if method == "join"
+    if method != "open"
+      self.fail("unknown File method (expected open/read/write/copy/size/sha256/mode/exist?/file?/" +
+        "symlink?/delete/rename/publish/sync/join/dirname/basename/extname/absolute?/directory?/expand_path)")
       return 0
     end
     self.advance_token()
@@ -10220,6 +10362,119 @@ class Parser
     self.advance_token()
     destination = self.allocate_register()
     self.emit_instruction3(Opcode::FILE_OPEN, destination, path_register, mode_register)
+    destination
+  end
+
+  # `(argument)` after a fixed-shape call's name.
+  def parse_single_argument(call)
+    if @current.kind() != :left_paren
+      self.fail("expected '(' after '#{call}'")
+      return 0
+    end
+    self.advance_token()
+    self.skip_newlines()
+    argument = self.parse_expression()
+    self.skip_newlines()
+    if @current.kind() != :right_paren
+      self.fail("expected ')' after #{call} argument")
+      return 0
+    end
+    self.advance_token()
+    argument
+  end
+
+  # FILE_PATH dest, path, second, selector: the second argument is nil when
+  # a binary method's optional one is left out.
+  def parse_file_path_call(call, id, binary, result_type)
+    if @current.kind() != :left_paren
+      self.fail("expected '(' after File path method name")
+      return 0
+    end
+    self.advance_token()
+    self.skip_newlines()
+    path_register = self.parse_expression()
+    self.skip_newlines()
+    second_register = 0
+    if binary && @current.kind() == :comma
+      self.advance_token()
+      self.skip_newlines()
+      second_register = self.parse_expression()
+      self.skip_newlines()
+    else
+      if binary && (id == 6 || id == 11 || id == 8 || id == 12)
+        self.fail(if id == 6
+          "File.publish requires path and bytes"
+        elsif id == 11
+          "File.write requires a path and data"
+        elsif id == 8
+          "File.rename requires a source and destination path"
+        else
+          "File.copy requires a source and destination path"
+        end)
+        return 0
+      end
+      second_register = self.allocate_register()
+      self.emit_instruction1(Opcode::NIL, second_register)
+    end
+    if @current.kind() != :right_paren
+      self.fail(if binary
+        "expected ')' after File path method arguments"
+      else
+        "expected ')' after File path method argument"
+      end)
+      return 0
+    end
+    self.advance_token()
+    destination = self.allocate_register()
+    self.emit_instruction3(Opcode::FILE_PATH, destination, path_register, second_register)
+    self.emit_byte(id)
+    self.set_type_fact(destination, result_type) if result_type != nil
+    destination
+  end
+
+  # `File.join(*parts)`: FILE_JOIN dest, base, count over a contiguous run.
+  def parse_file_join_call()
+    self.advance_token()
+    if @current.kind() != :left_paren
+      self.fail("expected '(' after 'File.join'")
+      return 0
+    end
+    self.advance_token()
+    self.skip_newlines()
+    arguments = []
+    if @current.kind() != :right_paren
+      while !@failed
+        if arguments.length() == 255
+          self.fail("too many File.join arguments")
+          return 0
+        end
+        arguments.push(self.parse_expression())
+        self.skip_newlines()
+        break if @current.kind() != :comma
+        self.advance_token()
+        self.skip_newlines()
+      end
+    end
+    if @current.kind() != :right_paren
+      self.fail("expected ')' after File.join arguments")
+      return 0
+    end
+    self.advance_token()
+    base = self.allocate_register()
+    index = 1
+    while index < arguments.length()
+      self.allocate_register()
+      index = index + 1
+    end
+    index = 0
+    while index < arguments.length()
+      self.emit_instruction2(Opcode::MOVE, base + index, arguments[index])
+      index = index + 1
+    end
+    destination = self.allocate_register()
+    self.emit_instruction2(Opcode::FILE_JOIN, destination, base)
+    self.emit_byte(arguments.length())
+    self.set_type_fact(destination, Type::STRING)
     destination
   end
 
