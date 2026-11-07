@@ -96,6 +96,11 @@ module Opcode
   CHANNEL_SELECT = 179
   CHANNEL_SELECT_SEND = 181
   SUPERVISOR_NEW = 170
+  PROCESS_RUN = 100
+  PROCESS_SPAWN = 101
+  PROCESS_RUN_OPTIONS = 183
+  PROCESS_SPAWN_OPTIONS = 184
+  IO_POLL = 77
   FILE_DELETE = 73
   TCP_LISTEN_NONBLOCK = 76
   FILE_PATH = 156
@@ -10102,6 +10107,8 @@ class Parser
     return 9 if name == "Thread"
     return 10 if name == "Channel"
     return 11 if name == "Supervisor"
+    return 12 if name == "Process"
+    return 13 if name == "IO"
     -1
   end
 
@@ -10117,6 +10124,8 @@ class Parser
     return self.parse_thread_new_call() if id == 9
     return self.parse_channel_call() if id == 10
     return self.parse_supervisor_new_call() if id == 11
+    return self.parse_process_call() if id == 12
+    return self.parse_io_call() if id == 13
     self.parse_program_builder_new_call()
   end
 
@@ -10507,6 +10516,97 @@ class Parser
     self.advance_token()
     destination = self.allocate_register()
     self.emit_instruction2(Opcode::SUPERVISOR_NEW, destination, strategy)
+    destination
+  end
+
+  # `Process.run(argv, options = nil)` or `Process.spawn(argv, options = nil)`:
+  # the options Hash (env, cwd, stdin) picks the _OPTIONS opcode, as
+  # compiler_builtins.c's parse_process_call.
+  def parse_process_call()
+    self.advance_token()
+    method = if @current.kind() == :identifier then self.token_text(@current) else "" end
+    if method != "run" && method != "spawn"
+      self.fail("expected 'run' or 'spawn' after 'Process'")
+      return 0
+    end
+    call = "Process.#{method}"
+    self.advance_token()
+    if @current.kind() != :left_paren
+      self.fail("expected '(' after '#{call}'")
+      return 0
+    end
+    self.advance_token()
+    self.skip_newlines()
+    argv = self.parse_expression()
+    self.skip_newlines()
+    options = nil
+    if @current.kind() == :comma
+      self.advance_token()
+      self.skip_newlines()
+      options = self.parse_expression()
+      self.skip_newlines()
+    end
+    if @current.kind() != :right_paren
+      self.fail("expected ')' after #{call} arguments")
+      return 0
+    end
+    self.advance_token()
+    destination = self.allocate_register()
+    if options == nil
+      self.emit_instruction2(if method == "run" then Opcode::PROCESS_RUN else Opcode::PROCESS_SPAWN end, destination, argv)
+    else
+      self.emit_instruction3(if method == "run" then Opcode::PROCESS_RUN_OPTIONS else Opcode::PROCESS_SPAWN_OPTIONS end,
+        destination, argv, options)
+    end
+    destination
+  end
+
+  # `IO.poll(readables, writables, timeout)` or `IO.tty?(stream)`, as
+  # compiler_builtins.c's parse_io_poll_call.
+  def parse_io_call()
+    self.advance_token()
+    method = if @current.kind() == :identifier then self.token_text(@current) else "" end
+    if method == "tty?"
+      self.advance_token()
+      return self.parse_file_path_call("IO.tty?", 22, false, Type::BOOL)
+    end
+    if method != "poll"
+      self.fail("expected 'poll' or 'tty?' after 'IO'")
+      return 0
+    end
+    self.advance_token()
+    if @current.kind() != :left_paren
+      self.fail("expected '(' after 'IO.poll'")
+      return 0
+    end
+    self.advance_token()
+    self.skip_newlines()
+    readables = self.parse_expression()
+    self.skip_newlines()
+    if @current.kind() != :comma
+      self.fail("expected ',' after IO.poll readables")
+      return 0
+    end
+    self.advance_token()
+    self.skip_newlines()
+    writables = self.parse_expression()
+    self.skip_newlines()
+    if @current.kind() != :comma
+      self.fail("expected ',' after IO.poll writables")
+      return 0
+    end
+    self.advance_token()
+    self.skip_newlines()
+    timeout = self.parse_expression()
+    self.skip_newlines()
+    if @current.kind() != :right_paren
+      self.fail("expected ')' after IO.poll arguments")
+      return 0
+    end
+    self.advance_token()
+    destination = self.allocate_register()
+    self.emit_instruction3(Opcode::IO_POLL, destination, readables, writables)
+    self.emit_register(timeout)
     destination
   end
 
