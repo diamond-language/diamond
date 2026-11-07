@@ -1,0 +1,12 @@
+# Process.run and Process.spawn, with and without their options Hash, and IO.poll:
+# the native-only call forms the self-hosted compiler builds.
+result = Process.run(["printf", "plain"])
+puts(result.stdout())
+with_env = Process.run(["sh", "-c", "printf \"$GREETING\""], {"env" => {"GREETING" => "from env"}})
+puts(with_env.stdout())
+child = Process.spawn(["true"])
+puts(child.wait())
+in_tmp = Process.spawn(["pwd"], {"cwd" => "/"})
+puts(in_tmp.pid() > 0)
+puts(in_tmp.wait())
+puts(IO.poll([], [], 0))
