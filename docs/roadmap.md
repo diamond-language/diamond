@@ -144,14 +144,14 @@ expressions and exceptions. Each lever below has been measured, not just guessed
 - **End-of-code sentinel** -- dropping the per-dispatch end-of-code check was worth about
   5.5% on the loop benchmark in a prototype; it needs the verifier to prove every jump
   target first.
-- **Regex engine** -- the time is in the matcher itself (`match_at`, UTF-8 length decoding
-  on ASCII input); an ASCII fast path is the first thing to try.
 - **Exceptions** -- every raise formats backtrace Strings for each frame; capture frames
   and format them only when read.
 - **String interpolation** -- one allocation per piece; a fused opcode needs compiler, JIT
   and bytecode-cache changes together.
 - **Instruction-cache layout** -- hot helpers conflict with `run_chunk` in L1i after a
-  relink (objects, hash and regex lose 2-4%).
+  relink (objects, hash and regex lose 2-4%). The same effect blocked a regex win: answering
+  `Regexp#match`/`match?` inside `run_chunk` took the regex benchmark 18% faster but slowed
+  blocks 3.5-4.6% at identical instruction counts. Controlling the layout would unlock both.
 
 Compare instruction counts (`perf stat -e instructions:u`) on PGO release builds, and keep a
 change only if cycles agree.
