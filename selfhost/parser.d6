@@ -101,6 +101,7 @@ module Opcode
   PROCESS_RUN_OPTIONS = 183
   PROCESS_SPAWN_OPTIONS = 184
   IO_POLL = 77
+  UDP_BIND = 78
   FILE_DELETE = 73
   TCP_LISTEN_NONBLOCK = 76
   FILE_PATH = 156
@@ -9233,7 +9234,7 @@ class Parser
     return self.parse_array_new_call() if name == "Array" && class_entry == nil && local == nil && @current.kind() == :dot
     return self.parse_file_open_call(name) if self.is_file_open_target(name, class_entry, local)
     dot_construct = self.dot_construct_id(name, class_entry, local)
-    return self.parse_dot_construct_call(dot_construct) if dot_construct >= 0
+    return self.parse_dot_construct_call(dot_construct, name) if dot_construct >= 0
     if local == nil
       constant_index = self.find_lexical_constant(name)
       if constant_index != nil
@@ -10109,10 +10110,11 @@ class Parser
     return 11 if name == "Supervisor"
     return 12 if name == "Process"
     return 13 if name == "IO"
+    return 14 if self.shaped_builtins().include_key?(name)
     -1
   end
 
-  def parse_dot_construct_call(id)
+  def parse_dot_construct_call(id, name = nil)
     return self.parse_fiber_new_call() if id == 0
     return self.parse_regexp_new_call() if id == 1
     return self.parse_tcp_connect_call() if id == 2
@@ -10126,6 +10128,7 @@ class Parser
     return self.parse_supervisor_new_call() if id == 11
     return self.parse_process_call() if id == 12
     return self.parse_io_call() if id == 13
+    return self.parse_shaped_builtin_call(name) if id == 14
     self.parse_program_builder_new_call()
   end
 
@@ -10607,6 +10610,134 @@ class Parser
     destination = self.allocate_register()
     self.emit_instruction3(Opcode::IO_POLL, destination, readables, writables)
     self.emit_register(timeout)
+    destination
+  end
+
+  # The fixed-shape builtin namespaces compiler_builtins.c parses one by one:
+  # namespace => [[method, opcode, required, optional, padding, result type,
+  # selector byte or nil], ...]. Up to `optional` more arguments may follow
+  # the required ones (nil when left out), `padding` nil registers always
+  # follow, and the opcode takes dest then every argument register.
+  def shaped_builtins() = {
+    "PostgreSQL" => [["open", 107, 1, 0, 0, nil, nil]],
+    "MySQL" => [["open", 108, 5, 0, 0, nil, nil]],
+    "TLSSocket" => [["connect", 81, 2, 1, 0, nil, nil], ["start_handshake", 177, 2, 1, 0, nil, nil]],
+    "TLSServer" => [["listen", 82, 3, 1, 0, nil, nil]],
+    "DNS" => [["resolve", 176, 3, 0, 0, nil, nil]],
+    "UDPSocket" => [["open", 79, 0, 0, 0, nil, nil]],
+    "Signal" => [["trap", 80, 2, 0, 0, nil, nil]],
+    "Cipher" => [["encrypt", 121, 2, 0, 0, Type::STRING, nil], ["decrypt", 122, 2, 0, 0, nil, nil]],
+    "Gzip" => [["compress", 123, 1, 0, 0, Type::STRING, nil], ["decompress", 124, 2, 0, 0, Type::STRING, nil]],
+    "Tensor" => [["zeros", 166, 2, 0, 0, nil, nil], ["from_array", 167, 1, 0, 0, nil, nil],
+                 ["random", 168, 3, 0, 0, nil, nil]],
+    "Base64" => [["encode", 125, 1, 0, 0, Type::STRING, nil], ["decode", 126, 1, 0, 0, Type::STRING, nil]],
+    "Digest" => [["sha256", 116, 1, 0, 0, Type::STRING, nil], ["sha1", 119, 1, 0, 0, Type::STRING, nil]],
+    "HMAC" => [["sha256", 117, 2, 0, 0, Type::STRING, nil], ["sha1", 120, 2, 0, 0, Type::STRING, nil],
+               ["verify", 118, 3, 0, 0, nil, nil]],
+    "SemVer" => [["valid?", 189, 1, 0, 1, Type::BOOL, 0], ["compare", 189, 2, 0, 0, Type::INT, 1],
+                 ["satisfies?", 189, 2, 0, 0, Type::BOOL, 2]]
+  }
+
+  def parse_shaped_builtin_call(namespace)
+    self.advance_token()
+    entries = self.shaped_builtins()[namespace]
+    method = if @current.kind() == :identifier then self.token_text(@current) else "" end
+    if namespace == "UDPSocket" && method == "bind"
+      return self.parse_udp_bind_call()
+    end
+    entry = nil
+    entries.each() do |candidate| entry = candidate if candidate[0] == method end
+    if entry == nil
+      names = entries.map() do |candidate| "'#{candidate[0]}'" end
+      names.push("'bind'") if namespace == "UDPSocket"
+      self.fail("expected #{names.join(" or ")} after '#{namespace}'")
+      return 0
+    end
+    call = "#{namespace}.#{method}"
+    self.advance_token()
+    if @current.kind() != :left_paren
+      self.fail("expected '(' after '#{call}'")
+      return 0
+    end
+    self.advance_token()
+    self.skip_newlines()
+    arguments = []
+    limit = entry[2] + entry[3]
+    while @current.kind() != :right_paren && !@failed
+      if arguments.length() == limit
+        self.fail("too many #{call} arguments")
+        return 0
+      end
+      arguments.push(self.parse_expression())
+      self.skip_newlines()
+      break if @current.kind() != :comma
+      self.advance_token()
+      self.skip_newlines()
+    end
+    return 0 if @failed
+    if @current.kind() != :right_paren
+      self.fail("expected ')' after #{call} arguments")
+      return 0
+    end
+    if arguments.length() < entry[2]
+      self.fail("#{call} expects #{entry[2]} argument#{if entry[2] == 1 then "" else "s" end}")
+      return 0
+    end
+    self.advance_token()
+    while arguments.length() < limit + entry[4]
+      filler = self.allocate_register()
+      self.emit_instruction1(Opcode::NIL, filler)
+      arguments.push(filler)
+    end
+    destination = self.allocate_register()
+    self.emit_byte(entry[1])
+    self.emit_register(destination)
+    arguments.each() do |argument| self.emit_register(argument) end
+    self.emit_byte(entry[6]) if entry[6] != nil
+    self.set_type_fact(destination, entry[5]) if entry[5] != nil
+    destination
+  end
+
+  # `UDPSocket.bind(port, host: nil)`: UDP_BIND dest, port, host.
+  def parse_udp_bind_call()
+    self.advance_token()
+    if @current.kind() != :left_paren
+      self.fail("expected '(' after 'UDPSocket.bind'")
+      return 0
+    end
+    self.advance_token()
+    self.skip_newlines()
+    port = self.parse_expression()
+    self.skip_newlines()
+    host = nil
+    if @current.kind() == :comma
+      self.advance_token()
+      self.skip_newlines()
+      if @current.kind() != :identifier || self.token_text(@current) != "host"
+        self.fail("expected 'host' after ',' in UDPSocket.bind arguments")
+        return 0
+      end
+      self.advance_token()
+      if @current.kind() != :colon
+        self.fail("expected ':' after 'host' in UDPSocket.bind")
+        return 0
+      end
+      self.advance_token()
+      self.skip_newlines()
+      host = self.parse_expression()
+      self.skip_newlines()
+    end
+    if @current.kind() != :right_paren
+      self.fail("expected ')' after UDPSocket.bind arguments")
+      return 0
+    end
+    self.advance_token()
+    if host == nil
+      host = self.allocate_register()
+      self.emit_instruction1(Opcode::NIL, host)
+    end
+    destination = self.allocate_register()
+    self.emit_instruction3(Opcode::UDP_BIND, destination, port, host)
     destination
   end
 
