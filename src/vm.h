@@ -1578,6 +1578,10 @@ typedef struct DiamondFunction {
     /* Whether the body is a trivial field getter or setter, filled with
      * entry_check and valid once entry_check.computed (DiamondAccessor). */
     DiamondAccessor accessor;
+    /* Whether the body only checks its parameters' types and stores them in
+     * fields (an `initialize` that copies its arguments), filled with
+     * accessor (diamond_decode_constructor). */
+    bool trivial_constructor;
     /* The chunk a call into this function runs, built once per program by
      * diamond_vm_run instead of on every call (function_call_chunk,
      * src/vm_internal.h). Valid only while call_chunk.functions is the

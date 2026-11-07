@@ -1,0 +1,13 @@
+3 4
+expected Int, got String
+expected Int, got Nil
+a [1, 2] [1, 2]
+true
+expected Node | Nil, got Point
+1 2 3
+arity: wrong number of arguments
+1 10
+5
+made noisy
+599970000
+nil

@@ -22,6 +22,13 @@ authoritative fine-grained record.
   copied back in a form the processor can forward straight from the callee's stores. The
   n-body simulation runs about 10% fewer cycles, object- and struct-heavy code 4-5% fewer, and
   building and walking trees about 3% fewer.
+- **Cheaper `new` for simple constructors.** An `initialize` that only checks its parameters'
+  types and copies them into fields (`def initialize(x: Int, y: Int) @x = x; @y = y end`, and
+  every `struct`'s) no longer runs as a method call: `new` checks the arguments and fills the
+  fields directly. Any argument it can't settle at once runs `initialize` as before, so errors
+  and backtraces are unchanged. Struct-heavy code runs about 17% fewer cycles, object
+  allocation 13% fewer and building binary trees 8% fewer. With `DIAMOND_TRACE_JIT`, such
+  constructors no longer appear among the compiled functions, since they never run.
 - **Cheaper short Strings and Arrays.** The collector keeps swept Strings of up to about 100
   bytes, sorted by size, and swept Array headers for the next allocations instead of returning
   them to `malloc`, as it already did for small instances; together the pools stay within one
