@@ -698,6 +698,38 @@ static DiamondVmStatus mono_invoke_call(DiamondVm *vm,const DiamondChunk *owner,
  * accessor's own argument count, NONE for anything else. The caller has
  * already ruled out a private or protected method, a wrong arity and the
  * exception field names, all fixed for one site and method. */
+/* DIAMOND_SHORTCUT_CHECK_CLASS for a type set that is one plain user class,
+ * DIAMOND_SHORTCUT_CHECK_CLASS_OR_NIL for that class and Nil in either
+ * order, with the class stored in entry->shortcut_class; anything else
+ * stays DIAMOND_SHORTCUT_CHECK_FULL. */
+static uint8_t classify_class_check(DiamondMethodCacheEntry *entry,
+        const DiamondChunk *function_chunk,const DiamondTypeSet *set) {
+    if(set->count==0||set->count>2)return DIAMOND_SHORTCUT_CHECK_FULL;
+    const DiamondClass *class=nullptr;
+    bool nil=false;
+    for(size_t index=0;index<set->count;index++) {
+        const DiamondTypeMember *member=&set->members[index];
+        if(member->argument_set!=DIAMOND_NO_TYPE_SET||
+           member->second_argument_set!=DIAMOND_NO_TYPE_SET)
+            return DIAMOND_SHORTCUT_CHECK_FULL;
+        if(member->id==DIAMOND_TYPE_NIL&&!nil) {
+            nil=true;
+            continue;
+        }
+        if(class!=nullptr||member->id<DIAMOND_TYPE_CLASS_BASE||
+           member->id>=DIAMOND_TYPE_VARIABLE_BASE)
+            return DIAMOND_SHORTCUT_CHECK_FULL;
+        const size_t class_index=(size_t)(member->id-DIAMOND_TYPE_CLASS_BASE);
+        if(class_index>=function_chunk->class_count||
+           function_chunk->classes[class_index]==nullptr)
+            return DIAMOND_SHORTCUT_CHECK_FULL;
+        class=function_chunk->classes[class_index];
+    }
+    if(class==nullptr)return DIAMOND_SHORTCUT_CHECK_FULL;
+    entry->shortcut_class=class;
+    return nil?DIAMOND_SHORTCUT_CHECK_CLASS_OR_NIL:DIAMOND_SHORTCUT_CHECK_CLASS;
+}
+
 __attribute__((noinline,cold))
 static void classify_mono_shortcut(DiamondMethodCacheEntry *entry,
         const DiamondChunk *owner,const DiamondMethod *method,uint8_t argc) {
@@ -718,6 +750,8 @@ static void classify_mono_shortcut(DiamondMethodCacheEntry *entry,
         check=lone&&set->members[0].id==DIAMOND_TYPE_FLOAT?DIAMOND_SHORTCUT_CHECK_FLOAT:
             lone&&set->members[0].id==DIAMOND_TYPE_INT?DIAMOND_SHORTCUT_CHECK_INT:
             DIAMOND_SHORTCUT_CHECK_FULL;
+        if(check==DIAMOND_SHORTCUT_CHECK_FULL)
+            check=classify_class_check(entry,function_chunk,set);
     }
     entry->shortcut_field=accessor.field;
     entry->shortcut_check=check;
@@ -750,6 +784,17 @@ static inline bool shortcut_value_passes(const DiamondVm *vm,
         case DIAMOND_SHORTCUT_CHECK_NONE: return true;
         case DIAMOND_SHORTCUT_CHECK_FLOAT: return value.kind==DIAMOND_VALUE_FLOAT;
         case DIAMOND_SHORTCUT_CHECK_INT: return value.kind==DIAMOND_VALUE_INT;
+        case DIAMOND_SHORTCUT_CHECK_CLASS_OR_NIL:
+            if(value.kind==DIAMOND_VALUE_NIL)return true;
+            [[fallthrough]];
+        case DIAMOND_SHORTCUT_CHECK_CLASS:
+            /* An exact instance passes; a subclass instance or anything
+             * else is judged by the full walk, which may still accept it. */
+            if(value.kind==DIAMOND_VALUE_OBJECT&&
+               value.as.object->kind==DIAMOND_OBJECT_INSTANCE&&
+               ((const DiamondInstance *)value.as.object)->class==entry->shortcut_class)
+                return true;
+            return shortcut_full_check(vm,instance,entry->method,value);
         default: return shortcut_full_check(vm,instance,entry->method,value);
     }
 }

@@ -1768,12 +1768,16 @@ enum {
     DIAMOND_SHORTCUT_SETTER,
 };
 /* The value check a getter or setter shortcut makes: none for an untyped
- * accessor, a kind test for a lone Int or Float, and otherwise the full
+ * accessor, a kind test for a lone Int or Float, a class test for a lone
+ * user class with or without Nil (`Node`, `Node | Nil`; the class is in
+ * DiamondMethodCacheEntry.shortcut_class), and otherwise the full
  * shortcut_type_matches walk on the method's own type set. */
 enum {
     DIAMOND_SHORTCUT_CHECK_NONE,
     DIAMOND_SHORTCUT_CHECK_INT,
     DIAMOND_SHORTCUT_CHECK_FLOAT,
+    DIAMOND_SHORTCUT_CHECK_CLASS,
+    DIAMOND_SHORTCUT_CHECK_CLASS_OR_NIL,
     DIAMOND_SHORTCUT_CHECK_FULL,
 };
 
@@ -1787,6 +1791,8 @@ typedef struct DiamondMethodCacheEntry {
     uint8_t shortcut;
     uint8_t shortcut_field;
     uint8_t shortcut_check;
+    /* The class a DIAMOND_SHORTCUT_CHECK_CLASS(_OR_NIL) accessor declares. */
+    const DiamondClass *shortcut_class;
 } DiamondMethodCacheEntry;
 
 typedef struct DiamondMethodCache {
