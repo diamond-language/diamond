@@ -12,9 +12,11 @@ authoritative fine-grained record.
   types, `attr_reader item: T` in generic classes, generic type arguments on classes inside a
   module (`Relation[T]`), every `File` and `Dir` method, `Fiber.yield`,
   `TCPServer.listen`'s `host:`/`backlog:` options with the non-blocking TCP forms, and do-block
-  contracts on generic functions (`generic_collect(21) do [] end` binds T to Int). Run through
-  it, 1,365 of the 1,586 `tests/cases` programs now compile and run (up from 1,342), and all but
-  three of the rest stop at a runtime builtin it doesn't port yet.
+  contracts on generic functions (`generic_collect(21) do [] end` binds T to Int). It also
+  compiles `Time`, `SQLite3.open`, `SecureRandom` and `BCrypt` calls, so Active Record runs
+  through it. Run through it, 1,438 of the 1,586 `tests/cases` programs now compile and run (up
+  from 1,342), and most of the rest stop at Thread, Channel, Process or Supervisor, which it
+  doesn't port yet.
 
 ## 0.28.0 — 2026-11-06
 
