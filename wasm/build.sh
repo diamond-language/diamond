@@ -99,8 +99,12 @@ if [ ! -f "$out/obj/sqlite3.o" ] || [ "$sqlite_dir/sqlite3.c" -nt "$out/obj/sqli
         -c "$sqlite_dir/sqlite3.c" -o "$out/obj/sqlite3.o"
 fi
 
-# reginold (the regular-expression engine) for wasm, built from a scratch copy.
-if [ ! -f "$out/reginold/libreginold.a" ]; then
+# reginold (the regular-expression engine) for wasm, built from a scratch copy,
+# again whenever a reginold source is newer than that copy's library: a library
+# built before reginold gained a function would otherwise fail the link.
+if [ ! -f "$out/reginold/libreginold.a" ] ||
+   [ -n "$(find "$root/reginold" \( -name '*.c' -o -name '*.h' -o -name Makefile \) \
+        -newer "$out/reginold/libreginold.a" -print -quit)" ]; then
     rm -rf "$out/reginold"
     cp -R "$root/reginold" "$out/reginold"
     find "$out/reginold" \( -name '*.o' -o -name '*.a' \) -delete
