@@ -1,0 +1,17 @@
+# A seventh descriptor field marks a written parameter list, so
+# `Callable[[], Int]` is typed with no parameters, unlike `Callable[0, Int]`.
+# Only a Callable with an arity can carry it.
+b = ProgramBuilder.new()
+begin
+  b.declare_type_set(-1, [[0, -1, -1, -1, -1, [], true]])
+rescue error
+  puts(error.message())
+end
+int = b.declare_type_set(-1, [[0, -1, -1, -1, -1, []]])
+set = b.declare_type_set(-1, [[7, -1, -1, 0, int, [], true]])
+# NIL r0; CHECK_TYPE r0, set; RETURN r0
+[3, 0, 0, 50, 0, 0, 0, set, 57, 0, 0].each() do |byte|
+  b.emit_byte(-1, byte)
+end
+b.set_register_count(-1, 1)
+b.run()
