@@ -6053,6 +6053,9 @@ class Parser
         return destination
       end
     end
+    if @current.kind() == :do && declaration != nil && declaration.length() > 1
+      @block_context = self.callable_union_block_context(declaration)
+    end
     argument_count = self.append_trailing_block(parsed)[1]
     destination = self.allocate_register()
     self.emit_call_opcode(Opcode::CALL_CLOSURE)
@@ -8658,6 +8661,10 @@ class Parser
     end
     if then_declaration != nil && then_declaration == else_declaration
       @declared_types.push([destination, then_declaration])
+    elsif self.single_callable?(then_declaration) && self.single_callable?(else_declaration)
+      # Two different Callables join as a union, which a trailing block on
+      # the result is typed against (callable_union_block_context).
+      @declared_types.push([destination, [then_declaration[0], else_declaration[0]]])
     end
     destination
   end
@@ -9388,7 +9395,115 @@ class Parser
     self.emit_register(destination)
     self.emit_function_index(function_entry[1])
     self.emit_byte(0)
+    declaration = self.function_value_annotation(function_entry)
+    @declared_types.push([destination, declaration]) if declaration != nil
     destination
+  end
+
+  # A non-generic function's type as a value, `Callable[[params], R]`, when
+  # every parameter is typed and none is defaulted or variadic.
+  def function_value_annotation(function_entry)
+    return nil if function_entry.length() < 10 || function_entry[4] > 0
+    # A &block parameter is optional without being defaulted.
+    required = function_entry[6] + (if function_entry[8] then 1 else 0 end)
+    return nil if required != function_entry[2] || self.variadic_function?(function_entry[1])
+    types = function_entry[7]
+    return nil if types == nil || types.length() != function_entry[2] || types.include?(nil)
+    [["Callable", nil, nil, function_entry[2], function_entry[5], types]]
+  end
+
+  # A trailing block on a union of Callables, as compiler.c's
+  # compile_callable_value_block types it: one arm's block contract when it
+  # satisfies every arm's, else one synthesized from them, each parameter
+  # the arm type all others accept (or their union) and the result an arm's
+  # result that satisfies every arm. Nil when the arms don't line up.
+  def callable_union_block_context(declaration)
+    blocks = []
+    declaration.each() do |member|
+      if member[0] == "Callable" && member[5] != nil && member[5].length() > 0
+        block = member[5][member[5].length() - 1]
+        blocks.push(block[0]) if block != nil && block.length() == 1 && block[0][0] == "Callable"
+      end
+    end
+    return nil if blocks.length() != declaration.length()
+    shared = blocks.find() do |candidate|
+      blocks.all?() do |expected| self.member_satisfies?(candidate, expected) end
+    end
+    return shared if shared != nil
+    first = blocks[0]
+    return nil if first[5] == nil
+    return nil if blocks.any?() do |block| block[5] == nil || block[5].length() != first[5].length() end
+    parameters = []
+    index = 0
+    while index < first[5].length()
+      arms = blocks.map() do |block| block[5][index] end
+      return nil if arms.include?(nil)
+      selected = arms.find() do |candidate|
+        arms.all?() do |arm| self.annotation_satisfies?(arm, candidate) end
+      end
+      if selected == nil
+        selected = []
+        arms.each() do |arm|
+          arm.each() do |member| selected.push(member) unless selected.include?(member) end
+        end
+      end
+      parameters.push(selected)
+      index = index + 1
+    end
+    results = blocks.map() do |block| block[4] end
+    result = if results.include?(nil)
+      nil
+    else
+      results.find() do |candidate|
+        results.all?() do |arm| self.annotation_satisfies?(candidate, arm) end
+      end
+    end
+    ["Callable", nil, nil, first[3], result, parameters]
+  end
+
+  # Whether every value of `actual` is one of `expected`, judged on the
+  # annotations alone: a subclass satisfies its class, collections and
+  # results covariantly, Callable parameters contravariantly.
+  def annotation_satisfies?(actual, expected)
+    return false if actual == nil || expected == nil
+    actual.all?() do |member|
+      expected.any?() do |wanted| self.member_satisfies?(member, wanted) end
+    end
+  end
+
+  def member_satisfies?(actual, expected)
+    return true if actual == expected
+    if actual[0] == "Callable" && expected[0] == "Callable"
+      return false if expected[3] != -1 && actual[3] != expected[3]
+      if expected[5] != nil
+        return false if actual[5] == nil || actual[5].length() != expected[5].length()
+        index = 0
+        while index < expected[5].length()
+          return false unless self.annotation_satisfies?(expected[5][index], actual[5][index])
+          index = index + 1
+        end
+      end
+      return expected[4] == nil || self.annotation_satisfies?(actual[4], expected[4])
+    end
+    if actual[0] == expected[0]
+      return true if expected[1] == nil && expected[2] == nil
+      return false if actual[1] == nil || !self.annotation_satisfies?(actual[1], expected[1])
+      return expected[2] == nil || (actual[2] != nil && self.annotation_satisfies?(actual[2], expected[2]))
+    end
+    return false if expected[1] != nil || expected[2] != nil
+    actual_class = self.find_class(actual[0])
+    expected_class = self.find_class(expected[0])
+    return false if actual_class == nil || expected_class == nil
+    walk = actual_class[2]
+    while walk != nil
+      return true if walk == expected_class[1]
+      walk = self.superclass_of(walk)
+    end
+    false
+  end
+
+  def single_callable?(declaration)
+    declaration != nil && declaration.length() == 1 && declaration[0][0] == "Callable" && declaration[0][5] != nil
   end
 
   def parse_name_call(name, local)
