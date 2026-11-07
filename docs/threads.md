@@ -48,6 +48,7 @@ These values may cross a thread boundary:
 - arrays and hashes containing transferable values;
 - instances whose fields contain transferable values;
 - `Regexp` (compiled again in the receiving thread from its pattern and options);
+- `Time` and `Tensor` (copied as plain data);
 - zero-capture callables; and
 - `Channel` (see [Channels](#channels) below) -- the one value that crosses
   by *reference*, not by deep copy: every thread that receives one gets its

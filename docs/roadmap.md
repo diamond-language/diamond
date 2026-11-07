@@ -222,13 +222,8 @@ Keep the self-hosted implementation at practical parity where it protects the la
 but do not duplicate every native optimization unless it advances a specific bootstrap or
 language-design goal.
 
-Running every `tests/cases` program through the self-hosted compiler
-(`tools/self_host_survey.sh`, 2026-11-07): 1,584 of 1,586 compile and run, with 47 skipped because
-they set a limit the compiler itself would hit. Every runtime builtin namespace is ported, and the
-compiler infers the Callable contracts native does: blocks on constructors and on a union of
-callables, generic function references fixed to the type a parameter expects, and constructed
-instances' type arguments. The two failures end with a Time or a Tensor as the program's result,
-which `ProgramBuilder#run` cannot copy out of the program it built.
+Every `tests/cases` program compiles and runs through it (`tools/self_host_survey.sh`); rerun
+the survey when a language change lands to keep it that way.
 
 ### Fewer languages to build and test
 

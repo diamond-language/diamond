@@ -245,11 +245,28 @@ static bool copy_regexp_step(DiamondVm *dest_vm,DiamondValue value,DiamondValue 
     *out=DIAMOND_OBJECT(copy);return true;
 }
 
+/* Time and Tensor are plain data (scalars, or a size and a run of doubles),
+ * so a copy is a fresh object with the same contents. */
+static bool copy_time_step(DiamondVm *dest_vm,DiamondValue value,DiamondValue *out) {
+    const DiamondTime *source=(const DiamondTime *)value.as.object;
+    DiamondTime *copy=allocate_time(dest_vm,source->epoch,source->zone_mode,source->utc_offset);
+    if(copy==nullptr)return false;
+    *out=DIAMOND_OBJECT(copy);return true;
+}
+
+static bool copy_tensor_step(DiamondVm *dest_vm,DiamondValue value,DiamondValue *out) {
+    const DiamondTensor *source=(const DiamondTensor *)value.as.object;
+    DiamondTensor *copy=allocate_tensor(dest_vm,source->rows,source->cols);
+    if(copy==nullptr)return false;
+    memcpy(copy->data,source->data,source->rows*source->cols*sizeof source->data[0]);
+    *out=DIAMOND_OBJECT(copy);return true;
+}
+
 /* Deep-copies a DiamondValue rooted in some other VM's heap (typically
  * program_builder_run_helper's temporary run_vm, about to be freed) into
  * dest_vm's own heap, so the result stays valid once the source VM is
  * gone. Object kinds that wrap live VM/OS state rather than plain data
- * (Closure, Fiber, File, Listener, Regexp, ProgramBuilder) aren't safe to
+ * (a capturing Closure, Fiber, File, Listener, ProgramBuilder) aren't safe to
  * hand across this boundary at all -- those return false and the caller
  * reports a TypeError. Composite kinds (Array, Hash, ...) recurse into
  * this same function per element, and deliberately drop the source's own
@@ -337,6 +354,10 @@ static bool copy_value_step(DiamondVm *dest_vm, DiamondValue value,
             return copy_channel_step(dest_vm,value,out);
         case DIAMOND_OBJECT_REGEXP:
             return copy_regexp_step(dest_vm,value,out);
+        case DIAMOND_OBJECT_TIME:
+            return copy_time_step(dest_vm,value,out);
+        case DIAMOND_OBJECT_TENSOR:
+            return copy_tensor_step(dest_vm,value,out);
         default: return false;
     }
 }

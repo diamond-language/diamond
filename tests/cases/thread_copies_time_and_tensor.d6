@@ -1,0 +1,8 @@
+# Time and Tensor values cross a thread boundary as copies of their data,
+# both as arguments and as the thread's result.
+def shift(moment: Time) -> Time = moment + 60
+def scale(matrix: Tensor) -> Tensor = matrix.matmul(Tensor.from_array([[2, 0], [0, 2]]))
+moment = Time.at(1000000000)
+puts(Thread.new(shift, moment).join().to_i())
+matrix = Tensor.from_array([[1, 2], [3, 4]])
+puts(Thread.new(scale, matrix).join().to_a())

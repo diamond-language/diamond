@@ -16,14 +16,15 @@ authoritative fine-grained record.
   compiles every runtime builtin call: `Time`, `Thread.new`, `Channel`, `Supervisor.new`,
   `Process`, `IO`, `SQLite3`/`MySQL`/`PostgreSQL`, TLS and UDP sockets, `DNS`, `Signal`,
   `Tensor`, `SemVer`, and the crypto and encoding calls, so Active Record runs through it. Run
-  through it, 1,584 of the 1,586 `tests/cases` programs now compile and run (up from 1,342),
-  including the Callable contracts native infers: do blocks on constructors and on a union of
-  callables, generic function references (`identity`) fixed to the type a parameter expects, and
-  `Box.new(41)` known as a `Box[Int]`. The other two return a native object as the program's
-  result.
+  through it, every one of the 1,587 `tests/cases` programs now compiles and runs (up from
+  1,342 of 1,586), including the Callable contracts native infers: do blocks on constructors and
+  on a union of callables, generic function references (`identity`) fixed to the type a parameter
+  expects, and `Box.new(41)` known as a `Box[Int]`.
 - **`ProgramBuilder` type sets can say `Callable[[], T]`.** A `declare_type_set` descriptor takes
   an optional seventh `Bool` marking a written parameter list, so a typed zero-parameter Callable
   differs from `Callable[0, T]` as it does in the native compiler.
+- **`Time` and `Tensor` values cross threads.** They can be `Thread.new` arguments and results,
+  go through a `Channel`, and be the result of `ProgramBuilder#run`, copied as plain data.
 
 ### Fixed
 
