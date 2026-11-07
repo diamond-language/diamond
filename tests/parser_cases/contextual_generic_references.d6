@@ -1,0 +1,46 @@
+# A generic function used as a value where a typed Callable is expected is
+# fixed to that type; a constructor's do block gets initialize's contract,
+# read through any parent type arguments.
+def identity[T](value: T) -> T = value
+def label() -> String = "produced"
+def apply_int(callback: Callable[[Int], Int]) -> Int = callback(41)
+def make_string() -> Callable[[String], String] = identity
+
+class Pair[A, B]
+  def initialize(left: A, first: Callable[[A], A], right: B, second: Callable[[B], B])
+    @left = first(left)
+    @right = second(right)
+  end
+  def right() -> B = @right
+end
+class Swapped[A, B] < Pair[B, A]
+end
+class Box[T]
+  def initialize(value: T, callback: Callable[[T], T])
+    @value = callback(value)
+  end
+  def value() -> T = @value
+end
+class Rows[T] < Box[Array[T]]
+end
+class Holder[T]
+  def initialize(value: T)
+    @value = value
+  end
+  def value() -> T = @value
+end
+class Producer[T] < Holder[Callable[[], T]]
+end
+
+puts(apply_int(identity))
+puts(make_string()("made"))
+begin
+  make_string()(1)
+rescue TypeError
+  puts("contract kept")
+end
+puts(Swapped[String, Int].new(1, identity, "swapped", identity).right())
+puts(Box.new(["plain"]) do |array| [array[0] + "?"] end.value()[0])
+puts(Rows[String].new(["rows"]) do |array| [array[0] + "!"] end.value()[0])
+puts(Rows.new(["inferred"]) do |array| [array[0] + "."] end.value()[0])
+puts(Producer.new(label).value()())

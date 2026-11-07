@@ -2458,8 +2458,9 @@ class Parser
           parameter = parameter + 1
         end
       end
+      # A written parameter list, even `[]`, makes the Callable typed.
       descriptors.push([type_id, argument_set, second_argument_set, member[3],
-                        callable_return_set, callable_parameter_sets])
+                        callable_return_set, callable_parameter_sets, member[5] != nil])
       index = index + 1
     end
     return 0 if @failed

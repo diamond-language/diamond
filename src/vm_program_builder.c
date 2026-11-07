@@ -1379,7 +1379,11 @@ static DiamondVmStatus program_builder_declare_type_set(DiamondVm *vm, DiamondPr
         }
         const DiamondArray *descriptor=
             (const DiamondArray *)type_ids->values[index].as.object;
-        if(descriptor->count!=6||
+        /* An optional seventh field says the parameter list was written out,
+         * so `Callable[[], T]` (typed, no parameters) differs from
+         * `Callable[0, T]`, as in compiler.c. */
+        if((descriptor->count!=6&&descriptor->count!=7)||
+           (descriptor->count==7&&descriptor->values[6].kind!=DIAMOND_VALUE_BOOL)||
            descriptor->values[0].kind!=DIAMOND_VALUE_INT||
            descriptor->values[1].kind!=DIAMOND_VALUE_INT||
            descriptor->values[2].kind!=DIAMOND_VALUE_INT||
@@ -1432,13 +1436,15 @@ static DiamondVmStatus program_builder_declare_type_set(DiamondVm *vm, DiamondPr
             (argument_set==-1&&second_argument_set==-1);
         const bool callable_arguments=type_id!=DIAMOND_TYPE_CALLABLE?
             callable_arity==-1&&callable_return==-1&&
-                callable_parameters->count==0:
+                callable_parameters->count==0&&
+                !(descriptor->count==7&&descriptor->values[6].as.boolean):
             /* Arity -1 is a Callable of any arity (bare `Callable`), which
              * takes no parameter list. */
             callable_arity>=-1&&callable_arity<=16&&valid_return&&
                 valid_parameters&&
                 (callable_parameters->count==0||
-                 callable_parameters->count==(size_t)callable_arity);
+                 callable_parameters->count==(size_t)callable_arity)&&
+                (callable_arity>=0||!(descriptor->count==7&&descriptor->values[6].as.boolean));
         const bool native_type=diamond_type_operand_is_native((int)type_id);
         if(!(primitive||class_type||interface_type||variable_type||native_type)||
            !collection_arguments||
@@ -1486,7 +1492,8 @@ static DiamondVmStatus program_builder_declare_type_set(DiamondVm *vm, DiamondPr
                 callable_arity<0?UINT8_MAX:(uint8_t)callable_arity,
             .callable_return_set=callable_return<0?DIAMOND_NO_TYPE_SET:
                 (uint16_t)callable_return,
-            .callable_parameters_typed=callable_parameters->count>0};
+            .callable_parameters_typed=callable_parameters->count>0||
+                (descriptor->count==7&&descriptor->values[6].as.boolean)};
         for(size_t index=0;index<16;index++)
             set->members[member].callable_parameter_sets[index]=DIAMOND_NO_TYPE_SET;
         for(size_t index=0;index<callable_parameters->count;index++)
