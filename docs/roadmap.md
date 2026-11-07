@@ -133,22 +133,26 @@ Collections are stop-the-world within each isolated VM.
 
 ### Close the benchmark gaps to Ruby
 
-The local `fistfight` suite pairs d6 and Ruby programs. d6 still trails the Ruby interpreter
-on call-heavy code (fib, trees, objects), floating-point object code (nbody), regular
-expressions and exceptions. Each lever below has been measured, not just guessed:
+The local `fistfight` suite pairs d6 and Ruby programs (21 pairs). On 0.29.0-dev the d6
+interpreter beats the Ruby interpreter on 20 of them and ties on fib (1.03x). The gaps left
+are against YJIT, on call-heavy and floating-point object code: fib 2.7x, poly 2.0x, nbody
+2.0x, trees 1.9x, sieve 1.25x, loop 1.2x, iterate 1.1x (best d6 over best Ruby). d6's own JIT
+(opt-in) barely moves those: fib 195 to 161 ms, and trees, nbody, poly and objects not at all.
 
+- **JIT coverage** -- the JIT speeds up `loop`, `mandelbrot` and `sieve` (simple numeric
+  loops) but not calls, field access or Float objects. Find what it falls back to the
+  interpreter for in fib, trees, nbody and poly, and compile those paths.
 - **Call machinery** -- about 300 of a fib call's ~450 instructions are call setup (prologue,
   register zeroing, CALL and RETURN), spread thinly, and frame size is not the cost. A
   VM-stack frame design is the remaining large lever; inline frames were tried and lost cycles
   to register pressure and store-forwarding stalls, so a new design has to avoid both.
-- **Exceptions** -- every raise formats backtrace Strings for each frame; capture frames
-  and format them only when read.
-- **String interpolation** -- one allocation per piece; a fused opcode needs compiler, JIT
-  and bytecode-cache changes together.
 - **Code layout** -- even with profile-guided builds, `run_chunk` performance moves with code
   placement: answering `Regexp#match`/`match?` inside it took the regex benchmark 18% faster
   but slowed blocks 3.5-4.6% at identical instruction counts, so it was dropped. Control over
   the hot loop's layout would unlock fast paths like that one.
+- Smaller measured levers, no longer gaps: a raise formats a backtrace String per frame
+  (capture frames, format when read); string interpolation allocates once per piece (a fused
+  opcode needs compiler, JIT and bytecode-cache changes together).
 
 Compare instruction counts (`perf stat -e instructions:u`) on PGO release builds, and keep a
 change only if cycles agree.
