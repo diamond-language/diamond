@@ -330,6 +330,17 @@ PGO_GENERATE_FLAGS := -fprofile-generate -fprofile-update=atomic
 PGO_USE_FLAGS := -fprofile-use -fprofile-partial-training -Wno-missing-profile
 PGO_TRAINING := $(sort $(wildcard tools/pgo/*.d6))
 
+# `release` cleans and rebuilds through its own sub-makes, so another goal on
+# the same command line (`make -j release facet`) must not build beside it:
+# both write build/ and the generator, and one can delete or relink what the
+# other is using (issue #437). With other goals, this make runs its goals one
+# at a time; the sub-makes still run in parallel.
+ifneq ($(filter release,$(MAKECMDGOALS)),)
+ifneq ($(filter-out release,$(MAKECMDGOALS)),)
+.NOTPARALLEL:
+endif
+endif
+
 release:
 	$(MAKE) clean-variant
 ifeq ($(PGO_ENABLED),1)
@@ -458,8 +469,13 @@ $(BUILD_DIR)/gen_compiled_prelude: tools/gen_compiled_prelude.c $(GEN_DBG_OBJECT
 	@mkdir -p $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS_COMMON) $(CFLAGS_DEBUG) $(GEN_DBG_OBJECTS) $< $(LDLIBS) -o $@
 
+# Run once more if the exec itself failed (126/127): straight after the link, a
+# parallel job can still hold the new file open for writing, and the exec gets
+# "Text file busy" (issue #437). Any other failure is reported as it is.
 $(PRELUDE_BIN): $(BUILD_DIR)/gen_compiled_prelude
-	$(BUILD_DIR)/gen_compiled_prelude $@
+	$(BUILD_DIR)/gen_compiled_prelude $@ || { status=$$?; \
+		[ $$status -eq 126 ] || [ $$status -eq 127 ] || exit $$status; \
+		sleep 1; $(BUILD_DIR)/gen_compiled_prelude $@; }
 
 # Normal (not order-only) prerequisite: -MMD -MP's own generated .d file
 # for this object (once it exists) already tracks $(PRELUDE_BIN) as a
