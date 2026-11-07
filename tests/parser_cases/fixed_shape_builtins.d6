@@ -1,0 +1,21 @@
+# The fixed-shape builtin namespaces (Digest, HMAC, Base64, Gzip, Cipher,
+# SemVer, Tensor, UDPSocket): each is a native-only call form the
+# self-hosted compiler builds from one table.
+puts(Digest.sha256("abc"))
+puts(Digest.sha1("abc"))
+signature = HMAC.sha256("data", "key")
+puts(HMAC.verify("data", "key", signature))
+puts(HMAC.sha1("data", "key").length())
+puts(Base64.decode(Base64.encode("round trip")))
+puts(Gzip.decompress(Gzip.compress("squeezed"), 1024))
+key = Digest.sha256("cipher key")[0, 32]
+puts(Cipher.decrypt(key, Cipher.encrypt(key, "sealed")))
+puts(SemVer.valid?("1.2.3"))
+puts(SemVer.compare("1.2.3", "1.10.0"))
+puts(SemVer.satisfies?("1.4.0", "^1.2.0"))
+puts([Tensor.zeros(2, 3).rows(), Tensor.zeros(2, 3).cols()])
+puts(Tensor.from_array([[1.0, 2.0]]).get(0, 1))
+puts(Tensor.random(2, 2, 7).rows())
+socket = UDPSocket.bind(0, host: "127.0.0.1")
+puts(socket.port() > 0)
+socket.close()
