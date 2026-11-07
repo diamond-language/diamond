@@ -13,11 +13,12 @@ authoritative fine-grained record.
   module (`Relation[T]`), every `File` and `Dir` method, `Fiber.yield`,
   `TCPServer.listen`'s `host:`/`backlog:` options with the non-blocking TCP forms, and do-block
   contracts on generic functions (`generic_collect(21) do [] end` binds T to Int). It also
-  compiles `Time`, `Thread.new`, `Channel.new`/`select`/`select_send`, `Supervisor.new`,
-  `Process.run`/`spawn`, `IO.poll`/`tty?`, `SQLite3.open`, `SecureRandom` and `BCrypt` calls, so
-  Active Record runs through it. Run through it, 1,554 of the 1,586 `tests/cases` programs now
-  compile and run (up from 1,342); most of the rest stop at UDP or TLS sockets, Tensor or the
-  remaining crypto calls, which it doesn't port yet.
+  compiles every runtime builtin call: `Time`, `Thread.new`, `Channel`, `Supervisor.new`,
+  `Process`, `IO`, `SQLite3`/`MySQL`/`PostgreSQL`, TLS and UDP sockets, `DNS`, `Signal`,
+  `Tensor`, `SemVer`, and the crypto and encoding calls, so Active Record runs through it. Run
+  through it, 1,576 of the 1,586 `tests/cases` programs now compile and run (up from 1,342); the
+  rest need static type inference it doesn't do yet, or return a native object as the program's
+  result.
 
 ### Fixed
 

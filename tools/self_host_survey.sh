@@ -53,7 +53,10 @@ if [[ -n "${2:-}" ]]; then
 else
     cases="$(find tests/cases -maxdepth 1 -name '*.expected' -printf '%f\n' | sed 's/\.expected$//' | sort)"
 fi
-results="$(printf '%s\n' "$cases" | xargs -P "${SURVEY_JOBS:-10}" -I{} "$0" --case {})"
+# Every worker runs the whole self-hosted compiler, and some cases start threads or
+# child processes of their own, so 10 workers held all 12 threads at 100%. Half the
+# machine keeps it usable; SURVEY_JOBS overrides.
+results="$(printf '%s\n' "$cases" | xargs -P "${SURVEY_JOBS:-5}" -I{} "$0" --case {})"
 printf '%s\n' "$results" | sort -k2 > "$output"
 printf '%s\n' "$results" | awk -F'\t' '
     { count[$1]++ }
