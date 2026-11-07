@@ -141,17 +141,14 @@ expressions and exceptions. Each lever below has been measured, not just guessed
   register zeroing, CALL and RETURN), spread thinly, and frame size is not the cost. A
   VM-stack frame design is the remaining large lever; inline frames were tried and lost cycles
   to register pressure and store-forwarding stalls, so a new design has to avoid both.
-- **End-of-code sentinel** -- dropping the per-dispatch end-of-code check was worth about
-  5.5% on the loop benchmark in a prototype; it needs the verifier to prove every jump
-  target first.
 - **Exceptions** -- every raise formats backtrace Strings for each frame; capture frames
   and format them only when read.
 - **String interpolation** -- one allocation per piece; a fused opcode needs compiler, JIT
   and bytecode-cache changes together.
-- **Instruction-cache layout** -- hot helpers conflict with `run_chunk` in L1i after a
-  relink (objects, hash and regex lose 2-4%). The same effect blocked a regex win: answering
-  `Regexp#match`/`match?` inside `run_chunk` took the regex benchmark 18% faster but slowed
-  blocks 3.5-4.6% at identical instruction counts. Controlling the layout would unlock both.
+- **Code layout** -- even with profile-guided builds, `run_chunk` performance moves with code
+  placement: answering `Regexp#match`/`match?` inside it took the regex benchmark 18% faster
+  but slowed blocks 3.5-4.6% at identical instruction counts, so it was dropped. Control over
+  the hot loop's layout would unlock fast paths like that one.
 
 Compare instruction counts (`perf stat -e instructions:u`) on PGO release builds, and keep a
 change only if cycles agree.
@@ -275,6 +272,24 @@ Current coverage and the full inventory of checked platform assumptions:
 - **Debian** -- untested; Ubuntu is the glibc target CI runs.
 - **Widening the narrower jobs** (musl, FreeBSD, macOS, arm64) to sanitizers, other
   compilers or package suites needs that coverage checked first, not just enabled.
+
+### Cross-distro builds
+
+Current packages: [packaging](../packaging/) builds one `.deb` on Ubuntu 26.04 and one `.rpm`
+on Fedora 44, for x86-64 and arm64. Each runs only on the distro release it was built on, or
+newer.
+
+- **More distros and releases** -- Debian stable, Ubuntu LTS, older Fedora, openSUSE, Arch and
+  Alpine. The obstacle is the compiler, not the package format: the source needs GCC 15 (C23,
+  `#embed`), which older releases don't ship, so each needs a newer toolchain in its build
+  container or a binary built elsewhere that still links against its libraries.
+- **A portable binary** -- one static (musl) `d6` that runs on any Linux would cover distros
+  without a native package. `d6` itself doesn't link statically yet (see `d6 build`), and the
+  database clients and OpenSSL would have to be built static too.
+- **CPU baseline** -- x86-64 packages assume x86-64-v3 (AVX2); a portable build would need a
+  lower baseline or runtime dispatch.
+- Test each package in a clean container of its target before calling it supported, without
+  upgrading the system first (that is how the 0.22 walkthrough found missing dependencies).
 
 ## Explicitly deferred
 
