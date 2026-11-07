@@ -223,15 +223,15 @@ but do not duplicate every native optimization unless it advances a specific boo
 language-design goal.
 
 Running every `tests/cases` program through the self-hosted compiler
-(`tools/self_host_survey.sh`, 2026-10-31): 1,303 of 1,535 compile and run, with 46 skipped because
-they set a limit the compiler itself would hit. 228 of the 232 failures use runtime builtins
+(`tools/self_host_survey.sh`, 2026-11-06): 1,364 of 1,586 compile and run, with 47 skipped because
+they set a limit the compiler itself would hit. 218 of the 222 failures use runtime builtins
 (below). The other four need static type inference for blocks: a generic function's block typed
 from its other arguments, Callable signatures inferred for constructor blocks, and return-type
 errors native reports for blocks and collection callbacks.
 
-The runtime builtin surfaces (Time, Thread, Channel, Process, `File.*`, SQLite3, Supervisor,
-sockets, Tensor, crypto) are not ported. Time comes first if one is: 56 cases stop there, many
-because Active Record and Rack read the clock while loading. Port one only when a bootstrap
+The runtime builtin surfaces (Time, Thread, Channel, Process, IO, SQLite3, Supervisor, UDP and
+TLS sockets, Tensor, crypto) are not ported; `File`, `Dir`, `Fiber` and TCP are. Time comes first if
+one is: 58 cases stop there, many because Active Record and Rack read the clock while loading. Port one only when a bootstrap
 goal needs it.
 
 ### Fewer languages to build and test
