@@ -131,6 +131,31 @@ Collections are stop-the-world within each isolated VM.
 - Investigate incremental marking only if pause measurements justify the added barrier
   and state-machine complexity.
 
+### Close the benchmark gaps to Ruby
+
+The local `fistfight` suite pairs d6 and Ruby programs. d6 still trails the Ruby interpreter
+on call-heavy code (fib, trees, objects), floating-point object code (nbody), regular
+expressions and exceptions. Each lever below has been measured, not just guessed:
+
+- **Call machinery** -- about 300 of a fib call's ~450 instructions are call setup (prologue,
+  register zeroing, CALL and RETURN), spread thinly, and frame size is not the cost. A
+  VM-stack frame design is the remaining large lever; inline frames were tried and lost cycles
+  to register pressure and store-forwarding stalls, so a new design has to avoid both.
+- **End-of-code sentinel** -- dropping the per-dispatch end-of-code check was worth about
+  5.5% on the loop benchmark in a prototype; it needs the verifier to prove every jump
+  target first.
+- **Regex engine** -- the time is in the matcher itself (`match_at`, UTF-8 length decoding
+  on ASCII input); an ASCII fast path is the first thing to try.
+- **Exceptions** -- every raise formats backtrace Strings for each frame; capture frames
+  and format them only when read.
+- **String interpolation** -- one allocation per piece; a fused opcode needs compiler, JIT
+  and bytecode-cache changes together.
+- **Instruction-cache layout** -- hot helpers conflict with `run_chunk` in L1i after a
+  relink (objects, hash and regex lose 2-4%).
+
+Compare instruction counts (`perf stat -e instructions:u`) on PGO release builds, and keep a
+change only if cycles agree.
+
 ### WebAssembly
 
 Current state: [WebAssembly build](internal/wasm.md).
@@ -222,8 +247,13 @@ Keep the self-hosted implementation at practical parity where it protects the la
 but do not duplicate every native optimization unless it advances a specific bootstrap or
 language-design goal.
 
-Every `tests/cases` program compiles and runs through it (`tools/self_host_survey.sh`); rerun
-the survey when a language change lands to keep it that way.
+Every `tests/cases` program compiles and runs through it (`tools/self_host_survey.sh`).
+
+- **Keep parity checked** -- the survey runs by hand. A scheduled CI job (not per pull
+  request: it compiles every case through the self-hosted compiler) would catch a language
+  change that leaves it behind.
+- **Bytecode differential** -- compare the bytecode both compilers emit, not just the
+  programs' output, to find divergences that happen to print the same thing.
 
 ### Fewer languages to build and test
 
