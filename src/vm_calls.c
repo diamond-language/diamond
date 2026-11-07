@@ -447,6 +447,85 @@ static inline DiamondAccessor function_accessor(const DiamondFunction *fn) {
     return fn->entry_check.computed?fn->accessor:diamond_decode_accessor(fn);
 }
 
+/* Recognizes a trivial constructor body: an `initialize` that checks its
+ * parameters' declared types and copies them into fields, in any order,
+ * then returns,
+ *
+ *     CHECK_TYPE rP, set               5 bytes, P a parameter (1..arity-1)
+ *     SET_IVAR  r0, field, rP          7 bytes, at least one
+ *     RETURN    rX                     3 bytes
+ *
+ * taking exactly its declared arguments (no defaults, no splat).
+ * diamond_vm_run stores the answer in fn->trivial_constructor. */
+bool diamond_decode_constructor(const DiamondFunction *fn) {
+    if(fn->has_variadic||fn->arity<2||fn->required_arity!=fn->arity)return false;
+    const uint8_t *code=fn->code;
+    bool stored=false;
+    size_t at=0;
+    while(at<fn->code_count) {
+        if(code[at]==DIAMOND_OP_CHECK_TYPE) {
+            if(at+5>fn->code_count)return false;
+            const uint16_t parameter=getter_operand(code+at+1);
+            if(parameter<1||parameter>=fn->arity||
+               (size_t)getter_operand(code+at+3)>=fn->type_set_count)return false;
+            at+=5;
+        } else if(code[at]==DIAMOND_OP_SET_IVAR) {
+            if(at+7>fn->code_count)return false;
+            const uint16_t parameter=getter_operand(code+at+5);
+            if(getter_operand(code+at+1)!=0||getter_operand(code+at+3)>UINT8_MAX||
+               parameter<1||parameter>=fn->arity)return false;
+            stored=true;
+            at+=7;
+        } else {
+            return code[at]==DIAMOND_OP_RETURN&&at+3==fn->code_count&&stored;
+        }
+    }
+    return false;
+}
+
+/* `Class.new(...)` with a trivial constructor (diamond_decode_constructor),
+ * answered without a frame: every parameter check first, then the stores
+ * through diamond_jit_set_ivar as the body makes them. A check that fails
+ * or needs the full type matcher, or a field past the instance's, returns
+ * false before anything is stored, and the caller runs `initialize` as
+ * usual, so errors, messages and backtraces are the ordinary ones.
+ * `arguments` are the call's explicit arguments, the body's r1 onwards.
+ * Otherwise true, with *status the stores' outcome. */
+static bool trivial_constructor_result(DiamondVm *vm,const DiamondChunk *function_chunk,
+        const DiamondFunction *fn,DiamondValue self_value,const DiamondValue *arguments,
+        DiamondVmStatus *status) {
+    const DiamondInstance *instance=(const DiamondInstance *)self_value.as.object;
+    const uint8_t *code=fn->code;
+    size_t at=0;
+    while(code[at]!=DIAMOND_OP_RETURN) {
+        if(code[at]==DIAMOND_OP_CHECK_TYPE) {
+            const uint16_t parameter=getter_operand(code+at+1);
+            if(!shortcut_type_matches(function_chunk,
+                   &fn->type_sets[getter_operand(code+at+3)],arguments[parameter-1]))
+                return false;
+            at+=5;
+        } else {
+            if(getter_operand(code+at+3)>=instance->field_count)return false;
+            at+=7;
+        }
+    }
+    for(at=0;code[at]!=DIAMOND_OP_RETURN;) {
+        if(code[at]==DIAMOND_OP_SET_IVAR) {
+            const DiamondVmStatus stored=diamond_jit_set_ivar(vm,nullptr,&self_value,
+                (uint8_t)getter_operand(code+at+3),&arguments[getter_operand(code+at+5)-1]);
+            if(stored!=DIAMOND_VM_OK) {
+                *status=stored;
+                return true;
+            }
+            at+=7;
+        } else {
+            at+=5;
+        }
+    }
+    *status=DIAMOND_VM_OK;
+    return true;
+}
+
 /* A getter call answered without a frame: the field read the body would
  * make. Every case where the body could fail or behave otherwise returns
  * false and the method is called as usual, so errors, messages and
@@ -1539,6 +1618,17 @@ DiamondVmStatus diamond_jit_new_instance(DiamondVm *vm, const DiamondChunk *chun
             const DiamondVmStatus bound=bind_instance_constructor_type(vm,owner,fn,
                 &registers[base],argc,instance);
             if(bound!=DIAMOND_VM_OK)return bound;
+        } else if(init->bound_value_count==0&&vm->debug_fd<0) {
+            /* An `initialize` that only copies its arguments into fields
+             * stores them here, without a frame. */
+            const DiamondChunk *owner=init->source_chunk!=nullptr?init->source_chunk:chunk;
+            const DiamondFunction *fn=owner->functions[init->function_index];
+            DiamondVmStatus stored;
+            if(fn->trivial_constructor&&fn->entry_check.computed&&
+               (size_t)argc+1==fn->arity&&
+               trivial_constructor_result(vm,owner,fn,registers[dest],
+                   &registers[base],&stored))
+                return stored;
         }
         DiamondValue ignored=DIAMOND_NIL;
         return invoke_resolved_method_helper(vm,chunk,

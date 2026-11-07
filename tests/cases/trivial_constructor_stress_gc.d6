@@ -1,0 +1,128 @@
+# An `initialize` that only checks its parameters and copies them into fields
+# is answered by `new` without running the method. Every case below must
+# behave exactly as the method would: the fields it sets, the errors it
+# raises, and constructors that don't qualify.
+class Point
+  attr_reader x: Int
+  attr_reader y: Int
+
+  def initialize(x: Int, y: Int)
+    @x = x
+    @y = y
+  end
+end
+
+point = Point.new(3, 4)
+puts("#{point.x()} #{point.y()}")
+
+# A rejected argument raises the method's own TypeError, whichever argument
+# it is, and leaves no half-built object behind to see.
+begin
+  Point.new(1, "two")
+rescue error: TypeError
+  puts(error.message())
+end
+begin
+  Point.new(nil, 2)
+rescue error: TypeError
+  puts(error.message())
+end
+
+# Untyped parameters, stored in a different order from the fields, one of
+# them twice.
+class Swapped
+  attr_reader first
+  attr_reader second
+  attr_reader again
+
+  def initialize(a, b)
+    @second = b
+    @first = a
+    @again = b
+  end
+end
+
+swapped = Swapped.new(:a, [1, 2])
+puts("#{swapped.first()} #{swapped.second()} #{swapped.again()}")
+
+# A class-typed parameter: an exact instance, nil, and a subclass instance
+# (which the shortcut leaves to the full type check) all pass.
+class Node
+  attr_reader next_node: Node | Nil
+
+  def initialize(next_node: Node | Nil)
+    @next_node = next_node
+  end
+end
+
+class SpecialNode < Node
+end
+
+chain = Node.new(Node.new(SpecialNode.new(nil)))
+puts(chain.next_node().next_node() is SpecialNode)
+begin
+  Node.new(point)
+rescue error: TypeError
+  puts(error.message())
+end
+
+# A subclass inherits the trivial constructor and adds a field of its own.
+class Point3 < Point
+  attr_accessor z: Int
+end
+
+deep = Point3.new(1, 2)
+deep.z = 3
+puts("#{deep.x()} #{deep.y()} #{deep.z()}")
+
+# Wrong argument counts are still arity errors.
+begin
+  Point.new(1)
+rescue error: ArgumentError
+  puts("arity: #{error.message()}")
+end
+
+# Constructors that do anything else run as methods: a default value, a
+# computed field, a call.
+class Defaulted
+  attr_reader x
+  attr_reader y
+
+  def initialize(x, y = 10)
+    @x = x
+    @y = y
+  end
+end
+
+class Computed
+  attr_reader total: Int
+
+  def initialize(a: Int, b: Int)
+    @total = a + b
+  end
+end
+
+class Noisy
+  def initialize(label: String)
+    @label = label
+    puts("made #{label}")
+  end
+end
+
+defaulted = Defaulted.new(1)
+puts("#{defaulted.x()} #{defaulted.y()}")
+puts(Computed.new(2, 3).total())
+Noisy.new("noisy")
+
+# Many allocations through the shortcut survive collections intact.
+nodes = []
+i = 0
+while i < 2000
+  nodes.push(Point.new(i, i * 2))
+  i += 1
+end
+sum = 0
+nodes.each() do |each_point|
+  sum += each_point.x() + each_point.y()
+end
+puts(sum)

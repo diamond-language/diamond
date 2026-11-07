@@ -1647,6 +1647,8 @@ DIAMOND_INTERNAL DiamondVmStatus invoke_resolved_method_helper(DiamondVm *vm,
 
 /* Fills a DiamondAccessor from a function's body (src/vm_calls.c). */
 DIAMOND_INTERNAL DiamondAccessor diamond_decode_accessor(const DiamondFunction *fn);
+/* Whether a function body is a trivial constructor (src/vm_calls.c). */
+DIAMOND_INTERNAL bool diamond_decode_constructor(const DiamondFunction *fn);
 
 /* diamond_mono_invoke's answer when the site's cache cannot make the call.
  * Never a real status: it does not leave run_chunk. */
