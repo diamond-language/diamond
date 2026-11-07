@@ -280,9 +280,12 @@ on Fedora 44, for x86-64 and arm64. Each runs only on the distro release it was 
 newer.
 
 - **More distros and releases** -- Debian stable, Ubuntu LTS, older Fedora, openSUSE, Arch and
-  Alpine. The obstacle is the compiler, not the package format: the source needs GCC 15 (C23,
-  `#embed`), which older releases don't ship, so each needs a newer toolchain in its build
-  container or a binary built elsewhere that still links against its libraries.
+  Alpine. The obstacle is the compiler, not the package format. GCC 15 is needed only for
+  `#embed`, in two files (`src/prelude.c`, `src/compiled_prelude_data.c`); a GCC 14 sweep
+  rejected nothing else. Generating those arrays when `#embed` is missing would bring the
+  floor to GCC 14 (`<stdckdint.h>`), which Debian 13 and Ubuntu 24.04 ship; a
+  `__builtin_*_overflow` fallback for `ckd_*` would reach GCC 13. Clang 19 already has
+  `#embed`.
 - **A portable binary** -- one static (musl) `d6` that runs on any Linux would cover distros
   without a native package. `d6` itself doesn't link statically yet (see `d6 build`), and the
   database clients and OpenSSL would have to be built static too.
