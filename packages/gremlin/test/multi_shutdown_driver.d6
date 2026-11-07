@@ -29,6 +29,11 @@ def run_mode(command, mode)
             # so workers are identified from their responses.
             workers = []
             child_peer = nil
+            # Slow-mode duplicates are closed while their handler is still writing; each
+            # handler then prints `cleaned nil` when its write fails. Counted so that
+            # shutdown waits for them: a late one would print the shutdown deadline
+            # and look like a fourth parked request (issue #419).
+            duplicates = 0
             120.times() do |attempt|
               break if workers.length() == 3
               options = {"connect_timeout_ms": 2000, "read_timeout_ms": 2000}
@@ -46,6 +51,7 @@ def run_mode(command, mode)
                   peer.read()
                 end
                 peer.close()
+                duplicates += 1 if mode == "slow"
               else
                 workers.push(identity)
                 peers.push(peer)
@@ -59,6 +65,12 @@ def run_mode(command, mode)
             child_peer.write("!")
             child_peer.flush()
           else
+            if mode == "slow"
+              Harness.wait_for(8000, "closed duplicates never cleaned up") do
+                child.pump(10)
+                count_of(child.stdout_text(), "cleaned nil") >= duplicates
+              end
+            end
             child.terminate()
           end
           started = mode == "failure" ? 2 : 3
