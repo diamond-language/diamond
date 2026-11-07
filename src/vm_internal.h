@@ -1343,22 +1343,24 @@ DIAMOND_INTERNAL DiamondVmStatus forward_to_top_level_helper(DiamondVm *vm,
         const DiamondValue *registers,uint16_t recv,uint16_t base,uint8_t argc,
         size_t depth,DiamondValue *result);
 
-/* Copies a DiamondValue that a callee has just written through a result
- * pointer. Callees store a value as two 8-byte halves, and a single 16-byte
- * load of it straight after the call (what GCC emits for a plain struct
- * copy) can't be forwarded from two stores: it waits for both to reach the
- * cache, which in trees cost more than the getter call it followed. Two
- * 8-byte loads forward; the empty asm keeps GCC from merging them back. */
-static_assert(sizeof(DiamondValue)==16,"DiamondValue is two 8-byte halves");
+/* Copies a DiamondValue field by field: the kind byte, then the 8-byte
+ * payload. Most producers write a value the same way (DIAMOND_INT(x) is a
+ * byte store and an 8-byte store, the padding left alone), and a load can
+ * only be forwarded from a store that covers it. A plain struct copy is one
+ * 16-byte load, which covers both stores and the stale padding, so it waits
+ * for them to reach the cache instead: about 17 times per fib call before
+ * this. The kind and payload loads each sit inside one store, whichever
+ * way the value was written. The empty asm keeps GCC from merging them. */
+static_assert(sizeof(DiamondValue)==16,"DiamondValue is a kind and an 8-byte payload");
+static_assert(offsetof(DiamondValue,as)==8,"the payload is the second 8 bytes");
 __attribute__((always_inline))
-static inline void value_copy_from_callee(DiamondValue *destination,
-        const DiamondValue *source) {
-    uint64_t low,high;
-    memcpy(&low,source,8);
-    memcpy(&high,(const char *)source+8,8);
-    __asm__("" : "+r"(low),"+r"(high));
-    memcpy(destination,&low,8);
-    memcpy((char *)destination+8,&high,8);
+static inline void value_copy(DiamondValue *destination,const DiamondValue *source) {
+    const DiamondValueKind kind=source->kind;
+    uint64_t payload;
+    memcpy(&payload,&source->as,8);
+    __asm__("" : "+r"(payload));
+    destination->kind=kind;
+    memcpy(&destination->as,&payload,8);
 }
 
 /* An instance's shape is class->shapes[n]: fields 0..n-1 are materialized
