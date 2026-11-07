@@ -4,6 +4,18 @@ d6 is currently pre-release. This file records user-visible capability
 milestones rather than every implementation step; the Git history remains the
 authoritative fine-grained record.
 
+## Unreleased
+
+### Changed
+
+- **Self-hosted compiler closer to native.** `selfhost/parser.d6` now compiles `-> Self` return
+  types, `attr_reader item: T` in generic classes, generic type arguments on classes inside a
+  module (`Relation[T]`), every `File` and `Dir` method, `Fiber.yield`,
+  `TCPServer.listen`'s `host:`/`backlog:` options with the non-blocking TCP forms, and do-block
+  contracts on generic functions (`generic_collect(21) do [] end` binds T to Int). Run through
+  it, 1,365 of the 1,586 `tests/cases` programs now compile and run (up from 1,342), and all but
+  three of the rest stop at a runtime builtin it doesn't port yet.
+
 ## 0.28.0 — 2026-11-06
 
 ### Changed
