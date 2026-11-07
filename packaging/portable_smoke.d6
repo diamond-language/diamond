@@ -1,0 +1,69 @@
+# Smoke test for a portable (static musl) d6, run on each distribution it
+# claims to support: every native library linked into the binary does real
+# work here. Prints "ok NAME" per check and exits 1 on the first failure.
+# PORTABLE_SMOKE_OFFLINE=1 skips the checks that need the network.
+
+def check(name, passed)
+  if passed
+    puts("ok #{name}")
+  else
+    puts("FAIL #{name}")
+    exit(1)
+  end
+end
+
+# The C library itself: files, processes, threads, fibers, time zones.
+path = "/tmp/d6-portable-smoke-#{SecureRandom.hex(8)}"
+File.write(path, "written")
+check("file", File.read(path) == "written")
+File.delete(path)
+check("process", Process.run(["echo", "child"]).stdout().strip() == "child")
+def square(n: Int) -> Int = n * n
+check("thread", Thread.new(square, 7).join() == 49)
+def steps()
+  Fiber.yield(1)
+  2
+end
+fiber = Fiber.new(steps)
+check("fiber", fiber.resume() == 1 && fiber.resume() == 2)
+check("time", Time.at(0).utc().year() == 1970 && Time.now().year() >= 2026)
+check("regexp", "portable d6".match?(/d\d/))
+check("dns", DNS.resolve("127.0.0.1", [], nil) == ["127.0.0.1"])
+
+# Bundled libraries: SQLite, zlib, OpenSSL's libcrypto.
+db = SQLite3.open(":memory:")
+db.execute("CREATE TABLE t (n INTEGER)")
+db.execute("INSERT INTO t (n) VALUES (?)", [42])
+check("sqlite", db.query("SELECT n FROM t")[0]["n"] == 42)
+check("gzip", Gzip.decompress(Gzip.compress("squeeze"), 1000) == "squeeze")
+check("digest", Digest.sha256("") == "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855")
+check("hmac", HMAC.sha256("key", "data").length() == 64)
+key = SecureRandom.bytes(32)
+check("cipher", Cipher.decrypt(key, Cipher.encrypt(key, "sealed")) == "sealed")
+digest = BCrypt.hash("hunter2", 4)
+check("bcrypt", BCrypt.verify("hunter2", digest))
+
+# The MySQL and PostgreSQL clients are linked in: with nothing listening on
+# port 1 the error has to come from the client library's connect attempt,
+# not "support is not compiled into this build".
+def connect_error(open) -> String
+  begin
+    open()
+    "connected"
+  rescue error
+    error.message()
+  end
+end
+def open_mysql() = MySQL.open("127.0.0.1", "smoke", "smoke", "smoke", 1)
+def open_postgres() = PostgreSQL.open("host=127.0.0.1 port=1 dbname=smoke connect_timeout=2")
+check("mysql", connect_error(open_mysql).start_with?("Can't connect"))
+check("postgres", connect_error(open_postgres).include?("port 1 failed"))
+
+# The network: name resolution and TLS against the host's CA certificates.
+if ENV["PORTABLE_SMOKE_OFFLINE"] != "1"
+  check("dns-remote", DNS.resolve("getdiamond.codes", [], nil).length() > 0)
+  conn = TLSSocket.connect("getdiamond.codes", 443)
+  conn.write("HEAD / HTTP/1.1\r\nHost: getdiamond.codes\r\nConnection: close\r\n\r\n")
+  check("tls", conn.read().start_with?("HTTP/1.1 "))
+  conn.close()
+end

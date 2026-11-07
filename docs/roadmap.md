@@ -69,10 +69,10 @@ Current behavior: [deployment](deployment.md).
 
 - **Targets beyond 64-bit little-endian** -- a 32-bit or big-endian target needs a
   portable program image rather than the current struct dump.
-- **MySQL in static builds** -- a static musl kit leaves the MariaDB client out; including
-  it needs Connector/C built from source as a static archive.
-- **Static output for glibc and non-Linux targets** -- only musl/Linux is supported;
-  `d6` itself does not link statically.
+- **MySQL in static kits** -- a static musl kit leaves the MariaDB client out. The portable
+  `d6` already builds Connector/C statically (`tools/build_portable_inside.sh`); the kit
+  could reuse that recipe.
+- **Static output for glibc and non-Linux targets** -- only musl/Linux is supported.
 
 ### Sandbox mode
 
@@ -277,7 +277,8 @@ Current coverage and the full inventory of checked platform assumptions:
 
 Current packages: [packaging](../packaging/) builds one `.deb` on Ubuntu 26.04 and one `.rpm`
 on Fedora 44, for x86-64 and arm64. Each runs only on the distro release it was built on, or
-newer.
+newer. Every other Linux can use the portable static tarball attached to each release
+([deployment](deployment.md#the-portable-d6)).
 
 - **More distros and releases** -- Debian stable, Ubuntu LTS, older Fedora, openSUSE, Arch and
   Alpine. The obstacle is the compiler, not the package format. GCC 15 is needed only for
@@ -286,11 +287,13 @@ newer.
   floor to GCC 14 (`<stdckdint.h>`), which Debian 13 and Ubuntu 24.04 ship; a
   `__builtin_*_overflow` fallback for `ckd_*` would reach GCC 13. Clang 19 already has
   `#embed`.
-- **A portable binary** -- one static (musl) `d6` that runs on any Linux would cover distros
-  without a native package. `d6` itself doesn't link statically yet (see `d6 build`), and the
-  database clients and OpenSSL would have to be built static too.
-- **CPU baseline** -- x86-64 packages assume x86-64-v3 (AVX2); a portable build would need a
-  lower baseline or runtime dispatch.
+- **Portable binary speed** -- the static musl `d6` (`tools/build_portable.sh`) targets
+  baseline x86-64 and has no JIT. Measure what the baseline ISA and musl's allocator cost
+  against the x86-64-v3 packages; if it is large, try runtime dispatch for the hot paths or a
+  faster allocator. The JIT is gated on glibc; check what keeps it off musl.
+- **`d6 build` without a compiler** -- with the portable binary as the runtime, `d6 build`
+  could append the program image to a copy of itself instead of running `make` and a C
+  compiler, so a downloaded `d6` could build standalone executables on any Linux.
 - Test each package in a clean container of its target before calling it supported, without
   upgrading the system first (that is how the 0.22 walkthrough found missing dependencies).
 

@@ -203,14 +203,50 @@ make aot-kit-cross TARGET_TRIPLE=x86_64-alpine-linux-musl SYSROOT=/opt/sysroots/
   `openssl-libs-static`, `sqlite-static`, `zlib-static`, `libpq-dev`, `libucontext-dev`,
   `libgcc-static`, `linux-headers` and `gcc` provides all of them. `STATIC_LDLIBS`
   overrides the extra archives for a sysroot that names them differently.
-- **MySQL is left out** (`NO_MYSQL=1`): MariaDB Connector/C has no static build in Alpine.
-  `MySQL.open` raises a `MySQLError` ("MySQL support is not compiled into this build")
-  and `-lmariadb` is not linked. `NO_POSTGRES`, `NO_SQLITE`, `NO_ZLIB`, `NO_TLS` and `NO_CRYPTO` do
+- **MySQL is left out of the kit** (`NO_MYSQL=1`): MariaDB Connector/C has no static
+  build in Alpine. `MySQL.open` raises a `MySQLError` ("MySQL support is not compiled
+  into this build") and `-lmariadb` is not linked. (The portable `d6` below builds
+  Connector/C from source to include it.) `NO_POSTGRES`, `NO_SQLITE`, `NO_ZLIB`, `NO_TLS` and `NO_CRYPTO` do
   the same for those libraries, and `MINIMAL=1` sets all six; they work for ordinary builds too.
 - The binary reads the host's CA certificates for TLS (`/etc/ssl`), so a minimal image
   still needs a certificate bundle for outbound HTTPS.
 - Static glibc is not offered: its name-service lookups load shared libraries at run
   time. Use musl for static output.
+
+### The portable d6
+
+Each GitHub release attaches `d6-VERSION-linux-x86_64.tar.gz` and
+`d6-VERSION-linux-aarch64.tar.gz`. Each holds `d6`, `facet`, `d6-lsp` and `d6-dap` as fully
+static musl executables that run on any Linux distribution of that architecture, with or
+without a native package. Unpack the tarball and put its directory on `PATH`. Before each
+release, CI runs them in clean Ubuntu 26.04 and 22.04, Debian 12, Fedora 44, Arch, Alpine
+and openSUSE Leap containers: the smoke script, and a `facet new` project installing its
+test cut from the registry and passing its tests.
+
+```sh
+tools/build_portable.sh           # build/portable/d6-linux-$(uname -m)/ and the tarball
+tools/test_portable_distros.sh    # packaging/portable_tools_smoke.sh on each distro
+```
+
+- `tools/build_portable.sh` builds inside an Alpine container (podman or docker) from the
+  checkout's tracked files, so the host needs neither musl nor the static libraries.
+  libxcrypt (for `BCrypt`) and MariaDB Connector/C are built from pinned, checksummed
+  source releases.
+- Connector/C carries its authentication plugins statically (`caching_sha2_password`,
+  `sha256_password`, `client_ed25519`, `parsec`, `dialog`, clear password), since a static
+  binary cannot load them at run time. Kerberos (`auth_gssapi`) is left out.
+- Every built-in library works: SQLite, PostgreSQL, MySQL/MariaDB, TLS, zlib and the
+  crypto calls. The Arel dialect tests pass against live MySQL 8, MariaDB 11 and
+  PostgreSQL 16 servers.
+- What the host still provides: CA certificates in `/etc/ssl` (`cert.pem` or `certs/`, from
+  the distribution's CA package) for TLS, and `curl` (plus `git` for git sources) for
+  `facet`.
+- Limits compared with the packages:
+  - The x86-64 build targets the baseline ISA (`-march=x86-64`), not x86-64-v3.
+  - There is no JIT, which needs glibc (`DIAMOND_JIT=1` is ignored).
+  - `d6 build` is unavailable, because the tarball carries no build kit. It stops with
+    "cannot locate d6 build files"; use a package or a source checkout to build
+    executables.
 
 ## Building for a different target distro
 
