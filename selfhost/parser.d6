@@ -6063,6 +6063,12 @@ class Parser
     self.emit_register(callable)
     self.emit_register(parsed[0])
     self.emit_byte(argument_count)
+    # A declared result is checked: the value may be a callable whose own
+    # result was never declared, which the contract admitted on trust.
+    if self.single_callable?(declaration) && declaration[0][4] != nil && !self.annotation_uses_type_variable?(declaration[0][4])
+      self.emit_type_check(destination, declaration[0][4])
+      @declared_types.push([destination, declaration[0][4]])
+    end
     destination
   end
 
@@ -7393,7 +7399,35 @@ class Parser
         i = i + 1
       end
     end
+    if type_arguments.length() == 0 && argument_count == 1 && parsed[2].length() == 1
+      self.check_collection_relay(destination, receiver, name, parsed[2][0])
+    end
     destination
+  end
+
+  # `list.group_by(callback)` and `hash.map_values(callback)` with a typed
+  # Callable whose result is declared: the result's shape follows from the
+  # receiver's element types and the callback's result, and is checked, as
+  # compiler.c's collection relays publish it (a callable with no declared
+  # result can satisfy the contract while returning something else).
+  def check_collection_relay(destination, receiver, name, argument)
+    return if name != "group_by" && name != "map_values"
+    callable = self.declared_type(argument)
+    return unless self.single_callable?(callable) && callable[0][4] != nil
+    result = callable[0][4]
+    collection = self.declared_type(receiver)
+    return if collection == nil || collection.length() != 1
+    member = collection[0]
+    expected = if name == "group_by" && member[0] == "Array" && member[1] != nil
+      [["Hash", result, [["Array", member[1], nil, -1, nil, nil]], -1, nil, nil]]
+    elsif name == "map_values" && member[0] == "Hash" && member[1] != nil && member[2] != nil
+      [["Hash", member[1], result, -1, nil, nil]]
+    else
+      nil
+    end
+    return if expected == nil
+    self.emit_type_check(destination, expected)
+    @declared_types.push([destination, expected])
   end
 
   def parse_index(receiver)
