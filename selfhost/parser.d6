@@ -81,6 +81,16 @@ module Opcode
   SET_IVAR = 45
   CHECK_TYPE = 50
   CHECK_SELF_RETURN = 188
+  TIME_MONOTONIC = 96
+  TIME_NOW = 97
+  TIME_AT = 98
+  TIME_PARSE = 158
+  TIME_BUILD = 159
+  SECURE_RANDOM_BYTES = 114
+  SECURE_RANDOM_HEX = 115
+  BCRYPT_HASH = 112
+  BCRYPT_VERIFY = 113
+  SQLITE3_OPEN = 94
   FILE_DELETE = 73
   TCP_LISTEN_NONBLOCK = 76
   FILE_PATH = 156
@@ -169,10 +179,10 @@ module Opcode
   MATH_UNARY = 88
   MATH_BINARY = 89
   PROGRAM_BUILDER_NEW = 90
-  # 91 (THREAD_NEW), 94 (SQLITE3_OPEN) and 96-98 (TIME_MONOTONIC,
-  # TIME_NOW, TIME_AT) in src/vm.h's DiamondOpCode enum have no entry of
+  # 91 (THREAD_NEW)
+  # in src/vm.h's DiamondOpCode enum have no entry of
   # their own here -- none of them are constructs this self-hosted
-  # parser emits (Thread, SQLite3, and Time literals aren't part of its
+  # parser emits (Thread isn't part of its
   # supported grammar). 92-93 (GET_CVAR/SET_CVAR) *are* named below:
   # class variables; 95 (CHECK_DESTRUCTURE_COUNT) is named above.
   # SHIFT_LEFT below still has to account for the full original 8-opcode
@@ -10090,6 +10100,10 @@ class Parser
     return 2 if name == "TCPSocket"
     return 3 if name == "TCPServer"
     return 4 if name == "ProgramBuilder"
+    return 5 if name == "Time"
+    return 6 if name == "SecureRandom"
+    return 7 if name == "BCrypt"
+    return 8 if name == "SQLite3"
     -1
   end
 
@@ -10098,6 +10112,10 @@ class Parser
     return self.parse_regexp_new_call() if id == 1
     return self.parse_tcp_connect_call() if id == 2
     return self.parse_tcp_listen_call() if id == 3
+    return self.parse_time_call() if id == 5
+    return self.parse_secure_random_call() if id == 6
+    return self.parse_bcrypt_call() if id == 7
+    return self.parse_sqlite3_open_call() if id == 8
     self.parse_program_builder_new_call()
   end
 
@@ -10159,6 +10177,185 @@ class Parser
     self.advance_token()
     destination = self.allocate_register()
     self.emit_instruction2(if creates then Opcode::FIBER_NEW else Opcode::YIELD end, destination, value)
+    destination
+  end
+
+  # `Time.monotonic()`, `.now()`, `.utc_now()`, `.at(epoch)`, `.parse(text)`,
+  # `.utc(...)`/`.local(...)` (six calendar fields) and `.fixed(offset, ...)`,
+  # as compiler_builtins.c's parse_time_call.
+  def parse_time_call()
+    self.advance_token()
+    method = if @current.kind() == :identifier then self.token_text(@current) else "" end
+    build_mode = ["utc", "fixed", "local"].index(method)
+    if method == "monotonic" || method == "now" || method == "utc_now"
+      self.advance_token()
+      if @current.kind() != :left_paren
+        self.fail("expected '(' after Time method name")
+        return 0
+      end
+      self.advance_token()
+      if @current.kind() != :right_paren
+        self.fail("expected ')' after Time method arguments")
+        return 0
+      end
+      self.advance_token()
+      destination = self.allocate_register()
+      if method == "monotonic"
+        self.emit_instruction1(Opcode::TIME_MONOTONIC, destination)
+        self.set_type_fact(destination, Type::FLOAT)
+      else
+        self.emit_instruction1(Opcode::TIME_NOW, destination)
+        self.emit_byte(if method == "utc_now" then 1 else 0 end)
+      end
+      return destination
+    end
+    if method == "at" || method == "parse"
+      self.advance_token()
+      argument = self.parse_single_argument("Time.#{method}")
+      return 0 if @failed
+      destination = self.allocate_register()
+      self.emit_instruction2(if method == "at" then Opcode::TIME_AT else Opcode::TIME_PARSE end, destination, argument)
+      return destination
+    end
+    if build_mode == nil
+      self.fail("expected a Time constructor after 'Time'")
+      return 0
+    end
+    self.advance_token()
+    if @current.kind() != :left_paren
+      self.fail("expected '(' after Time constructor")
+      return 0
+    end
+    self.advance_token()
+    self.skip_newlines()
+    expected = if build_mode == 1 then 7 else 6 end
+    arguments = []
+    while @current.kind() != :right_paren && !@failed
+      if arguments.length() == expected
+        self.fail("too many Time constructor arguments")
+        return 0
+      end
+      arguments.push(self.parse_expression())
+      self.skip_newlines()
+      break if @current.kind() != :comma
+      self.advance_token()
+      self.skip_newlines()
+    end
+    return 0 if @failed
+    if @current.kind() != :right_paren || arguments.length() != expected
+      self.fail(if build_mode == 1
+        "Time.fixed expects offset plus six calendar fields"
+      else
+        "Time.utc expects six calendar fields"
+      end)
+      return 0
+    end
+    self.advance_token()
+    base = self.allocate_register()
+    index = 1
+    while index < arguments.length()
+      self.allocate_register()
+      index = index + 1
+    end
+    index = 0
+    while index < arguments.length()
+      self.emit_instruction2(Opcode::MOVE, base + index, arguments[index])
+      index = index + 1
+    end
+    destination = self.allocate_register()
+    self.emit_instruction2(Opcode::TIME_BUILD, destination, base)
+    self.emit_byte(build_mode)
+    destination
+  end
+
+  # `SecureRandom.bytes(count)` or `.hex(count)`.
+  def parse_secure_random_call()
+    self.advance_token()
+    method = if @current.kind() == :identifier then self.token_text(@current) else "" end
+    if method != "bytes" && method != "hex"
+      self.fail("expected 'bytes' or 'hex' after 'SecureRandom'")
+      return 0
+    end
+    self.advance_token()
+    count = self.parse_single_argument("SecureRandom.#{method}")
+    return 0 if @failed
+    destination = self.allocate_register()
+    self.emit_instruction2(if method == "bytes" then Opcode::SECURE_RANDOM_BYTES else Opcode::SECURE_RANDOM_HEX end,
+      destination, count)
+    self.set_type_fact(destination, Type::STRING) if method == "hex"
+    destination
+  end
+
+  # `BCrypt.hash(password, cost)` or `.verify(password, digest)`.
+  def parse_bcrypt_call()
+    self.advance_token()
+    method = if @current.kind() == :identifier then self.token_text(@current) else "" end
+    if method != "hash" && method != "verify"
+      self.fail("expected 'hash' or 'verify' after 'BCrypt'")
+      return 0
+    end
+    call = "BCrypt.#{method}"
+    self.advance_token()
+    if @current.kind() != :left_paren
+      self.fail("expected '(' after '#{call}'")
+      return 0
+    end
+    self.advance_token()
+    self.skip_newlines()
+    password = self.parse_expression()
+    self.skip_newlines()
+    if @current.kind() != :comma
+      self.fail("expected ',' after #{call} password")
+      return 0
+    end
+    self.advance_token()
+    self.skip_newlines()
+    second = self.parse_expression()
+    self.skip_newlines()
+    if @current.kind() != :right_paren
+      self.fail("expected ')' after #{call} arguments")
+      return 0
+    end
+    self.advance_token()
+    destination = self.allocate_register()
+    self.emit_instruction3(if method == "hash" then Opcode::BCRYPT_HASH else Opcode::BCRYPT_VERIFY end,
+      destination, password, second)
+    destination
+  end
+
+  # `SQLite3.open(path, mode = nil)`.
+  def parse_sqlite3_open_call()
+    self.advance_token()
+    if @current.kind() != :identifier || self.token_text(@current) != "open"
+      self.fail("expected 'open' after 'SQLite3'")
+      return 0
+    end
+    self.advance_token()
+    if @current.kind() != :left_paren
+      self.fail("expected '(' after 'SQLite3.open'")
+      return 0
+    end
+    self.advance_token()
+    self.skip_newlines()
+    path = self.parse_expression()
+    self.skip_newlines()
+    mode = 0
+    if @current.kind() == :comma
+      self.advance_token()
+      self.skip_newlines()
+      mode = self.parse_expression()
+      self.skip_newlines()
+    else
+      mode = self.allocate_register()
+      self.emit_instruction1(Opcode::NIL, mode)
+    end
+    if @current.kind() != :right_paren
+      self.fail("expected ')' after SQLite3.open arguments")
+      return 0
+    end
+    self.advance_token()
+    destination = self.allocate_register()
+    self.emit_instruction3(Opcode::SQLITE3_OPEN, destination, path, mode)
     destination
   end
 
