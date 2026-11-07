@@ -140,8 +140,17 @@ are against YJIT, on call-heavy and floating-point object code: fib 2.7x, poly 2
 (opt-in) barely moves those: fib 195 to 161 ms, and trees, nbody, poly and objects not at all.
 
 - **JIT coverage** -- the JIT speeds up `loop`, `mandelbrot` and `sieve` (simple numeric
-  loops) but not calls, field access or Float objects. Find what it falls back to the
-  interpreter for in fib, trees, nbody and poly, and compile those paths.
+  loops) but not calls, field access or Float objects. Traced on 0.29.0-dev:
+  - It compiles whole functions or none, and any `INVOKE` on a receiver it can't prove the
+    type of rejects the whole function. nbody's `advance` and `energy` die at
+    `bodies.length()` on an untyped parameter; poly's `build` and `total_area` likewise. A
+    generic `INVOKE` trampoline (the interpreter's dispatch, called from native code) would
+    let those compile.
+  - Where it does compile (fib, trees' `make`/`check`, objects' `dot`), calls and objects
+    still go through C trampolines. In fib, ~45% of samples are `diamond_jit_call_self`,
+    `jit_run_native`, frame push/pop and the register memset/memmove around each call; in
+    trees, `diamond_jit_invoke_instance` and `diamond_jit_new_instance` lead. Gains need
+    native-to-native calls with a lighter frame, and inline field reads and writes.
 - **Call machinery** -- about 300 of a fib call's ~450 instructions are call setup (prologue,
   register zeroing, CALL and RETURN), spread thinly, and frame size is not the cost. A
   VM-stack frame design is the remaining large lever; inline frames were tried and lost cycles
