@@ -5287,7 +5287,7 @@ class Parser
   # value register], ...], block register or nil], or nil; a trailing block
   # takes its types from `block_context`. Mirrors compiler_calls.c's
   # parse_dynamic_keyword_arguments.
-  def parse_dynamic_keyword_arguments(block_context = nil, constructor = nil)
+  def parse_dynamic_keyword_arguments(block_context = nil, expectation = nil)
     positional = []
     keywords = []
     names = []
@@ -5311,6 +5311,7 @@ class Parser
         self.advance_token()
         self.advance_token()
         self.skip_newlines()
+        self.expect_annotation(self.expected_keyword_annotation(expectation, positional, keyword_name)) if expectation != nil
         keywords.push([name_index, self.parse_expression()])
       else
         if seen_keyword
@@ -5330,8 +5331,8 @@ class Parser
           self.fail("too many fixed call arguments")
           return nil
         else
-          if constructor != nil && spread == nil
-            self.expect_annotation(self.constructor_slot_annotation(constructor, positional, positional.length()))
+          if expectation != nil && spread == nil
+            self.expect_annotation(self.expected_slot_annotation(expectation, positional, positional.length()))
           end
           positional.push(self.parse_expression())
         end
@@ -5367,8 +5368,8 @@ class Parser
         keywords[index] = [keywords[index][0], snapshot]
         index = index + 1
       end
-      if constructor != nil && spread == nil && keywords.length() == 0
-        block_context = self.constructor_block_context(constructor[0], positional, constructor[1])
+      if expectation != nil && spread == nil && keywords.length() == 0
+        block_context = self.constructor_block_context(expectation, positional)
       end
       @block_context = block_context
       block = self.compile_block()
@@ -5571,13 +5572,13 @@ class Parser
     self.emit_call_spread(function_index, arguments, type_arguments)
   end
 
-  def parse_call_arguments(constructor = nil)
+  def parse_call_arguments(expectation = nil)
     self.skip_newlines()
     arguments = []
     if @current.kind() != :right_paren
       more = true
       while more
-        self.expect_annotation(self.constructor_slot_annotation(constructor, arguments, arguments.length())) if constructor != nil
+        self.expect_annotation(self.expected_slot_annotation(expectation, arguments, arguments.length())) if expectation != nil
         arguments.push(self.parse_expression())
         self.skip_newlines()
         if @current.kind() == :comma
@@ -7279,13 +7280,18 @@ class Parser
     entry = nil
     entry = self.case_pattern_reader(fact - Type::CLASS_BASE, name) if fact != nil && fact >= Type::CLASS_BASE && fact < 57344
     entry = nil if entry != nil && entry.length() < 7
+    expectation = if entry == nil
+      nil
+    else
+      self.call_expectation(fact - Type::CLASS_BASE, entry, type_annotations, self.declared_type(receiver))
+    end
     block_context = nil
     if entry != nil && entry[6][2].length() == 0 && entry[5] > 0
       block_context = contextual_block_member([nil, nil, nil, nil, nil, nil, nil, entry[6][0]], entry[5] - 1)
     end
     self.skip_newlines()
     if self.call_arguments_have_keyword?()
-      arguments = self.parse_dynamic_keyword_arguments()
+      arguments = self.parse_dynamic_keyword_arguments(nil, expectation)
       return 0 if arguments == nil
       destination = self.allocate_register()
       self.emit_call_opcode(if type_arguments.length() == 0 then Opcode::INVOKE_KEYWORDS else Opcode::INVOKE_TYPED_KEYWORDS end)
@@ -7320,7 +7326,7 @@ class Parser
       self.emit_type_argument_trailer(type_arguments)
       return destination
     end
-    parsed = self.parse_call_arguments()
+    parsed = self.parse_call_arguments(expectation)
     return 0 if parsed == nil
     argument_base = parsed[0]
     argument_count = parsed[1]
@@ -9849,8 +9855,8 @@ class Parser
     else
       @builder.declare_type_set(@current_function_index, [[Type::HASH, sets[0], sets[1], -1, -1, []]])
     end
-    constructor = if class_entry == nil then nil else [class_entry[1], annotations] end
-    arguments = self.parse_dynamic_keyword_arguments(nil, constructor)
+    expectation = if class_entry == nil then nil else self.call_expectation(class_entry[1], self.case_pattern_reader(class_entry[1], "initialize"), annotations) end
+    arguments = self.parse_dynamic_keyword_arguments(nil, expectation)
     return 0 if arguments == nil
     destination = self.allocate_register()
     self.emit_call_opcode(Opcode::NEW_TYPED)
@@ -9865,6 +9871,7 @@ class Parser
     self.emit_register(explicit_type)
     self.emit_keyword_trailer(arguments)
     self.set_type_fact(destination, Type::CLASS_BASE + class_entry[1]) if class_entry != nil
+    self.publish_constructed_type(destination, class_entry[1], nil, [], annotations) if class_entry != nil
     destination
   end
 
@@ -9895,60 +9902,96 @@ class Parser
     if type_name == nil then nil else [[type_name, nil, nil, -1, nil, nil]] end
   end
 
-  # A do block given to `Class.new(...)`: initialize's Callable contract for
-  # the block's slot, with the class's type variables bound from explicit
-  # type arguments (`Box[String].new`) or else from the arguments before the
-  # block, as generic_block_context does for a function. An inherited
-  # initialize is first read through each subclass's parent type arguments.
-  def constructor_block_context(class_index, arguments, explicit = nil)
-    entry = self.case_pattern_reader(class_index, "initialize")
+  # What a call's arguments are expected to be, for `entry` (an
+  # @instance_methods entry, initialize for a constructor) called on an
+  # instance of class_index: [types, names, bindings, parameter names],
+  # with the types read in class_index's type variables followed by the
+  # method's own. Bindings come from explicit type arguments (all of them,
+  # or just the method's own) and a declared receiver type; the rest are
+  # inferred per slot from the arguments before it. Nil when unknown.
+  def call_expectation(class_index, entry, explicit, receiver_annotation = nil)
     return nil if entry == nil || entry.length() < 7 || entry[6] == nil
     signature = entry[6]
-    view = self.inherited_signature_view(class_index, entry[0], signature[0], signature[2])
+    owner = self.find_class_by_index(entry[0])
+    class_count = if owner == nil then 0 else class_type_parameters(owner).length() end
+    method_count = signature[2].length() - class_count
+    return nil if method_count < 0
+    view = self.inherited_signature_view(class_index, entry[0], signature[0], signature[2], class_count)
     return nil if view == nil
-    types = view[0]
     names = view[1]
-    slot = arguments.length()
-    return nil if slot >= types.length()
-    annotation = types[slot]
+    own_count = names.length() - method_count
+    bound = names.map() do |name| nil end
+    if explicit != nil && explicit.length() > 0
+      offset = if explicit.length() == names.length()
+        0
+      elsif explicit.length() == method_count
+        own_count
+      else
+        -1
+      end
+      return nil if offset < 0
+      index = 0
+      while index < explicit.length()
+        bound[offset + index] = explicit[index]
+        index = index + 1
+      end
+    end
+    if receiver_annotation != nil && receiver_annotation.length() == 1
+      member = receiver_annotation[0]
+      bound[0] = member[1] if own_count > 0 && bound[0] == nil && member[1] != nil
+      bound[1] = member[2] if own_count > 1 && bound[1] == nil && member[2] != nil
+    end
+    [view[0], names, bound, signature[3]]
+  end
+
+  # The type an expectation wants for parameter `slot`, given the
+  # positional arguments parsed so far; nil when unknown or unbound.
+  def expected_slot_annotation(expectation, arguments, slot)
+    return nil if expectation == nil || slot < 0 || slot >= expectation[0].length()
+    annotation = expectation[0][slot]
+    names = expectation[1]
+    return annotation if annotation == nil || !self.annotation_mentions?(annotation, names)
+    bind_annotation(annotation, names, self.infer_type_bindings(expectation[0], names, arguments, expectation[2]))
+  end
+
+  def expected_keyword_annotation(expectation, arguments, keyword_name)
+    return nil if expectation == nil || expectation[3] == nil
+    slot = expectation[3].index(keyword_name)
+    if slot == nil then nil else self.expected_slot_annotation(expectation, arguments, slot) end
+  end
+
+  # `Box.new(41)` is a Box[Int], and `Box[String].new(...)` a Box[String]:
+  # once every class type parameter is bound, the instance's declared type
+  # carries them, so its method calls know their parameters' types.
+  def publish_constructed_type(destination, class_index, expectation, arguments, explicit)
+    entry = self.find_class_by_index(class_index)
+    return if entry == nil || entry[5] || entry[4].length() == 0 || entry[4].length() > 2
+    bound = if explicit != nil
+      explicit
+    elsif expectation != nil
+      self.infer_type_bindings(expectation[0], expectation[1], arguments, expectation[2]).slice(0, entry[4].length())
+    else
+      nil
+    end
+    return if bound == nil || bound.length() != entry[4].length() || bound.include?(nil)
+    second = if bound.length() > 1 then bound[1] else nil end
+    @declared_types.push([destination, [[entry[0], bound[0], second, -1, nil, nil]]])
+  end
+
+  # A do block given to `Class.new(...)`: initialize's Callable contract for
+  # the block's slot, as generic_block_context gives one for a function.
+  def constructor_block_context(expectation, arguments)
+    annotation = self.expected_slot_annotation(expectation, arguments, arguments.length())
     return nil if annotation == nil || annotation.length() != 1
     member = annotation[0]
-    return nil if member[0] != "Callable" || member[5] == nil
-    return member if names.length() == 0
-    bound = if explicit != nil && explicit.length() == names.length()
-      explicit
-    else
-      self.infer_type_bindings(types, names, arguments)
-    end
-    bound_members = bind_annotation([member], names, bound)
-    if bound_members == nil then nil else bound_members[0] end
+    if member[0] == "Callable" && member[5] != nil then member else nil end
   end
 
-  # The type initialize's parameter `slot` expects at `constructor`'s call
-  # ([class_index, explicit type arguments or nil]), given the arguments
-  # parsed so far; nil when it is unknown or untyped.
-  def constructor_slot_annotation(constructor, arguments, slot)
-    return nil if constructor == nil
-    entry = self.case_pattern_reader(constructor[0], "initialize")
-    return nil if entry == nil || entry.length() < 7 || entry[6] == nil
-    view = self.inherited_signature_view(constructor[0], entry[0], entry[6][0], entry[6][2])
-    return nil if view == nil || slot >= view[0].length()
-    annotation = view[0][slot]
-    names = view[1]
-    return annotation if annotation == nil || !self.annotation_mentions?(annotation, names)
-    explicit = constructor[1]
-    bound = if explicit != nil && explicit.length() == names.length()
-      explicit
-    else
-      self.infer_type_bindings(view[0], names, arguments)
-    end
-    bind_annotation(annotation, names, bound)
-  end
-
-  # `types` (written in `owner`'s type variables `names`) read in the type
-  # variables of `class_index`, a subclass of owner, as [types, names];
-  # nil when some step can't be expressed.
-  def inherited_signature_view(class_index, owner, types, names)
+  # `types` (written in `owner`'s type variables `names`, the first
+  # class_count of them the class's) read in the type variables of
+  # class_index, a subclass of owner, as [types, names]; nil when some step
+  # can't be expressed.
+  def inherited_signature_view(class_index, owner, types, names, class_count)
     chain = []
     walk = class_index
     while walk != nil && walk != owner
@@ -9962,29 +10005,33 @@ class Parser
     while index >= 0
       entry = chain[index]
       parents = if entry.length() > 6 then entry[6] else [] end
-      if names.length() > 0
-        return nil if parents.length() != names.length()
+      class_names = names.slice(0, class_count)
+      method_names = names.slice(class_count, names.length() - class_count)
+      if class_count > 0
+        return nil if parents.length() != class_count
         mapped = []
         slot = 0
         while slot < types.length()
           annotation = types[slot]
-          mapped_annotation = if annotation == nil then nil else bind_annotation(annotation, names, parents) end
+          mapped_annotation = if annotation == nil then nil else bind_annotation(annotation, class_names, parents) end
           return nil if annotation != nil && mapped_annotation == nil
           mapped.push(mapped_annotation)
           slot = slot + 1
         end
         types = mapped
       end
-      names = entry[4]
+      names = entry[4] + method_names
+      class_count = entry[4].length()
       index = index - 1
     end
     [types, names]
   end
 
-  # Type variable bindings from the arguments' declared types or facts,
-  # matched structurally (`Array[T]` against Array[String] binds T).
-  def infer_type_bindings(types, names, arguments)
-    bound = names.map() do |name| nil end
+  # Type variable bindings: `start`'s, then any still open inferred from
+  # the arguments' declared types or facts, matched structurally
+  # (`Array[T]` against Array[String] binds T).
+  def infer_type_bindings(types, names, arguments, start)
+    bound = start.dup()
     index = 0
     while index < arguments.length() && index < types.length()
       parameter = types[index]
@@ -10024,8 +10071,9 @@ class Parser
     end
     self.advance_token()
     self.skip_newlines()
+    expectation = self.call_expectation(class_index, self.case_pattern_reader(class_index, "initialize"), nil)
     if self.call_arguments_have_keyword?()
-      arguments = self.parse_dynamic_keyword_arguments(nil, [class_index, nil])
+      arguments = self.parse_dynamic_keyword_arguments(nil, expectation)
       return 0 if arguments == nil
       destination = self.allocate_register()
       self.emit_call_opcode(Opcode::NEW_KEYWORDS)
@@ -10036,7 +10084,7 @@ class Parser
       return destination
     end
     if self.call_arguments_have_spread?()
-      arguments = self.parse_dynamic_keyword_arguments(nil, [class_index, nil])
+      arguments = self.parse_dynamic_keyword_arguments(nil, expectation)
       return 0 if arguments == nil
       destination = self.allocate_register()
       if arguments[2] == nil
@@ -10053,14 +10101,14 @@ class Parser
       self.set_type_fact(destination, Type::CLASS_BASE + class_index)
       return destination
     end
-    parsed = self.parse_call_arguments([class_index, nil])
+    parsed = self.parse_call_arguments(expectation)
     return 0 if parsed == nil
     # A block for initialize goes by NEW_KEYWORDS' block flag.
     if @current.kind() == :do
       array = self.allocate_register()
       self.emit_instruction3(Opcode::ARRAY, array, parsed[0], parsed[1])
       self.set_type_fact(array, Type::ARRAY)
-      @block_context = self.constructor_block_context(class_index, parsed[2])
+      @block_context = self.constructor_block_context(expectation, parsed[2])
       block = self.compile_block()
       destination = self.allocate_register()
       self.emit_call_opcode(Opcode::NEW_KEYWORDS)
@@ -10068,6 +10116,7 @@ class Parser
       self.emit_register(class_index)
       self.emit_keyword_trailer([array, [], block])
       self.set_type_fact(destination, Type::CLASS_BASE + class_index)
+      self.publish_constructed_type(destination, class_index, expectation, parsed[2], nil)
       return destination
     end
     destination = self.allocate_register()
@@ -10077,6 +10126,7 @@ class Parser
     self.emit_register(parsed[0])
     self.emit_byte(parsed[1])
     self.set_type_fact(destination, Type::CLASS_BASE + class_index)
+    self.publish_constructed_type(destination, class_index, expectation, parsed[2], nil)
     destination
   end
 
