@@ -223,15 +223,17 @@ but do not duplicate every native optimization unless it advances a specific boo
 language-design goal.
 
 Running every `tests/cases` program through the self-hosted compiler
-(`tools/self_host_survey.sh`, 2026-11-07): 1,438 of 1,586 compile and run, with 47 skipped because
-they set a limit the compiler itself would hit. 142 of the 148 failures use runtime builtins
-(below). Five need static type inference: Callable signatures for a block passed through a union
-of callables or a generic parent's method reference, a generic class's type parameter inferred
-from a constructor's arguments, and the return-type errors native reports for collection
-callbacks. One returns a Time as the program's result, which `ProgramBuilder#run` cannot copy out.
+(`tools/self_host_survey.sh`, 2026-11-07): 1,484 of 1,586 compile and run, with 47 skipped because
+they set a limit the compiler itself would hit. 93 of the 102 failures use runtime builtins
+(below). Eight need static type inference: Callable signatures for a block passed through a union
+of callables, a generic function reference (`identity`) passed where a generic class's
+constructor or method expects a Callable, a generic parent's method reference, a generic class's
+type parameter inferred from a constructor's arguments, and the return-type errors native reports
+for collection callbacks. One returns a Time as the program's result, which `ProgramBuilder#run`
+cannot copy out.
 
-`File`, `Dir`, `Fiber`, `Time`, TCP, `SQLite3.open`, `SecureRandom` and `BCrypt` are ported, so
-Active Record runs through it. The other runtime builtin surfaces (Thread 52 cases, Channel 35,
+`File`, `Dir`, `Fiber`, `Time`, `Thread.new`, TCP, `SQLite3.open`, `SecureRandom` and `BCrypt` are
+ported, so Active Record runs through it. The other runtime builtin surfaces (Channel 38 cases,
 Process 25, Supervisor 14, then Tensor, UDP and TLS sockets, IO, the other crypto calls) are not.
 Port one only when a bootstrap goal needs it.
 

@@ -13,10 +13,16 @@ authoritative fine-grained record.
   module (`Relation[T]`), every `File` and `Dir` method, `Fiber.yield`,
   `TCPServer.listen`'s `host:`/`backlog:` options with the non-blocking TCP forms, and do-block
   contracts on generic functions (`generic_collect(21) do [] end` binds T to Int). It also
-  compiles `Time`, `SQLite3.open`, `SecureRandom` and `BCrypt` calls, so Active Record runs
-  through it. Run through it, 1,438 of the 1,586 `tests/cases` programs now compile and run (up
-  from 1,342), and most of the rest stop at Thread, Channel, Process or Supervisor, which it
+  compiles `Time`, `Thread.new`, `SQLite3.open`, `SecureRandom` and `BCrypt` calls, so Active
+  Record runs through it. Run through it, 1,484 of the 1,586 `tests/cases` programs now compile
+  and run (up from 1,342), and most of the rest stop at Channel, Process or Supervisor, which it
   doesn't port yet.
+
+### Fixed
+
+- **Bytecode verifier reads `is` type ids in full.** It truncated the type in `x is Type` to a
+  byte, so a program built with `ProgramBuilder` that tested against its 39th or later interface
+  failed with "constructed bytecode is invalid".
 
 ## 0.28.0 — 2026-11-06
 

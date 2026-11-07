@@ -1,0 +1,131 @@
+# `x is Shape39`: an interface id (0xF200 + n) is a 16-bit operand, which the
+# bytecode verifier once truncated to a byte and then judged as a class id.
+interface Shape0
+  def area() -> Int
+end
+interface Shape1
+  def area() -> Int
+end
+interface Shape2
+  def area() -> Int
+end
+interface Shape3
+  def area() -> Int
+end
+interface Shape4
+  def area() -> Int
+end
+interface Shape5
+  def area() -> Int
+end
+interface Shape6
+  def area() -> Int
+end
+interface Shape7
+  def area() -> Int
+end
+interface Shape8
+  def area() -> Int
+end
+interface Shape9
+  def area() -> Int
+end
+interface Shape10
+  def area() -> Int
+end
+interface Shape11
+  def area() -> Int
+end
+interface Shape12
+  def area() -> Int
+end
+interface Shape13
+  def area() -> Int
+end
+interface Shape14
+  def area() -> Int
+end
+interface Shape15
+  def area() -> Int
+end
+interface Shape16
+  def area() -> Int
+end
+interface Shape17
+  def area() -> Int
+end
+interface Shape18
+  def area() -> Int
+end
+interface Shape19
+  def area() -> Int
+end
+interface Shape20
+  def area() -> Int
+end
+interface Shape21
+  def area() -> Int
+end
+interface Shape22
+  def area() -> Int
+end
+interface Shape23
+  def area() -> Int
+end
+interface Shape24
+  def area() -> Int
+end
+interface Shape25
+  def area() -> Int
+end
+interface Shape26
+  def area() -> Int
+end
+interface Shape27
+  def area() -> Int
+end
+interface Shape28
+  def area() -> Int
+end
+interface Shape29
+  def area() -> Int
+end
+interface Shape30
+  def area() -> Int
+end
+interface Shape31
+  def area() -> Int
+end
+interface Shape32
+  def area() -> Int
+end
+interface Shape33
+  def area() -> Int
+end
+interface Shape34
+  def area() -> Int
+end
+interface Shape35
+  def area() -> Int
+end
+interface Shape36
+  def area() -> Int
+end
+interface Shape37
+  def area() -> Int
+end
+interface Shape38
+  def area() -> Int
+end
+interface Shape39
+  def area() -> Int
+end
+class Square
+  def initialize(side: Int)
+    @side = side
+  end
+  def area() -> Int = @side * @side
+end
+puts(Square.new(4) is Shape39)
+puts(4 is Shape39)
+puts(Square.new(2) is Shape0)
