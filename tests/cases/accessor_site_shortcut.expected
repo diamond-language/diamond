@@ -9,6 +9,10 @@ frozen: frozen object cannot be modified
 5.0
 true
 expected Node | Nil, got Body
+2
+expected Node | Nil, got Body
+1
+expected Node, got Nil
 1.5
 2.5
 other x

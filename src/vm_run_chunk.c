@@ -1561,7 +1561,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                         site,&registers[left],&registers[right],
                         opcode==DIAMOND_OP_NOT_EQUAL,&general_result);
                     VM_PROPAGATE(status);
-                    registers[destination]=general_result;
+                    value_copy_from_callee(&registers[destination],&general_result);
                 }
                 break;
             }
@@ -1793,7 +1793,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     : run_chunk(called_chunk, vm, &registers[argument_base],
                         call_argument_count, depth + 1, nullptr, &call_result);
                 VM_PROPAGATE(status);
-                registers[destination] = call_result;
+                value_copy_from_callee(&registers[destination],&call_result);
                 DISPATCH_NEXT();
             }
             case DIAMOND_OP_TAIL_CALL: op_TAIL_CALL: {
@@ -2355,7 +2355,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     const DiamondVmStatus mono_status=diamond_mono_invoke(vm,chunk,
                         registers,bytecode+instruction_offset,depth,&mono_result);
                     if(mono_status==DIAMOND_VM_OK) {
-                        registers[dest]=mono_result;
+                        value_copy_from_callee(&registers[dest],&mono_result);
                         DISPATCH_NEXT();
                     }
                     if(mono_status!=DIAMOND_VM_NOT_CACHED) {

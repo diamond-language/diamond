@@ -122,6 +122,52 @@ rescue error: TypeError
   puts(error.message())
 end
 
+# Class-typed getters remember their class: an exact instance or nil passes
+# at once, a subclass instance still passes through the full check, and a
+# field holding anything else (set by an untyped initializer) is still a
+# TypeError, with or without Nil in the declared type.
+class LooseLink
+  attr_reader link: Node | Nil
+  attr_reader strict: Node
+
+  def initialize(link, strict)
+    @link = link
+    @strict = strict
+  end
+end
+
+def count_links(values) -> Int
+  count = 0
+  values.each() do |value|
+    count += 1 if value.link() != nil
+  end
+  count
+end
+
+def count_strict(values) -> Int
+  count = 0
+  values.each() do |value|
+    count += 1 if value.strict() is SpecialNode
+  end
+  count
+end
+
+plain = Node.new(nil)
+special = SpecialNode.new(nil)
+puts(count_links([LooseLink.new(plain, plain), LooseLink.new(nil, plain),
+    LooseLink.new(special, plain)]))
+begin
+  count_links([LooseLink.new(plain, plain), LooseLink.new(body, plain)])
+rescue error: TypeError
+  puts(error.message())
+end
+puts(count_strict([LooseLink.new(nil, plain), LooseLink.new(nil, special)]))
+begin
+  count_strict([LooseLink.new(nil, plain), LooseLink.new(nil, nil)])
+rescue error: TypeError
+  puts(error.message())
+end
+
 # The getter on a site that later sees a different class falls back to the
 # ordinary lookup and still finds the right method.
 class Other

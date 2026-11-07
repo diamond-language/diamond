@@ -15,6 +15,13 @@ authoritative fine-grained record.
   value, a frozen receiver) are the same as before. The n-body simulation runs about 13% fewer
   instructions (8% fewer cycles), building and walking trees 5% fewer cycles, and struct- and
   object-heavy code 2-5% fewer.
+- **Cheaper class-typed getters and call results.** A getter declared as one class, with or
+  without `Nil` (`attr_reader left: Node | Nil`), now checks its value with one class comparison
+  instead of walking its declared type each call; a subclass instance or a wrong-typed value
+  still gets the full check and the same error. Method, function and `==` call results are
+  copied back in a form the processor can forward straight from the callee's stores. The
+  n-body simulation runs about 10% fewer cycles, object- and struct-heavy code 4-5% fewer, and
+  building and walking trees about 3% fewer.
 - **Cheaper short Strings and Arrays.** The collector keeps swept Strings of up to about 100
   bytes, sorted by size, and swept Array headers for the next allocations instead of returning
   them to `malloc`, as it already did for small instances; together the pools stay within one
