@@ -1845,12 +1845,10 @@ static void compile_tail_call_other(JitCompiler *jc, uint16_t dest,
  * unconditionally sets args[0] to the receiver), or recv names a declared
  * parameter whose static type is a single concrete class and which the
  * function body never reassigns (Phase 9: see parameter_is_single_class/
- * parameter_never_reassigned below). DIAMOND_OP_INVOKE_TYPED is never
- * compiled at all (no case for it below -- falls through to compile_body's
- * own default: bail), so type_argument_count/type_arguments are always the
- * "no type arguments" constants here; the interpreter's own case still
- * passes real values through diamond_jit_invoke_instance for that opcode,
- * since this trampoline is shared.
+ * parameter_never_reassigned below). DIAMOND_OP_INVOKE_TYPED never comes
+ * here (it compiles through compile_invoke_any, which passes its type
+ * arguments), so type_argument_count/type_arguments are always the "no type
+ * arguments" constants.
  * Sets both jc->needs_frame (invoke_resolved_method_helper/method_missing_
  * helper/tap's own closure call can all allocate/trigger GC arbitrarily
  * deep inside whatever they call) and jc->has_called (a real method call
@@ -2056,6 +2054,7 @@ static bool opcode_writes_no_register(DiamondOpCode opcode) {
         case DIAMOND_OP_RETURN:
         case DIAMOND_OP_SET_CVAR:
         case DIAMOND_OP_CHECK_DESTRUCTURE_COUNT:
+        case DIAMOND_OP_CHECK_SELF_RETURN:
             return true;
         default:
             return false;
@@ -2077,6 +2076,7 @@ static bool opcode_runs_outlined(DiamondOpCode opcode) {
         case DIAMOND_OP_INVOKE_SELF_METHOD:
         case DIAMOND_OP_GET_CVAR:
         case DIAMOND_OP_SET_CVAR:
+        case DIAMOND_OP_CHECK_SELF_RETURN:
         case DIAMOND_OP_CALL_TYPED:
         case DIAMOND_OP_CALL_SPREAD: case DIAMOND_OP_CALL_TYPED_SPREAD:
         case DIAMOND_OP_CALL_KEYWORD_SPREAD: case DIAMOND_OP_CALL_TYPED_KEYWORD_SPREAD:
@@ -2152,6 +2152,7 @@ static bool opcode_dest_is_first_u16(DiamondOpCode opcode) {
         case DIAMOND_OP_SUPER:
         case DIAMOND_OP_INVOKE:
         case DIAMOND_OP_INVOKE_MONO:
+        case DIAMOND_OP_INVOKE_TYPED:
         case DIAMOND_OP_NEW:
         case DIAMOND_OP_CALL:
         case DIAMOND_OP_TAIL_CALL:
@@ -2267,6 +2268,11 @@ static bool decode_instruction_operands(const DiamondFunction *fn, size_t *pc,
                 uint16_t array = 0, expected = 0;
                 return decode_u16(fn, pc, &array) && decode_u16(fn, pc, &expected);
             }
+            case DIAMOND_OP_CHECK_SELF_RETURN: {
+                uint16_t source = 0, others = 0, receiver = 0;
+                return decode_u16(fn, pc, &source) && decode_u16(fn, pc, &others) &&
+                    decode_u16(fn, pc, &receiver);
+            }
             default: return false; /* unreachable given opcode_writes_no_register */
         }
     }
@@ -2316,6 +2322,12 @@ static bool decode_instruction_operands(const DiamondFunction *fn, size_t *pc,
             uint16_t a = 0, b = 0, c = 0; uint8_t d = 0;
             return decode_u16(fn, pc, &a) && decode_u16(fn, pc, &b) &&
                 decode_u16(fn, pc, &c) && decode_u8(fn, pc, &d);
+        }
+        case DIAMOND_OP_INVOKE_TYPED: {
+            uint16_t a = 0, b = 0, c = 0; uint8_t d = 0;
+            return decode_u16(fn, pc, &a) && decode_u16(fn, pc, &b) &&
+                decode_u16(fn, pc, &c) && decode_u8(fn, pc, &d) &&
+                skip_type_trailer(fn, pc);
         }
         case DIAMOND_OP_NEW: {
             uint16_t a = 0, b = 0; uint8_t c = 0;
@@ -2670,8 +2682,8 @@ static bool jit_native_read_operation(uint16_t site_type,
  * receiver-kind checks. Every other site -- an untyped receiver, a native
  * per-type method, a polymorphic Instance site -- goes through
  * compile_invoke_any, the interpreter's own dispatch, so it no longer keeps
- * the whole function interpreted. DIAMOND_OP_INVOKE_TYPED has no case at
- * all and still rejects the function. */
+ * the whole function interpreted. DIAMOND_OP_INVOKE_TYPED always takes
+ * compile_invoke_any (compile_body's own case). */
 static void compile_invoke(JitCompiler *jc, size_t instruction_start, DiamondOpCode opcode,
         uint16_t dest, uint16_t recv, uint16_t name, uint16_t base, uint8_t argc) {
     const DiamondFunction *fn = jc->function;
@@ -3625,6 +3637,19 @@ static bool compile_control_instruction(JitCompiler *jc, DiamondOpCode opcode, s
                 !decode_u16(fn, &pc, &name) || !decode_u16(fn, &pc, &base) ||
                 !decode_u8(fn, &pc, &argc)) { jc->bailed = true; return true; }
             compile_invoke(jc, instruction_start, opcode, dest, recv, name, base, argc);
+            break;
+        }
+        /* Explicit type arguments (`recv.method[Type]()`): the interpreter's
+         * own dispatch, which reads them from the instruction. */
+        case DIAMOND_OP_INVOKE_TYPED: {
+            uint16_t dest = 0, recv = 0, name = 0, base = 0;
+            uint8_t argc = 0;
+            if (!decode_u16(fn, &pc, &dest) || !decode_u16(fn, &pc, &recv) ||
+                !decode_u16(fn, &pc, &name) || !decode_u16(fn, &pc, &base) ||
+                !decode_u8(fn, &pc, &argc) || !skip_type_trailer(fn, &pc)) {
+                jc->bailed = true; return true;
+            }
+            compile_invoke_any(jc, instruction_start);
             break;
         }
         default:

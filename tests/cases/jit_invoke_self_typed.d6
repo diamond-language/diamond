@@ -1,0 +1,19 @@
+# self.method[Type]() compiles to DIAMOND_OP_INVOKE_TYPED, which compiled
+# code runs through the interpreter's own dispatch (diamond_jit_invoke_any)
+# with the instruction's explicit type arguments. Both methods compile: the
+# generic wrap[T] and wrap_self_typed, whose call fixes T to Int. The Int
+# binding is checked too: as_int[T] rejects a String once T is Int.
+class Box
+  def wrap[T](value: T) -> Array[T] = [value]
+  def wrap_self_typed() = self.wrap[Int](7)
+  def as_int[T](value) -> T = value
+  def bad_as_int() = self.as_int[Int]("seven")
+end
+
+b = Box.new()
+puts(b.wrap_self_typed()[0])
+begin
+  b.bad_as_int()
+rescue error: TypeError
+  puts("rejected: #{error.message()}")
+end

@@ -2385,6 +2385,15 @@ DiamondVmStatus diamond_jit_invoke_any(DiamondVm *vm,const DiamondChunk *chunk,
     const uint16_t name=(uint16_t)(((unsigned)site[5]<<8)|site[6]);
     const uint16_t base=(uint16_t)(((unsigned)site[7]<<8)|site[8]);
     const uint8_t argc=site[9];
+    /* INVOKE_TYPED's explicit type arguments follow, as run_chunk reads them;
+     * compiled code calls this only after jit.c decoded them in bounds. */
+    uint8_t type_argument_count=0;uint16_t type_arguments[8];
+    if(instruction==DIAMOND_OP_INVOKE_TYPED) {
+        type_argument_count=site[10];
+        if(type_argument_count>8)return DIAMOND_VM_INVALID_BYTECODE;
+        for(size_t index=0;index<type_argument_count;index++)
+            type_arguments[index]=(uint16_t)(((unsigned)site[11+2*index]<<8)|site[12+2*index]);
+    }
     const bool instance=registers[recv].kind==DIAMOND_VALUE_OBJECT&&
         registers[recv].as.object->kind==DIAMOND_OBJECT_INSTANCE;
     if(instruction==DIAMOND_OP_INVOKE_MONO&&instance) {
@@ -2402,7 +2411,8 @@ DiamondVmStatus diamond_jit_invoke_any(DiamondVm *vm,const DiamondChunk *chunk,
     if(instance) {
         DiamondValue call_result=DIAMOND_NIL;
         const DiamondVmStatus status=diamond_jit_invoke_instance(vm,chunk,site,
-            instruction,registers,recv,name,base,argc,0,nullptr,depth,&call_result);
+            instruction,registers,recv,name,base,argc,type_argument_count,
+            type_arguments,depth,&call_result);
         if(status!=DIAMOND_VM_OK) return status;
         registers[dest]=call_result;
         return DIAMOND_VM_OK;
@@ -2583,6 +2593,10 @@ DiamondVmStatus diamond_jit_outlined(DiamondVm *vm,const DiamondChunk *chunk,
                 &registers[jit_outlined_short(chunk,offset+1)]);
         case DIAMOND_OP_SET_CVAR:
             return set_cvar_helper(vm,chunk,jit_outlined_short(chunk,offset+1),
+                jit_outlined_short(chunk,offset+3),
+                registers[jit_outlined_short(chunk,offset+5)]);
+        case DIAMOND_OP_CHECK_SELF_RETURN:
+            return check_self_return(vm,chunk,registers[jit_outlined_short(chunk,offset+1)],
                 jit_outlined_short(chunk,offset+3),
                 registers[jit_outlined_short(chunk,offset+5)]);
         default:

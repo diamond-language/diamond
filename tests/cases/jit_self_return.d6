@@ -1,0 +1,25 @@
+# `-> Self` checks (DIAMOND_OP_CHECK_SELF_RETURN) run in compiled code through
+# the interpreter's own check_self_return: the class the method was called
+# on, through inheritance, and a wrong return rejected the same way.
+class Shape
+  def initialize(name)
+    @name = name
+  end
+
+  def name() = @name
+  def copy() -> Self = self.make(@name)
+  def make(name) = Shape.new(name)
+  def broken() -> Self = Shape.new("plain")
+end
+
+class Circle < Shape
+  def make(name) = Circle.new(name)
+end
+
+puts(Circle.new("c").copy().name())
+puts(Shape.new("s").copy().name())
+begin
+  Circle.new("c").broken()
+rescue error: TypeError
+  puts("rejected: #{error.message()}")
+end
