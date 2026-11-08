@@ -46,9 +46,19 @@ authoritative fine-grained record.
   machine code directly, with the callee's registers on the native stack, instead of going
   back through the VM. With `DIAMOND_JIT=1`, fib runs 53% fewer instructions (160 to 121 ms)
   and trees 14% fewer. The call-depth limit and its stack-overflow error are unchanged.
+- **Blocks run as machine code under the JIT.** The body of a `do ... end` block or closure now
+  compiles, including the captured variables it reads and writes. Functions that read a
+  top-level constant compile too. With `DIAMOND_JIT=1`, the blocks and iterate benchmarks run
+  36% fewer instructions (91 to 76 ms and 152 to 116 ms), and regex 5% fewer.
 
 ### Fixed
 
+- **JIT: big-integer and operator-method arithmetic no longer loses values under GC pressure.** A
+  compiled function whose only allocations came from `+`, `-`, `*`, `/`, `%`, a comparison or
+  `==` on operands its fast path does not handle (big integers, Strings, a user operator
+  method) kept its registers hidden from the garbage collector during that call, so a
+  collection could free an intermediate result. `(a / b) * b + a % b == a` on big integers
+  could come out false with `DIAMOND_JIT=1`.
 - **`String#scan` with a String pattern no longer crashes under GC pressure.** The Regexp
   compiled from the pattern was held only by the result register, which the scan overwrote
   with its result Array before allocating the matches, so a collection mid-scan could free it.

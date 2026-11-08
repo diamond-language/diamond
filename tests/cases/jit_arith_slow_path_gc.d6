@@ -1,0 +1,33 @@
+# A compiled function whose only allocating instructions are arithmetic,
+# comparison and == slow paths (big integers, String concatenation, a user
+# operator method) keeps its registers visible to the GC while each slow
+# call runs: under stress GC, an intermediate big integer held only in a
+# register survives the next operation's collection.
+class Money
+  attr_reader cents: Int
+
+  def initialize(cents: Int)
+    @cents = cents
+  end
+
+  def +(other: Money) -> Money = Money.new(@cents + other.cents())
+  def ==(other) -> Bool = other is Money && @cents == other.cents()
+end
+
+def identity_holds(a, b) = (a / b) * b + a % b == a
+
+def joined(a, b) = a + "-" + b + "-" + a
+
+def total(a, b) = a + b + a
+
+big = 2 ** 70
+ok = true
+[-13, 7, big, -big, 2 ** 64 + 1].each() do |a|
+  [-5, 3, big, -big].each() do |b|
+    ok = false unless identity_holds(a, b)
+  end
+end
+puts(ok)
+puts(joined("x", "y"))
+puts(total(Money.new(5), Money.new(7)).cents())
+puts(total(Money.new(1), Money.new(2)) == Money.new(4))

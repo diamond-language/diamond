@@ -1,8 +1,9 @@
 # Compiled functions that box locals and create blocks: a block reading and
 # writing captured locals, a closure returned and called after its function
 # has returned, a block nested in another, and the boxed locals read back by
-# the compiled code afterwards. A function whose block breaks stays
-# interpreted (its frame is the break's landing) and still works.
+# the compiled code afterwards. The blocks and the returned closure compile
+# too (7 in all). A function whose block breaks stays interpreted (its frame
+# is the break's landing), as does the breaking block, and still works.
 def total_with_offset(values, offset: Int) -> Int
   sum = 0
   i = 0

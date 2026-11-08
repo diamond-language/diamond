@@ -334,6 +334,22 @@ DIAMOND_INTERNAL DiamondRegexp *allocate_regexp_handle(DiamondVm *vm, reginold_r
 /* Grows vm's namespace constant storage to `count` entries (new ones
  * unset); false when over the limit or out of memory. */
 DIAMOND_INTERNAL bool vm_reserve_namespace_constants(DiamondVm *vm, size_t count);
+
+/* DIAMOND_OP_GET_NAMESPACE_CONSTANT's read, for run_chunk and the JIT's
+ * trampoline alike. */
+static inline DiamondVmStatus diamond_read_namespace_constant(DiamondVm *vm,uint16_t index,
+        DiamondValue *out) {
+    if(index>=DIAMOND_MAX_NAMESPACE_CONSTANTS) return DIAMOND_VM_INVALID_BYTECODE;
+    if(index>=vm->namespace_constant_capacity||!vm->namespace_constant_initialized[index]) {
+        snprintf(vm->error,sizeof vm->error,vm->spawned_thread?
+            "uninitialized constant (in a spawned thread: its value "
+            "cannot cross a thread boundary, or it was defined after "
+            "the thread started)":"uninitialized constant");
+        return DIAMOND_VM_CONSTANT_ERROR;
+    }
+    *out=vm->namespace_constants[index];
+    return DIAMOND_VM_OK;
+}
 DIAMOND_INTERNAL void copy_namespace_constants_into_vm(const DiamondVm *parent, DiamondVm *child,
                                                        DiamondClass *const *source_classes,
                                                        DiamondClass *const *dest_classes);
@@ -401,6 +417,8 @@ typedef struct {
     DiamondChunk child_storage;
     const DiamondChunk *child;
     const DiamondClosure *called;
+    /* The block's function, for jit_call_or_interpret. */
+    const DiamondFunction *function;
     uint8_t argc;
     bool self_slot;
 } DiamondBlockCall;
@@ -1693,7 +1711,9 @@ static inline DiamondVmStatus jit_call_or_interpret(DiamondVm *vm, const Diamond
         const DiamondChunk *chunk_to_interpret, const DiamondValue *arguments,
         size_t argument_count, size_t depth, const DiamondClosure *closure,
         DiamondValue *result) {
-    if (!vm->jit)
+    /* A function the JIT already turned down skips its checks too: a block
+     * that cannot compile is called once per element. */
+    if (!vm->jit || function->jit_ineligible)
         return run_chunk(chunk_to_interpret, vm, arguments, argument_count,
             depth + 1, closure, result);
     return jit_call_with_jit(vm, function, chunk_to_interpret, arguments, argument_count,

@@ -2486,17 +2486,10 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
             }
             case DIAMOND_OP_GET_NAMESPACE_CONSTANT: op_GET_NAMESPACE_CONSTANT: {
                 uint16_t destination=0,index=0;READ_SHORT(destination);READ_SHORT(index);
-                if(index>=DIAMOND_MAX_NAMESPACE_CONSTANTS)
-                    VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
-                if(index>=vm->namespace_constant_capacity||
-                   !vm->namespace_constant_initialized[index]) {
-                    snprintf(vm->error,sizeof vm->error,vm->spawned_thread?
-                        "uninitialized constant (in a spawned thread: its value "
-                        "cannot cross a thread boundary, or it was defined after "
-                        "the thread started)":"uninitialized constant");
-                    VM_RETURN(DIAMOND_VM_CONSTANT_ERROR);
-                }
-                registers[destination]=vm->namespace_constants[index];break;
+                const DiamondVmStatus read_status=
+                    diamond_read_namespace_constant(vm,index,&registers[destination]);
+                if(read_status!=DIAMOND_VM_OK) VM_RETURN(read_status);
+                break;
             }
             case DIAMOND_OP_SET_NAMESPACE_CONSTANT: op_SET_NAMESPACE_CONSTANT: {
                 uint16_t index=0,source=0;READ_SHORT(index);READ_SHORT(source);

@@ -122,6 +122,16 @@ typedef struct JitCompiler {
      * the body correctly aligned -- set once, right before emitting the
      * real prologue, from DIAMOND_JIT_FRAME_SIZE. */
     size_t frame_reserve_bytes;
+    /* Set by an opcode that reads the closure the function was entered with
+     * (GET_CAPTURE, GET_CAPTURE_CELL, SET_CAPTURE, CLOSURE), in the dry run
+     * as in the real pass, so the real pass knows it from the start. */
+    bool reads_closure;
+    /* Set by a slow path that can allocate but sits behind an inline fast
+     * path (arithmetic, comparison and == on operands the fast path does
+     * not take). A function with only these reserves the frame's space but
+     * links the frame just around each slow call (emit_slow_frame_link),
+     * so the fast path pays two instructions, not the frame write. */
+    bool slow_frame;
     /* Phase 2d: set the moment SUPER is compiled, in both the dry-run and
      * real passes alike (mirroring needs_frame). Once true: (a) every
      * later status-bearing bail site (a trampoline call's own non-OK
@@ -232,6 +242,25 @@ static void emit_load_r64_sib(JitBuffer *buf, int reg, int base, int32_t disp) {
     emit_u8(buf, 0x8B);
     emit_u8(buf, (uint8_t)(0x84 | ((reg & 7) << 3)));
     emit_u8(buf, 0x24);
+    emit_u32_le(buf, (uint32_t)disp);
+}
+
+/* xorps xmm0, xmm0 */
+static void emit_zero_xmm0(JitBuffer *buf) {
+    emit_u8(buf, 0x0F); emit_u8(buf, 0x57); emit_u8(buf, 0xC0);
+}
+/* movups [rsp + disp32], xmm<n> (n < 8) */
+static void emit_movups_store_rsp(JitBuffer *buf, int32_t disp, int xmm) {
+    emit_u8(buf, 0x0F); emit_u8(buf, 0x11);
+    emit_u8(buf, (uint8_t)(0x84 | (xmm << 3)));  /* mod 10, rm 100: SIB follows */
+    emit_u8(buf, 0x24);                          /* SIB: base rsp, no index */
+    emit_u32_le(buf, (uint32_t)disp);
+}
+/* movups xmm<n>, [base + disp32] (n < 8; base not rsp or r12) */
+static void emit_movups_load(JitBuffer *buf, int xmm, int base, int32_t disp) {
+    if (base >= 8) emit_u8(buf, emit_rex(false, xmm, base));
+    emit_u8(buf, 0x0F); emit_u8(buf, 0x10);
+    emit_u8(buf, (uint8_t)(0x80 | (xmm << 3) | (base & 7)));
     emit_u32_le(buf, (uint32_t)disp);
 }
 
@@ -471,6 +500,72 @@ static void emit_store_instruction_offset(JitCompiler *jc) {
     emit_u32_le(buf, (uint32_t)jc->current_instruction_start);
 }
 
+/* Loads the closure the function was entered with (the entry's seventh
+ * argument, nullptr outside a closure call) into `reg`. The caller left it
+ * on the stack just above the return address; the prologue's six pushes and
+ * pad slot (56 bytes) and the frame reservation sit below it, plus whatever
+ * the current instruction has pushed (rsp_delta). */
+static void emit_load_closure(JitCompiler *jc, int reg) {
+    emit_load_r64_sib(&jc->buf, reg, REG_RSP,
+        (int32_t)jc->frame_reserve_bytes + jc->buf.rsp_delta + 7 * 8 + 8);
+}
+
+/* Writes this function's DiamondFrame into its reservation (layout in
+ * jit.h) and links it onto vm->frames: zero the fields nothing else sets,
+ * fill the five run_chunk's entry sets, point instruction_offset at the
+ * pad slot just above the reservation. Only RAX and XMM0 are touched. Each
+ * field is stored once: zeroing the whole frame first measured as
+ * store-buffer stalls. `at` is the reservation's offset from RSP: 0 in the
+ * prologue, rsp_delta for a slow path mid-instruction. */
+static void emit_frame_link(JitCompiler *jc, int32_t at) {
+    JitBuffer *buf = &jc->buf;
+    const int32_t reserve = (int32_t)jc->frame_reserve_bytes;
+    const DiamondFunction *function = jc->function;
+    const size_t live_register_count = function->register_count == 0
+        ? DIAMOND_JIT_MAX_REGISTERS : function->register_count;
+    emit_zero_xmm0(buf);
+    emit_movups_store_rsp(buf, at + DIAMOND_JIT_FRAME_PENDING, 0);
+    for (int32_t field = DIAMOND_JIT_FRAME_SERIAL; field < DIAMOND_JIT_FRAME_SIZE; field += 16)
+        emit_movups_store_rsp(buf, at + field, 0);
+    emit_u8(buf, 0x31); emit_u8(buf, 0xC0);   /* xor eax, eax */
+    emit_store_r64_sib(buf, REG_RSP, at + DIAMOND_JIT_FRAME_HANDLER_COUNT, REG_RAX);
+    emit_store_r64_sib(buf, REG_RSP, at + reserve, REG_RAX);
+    emit_load_r64_sib(buf, REG_RAX, JIT_VM, (int32_t)offsetof(DiamondVm, frames));
+    emit_store_r64_sib(buf, REG_RSP, at + DIAMOND_JIT_FRAME_PREVIOUS, REG_RAX);
+    emit_store_r64_sib(buf, REG_RSP, at + DIAMOND_JIT_FRAME_REGISTERS, JIT_REGISTERS_BASE);
+    emit_mov_imm64(buf, REG_RAX, live_register_count);
+    emit_store_r64_sib(buf, REG_RSP, at + DIAMOND_JIT_FRAME_REGISTER_COUNT, REG_RAX);
+    emit_store_r64_sib(buf, REG_RSP, at + DIAMOND_JIT_FRAME_CHUNK, JIT_CHUNK);
+    emit_u8(buf, 0x48); emit_u8(buf, 0x8D);   /* lea rax, [rsp + at + reserve] */
+    emit_u8(buf, 0x84); emit_u8(buf, 0x24);
+    emit_u32_le(buf, (uint32_t)(at + reserve));
+    emit_store_r64_sib(buf, REG_RSP, at + DIAMOND_JIT_FRAME_INSTRUCTION_OFFSET, REG_RAX);
+    if (at == 0) {
+        emit_store_r64_sib(buf, JIT_VM, (int32_t)offsetof(DiamondVm, frames), REG_RSP);
+    } else {
+        emit_u8(buf, 0x48); emit_u8(buf, 0x8D);   /* lea rax, [rsp + at] */
+        emit_u8(buf, 0x84); emit_u8(buf, 0x24);
+        emit_u32_le(buf, (uint32_t)at);
+        emit_store_r64_sib(buf, JIT_VM, (int32_t)offsetof(DiamondVm, frames), REG_RAX);
+    }
+}
+
+/* Around a slow call that can allocate (see JitCompiler.slow_frame): when
+ * the function has no frame of its own, link one for the call's duration so
+ * a collection sees this function's registers. The unlink goes through RCX
+ * and keeps AL, the call's status. Both are no-ops in a function that
+ * already keeps its frame linked. */
+static void emit_slow_frame_link(JitCompiler *jc) {
+    jc->slow_frame = true;
+    if (!jc->needs_frame) emit_frame_link(jc, jc->buf.rsp_delta);
+}
+static void emit_slow_frame_unlink(JitCompiler *jc) {
+    if (jc->needs_frame) return;
+    JitBuffer *buf = &jc->buf;
+    emit_load_r64_sib(buf, REG_RCX, REG_RSP, buf->rsp_delta + DIAMOND_JIT_FRAME_PREVIOUS);
+    emit_store_r64_sib(buf, JIT_VM, (int32_t)offsetof(DiamondVm, frames), REG_RCX);
+}
+
 static void emit_body_call(JitCompiler *jc, void *function_address) {
     emit_store_instruction_offset(jc);
     emit_call_trampoline(&jc->buf, function_address);
@@ -516,6 +611,8 @@ static void emit_epilogue(JitCompiler *jc) {
         /* vm->frames = frame->previous, through RCX: AL holds the status. */
         emit_load_r64_sib(buf, REG_RCX, REG_RSP, DIAMOND_JIT_FRAME_PREVIOUS);
         emit_store_r64_sib(buf, JIT_VM, (int32_t)offsetof(DiamondVm, frames), REG_RCX);
+        emit_add_rsp_imm32(buf, (uint32_t)jc->frame_reserve_bytes);
+    } else if (jc->slow_frame) {
         emit_add_rsp_imm32(buf, (uint32_t)jc->frame_reserve_bytes);
     }
     emit_pop_persistent_registers(buf);
@@ -567,14 +664,13 @@ static void emit_epilogue_propagate(JitCompiler *jc) {
         /* No frame, but the failing call still stored its offset in the pad
          * slot at [rsp]: record this function's trace line from there. */
         emit_mov_rr(buf, REG_RDX, JIT_CHUNK);
-        emit_u8(buf, 0x48);                   /* mov rcx, [rsp] */
-        emit_u8(buf, 0x8B);
-        emit_u8(buf, 0x0C);
-        emit_u8(buf, 0x24);
+        /* mov rcx, [rsp + reserve]: above the space a slow call links its
+         * frame in, if any (already unlinked by then). */
+        emit_load_r64_sib(buf, REG_RCX, REG_RSP, (int32_t)jc->frame_reserve_bytes);
         emit_call_trampoline(buf, (void *)(uintptr_t)diamond_jit_record_propagating);
     }
     emit_mov_rr(buf, REG_RAX, JIT_RESULT_PTR);
-    if (jc->needs_frame)
+    if (jc->needs_frame || jc->slow_frame)
         emit_add_rsp_imm32(buf, (uint32_t)jc->frame_reserve_bytes);
     emit_pop_persistent_registers(buf);
     buf->rsp_delta = saved_rsp_delta;
@@ -765,7 +861,9 @@ static void emit_arith_slow_call(JitCompiler *jc, size_t instruction_start, uint
     emit_mov_imm64(buf, REG_RCX, (uint64_t)(uintptr_t)(jc->function->code + instruction_start));
     emit_lea(buf, REG_R8, JIT_REGISTERS_BASE, reg_disp(left, 0));
     emit_lea(buf, REG_R9, JIT_REGISTERS_BASE, reg_disp(right, 0));
+    emit_slow_frame_link(jc);
     emit_body_call(jc, (void *)(uintptr_t)diamond_jit_arith_slow);
+    emit_slow_frame_unlink(jc);
     emit_add_rsp_imm32(buf, 16);
     emit_bail_if_al_nonzero(jc);
 }
@@ -786,7 +884,9 @@ static void emit_compare_slow_call(JitCompiler *jc, size_t instruction_start, ui
     emit_mov_imm64(buf, REG_RCX, (uint64_t)(uintptr_t)(jc->function->code + instruction_start));
     emit_lea(buf, REG_R8, JIT_REGISTERS_BASE, reg_disp(left, 0));
     emit_lea(buf, REG_R9, JIT_REGISTERS_BASE, reg_disp(right, 0));
+    emit_slow_frame_link(jc);
     emit_body_call(jc, (void *)(uintptr_t)diamond_jit_compare_slow);
+    emit_slow_frame_unlink(jc);
     emit_add_rsp_imm32(buf, 16);
     emit_bail_if_al_nonzero(jc);
 }
@@ -1114,7 +1214,9 @@ static void compile_equal_op(JitCompiler *jc, size_t instruction_start, uint16_t
     emit_mov_imm64(buf, REG_RCX, (uint64_t)(uintptr_t)(jc->function->code + instruction_start));
     emit_lea(buf, REG_R8, JIT_REGISTERS_BASE, reg_disp(left, 0));
     emit_lea(buf, REG_R9, JIT_REGISTERS_BASE, reg_disp(right, 0));
+    emit_slow_frame_link(jc);
     emit_body_call(jc, (void *)(uintptr_t)diamond_jit_equal_general);
+    emit_slow_frame_unlink(jc);
     emit_add_rsp_imm32(buf, 16);
     emit_bail_if_al_nonzero(jc);
     size_t general_done = emit_jmp_placeholder(buf);
@@ -1438,23 +1540,6 @@ static void compile_super_call(JitCompiler *jc, uint16_t dest, uint16_t owner_in
  * (vm, chunk, registers, function_index, base, argc) in registers, and
  * (depth, out) on the stack, pushed in reverse so depth ends at [rsp+0]. */
 /* xorps xmm0, xmm0 */
-static void emit_zero_xmm0(JitBuffer *buf) {
-    emit_u8(buf, 0x0F); emit_u8(buf, 0x57); emit_u8(buf, 0xC0);
-}
-/* movups [rsp + disp32], xmm<n> (n < 8) */
-static void emit_movups_store_rsp(JitBuffer *buf, int32_t disp, int xmm) {
-    emit_u8(buf, 0x0F); emit_u8(buf, 0x11);
-    emit_u8(buf, (uint8_t)(0x84 | (xmm << 3)));  /* mod 10, rm 100: SIB follows */
-    emit_u8(buf, 0x24);                          /* SIB: base rsp, no index */
-    emit_u32_le(buf, (uint32_t)disp);
-}
-/* movups xmm<n>, [base + disp32] (n < 8; base not rsp or r12) */
-static void emit_movups_load(JitBuffer *buf, int xmm, int base, int32_t disp) {
-    if (base >= 8) emit_u8(buf, emit_rex(false, xmm, base));
-    emit_u8(buf, 0x0F); emit_u8(buf, 0x10);
-    emit_u8(buf, (uint8_t)(0x80 | (xmm << 3) | (base & 7)));
-    emit_u32_le(buf, (uint32_t)disp);
-}
 
 /* The body of a plain CALL of this function itself (recursion), made without
  * the C round trip through diamond_jit_call_self and jit_run_native: the
@@ -1553,7 +1638,11 @@ static void compile_call_function(JitCompiler *jc, uint16_t dest,
     /* Recursion: the target is this function, so its arity and the
      * register bound are checked here once, not on every call. */
     const DiamondFunction *self = jc->function;
-    const bool calls_self = function_index == jc->self_function_index &&
+    /* A function that reads its closure gets it as the entry's seventh
+     * argument, which the native self-call does not pass: its self-calls
+     * keep the trampoline, which enters with no closure as run_chunk's CALL
+     * does. */
+    const bool calls_self = function_index == jc->self_function_index && !jc->reads_closure &&
         argc >= self->required_arity && argc <= self->arity && !self->has_variadic &&
         (size_t)base + argc <= DIAMOND_REGISTER_COUNT;
     size_t slow_jumps[4] = {0, 0, 0, 0};
@@ -1837,6 +1926,7 @@ static bool opcode_writes_no_register(DiamondOpCode opcode) {
         case DIAMOND_OP_CHECK_TYPE:
         case DIAMOND_OP_INDEX_SET:
         case DIAMOND_OP_SET_CELL:
+        case DIAMOND_OP_SET_CAPTURE:
         case DIAMOND_OP_JUMP:
         case DIAMOND_OP_JUMP_IF_TRUE:
         case DIAMOND_OP_JUMP_IF_FALSE:
@@ -1897,6 +1987,9 @@ static bool opcode_dest_is_first_u16(DiamondOpCode opcode) {
         case DIAMOND_OP_SAME_CLASS:
         case DIAMOND_OP_BOX_LOCAL:
         case DIAMOND_OP_GET_CELL:
+        case DIAMOND_OP_GET_CAPTURE:
+        case DIAMOND_OP_GET_CAPTURE_CELL:
+        case DIAMOND_OP_GET_NAMESPACE_CONSTANT:
         case DIAMOND_OP_CLOSURE:
             return true;
         default:
@@ -1925,7 +2018,7 @@ static bool decode_instruction_operands(const DiamondFunction *fn, size_t *pc,
                 return decode_u16(fn, pc, &a) && decode_u16(fn, pc, &b) &&
                     decode_u16(fn, pc, &c);
             }
-            case DIAMOND_OP_CHECK_TYPE: case DIAMOND_OP_SET_CELL: {
+            case DIAMOND_OP_CHECK_TYPE: case DIAMOND_OP_SET_CELL: case DIAMOND_OP_SET_CAPTURE: {
                 uint16_t a = 0, b = 0;
                 return decode_u16(fn, pc, &a) && decode_u16(fn, pc, &b);
             }
@@ -1967,7 +2060,8 @@ static bool decode_instruction_operands(const DiamondFunction *fn, size_t *pc,
             return true;
         }
         case DIAMOND_OP_BOOL: case DIAMOND_OP_MOVE: case DIAMOND_OP_CONSTANT:
-        case DIAMOND_OP_GET_CELL:
+        case DIAMOND_OP_GET_CELL: case DIAMOND_OP_GET_CAPTURE: case DIAMOND_OP_GET_CAPTURE_CELL:
+        case DIAMOND_OP_GET_NAMESPACE_CONSTANT:
         case DIAMOND_OP_ARGUMENT_PROVIDED: case DIAMOND_OP_STRING: {
             uint16_t a = 0;
             return decode_u16(fn, pc, &a);
@@ -2725,6 +2819,56 @@ static bool compile_value_instruction(JitCompiler *jc, DiamondOpCode opcode, siz
             emit_bail_if_al_nonzero(jc);
             break;
         }
+        case DIAMOND_OP_GET_CAPTURE:
+        case DIAMOND_OP_GET_CAPTURE_CELL: {
+            /* A block body reading a captured local (or its cell, to pass
+             * on to a nested block) through the closure it was entered
+             * with. Neither allocates nor runs user code. */
+            uint16_t dest = 0, index = 0;
+            if (!decode_u16(fn, &pc, &dest) || !decode_u16(fn, &pc, &index)) {
+                jc->bailed = true; return true;
+            }
+            jc->reads_closure = true;
+            JitBuffer *buf = &jc->buf;
+            emit_load_closure(jc, REG_RDI);
+            emit_mov_rr(buf, REG_RSI, JIT_REGISTERS_BASE);
+            emit_mov_imm64(buf, REG_RDX, dest);
+            emit_mov_imm64(buf, REG_RCX, index);
+            emit_mov_imm64(buf, REG_R8, opcode == DIAMOND_OP_GET_CAPTURE_CELL ? 1 : 0);
+            emit_body_call(jc, (void *)(uintptr_t)diamond_jit_get_capture);
+            emit_bail_if_al_nonzero(jc);
+            break;
+        }
+        case DIAMOND_OP_GET_NAMESPACE_CONSTANT: {
+            uint16_t dest = 0, index = 0;
+            if (!decode_u16(fn, &pc, &dest) || !decode_u16(fn, &pc, &index)) {
+                jc->bailed = true; return true;
+            }
+            JitBuffer *buf = &jc->buf;
+            emit_mov_rr(buf, REG_RDI, JIT_VM);
+            emit_mov_rr(buf, REG_RSI, JIT_REGISTERS_BASE);
+            emit_mov_imm64(buf, REG_RDX, dest);
+            emit_mov_imm64(buf, REG_RCX, index);
+            emit_body_call(jc, (void *)(uintptr_t)diamond_jit_get_namespace_constant);
+            emit_bail_if_al_nonzero(jc);
+            break;
+        }
+        case DIAMOND_OP_SET_CAPTURE: {
+            uint16_t index = 0, source = 0;
+            if (!decode_u16(fn, &pc, &index) || !decode_u16(fn, &pc, &source)) {
+                jc->bailed = true; return true;
+            }
+            jc->reads_closure = true;
+            JitBuffer *buf = &jc->buf;
+            emit_mov_rr(buf, REG_RDI, JIT_VM);
+            emit_load_closure(jc, REG_RSI);
+            emit_mov_rr(buf, REG_RDX, JIT_REGISTERS_BASE);
+            emit_mov_imm64(buf, REG_RCX, index);
+            emit_mov_imm64(buf, REG_R8, source);
+            emit_body_call(jc, (void *)(uintptr_t)diamond_jit_set_capture);
+            emit_bail_if_al_nonzero(jc);
+            break;
+        }
         case DIAMOND_OP_CLOSURE: {
             /* diamond_jit_closure reads the capture list from the
              * instruction; here it is only skipped. It allocates and reads
@@ -2742,6 +2886,8 @@ static bool compile_value_instruction(JitCompiler *jc, DiamondOpCode opcode, siz
             emit_mov_rr(buf, REG_RDX, JIT_REGISTERS_BASE);
             emit_mov_imm64(buf, REG_RCX,
                 (uint64_t)(uintptr_t)(fn->code + instruction_start));
+            jc->reads_closure = true;
+            emit_load_closure(jc, REG_R8);
             emit_body_call(jc, (void *)(uintptr_t)diamond_jit_closure);
             emit_bail_if_al_nonzero(jc);
             break;
@@ -3020,7 +3166,7 @@ void *diamond_jit_try_compile(const DiamondFunction *function,
     jc.bailed = false;
     jc.buf.dry_run = false;
     for (size_t i = 0; i < function->code_count; i++) jc.bytecode_to_native[i] = SIZE_MAX;
-    if (jc.needs_frame) {
+    if (jc.needs_frame || jc.slow_frame) {
         jc.frame_reserve_bytes = ((size_t)DIAMOND_JIT_FRAME_SIZE + 15) & ~(size_t)15;
     }
 
@@ -3053,32 +3199,10 @@ void *diamond_jit_try_compile(const DiamondFunction *function,
 
     if (jc.needs_frame) {
         emit_sub_rsp_imm32(&jc.buf, (uint32_t)jc.frame_reserve_bytes);
-        const size_t live_register_count = function->register_count == 0
-            ? DIAMOND_JIT_MAX_REGISTERS : function->register_count;
-        /* Write the frame inline (layout in jit.h): zero the fields nothing
-         * else sets, fill the five run_chunk's entry sets, zero the pad slot
-         * instruction_offset points at, and link the frame onto vm->frames.
-         * Only RAX and XMM0 are touched. Each field is stored once: zeroing
-         * the whole frame first measured as store-buffer stalls. */
-        const int32_t reserve = (int32_t)jc.frame_reserve_bytes;
-        emit_zero_xmm0(&jc.buf);
-        emit_movups_store_rsp(&jc.buf, DIAMOND_JIT_FRAME_PENDING, 0);
-        for (int32_t at = DIAMOND_JIT_FRAME_SERIAL; at < DIAMOND_JIT_FRAME_SIZE; at += 16)
-            emit_movups_store_rsp(&jc.buf, at, 0);
-        emit_u8(&jc.buf, 0x31); emit_u8(&jc.buf, 0xC0);   /* xor eax, eax */
-        emit_store_r64_sib(&jc.buf, REG_RSP, DIAMOND_JIT_FRAME_HANDLER_COUNT, REG_RAX);
-        emit_store_r64_sib(&jc.buf, REG_RSP, reserve, REG_RAX);
-        emit_load_r64_sib(&jc.buf, REG_RAX, JIT_VM, (int32_t)offsetof(DiamondVm, frames));
-        emit_store_r64_sib(&jc.buf, REG_RSP, DIAMOND_JIT_FRAME_PREVIOUS, REG_RAX);
-        emit_store_r64_sib(&jc.buf, REG_RSP, DIAMOND_JIT_FRAME_REGISTERS, JIT_REGISTERS_BASE);
-        emit_mov_imm64(&jc.buf, REG_RAX, live_register_count);
-        emit_store_r64_sib(&jc.buf, REG_RSP, DIAMOND_JIT_FRAME_REGISTER_COUNT, REG_RAX);
-        emit_store_r64_sib(&jc.buf, REG_RSP, DIAMOND_JIT_FRAME_CHUNK, JIT_CHUNK);
-        emit_u8(&jc.buf, 0x48); emit_u8(&jc.buf, 0x8D);   /* lea rax, [rsp + reserve] */
-        emit_u8(&jc.buf, 0x84); emit_u8(&jc.buf, 0x24);
-        emit_u32_le(&jc.buf, (uint32_t)reserve);
-        emit_store_r64_sib(&jc.buf, REG_RSP, DIAMOND_JIT_FRAME_INSTRUCTION_OFFSET, REG_RAX);
-        emit_store_r64_sib(&jc.buf, JIT_VM, (int32_t)offsetof(DiamondVm, frames), REG_RSP);
+        emit_frame_link(&jc, 0);
+    } else if (jc.slow_frame) {
+        /* Space only: each slow call links the frame around itself. */
+        emit_sub_rsp_imm32(&jc.buf, (uint32_t)jc.frame_reserve_bytes);
     }
 
     compile_body(&jc);

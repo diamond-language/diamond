@@ -133,7 +133,7 @@ static_assert((unsigned)DIAMOND_VM_SANDBOX_ERROR < (unsigned)DIAMOND_JIT_RETRY,
  *                          propagates directly instead. */
 typedef uint8_t (*DiamondJitFn)(DiamondVm *vm, DiamondValue *registers,
         DiamondValue *result, size_t argument_count, const DiamondChunk *chunk,
-        size_t depth);
+        size_t depth, const struct DiamondClosure *closure);
 
 /* Attempts to compile `function` to native code. Returns a callable
  * DiamondJitFn on success (and writes the mmap'd region's size to
@@ -455,7 +455,20 @@ DiamondVmStatus diamond_jit_self_call_finish(DiamondVm *vm, const DiamondChunk *
  * fail only on bytecode that names a register holding no cell (SET_CELL
  * also on its write barrier running out of memory). None runs user code. */
 DiamondVmStatus diamond_jit_closure(DiamondVm *vm, const DiamondChunk *chunk,
-        DiamondValue *registers, const uint8_t *site);
+        DiamondValue *registers, const uint8_t *site,
+        const struct DiamondClosure *closure);
+/* DIAMOND_OP_GET_NAMESPACE_CONSTANT (a top-level constant such as `EMAIL`),
+ * with run_chunk's uninitialized-constant error. */
+DiamondVmStatus diamond_jit_get_namespace_constant(DiamondVm *vm, DiamondValue *registers,
+        uint16_t dest, uint16_t index);
+/* A block body's GET_CAPTURE (cell false) and GET_CAPTURE_CELL (cell true)
+ * and SET_CAPTURE, with run_chunk's checks: `closure` is the one the
+ * compiled function was entered with (nullptr outside a closure call, which
+ * fails as malformed bytecode, as in the interpreter). */
+DiamondVmStatus diamond_jit_get_capture(const struct DiamondClosure *closure,
+        DiamondValue *registers, uint16_t dest, uint16_t index, bool cell);
+DiamondVmStatus diamond_jit_set_capture(DiamondVm *vm, const struct DiamondClosure *closure,
+        DiamondValue *registers, uint16_t index, uint16_t source);
 DiamondVmStatus diamond_jit_box_local(DiamondVm *vm, DiamondValue *registers,
         uint16_t reg);
 DiamondVmStatus diamond_jit_get_cell(DiamondValue *registers, uint16_t dest,
