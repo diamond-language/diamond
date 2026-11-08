@@ -2492,3 +2492,35 @@ nothing before: `check` raises and `run_once` rescues. What remains there is bui
 exception (backtrace capture and message formatting). The change moved poly, closures and counts
 about 1% in cycles at identical instruction counts: `diamond_jit_invoke_instance`, untouched,
 came out of LTO and PGO a few bytes different.
+
+## Outlined instructions
+
+Many opcodes are cheap to support by running the interpreter's own body for them, rather than
+writing native code. `opcode_runs_outlined()` in `jit.c` lists them; `compile_outlined_instruction`
+emits a call to `diamond_jit_outlined(vm, chunk, registers, depth, offset)` (in `vm_calls.c`),
+which switches on the opcode at `offset` and calls the same `outlined_*` helper `run_chunk` calls
+(`vm_outlined.c`). A nonzero status bails like any failing call. Such a function sets
+`needs_frame` (the helper may allocate) and `has_called` (the helper may run user code or have
+side effects, so a failure propagates rather than retrying in the interpreter).
+
+- **Covered:** `PRINT`, `SYMBOL`, `CLASS_NAME`, `NEGATE` (its slow path; `run_chunk` keeps the
+  Int/Float fast path inline), `GET_CVAR`/`SET_CVAR`, `CHECK_DESTRUCTURE_COUNT`,
+  `INVOKE_SELF_METHOD`, and the keyword, spread and explicitly typed call families: `CALL_TYPED`,
+  `CALL_SPREAD`, `CALL_KEYWORD_SPREAD`, the singleton keyword/spread calls, `NEW_SPREAD`,
+  `NEW_KEYWORDS`, `NEW_TYPED`, `INVOKE_KEYWORDS`, `INVOKE_SPREAD`, `CALL_CLOSURE_KEYWORDS`,
+  `CALL_CLOSURE_SPREAD` and `BUILD_SPREAD_ARGS`, with their `_TYPED` variants.
+- **Decoding:** every covered opcode has an entry in `decode_instruction_operands`, which the
+  register scans and the compiler share. Type-argument and keyword trailers are skipped with
+  `skip_type_trailer` / `skip_keyword_trailer`; `CALL_KEYWORD_SPREAD` uses 3-byte keyword
+  entries with no block flag. The class-fact scan (`register_new_class_or_move_src`) walks with the
+  same decoder, so a trailer can no longer desynchronize it.
+- **Inline instead:** `NOT` (truthiness to Bool) and `LOAD_CLASS` (bounds-checked against
+  `chunk->class_count`, bailing with `INVALID_BYTECODE` when out of range) compile to native code.
+- **Adding one:** move the `run_chunk` case body into a `vm_outlined.c` helper if it is not one
+  already, add a decoder entry and a `diamond_jit_outlined` case, and list it in
+  `opcode_runs_outlined`.
+
+Across the test cases, benchmarks and examples, functions the JIT rejected fell from 3,041 to
+1,333 (opcode rejections 2,130 to 422). What remains is mostly generic functions, register-limit
+and variadic functions, and a tail of native opcodes (`SQLITE3_OPEN`, `JSON_STRINGIFY`,
+`CASE_MATCH`, ...).

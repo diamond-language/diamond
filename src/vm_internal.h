@@ -2090,6 +2090,14 @@ DIAMOND_INTERNAL DiamondVmStatus outlined_invoke_self_method(DiamondVm *vm,const
         size_t depth,size_t *ip_ref);
 DIAMOND_INTERNAL DiamondVmStatus outlined_negate(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
         size_t depth,size_t *ip_ref);
+DIAMOND_INTERNAL DiamondVmStatus outlined_call_closure_keywords(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t depth,size_t *ip_ref);
+DIAMOND_INTERNAL DiamondVmStatus outlined_call_closure_spread(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t depth,size_t *ip_ref);
+DIAMOND_INTERNAL DiamondVmStatus outlined_new_keywords(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t depth,uint8_t instruction,size_t *ip_ref);
+DIAMOND_INTERNAL DiamondVmStatus outlined_build_spread_args(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t depth,size_t *ip_ref);
 DIAMOND_INTERNAL DiamondVmStatus outlined_call_spread(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
         size_t depth,uint8_t instruction,size_t *ip_ref);
 DIAMOND_INTERNAL DiamondVmStatus outlined_call_singleton_keywords(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,

@@ -573,8 +573,8 @@ DiamondVmStatus diamond_jit_native_call(DiamondVm *vm,
  * separate `out` pointer) since dest already indexes the same registers
  * array both the interpreter and the JIT's own JIT_REGISTERS_BASE share.
  * DIAMOND_OP_NEW_KEYWORDS/DIAMOND_OP_NEW_SPREAD (synthetic-chunk re-entry
- * into run_chunk) are deliberately not covered -- compile_body has no
- * case for either, so a function containing one still bails whole. Can
+ * into run_chunk) are not covered here: compiled code runs them through
+ * diamond_jit_outlined, the interpreter's own bodies. Can
  * invoke arbitrary user code (`initialize`) and allocate, so its JIT-side
  * caller (compile_new) sets both jc->needs_frame and jc->has_called
  * unconditionally, same as diamond_jit_super_call/diamond_jit_invoke_

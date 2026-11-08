@@ -2073,6 +2073,16 @@ static bool opcode_runs_outlined(DiamondOpCode opcode) {
         case DIAMOND_OP_INVOKE_SELF_METHOD:
         case DIAMOND_OP_GET_CVAR:
         case DIAMOND_OP_SET_CVAR:
+        case DIAMOND_OP_CALL_TYPED:
+        case DIAMOND_OP_CALL_SPREAD: case DIAMOND_OP_CALL_TYPED_SPREAD:
+        case DIAMOND_OP_CALL_KEYWORD_SPREAD: case DIAMOND_OP_CALL_TYPED_KEYWORD_SPREAD:
+        case DIAMOND_OP_CALL_SINGLETON_KEYWORDS: case DIAMOND_OP_CALL_TYPED_SINGLETON_KEYWORDS:
+        case DIAMOND_OP_CALL_SINGLETON_SPREAD: case DIAMOND_OP_CALL_TYPED_SINGLETON_SPREAD:
+        case DIAMOND_OP_NEW_SPREAD: case DIAMOND_OP_NEW_KEYWORDS: case DIAMOND_OP_NEW_TYPED:
+        case DIAMOND_OP_INVOKE_KEYWORDS: case DIAMOND_OP_INVOKE_TYPED_KEYWORDS:
+        case DIAMOND_OP_INVOKE_SPREAD: case DIAMOND_OP_INVOKE_TYPED_SPREAD:
+        case DIAMOND_OP_CALL_CLOSURE_KEYWORDS: case DIAMOND_OP_CALL_CLOSURE_SPREAD:
+        case DIAMOND_OP_BUILD_SPREAD_ARGS:
             return true;
         default:
             return false;
@@ -2081,6 +2091,16 @@ static bool opcode_runs_outlined(DiamondOpCode opcode) {
 
 static bool opcode_dest_is_first_u16(DiamondOpCode opcode) {
     switch (opcode) {
+        case DIAMOND_OP_CALL_TYPED:
+        case DIAMOND_OP_CALL_SPREAD: case DIAMOND_OP_CALL_TYPED_SPREAD:
+        case DIAMOND_OP_CALL_KEYWORD_SPREAD: case DIAMOND_OP_CALL_TYPED_KEYWORD_SPREAD:
+        case DIAMOND_OP_CALL_SINGLETON_KEYWORDS: case DIAMOND_OP_CALL_TYPED_SINGLETON_KEYWORDS:
+        case DIAMOND_OP_CALL_SINGLETON_SPREAD: case DIAMOND_OP_CALL_TYPED_SINGLETON_SPREAD:
+        case DIAMOND_OP_NEW_SPREAD: case DIAMOND_OP_NEW_KEYWORDS: case DIAMOND_OP_NEW_TYPED:
+        case DIAMOND_OP_INVOKE_KEYWORDS: case DIAMOND_OP_INVOKE_TYPED_KEYWORDS:
+        case DIAMOND_OP_INVOKE_SPREAD: case DIAMOND_OP_INVOKE_TYPED_SPREAD:
+        case DIAMOND_OP_CALL_CLOSURE_KEYWORDS: case DIAMOND_OP_CALL_CLOSURE_SPREAD:
+        case DIAMOND_OP_BUILD_SPREAD_ARGS:
         case DIAMOND_OP_NOT:
         case DIAMOND_OP_LOAD_CLASS:
         case DIAMOND_OP_PRINT:
@@ -2159,6 +2179,29 @@ static bool opcode_dest_is_first_u16(DiamondOpCode opcode) {
  * `*second_dest` (-1 for every other instruction).
  * Returns false for an opcode outside the whitelist or a truncated stream,
  * which every caller treats as "unknown, assume the worst". */
+/* A typed call's trailer: a count byte (at most 8), then that many u16 type
+ * sets. */
+static bool skip_type_trailer(const DiamondFunction *fn, size_t *pc) {
+    uint8_t count = 0;
+    if (!decode_u8(fn, pc, &count) || count > 8 || *pc + 2 * (size_t)count > fn->code_count)
+        return false;
+    *pc += 2 * (size_t)count;
+    return true;
+}
+
+/* The keyword trailer of CALL_CLOSURE_KEYWORDS, CALL_SINGLETON_KEYWORDS,
+ * NEW_KEYWORDS and INVOKE_KEYWORDS: a count byte with 0x80 set when a block
+ * register follows, that many (u16 name, u16 register) pairs, then the block
+ * register. */
+static bool skip_keyword_trailer(const DiamondFunction *fn, size_t *pc) {
+    uint8_t encoded = 0;
+    if (!decode_u8(fn, pc, &encoded)) return false;
+    const size_t bytes = 4 * (size_t)(encoded & 0x7Fu) + ((encoded & 0x80u) != 0 ? 2 : 0);
+    if (*pc + bytes > fn->code_count) return false;
+    *pc += bytes;
+    return true;
+}
+
 static bool decode_instruction_operands(const DiamondFunction *fn, size_t *pc,
         DiamondOpCode opcode, int32_t *dest, int32_t *jump_target, int32_t *second_dest) {
     *dest = -1;
@@ -2327,6 +2370,76 @@ static bool decode_instruction_operands(const DiamondFunction *fn, size_t *pc,
         case DIAMOND_OP_GET_CVAR: {
             uint16_t class_index = 0, slot = 0;
             return decode_u16(fn, pc, &class_index) && decode_u16(fn, pc, &slot);
+        }
+        /* The calls run through diamond_jit_outlined. Their layouts are the
+         * READ_SHORT/READ_BYTE sequences of the matching vm_outlined.c
+         * bodies; every one writes only its dest. */
+        case DIAMOND_OP_CALL_TYPED: {
+            uint16_t function_index = 0, base = 0; uint8_t argc = 0;
+            return decode_u16(fn, pc, &function_index) && decode_u16(fn, pc, &base) &&
+                decode_u8(fn, pc, &argc) && skip_type_trailer(fn, pc);
+        }
+        case DIAMOND_OP_CALL_SPREAD: case DIAMOND_OP_CALL_TYPED_SPREAD:
+        case DIAMOND_OP_CALL_KEYWORD_SPREAD: case DIAMOND_OP_CALL_TYPED_KEYWORD_SPREAD: {
+            uint16_t function_index = 0, array = 0;
+            if (!decode_u16(fn, pc, &function_index) || !decode_u16(fn, pc, &array)) return false;
+            if (opcode == DIAMOND_OP_CALL_KEYWORD_SPREAD ||
+                opcode == DIAMOND_OP_CALL_TYPED_KEYWORD_SPREAD) {
+                /* count, then (slot byte, u16 register) entries: no block */
+                uint8_t count = 0;
+                if (!decode_u8(fn, pc, &count) || *pc + 3 * (size_t)count > fn->code_count)
+                    return false;
+                *pc += 3 * (size_t)count;
+            }
+            return (opcode != DIAMOND_OP_CALL_TYPED_SPREAD &&
+                    opcode != DIAMOND_OP_CALL_TYPED_KEYWORD_SPREAD) ||
+                skip_type_trailer(fn, pc);
+        }
+        case DIAMOND_OP_CALL_SINGLETON_KEYWORDS: case DIAMOND_OP_CALL_TYPED_SINGLETON_KEYWORDS: {
+            uint16_t function_index = 0, positional = 0, class_index = 0; uint8_t receiver = 0;
+            return decode_u16(fn, pc, &function_index) && decode_u16(fn, pc, &positional) &&
+                decode_u16(fn, pc, &class_index) && decode_u8(fn, pc, &receiver) &&
+                skip_keyword_trailer(fn, pc) &&
+                (opcode != DIAMOND_OP_CALL_TYPED_SINGLETON_KEYWORDS || skip_type_trailer(fn, pc));
+        }
+        case DIAMOND_OP_CALL_SINGLETON_SPREAD: case DIAMOND_OP_CALL_TYPED_SINGLETON_SPREAD: {
+            uint16_t function_index = 0, spread = 0, class_index = 0; uint8_t receiver = 0;
+            return decode_u16(fn, pc, &function_index) && decode_u16(fn, pc, &spread) &&
+                decode_u16(fn, pc, &class_index) && decode_u8(fn, pc, &receiver) &&
+                (opcode != DIAMOND_OP_CALL_TYPED_SINGLETON_SPREAD || skip_type_trailer(fn, pc));
+        }
+        case DIAMOND_OP_NEW_SPREAD: case DIAMOND_OP_CALL_CLOSURE_SPREAD: {
+            uint16_t a = 0, b = 0;
+            return decode_u16(fn, pc, &a) && decode_u16(fn, pc, &b);
+        }
+        case DIAMOND_OP_NEW_KEYWORDS: case DIAMOND_OP_NEW_TYPED: {
+            uint16_t class_index = 0, explicit_type = 0, positional = 0;
+            return decode_u16(fn, pc, &class_index) &&
+                (opcode != DIAMOND_OP_NEW_TYPED || decode_u16(fn, pc, &explicit_type)) &&
+                decode_u16(fn, pc, &positional) && skip_keyword_trailer(fn, pc);
+        }
+        case DIAMOND_OP_INVOKE_KEYWORDS: case DIAMOND_OP_INVOKE_TYPED_KEYWORDS: {
+            uint16_t recv = 0, name = 0, positional = 0;
+            return decode_u16(fn, pc, &recv) && decode_u16(fn, pc, &name) &&
+                decode_u16(fn, pc, &positional) && skip_keyword_trailer(fn, pc) &&
+                (opcode != DIAMOND_OP_INVOKE_TYPED_KEYWORDS || skip_type_trailer(fn, pc));
+        }
+        case DIAMOND_OP_INVOKE_SPREAD: case DIAMOND_OP_INVOKE_TYPED_SPREAD: {
+            uint16_t recv = 0, name = 0, spread = 0;
+            return decode_u16(fn, pc, &recv) && decode_u16(fn, pc, &name) &&
+                decode_u16(fn, pc, &spread) &&
+                (opcode != DIAMOND_OP_INVOKE_TYPED_SPREAD || skip_type_trailer(fn, pc));
+        }
+        case DIAMOND_OP_CALL_CLOSURE_KEYWORDS: {
+            uint16_t callable = 0, positional = 0;
+            return decode_u16(fn, pc, &callable) && decode_u16(fn, pc, &positional) &&
+                skip_keyword_trailer(fn, pc);
+        }
+        case DIAMOND_OP_BUILD_SPREAD_ARGS: {
+            uint16_t prefix = 0, spread = 0, suffix = 0; uint8_t prefix_count = 0, suffix_count = 0;
+            return decode_u16(fn, pc, &prefix) && decode_u8(fn, pc, &prefix_count) &&
+                decode_u16(fn, pc, &spread) && decode_u16(fn, pc, &suffix) &&
+                decode_u8(fn, pc, &suffix_count);
         }
         default: return false; /* unreachable given opcode_dest_is_first_u16 */
     }

@@ -1,0 +1,6 @@
+\[12, 24, 120, 7, 7\]
+\[6, 11, 9, 10, 7\]
+\[11, 21\]
+9
+\[spread argument (\*expr) must be an Array, no parameter with this name\]
+jit: 7 compiled function(s), 0 bailout(s), 0 hard propagation(s)

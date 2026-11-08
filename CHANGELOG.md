@@ -64,6 +64,13 @@ authoritative fine-grained record.
   was not enforced in compiled code: a compiled loop that only grew one array ran past the
   budget until the system ran out of memory. Instruction and wall-clock budgets already did
   this.
+- **Many more functions compile under the JIT.** `!`, `puts`/`print`, class-method calls
+  (`Name.method()`, `self.method()`), class variables, destructuring assignment, unary minus,
+  symbols, `.class()`, and calls that pass keywords, a `*spread` or explicit type arguments no
+  longer keep a function interpreted. These run the interpreter's own code for the
+  instruction, so results and errors are unchanged. Across the test cases, benchmarks and
+  examples, functions the JIT turned away fell from 3,041 to 1,333. The rest are mostly
+  generic functions, which stay interpreted.
 
 ### Fixed
 

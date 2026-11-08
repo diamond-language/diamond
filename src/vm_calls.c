@@ -2504,6 +2504,29 @@ DiamondVmStatus diamond_jit_outlined(DiamondVm *vm,const DiamondChunk *chunk,
             return outlined_check_destructure_count(vm,chunk,registers,depth,&ip);
         case DIAMOND_OP_INVOKE_SELF_METHOD:
             return outlined_invoke_self_method(vm,chunk,registers,depth,&ip);
+        case DIAMOND_OP_CALL_TYPED: return outlined_call_typed(vm,chunk,registers,depth,&ip);
+        case DIAMOND_OP_CALL_SPREAD: case DIAMOND_OP_CALL_TYPED_SPREAD:
+        case DIAMOND_OP_CALL_KEYWORD_SPREAD: case DIAMOND_OP_CALL_TYPED_KEYWORD_SPREAD:
+            return outlined_call_spread(vm,chunk,registers,depth,chunk->code[offset],&ip);
+        case DIAMOND_OP_CALL_SINGLETON_KEYWORDS: case DIAMOND_OP_CALL_TYPED_SINGLETON_KEYWORDS:
+            return outlined_call_singleton_keywords(vm,chunk,registers,depth,
+                chunk->code[offset],&ip);
+        case DIAMOND_OP_CALL_SINGLETON_SPREAD: case DIAMOND_OP_CALL_TYPED_SINGLETON_SPREAD:
+            return outlined_call_singleton_spread(vm,chunk,registers,depth,
+                chunk->code[offset],&ip);
+        case DIAMOND_OP_NEW_SPREAD: return outlined_new_spread(vm,chunk,registers,depth,&ip);
+        case DIAMOND_OP_NEW_KEYWORDS: case DIAMOND_OP_NEW_TYPED:
+            return outlined_new_keywords(vm,chunk,registers,depth,chunk->code[offset],&ip);
+        case DIAMOND_OP_INVOKE_KEYWORDS: case DIAMOND_OP_INVOKE_TYPED_KEYWORDS:
+            return outlined_invoke_keywords(vm,chunk,registers,depth,chunk->code[offset],&ip);
+        case DIAMOND_OP_INVOKE_SPREAD: case DIAMOND_OP_INVOKE_TYPED_SPREAD:
+            return outlined_invoke_spread(vm,chunk,registers,depth,chunk->code[offset],&ip);
+        case DIAMOND_OP_CALL_CLOSURE_KEYWORDS:
+            return outlined_call_closure_keywords(vm,chunk,registers,depth,&ip);
+        case DIAMOND_OP_CALL_CLOSURE_SPREAD:
+            return outlined_call_closure_spread(vm,chunk,registers,depth,&ip);
+        case DIAMOND_OP_BUILD_SPREAD_ARGS:
+            return outlined_build_spread_args(vm,chunk,registers,depth,&ip);
         /* The JIT checked these operands' extent when it compiled them. */
         case DIAMOND_OP_GET_CVAR:
             return get_cvar_helper(vm,chunk,jit_outlined_short(chunk,offset+3),
