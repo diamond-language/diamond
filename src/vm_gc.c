@@ -203,9 +203,14 @@ void mark_frame_chain(void *frames, bool minor) {
             mark_value(frame->extra_roots[index], minor);
         if(frame->pending!=nullptr && frame->pending->kind!=PENDING_NONE)
             mark_value(frame->pending->value, minor);
+        /* An ensure entered on the normal path saves a PENDING_NONE whose
+         * value means nothing: a compiled function's handler state only
+         * clears pending.kind, so that value is old stack data. Only a
+         * real pending exception or return holds a live value. */
         if(frame->handlers!=nullptr && frame->handler_count!=nullptr)
             for(size_t i=0;i<*frame->handler_count;i++)
-                if(frame->handlers[i].kind==HANDLER_ACTIVE_ENSURE)
+                if(frame->handlers[i].kind==HANDLER_ACTIVE_ENSURE&&
+                   frame->handlers[i].saved_pending.kind!=PENDING_NONE)
                     mark_value(frame->handlers[i].saved_pending.value,minor);
     }
 }
