@@ -1,0 +1,87 @@
+# A method call on a receiver whose type the JIT cannot prove compiles through
+# the interpreter's own dispatch instead of keeping the whole function
+# interpreted: every receiver kind, polymorphic Instance sites, errors and
+# exceptions behave as they do interpreted.
+class Square
+  def initialize(side: Int)
+    @side = side
+  end
+
+  def area() -> Int = @side * @side
+end
+
+class Rect
+  def initialize(width: Int, height: Int)
+    @width = width
+    @height = height
+  end
+
+  def area() -> Int = @width * @height
+end
+
+def total_area(shapes) -> Int
+  total = 0
+  i = 0
+  count = shapes.length()
+  while i < count
+    total += shapes[i].area()
+    i += 1
+  end
+  total
+end
+
+def describe(value)
+  parts = []
+  parts.push(value.to_s())
+  parts.push(value.inspect())
+  parts.push(value.nil?().to_s())
+  parts.join(" ")
+end
+
+def collections(list, table, text)
+  list.push(text.upcase())
+  table["size"] = list.length()
+  "#{list.map() do |item| item.to_s() end.join(",")} #{table.keys()} #{text.reverse()}"
+end
+
+def numbers(a, b) = a.abs() + b.round() + a.to_s().length()
+
+def no_such_method(value) = value.frobnicate()
+
+def raises(value)
+  value.fail_now()
+  "not reached"
+end
+
+class Failing
+  def fail_now()
+    raise ArgumentError.new("from fail_now")
+  end
+end
+
+def frozen_copy(value)
+  copy = value.dup()
+  copy.freeze()
+  copy.frozen?()
+end
+
+shapes = [Square.new(3), Rect.new(2, 5), Square.new(1), Rect.new(4, 4)]
+puts(total_area(shapes))
+puts(describe(42))
+puts(describe(nil))
+puts(describe("text"))
+puts(describe(Square.new(2)).start_with?("#<Square"))
+puts(collections([1, 2], {"a" => 1}, "ab"))
+puts(numbers(-7, 2.6))
+begin
+  no_such_method(5)
+rescue error
+  puts(error.message())
+end
+begin
+  raises(Failing.new())
+rescue error: ArgumentError
+  puts("rescued #{error.message()}")
+end
+puts(frozen_copy([1, 2]))
+puts(frozen_copy(Square.new(1)))

@@ -36,9 +36,18 @@ authoritative fine-grained record.
   differs from `Callable[0, T]` as it does in the native compiler.
 - **`Time` and `Tensor` values cross threads.** They can be `Thread.new` arguments and results,
   go through a `Channel`, and be the result of `ProgramBuilder#run`, copied as plain data.
+- **The JIT compiles functions that call methods on values of unknown type.** A method call
+  whose receiver the JIT could not prove the type of (an untyped parameter, an Array element, a
+  polymorphic call site) used to keep the whole function interpreted; it now compiles to a call
+  into the interpreter's own dispatch, and `Math.sqrt` and the other `Math` functions compile
+  too. With `DIAMOND_JIT=1`, the poly benchmark runs about 14% fewer instructions and counts
+  about 37% fewer.
 
 ### Fixed
 
+- **`String#scan` with a String pattern no longer crashes under GC pressure.** The Regexp
+  compiled from the pattern was held only by the result register, which the scan overwrote
+  with its result Array before allocating the matches, so a collection mid-scan could free it.
 - **Bytecode verifier reads `is` type ids in full.** It truncated the type in `x is Type` to a
   byte, so a program built with `ProgramBuilder` that tested against its 39th or later interface
   failed with "constructed bytecode is invalid".

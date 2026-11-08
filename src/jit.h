@@ -374,23 +374,20 @@ DiamondVmStatus diamond_jit_compare_slow(DiamondVm *vm, const DiamondChunk *chun
         size_t depth, const uint8_t *site, const DiamondValue *left,
         const DiamondValue *right, DiamondOpCode opcode, DiamondValue *out);
 
-/* Phase 4. JIT trampolines for DIAMOND_OP_INVOKE's `dup`/`freeze`/
- * `frozen?` pseudo-methods -- full extractions of that opcode's own
- * real, receiver-kind-agnostic handling of them (src/vm.c, shared with
- * the interpreter's own case so the two can never drift apart), checked
- * before any per-type or Instance method dispatch. None of the three
- * can ever invoke arbitrary user code (no operator-override equivalent
- * for any of them) or, for `freeze`/`frozen?`, ever allocate -- only
- * `dup`'s own Array/Hash branches can (compile_invoke_universal in
- * jit.c sets jc->needs_frame accordingly, only when compiling `dup`).
- * A receiver that isn't Array/Hash/String/Symbol/a primitive (an
- * Instance, or any other Object kind) returns a plain nonzero
- * DiamondVmStatus -- the JIT's own caller only ever compiles a call to
- * one of these while jc->has_called is still false (see compile_body's
- * own DIAMOND_OP_INVOKE case for why), so that nonzero status always
- * resolves to a safe retry via the whole function's ordinary bailout
- * mechanism, discarding this attempt and falling back to full
- * interpretation exactly as if the JIT had never been tried. */
+/* DIAMOND_OP_MATH_UNARY (right is nullptr) and MATH_BINARY, sharing
+ * run_chunk's arithmetic (diamond_math_apply, src/vm_internal.h). Neither
+ * allocates nor runs user code; a non-numeric operand is a type error. */
+DiamondVmStatus diamond_jit_math(DiamondVm *vm, const DiamondValue *left,
+        const DiamondValue *right, uint8_t function_id, DiamondValue *out);
+
+/* Phase 4. `dup`/`freeze`/`frozen?` on a built-in receiver, shared by
+ * the interpreter's DIAMOND_OP_INVOKE dispatch (diamond_invoke_general)
+ * and the Instance path (diamond_jit_invoke_instance). None of the three
+ * can invoke user code; only `dup`'s Array/Hash branches allocate. A
+ * receiver that isn't Array/Hash/String/Symbol/a primitive returns a
+ * plain nonzero DiamondVmStatus. Compiled code used to call these
+ * directly; it now reaches them through diamond_jit_invoke_any like any
+ * other method. */
 DiamondVmStatus diamond_jit_dup(DiamondVm *vm, const DiamondValue *receiver,
         DiamondValue *out);
 DiamondVmStatus diamond_jit_freeze(DiamondVm *vm, const DiamondValue *receiver,
@@ -439,6 +436,15 @@ DiamondVmStatus diamond_jit_invoke_instance(DiamondVm *vm, const DiamondChunk *c
         uint16_t recv, uint16_t name, uint16_t base, uint8_t argc,
         uint8_t type_argument_count, const uint16_t *type_arguments,
         size_t depth, DiamondValue *out);
+
+/* DIAMOND_OP_INVOKE/INVOKE_MONO on a receiver the compiler could not prove
+ * the type of: the interpreter's whole dispatch, from a warm monomorphic
+ * site through every native receiver kind to Instance methods (src/vm_calls.c,
+ * shared with run_chunk through diamond_invoke_general). Writes
+ * registers[dest]. Can run arbitrary code and allocate, so its caller sets
+ * jc->needs_frame and jc->has_called. */
+DiamondVmStatus diamond_jit_invoke_any(DiamondVm *vm, const DiamondChunk *chunk,
+        DiamondValue *registers, const uint8_t *site, size_t depth);
 
 typedef enum DiamondJitNativeReadOp {
     DIAMOND_JIT_NATIVE_STRING_LENGTH,

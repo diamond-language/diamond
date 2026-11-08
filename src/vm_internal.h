@@ -22,6 +22,7 @@
 #include <netdb.h>
 #include <sys/socket.h>
 #include <fcntl.h>
+#include <math.h>
 #include <unistd.h>
 
 #define DIAMOND_INTERNAL __attribute__((visibility("hidden")))
@@ -359,6 +360,24 @@ DIAMOND_INTERNAL void tensor_random_helper(DiamondTensor *tensor,int64_t seed);
 DIAMOND_INTERNAL DiamondArray *allocate_array(DiamondVm *vm,const DiamondValue *values, size_t count);
 [[nodiscard]] DIAMOND_INTERNAL bool array_push(DiamondVm *vm,DiamondArray *array,DiamondValue value);
 DIAMOND_INTERNAL bool numeric_as_double(DiamondValue value, double *out);
+
+/* DIAMOND_OP_MATH_UNARY/MATH_BINARY's arithmetic, shared by run_chunk and
+ * the JIT's diamond_jit_math. `right` is ignored by the unary functions.
+ * False for a function id the opcode does not have. */
+static inline bool diamond_math_apply(uint8_t function_id,double left,double right,
+        double *result) {
+    switch((DiamondMathFunction)function_id) {
+        case DIAMOND_MATH_SQRT: *result=sqrt(left); return true;
+        case DIAMOND_MATH_SIN: *result=sin(left); return true;
+        case DIAMOND_MATH_COS: *result=cos(left); return true;
+        case DIAMOND_MATH_TAN: *result=tan(left); return true;
+        case DIAMOND_MATH_EXP: *result=exp(left); return true;
+        case DIAMOND_MATH_LOG: *result=log(left); return true;
+        case DIAMOND_MATH_TANH: *result=tanh(left); return true;
+        case DIAMOND_MATH_POW: *result=pow(left,right); return true;
+    }
+    return false;
+}
 
 /* vm_regexp.c: entry points called from run_chunk and the rest of vm.c */
 DIAMOND_INTERNAL DiamondVmStatus regexp_match_helper(DiamondVm *vm, const DiamondRegexp *regexp, const DiamondString *subject, bool test_only, DiamondValue *registers, uint16_t dest);
@@ -1666,6 +1685,10 @@ DIAMOND_INTERNAL DiamondVmStatus diamond_jit_invoke_instance(DiamondVm *vm, cons
         uint16_t recv, uint16_t name, uint16_t base, uint8_t argc,
         uint8_t type_argument_count, const uint16_t *type_arguments,
         size_t depth, DiamondValue *out);
+DIAMOND_INTERNAL DiamondVmStatus diamond_invoke_general(DiamondVm *vm,const DiamondChunk *chunk,
+        DiamondValue *registers,const uint8_t *site,size_t depth);
+DIAMOND_INTERNAL DiamondVmStatus diamond_jit_invoke_any(DiamondVm *vm,const DiamondChunk *chunk,
+        DiamondValue *registers,const uint8_t *site,size_t depth);
 
 DIAMOND_INTERNAL DiamondVmStatus diamond_jit_new_instance(DiamondVm *vm, const DiamondChunk *chunk,
         DiamondValue *registers, uint16_t dest, uint16_t class_index,

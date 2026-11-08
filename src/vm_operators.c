@@ -724,3 +724,23 @@ DiamondVmStatus diamond_jit_compare_slow(DiamondVm *vm, const DiamondChunk *chun
         const DiamondValue *right, DiamondOpCode opcode, DiamondValue *out) {
     return compare_int_slow(vm,chunk,depth,(size_t)(site-chunk->code),opcode,*left,*right,out);
 }
+
+/* JIT trampoline for DIAMOND_OP_MATH_UNARY (right is nullptr) and
+ * MATH_BINARY: the same checks and arithmetic as run_chunk's cases
+ * (diamond_math_apply). Never allocates or runs user code. */
+DiamondVmStatus diamond_jit_math(DiamondVm *vm,const DiamondValue *left,
+        const DiamondValue *right,uint8_t function_id,DiamondValue *out) {
+    double left_value=0.0,right_value=0.0;
+    if(!numeric_as_double(*left,&left_value)||
+       (right!=nullptr&&!numeric_as_double(*right,&right_value))) {
+        snprintf(vm->error,sizeof vm->error,
+                 "math function argument must be an Int or Float");
+        return DIAMOND_VM_TYPE_ERROR;
+    }
+    double result=0.0;
+    if((right!=nullptr)!=(function_id==DIAMOND_MATH_POW)||
+       !diamond_math_apply(function_id,left_value,right_value,&result))
+        return DIAMOND_VM_INVALID_BYTECODE;
+    *out=DIAMOND_FLOAT(result);
+    return DIAMOND_VM_OK;
+}

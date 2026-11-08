@@ -2277,3 +2277,28 @@ about 113 in the native body). Removing it would mean calling the native entry d
 callee's register file on the native stack. The obstacle is the depth limit, which is
 thread-local and depends on whether a fiber is running, so native code cannot read it without a
 new slot in the JIT calling convention.
+
+## Method calls on receivers of unknown type
+
+An `INVOKE` or `INVOKE_MONO` whose receiver none of `compile_invoke`'s proofs cover (an untyped
+parameter, an Array element, a polymorphic site) used to reject the whole function, so a single
+`bodies.length()` on an untyped parameter kept nbody's `energy` interpreted. Such a site now
+compiles to a call to `diamond_jit_invoke_any`, which runs the interpreter's own dispatch: the
+monomorphic cache (`diamond_mono_invoke`) for a warm Instance site, then
+`diamond_invoke_general`, the part of the interpreter's `INVOKE` case after its inline fast paths,
+moved out of `run_chunk` so both tiers call the same code. It sets `needs_frame` and `has_called`
+like any call. The dedicated `dup`/`freeze`/`frozen?` trampolines that compiled only while
+`has_called` was false are gone from the JIT: the dry run and the real pass could disagree on
+`has_called` at that site, and the general call handles those methods for every receiver.
+
+A compiled function has no exception handlers, so `diamond_jit_invoke_any` gives an exception
+from `Thread#join` the uncaught-exception error text `run_chunk` gives it when nothing catches
+it. `INVOKE_TYPED` still has no case and rejects the function.
+
+This removes a rejection, not call overhead: poly's `total_area` now compiles but each
+`shapes[i].area()` still pays for the full dispatch and a C round trip into the callee. nbody's
+`advance` is still rejected on `BOX_LOCAL` (its block captures `dt`).
+
+`MATH_UNARY` and `MATH_BINARY` (`Math.sqrt`, `Math.pow`, ...) compile to a call to
+`diamond_jit_math`, which shares `diamond_math_apply` with `run_chunk`. It neither allocates nor
+runs user code, so it needs no frame and does not set `has_called`.
