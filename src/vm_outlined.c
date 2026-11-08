@@ -3682,6 +3682,1585 @@ DiamondVmStatus outlined_build_spread_args(DiamondVm *vm,const DiamondChunk *chu
     HELPER_DONE;
 }
 
+
+/* DIAMOND_OP_JSON_STRINGIFY and DIAMOND_OP_JSON_STRINGIFY_OPTIONS, moved out of run_chunk's switch so compiled code runs the same body
+ * (diamond_jit_outlined). The case body is unchanged apart from its macros. */
+__attribute__((noinline))
+DiamondVmStatus outlined_json_stringify(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t depth,size_t *ip_ref) {
+    size_t ip=*ip_ref;(void)depth;
+    const uint8_t instruction=chunk->code[ip-1];
+    uint16_t dest=0,source=0,options=UINT16_MAX;
+    READ_SHORT(dest);READ_SHORT(source);
+    if(instruction==DIAMOND_OP_JSON_STRINGIFY_OPTIONS)READ_SHORT(options);
+    DiamondValue json_text=DIAMOND_NIL;
+    const DiamondVmStatus json_status=json_stringify_document(
+        vm,chunk,depth,registers[source],
+        options==UINT16_MAX?DIAMOND_NIL:registers[options],&json_text);
+    VM_PROPAGATE(json_status);
+    registers[dest]=json_text;
+    HELPER_DONE;
+
+}
+
+/* DIAMOND_OP_TO_SYMBOL, moved out of run_chunk's switch so compiled code runs the same body
+ * (diamond_jit_outlined). The case body is unchanged apart from its macros. */
+__attribute__((noinline))
+DiamondVmStatus outlined_to_symbol(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t depth,size_t *ip_ref) {
+    size_t ip=*ip_ref;(void)depth;
+    uint16_t dest=0,source=0;
+    READ_SHORT(dest);READ_SHORT(source);
+    if(registers[source].kind!=DIAMOND_VALUE_OBJECT||
+       registers[source].as.object->kind!=DIAMOND_OBJECT_STRING) {
+        snprintf(vm->error,sizeof vm->error,"to_sym argument must be a String");
+        VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+    }
+    const DiamondString *source_string=
+        (const DiamondString *)registers[source].as.object;
+    DiamondSymbol *symbol=allocate_symbol(vm,source_string->chars,
+        source_string->length);
+    if(symbol==nullptr)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+    registers[dest]=DIAMOND_OBJECT(symbol);
+    HELPER_DONE;
+
+}
+
+/* DIAMOND_OP_TO_INT, moved out of run_chunk's switch so compiled code runs the same body
+ * (diamond_jit_outlined). The case body is unchanged apart from its macros. */
+__attribute__((noinline))
+DiamondVmStatus outlined_to_int(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t depth,size_t *ip_ref) {
+    size_t ip=*ip_ref;(void)depth;
+    uint16_t dest=0,source=0;
+    READ_SHORT(dest);READ_SHORT(source);
+    if(registers[source].kind!=DIAMOND_VALUE_FLOAT) {
+        snprintf(vm->error,sizeof vm->error,"to_i argument must be a Float");
+        VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+    }
+    DiamondValue converted=DIAMOND_NIL;
+    VM_PROPAGATE(float_to_int(vm,trunc(registers[source].as.real),"to_i",
+                              &converted));
+    registers[dest]=converted;
+    HELPER_DONE;
+
+}
+
+/* DIAMOND_OP_TO_FLOAT, moved out of run_chunk's switch so compiled code runs the same body
+ * (diamond_jit_outlined). The case body is unchanged apart from its macros. */
+__attribute__((noinline))
+DiamondVmStatus outlined_to_float(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t depth,size_t *ip_ref) {
+    size_t ip=*ip_ref;(void)depth;
+    uint16_t dest=0,source=0;
+    READ_SHORT(dest);READ_SHORT(source);
+    double as_double=0.0;
+    if(!is_int_value(registers[source])||
+       !numeric_as_double(registers[source],&as_double)) {
+        snprintf(vm->error,sizeof vm->error,"to_f argument must be an Int");
+        VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+    }
+    registers[dest]=DIAMOND_FLOAT(as_double);
+    HELPER_DONE;
+
+}
+
+/* DIAMOND_OP_CHR, moved out of run_chunk's switch so compiled code runs the same body
+ * (diamond_jit_outlined). The case body is unchanged apart from its macros. */
+__attribute__((noinline))
+DiamondVmStatus outlined_chr(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t depth,size_t *ip_ref) {
+    size_t ip=*ip_ref;(void)depth;
+    uint16_t dest=0,source=0;
+    READ_SHORT(dest);READ_SHORT(source);
+    if(registers[source].kind!=DIAMOND_VALUE_INT) {
+        snprintf(vm->error,sizeof vm->error,"chr argument must be an Int");
+        VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+    }
+    const int64_t code=registers[source].as.integer;
+    if(code<0||code>255) {
+        snprintf(vm->error,sizeof vm->error,
+                 "chr argument must be between 0 and 255");
+        VM_RETURN(DIAMOND_VM_INTEGER_OVERFLOW);
+    }
+    const char byte=(char)code;
+    DiamondString *string=allocate_string(vm,&byte,1);
+    if(string==nullptr)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+    registers[dest]=DIAMOND_OBJECT(string);HELPER_DONE;
+
+}
+
+/* DIAMOND_OP_TLS_LISTEN, moved out of run_chunk's switch so compiled code runs the same body
+ * (diamond_jit_outlined). The case body is unchanged apart from its macros. */
+__attribute__((noinline))
+DiamondVmStatus outlined_tls_listen(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t depth,size_t *ip_ref) {
+    size_t ip=*ip_ref;(void)depth;
+    uint16_t dest=0,port_reg=0,cert_reg=0,key_reg=0,options_reg=0;
+    READ_SHORT(dest);READ_SHORT(port_reg);READ_SHORT(cert_reg);READ_SHORT(key_reg);
+    READ_SHORT(options_reg);
+    VM_SANDBOX_GUARD("TLSServer.listen", "network");
+    if(registers[port_reg].kind!=DIAMOND_VALUE_INT||
+       registers[cert_reg].kind!=DIAMOND_VALUE_OBJECT||
+       registers[cert_reg].as.object->kind!=DIAMOND_OBJECT_STRING||
+       registers[key_reg].kind!=DIAMOND_VALUE_OBJECT||
+       registers[key_reg].as.object->kind!=DIAMOND_OBJECT_STRING) {
+        snprintf(vm->error,sizeof vm->error,"TLSServer.listen arguments must be "
+            "an Int port and String certificate/key file paths");
+        VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+    }
+    const DiamondArray *alpn_protocols=nullptr;
+    const DiamondString *client_ca=nullptr;
+    const DiamondVmStatus options_status=parse_tls_listen_options_helper(
+        vm,registers[options_reg],&alpn_protocols,&client_ca);
+    VM_PROPAGATE(options_status);
+    const DiamondString *cert_path=
+        (const DiamondString *)registers[cert_reg].as.object;
+    const DiamondString *key_path=
+        (const DiamondString *)registers[key_reg].as.object;
+    DiamondListenerHandle *listener_handle=nullptr;
+    const DiamondVmStatus listen_status=tls_listen_helper(vm,
+        registers[port_reg].as.integer,cert_path->chars,key_path->chars,
+        alpn_protocols,client_ca==nullptr?nullptr:client_ca->chars,
+        &listener_handle);
+    VM_PROPAGATE(listen_status);
+    registers[dest]=(DiamondValue){.kind=DIAMOND_VALUE_OBJECT,
+        .as.object=(DiamondObject *)listener_handle};
+    HELPER_DONE;
+
+}
+
+/* DIAMOND_OP_SIGNAL_TRAP, moved out of run_chunk's switch so compiled code runs the same body
+ * (diamond_jit_outlined). The case body is unchanged apart from its macros. */
+__attribute__((noinline))
+DiamondVmStatus outlined_signal_trap(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t depth,size_t *ip_ref) {
+    size_t ip=*ip_ref;(void)depth;
+    VM_SANDBOX_GUARD("Signal.trap", "signals");
+    uint16_t dest=0,name_reg=0,handler_reg=0;
+    READ_SHORT(dest);READ_SHORT(name_reg);READ_SHORT(handler_reg);
+    if(registers[name_reg].kind!=DIAMOND_VALUE_OBJECT||
+       registers[name_reg].as.object->kind!=DIAMOND_OBJECT_STRING) {
+        snprintf(vm->error,sizeof vm->error,"Signal.trap name must be a String");
+        VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+    }
+    if(registers[handler_reg].kind!=DIAMOND_VALUE_OBJECT||
+       registers[handler_reg].as.object->kind!=DIAMOND_OBJECT_CLOSURE) {
+        snprintf(vm->error,sizeof vm->error,"Signal.trap handler must be a Callable");
+        VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+    }
+    const DiamondString *signal_name=
+        (const DiamondString *)registers[name_reg].as.object;
+    size_t signal_index=DIAMOND_SIGNAL_COUNT;
+    for(size_t candidate=0;candidate<DIAMOND_SIGNAL_COUNT;candidate++) {
+        const size_t candidate_length=strlen(diamond_signal_names[candidate]);
+        if(signal_name->length==candidate_length&&
+           memcmp(signal_name->chars,diamond_signal_names[candidate],
+                  candidate_length)==0) {
+            signal_index=candidate;break;
+        }
+    }
+    if(signal_index==DIAMOND_SIGNAL_COUNT) {
+        snprintf(vm->error,sizeof vm->error,"Signal.trap: unrecognized signal "
+            "name '%.*s' (supported: INT, TERM, HUP)",
+            (int)signal_name->length,signal_name->chars);
+        VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+    }
+    struct sigaction action={0};
+    action.sa_handler=diamond_signal_handler;
+    sigemptyset(&action.sa_mask);
+    /* Deliberately no SA_RESTART: a trapped signal arriving
+     * while blocked in accept()/poll()/recvfrom() needs that
+     * call to actually return EINTR so the handler can run
+     * promptly (see the accept/IO.poll/UDPSocket#receive
+     * opcode handlers) rather than the kernel silently
+     * resuming the blocking call as if nothing happened,
+     * which is what SA_RESTART would do -- and is exactly
+     * wrong for the motivating use case (a signal arriving
+     * while a server sits idle in accept()/poll() with
+     * nothing connecting). */
+    action.sa_flags=0;
+    if(sigaction(diamond_signal_numbers[signal_index],&action,nullptr)!=0) {
+        snprintf(vm->error,sizeof vm->error,"cannot trap signal: %s",
+            strerror(errno));
+        VM_RETURN(DIAMOND_VM_IO_ERROR);
+    }
+    vm->trapped_signal_handlers[signal_index]=registers[handler_reg];
+    registers[dest]=DIAMOND_NIL;
+    HELPER_DONE;
+
+}
+
+/* DIAMOND_OP_UDP_OPEN, moved out of run_chunk's switch so compiled code runs the same body
+ * (diamond_jit_outlined). The case body is unchanged apart from its macros. */
+__attribute__((noinline))
+DiamondVmStatus outlined_udp_open(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t depth,size_t *ip_ref) {
+    size_t ip=*ip_ref;(void)depth;
+    uint16_t dest=0;
+    READ_SHORT(dest);
+    VM_SANDBOX_GUARD("UDPSocket.open", "network");
+    DiamondUdpSocketHandle *udp_handle=nullptr;
+    const DiamondVmStatus udp_status=udp_socket_helper(vm,false,0,nullptr,&udp_handle);
+    VM_PROPAGATE(udp_status);
+    registers[dest]=(DiamondValue){.kind=DIAMOND_VALUE_OBJECT,
+        .as.object=(DiamondObject *)udp_handle};
+    HELPER_DONE;
+
+}
+
+/* DIAMOND_OP_UDP_BIND, moved out of run_chunk's switch so compiled code runs the same body
+ * (diamond_jit_outlined). The case body is unchanged apart from its macros. */
+__attribute__((noinline))
+DiamondVmStatus outlined_udp_bind(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t depth,size_t *ip_ref) {
+    size_t ip=*ip_ref;(void)depth;
+    uint16_t dest=0,port_reg=0,host_reg=0;
+    READ_SHORT(dest);READ_SHORT(port_reg);READ_SHORT(host_reg);
+    VM_SANDBOX_GUARD("UDPSocket.bind", "network");
+    if(registers[port_reg].kind!=DIAMOND_VALUE_INT) {
+        snprintf(vm->error,sizeof vm->error,
+                 "UDPSocket.bind argument must be an Int port");
+        VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+    }
+    const DiamondString *udp_host=nullptr;
+    if(registers[host_reg].kind!=DIAMOND_VALUE_NIL) {
+        if(registers[host_reg].kind!=DIAMOND_VALUE_OBJECT||
+           registers[host_reg].as.object->kind!=DIAMOND_OBJECT_STRING) {
+            snprintf(vm->error,sizeof vm->error,
+                     "UDPSocket.bind host: must be a String");
+            VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+        }
+        udp_host=(const DiamondString *)registers[host_reg].as.object;
+    }
+    DiamondUdpSocketHandle *udp_handle=nullptr;
+    const DiamondVmStatus udp_status=udp_socket_helper(vm,true,
+        registers[port_reg].as.integer,udp_host,&udp_handle);
+    VM_PROPAGATE(udp_status);
+    registers[dest]=(DiamondValue){.kind=DIAMOND_VALUE_OBJECT,
+        .as.object=(DiamondObject *)udp_handle};
+    HELPER_DONE;
+
+}
+
+/* DIAMOND_OP_TCP_CONNECT, moved out of run_chunk's switch so compiled code runs the same body
+ * (diamond_jit_outlined). The case body is unchanged apart from its macros. */
+__attribute__((noinline))
+DiamondVmStatus outlined_tcp_connect(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t depth,size_t *ip_ref) {
+    size_t ip=*ip_ref;(void)depth;
+    uint16_t dest=0,host_reg=0,port_reg=0,options_reg=0;
+    READ_SHORT(dest);READ_SHORT(host_reg);READ_SHORT(port_reg);
+    READ_SHORT(options_reg);
+    VM_SANDBOX_GUARD("TCPSocket.connect", "network");
+    if(registers[host_reg].kind!=DIAMOND_VALUE_OBJECT||
+       registers[host_reg].as.object->kind!=DIAMOND_OBJECT_STRING||
+       registers[port_reg].kind!=DIAMOND_VALUE_INT) {
+        snprintf(vm->error,sizeof vm->error,
+                 "TCPSocket.connect arguments must be a String host and an Int port");
+        VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+    }
+    DiamondSocketConnectOptions options;
+    const DiamondVmStatus options_status=parse_socket_connect_options_helper(
+        vm,registers[options_reg],false,&options);
+    VM_PROPAGATE(options_status);
+    const DiamondString *host=(const DiamondString *)registers[host_reg].as.object;
+    int connected_fd=-1;
+    const DiamondVmStatus connect_status=tcp_connect_helper(vm,host,
+        registers[port_reg].as.integer,options.connect_timeout_ms,
+        options.recv_buffer_bytes,options.send_buffer_bytes,&connected_fd);
+    VM_PROPAGATE(connect_status);
+    const DiamondVmStatus timeout_status=apply_socket_timeouts_helper(vm,
+        connected_fd,options.read_timeout_ms,options.write_timeout_ms);
+    if(timeout_status!=DIAMOND_VM_OK) {close(connected_fd);VM_RETURN(timeout_status);}
+    FILE *stream=fdopen(connected_fd,"r+");
+    if(stream==nullptr) {
+        close(connected_fd);
+        VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+    }
+    DiamondFileHandle *handle=allocate_connected_file_handle(vm,stream);
+    if(handle==nullptr) {
+        fclose(stream);
+        VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+    }
+    registers[dest]=(DiamondValue){.kind=DIAMOND_VALUE_OBJECT,
+        .as.object=(DiamondObject *)handle};
+    HELPER_DONE;
+
+}
+
+/* DIAMOND_OP_TCP_CONNECT_NONBLOCK, moved out of run_chunk's switch so compiled code runs the same body
+ * (diamond_jit_outlined). The case body is unchanged apart from its macros. */
+__attribute__((noinline))
+DiamondVmStatus outlined_tcp_connect_nonblock(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t depth,size_t *ip_ref) {
+    size_t ip=*ip_ref;(void)depth;
+    uint16_t dest=0,address_reg=0,port_reg=0;
+    READ_SHORT(dest);READ_SHORT(address_reg);READ_SHORT(port_reg);
+    VM_SANDBOX_GUARD("TCPSocket.connect_nonblocking", "network");
+    if(registers[address_reg].kind!=DIAMOND_VALUE_OBJECT||
+       registers[address_reg].as.object->kind!=DIAMOND_OBJECT_STRING||
+       registers[port_reg].kind!=DIAMOND_VALUE_INT) {
+        snprintf(vm->error,sizeof vm->error,
+            "connect_nonblocking arguments must be a String address and an Int port");
+        VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+    }
+    DiamondSocketHandle *handle=nullptr;
+    const DiamondVmStatus status=tcp_connect_nonblocking_helper(vm,
+        (const DiamondString *)registers[address_reg].as.object,
+        registers[port_reg].as.integer,&handle);
+    VM_PROPAGATE(status);
+    registers[dest]=DIAMOND_OBJECT(handle);
+    HELPER_DONE;
+
+}
+
+/* DIAMOND_OP_DNS_RESOLVE, moved out of run_chunk's switch so compiled code runs the same body
+ * (diamond_jit_outlined). The case body is unchanged apart from its macros. */
+__attribute__((noinline))
+DiamondVmStatus outlined_dns_resolve(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t depth,size_t *ip_ref) {
+    size_t ip=*ip_ref;(void)depth;
+    uint16_t dest=0,host_reg=0,channels_reg=0,deadline_reg=0;
+    READ_SHORT(dest);READ_SHORT(host_reg);READ_SHORT(channels_reg);READ_SHORT(deadline_reg);
+    VM_SANDBOX_GUARD("DNS.resolve", "network");
+    const size_t root_count=vm->gc_protected_count;
+    if(!gc_protect(vm,registers[host_reg])||!gc_protect(vm,registers[channels_reg])) {
+        gc_unprotect(vm,root_count);VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+    }
+    const DiamondVmStatus status=dns_resolve_helper(vm,chunk,depth,
+        registers[host_reg],registers[channels_reg],registers[deadline_reg],&registers[dest]);
+    gc_unprotect(vm,root_count);
+    VM_PROPAGATE(status);
+    HELPER_DONE;
+
+}
+
+/* DIAMOND_OP_PROGRAM_BUILDER_NEW, moved out of run_chunk's switch so compiled code runs the same body
+ * (diamond_jit_outlined). The case body is unchanged apart from its macros. */
+__attribute__((noinline))
+DiamondVmStatus outlined_program_builder_new(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t depth,size_t *ip_ref) {
+    size_t ip=*ip_ref;(void)depth;
+    uint16_t dest=0;
+    READ_SHORT(dest);
+    DiamondProgramBuilder *handle=allocate_program_builder(vm);
+    if(handle==nullptr)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+    registers[dest]=(DiamondValue){.kind=DIAMOND_VALUE_OBJECT,
+        .as.object=(DiamondObject *)handle};
+    HELPER_DONE;
+
+}
+
+/* DIAMOND_OP_SQLITE3_OPEN, moved out of run_chunk's switch so compiled code runs the same body
+ * (diamond_jit_outlined). The case body is unchanged apart from its macros. */
+__attribute__((noinline))
+DiamondVmStatus outlined_sqlite3_open(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t depth,size_t *ip_ref) {
+    size_t ip=*ip_ref;(void)depth;
+    uint16_t dest=0,path_reg=0,mode_reg=0;
+    READ_SHORT(dest);READ_SHORT(path_reg);READ_SHORT(mode_reg);
+    VM_SANDBOX_GUARD("SQLite3.open", "database");
+#ifdef DIAMOND_NO_SQLITE
+    (void)dest;(void)path_reg;(void)mode_reg;
+    snprintf(vm->error,sizeof vm->error,
+        "SQLite3 support is not compiled into this build");
+    VM_RETURN(DIAMOND_VM_SQLITE3_ERROR);
+#else
+    if(registers[path_reg].kind!=DIAMOND_VALUE_OBJECT||
+       registers[path_reg].as.object->kind!=DIAMOND_OBJECT_STRING) {
+        snprintf(vm->error,sizeof vm->error,
+            "SQLite3.open argument must be a String path");
+        VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+    }
+    const DiamondString *path=(const DiamondString *)registers[path_reg].as.object;
+    sqlite3 *db=nullptr;
+    const DiamondVmStatus open_status=
+        sqlite3_open_helper(vm,path,registers[mode_reg],&db);
+    VM_PROPAGATE(open_status);
+    DiamondSqlite3Handle *handle=allocate_sqlite3_handle(vm,db);
+    if(handle==nullptr) {
+        sqlite3_close(db);
+        VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+    }
+    registers[dest]=(DiamondValue){.kind=DIAMOND_VALUE_OBJECT,
+        .as.object=(DiamondObject *)handle};
+#endif
+    HELPER_DONE;
+
+}
+
+/* DIAMOND_OP_REGEXP_NEW, moved out of run_chunk's switch so compiled code runs the same body
+ * (diamond_jit_outlined). The case body is unchanged apart from its macros. */
+__attribute__((noinline))
+DiamondVmStatus outlined_regexp_new(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t depth,size_t *ip_ref) {
+    size_t ip=*ip_ref;(void)depth;
+    uint16_t dest=0,pattern_reg=0,options_reg=0;
+    READ_SHORT(dest);READ_SHORT(pattern_reg);READ_SHORT(options_reg);
+    if(registers[pattern_reg].kind!=DIAMOND_VALUE_OBJECT||
+       registers[pattern_reg].as.object->kind!=DIAMOND_OBJECT_STRING||
+       registers[options_reg].kind!=DIAMOND_VALUE_INT) {
+        snprintf(vm->error,sizeof vm->error,
+            "Regexp.new arguments must be a String pattern and an Int options");
+        VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+    }
+    DiamondValue new_result=DIAMOND_NIL;
+    const DiamondVmStatus new_status=regexp_new_helper(vm,
+        (const DiamondString *)registers[pattern_reg].as.object,
+        registers[options_reg].as.integer,&new_result);
+    VM_PROPAGATE(new_status);
+    registers[dest]=new_result;
+    HELPER_DONE;
+
+}
+
+/* DIAMOND_OP_FILE_JOIN, moved out of run_chunk's switch so compiled code runs the same body
+ * (diamond_jit_outlined). The case body is unchanged apart from its macros. */
+__attribute__((noinline))
+DiamondVmStatus outlined_file_join(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t depth,size_t *ip_ref) {
+    size_t ip=*ip_ref;(void)depth;
+    uint16_t dest=0,base=0;uint8_t argc=0;
+    READ_SHORT(dest);READ_SHORT(base);READ_BYTE(argc);
+    DiamondValue join_result=DIAMOND_NIL;
+    const DiamondVmStatus join_status=file_path_join_helper(vm,
+        &registers[base],argc,&join_result);
+    VM_PROPAGATE(join_status);
+    registers[dest]=join_result;
+    HELPER_DONE;
+
+}
+
+/* DIAMOND_OP_FILE_DELETE, moved out of run_chunk's switch so compiled code runs the same body
+ * (diamond_jit_outlined). The case body is unchanged apart from its macros. */
+__attribute__((noinline))
+DiamondVmStatus outlined_file_delete(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t depth,size_t *ip_ref) {
+    size_t ip=*ip_ref;(void)depth;
+    uint16_t dest=0,path_reg=0;
+    READ_SHORT(dest);READ_SHORT(path_reg);
+    VM_SANDBOX_GUARD("File.delete", "filesystem");
+    if(registers[path_reg].kind!=DIAMOND_VALUE_OBJECT||
+       registers[path_reg].as.object->kind!=DIAMOND_OBJECT_STRING) {
+        snprintf(vm->error,sizeof vm->error,"File.delete argument must be a String value");
+        VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+    }
+    const DiamondString *path=(const DiamondString *)registers[path_reg].as.object;
+    errno=0;
+    if(remove(path->chars)!=0) {
+        if(errno==ENOENT) {
+            registers[dest]=(DiamondValue){.kind=DIAMOND_VALUE_BOOL,.as.boolean=false};
+            HELPER_DONE;
+        }
+        snprintf(vm->error,sizeof vm->error,"cannot delete '%.*s': %s",
+                 (int)path->length,path->chars,strerror(errno));
+        VM_RETURN(DIAMOND_VM_IO_ERROR);
+    }
+    registers[dest]=(DiamondValue){.kind=DIAMOND_VALUE_BOOL,.as.boolean=true};
+    HELPER_DONE;
+
+}
+
+/* DIAMOND_OP_FILE_OPEN, moved out of run_chunk's switch so compiled code runs the same body
+ * (diamond_jit_outlined). The case body is unchanged apart from its macros. */
+__attribute__((noinline))
+DiamondVmStatus outlined_file_open(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t depth,size_t *ip_ref) {
+    size_t ip=*ip_ref;(void)depth;
+    uint16_t dest=0,path_reg=0,mode_reg=0;
+    READ_SHORT(dest);READ_SHORT(path_reg);READ_SHORT(mode_reg);
+    VM_SANDBOX_GUARD("File.open", "filesystem");
+    if(registers[path_reg].kind!=DIAMOND_VALUE_OBJECT||
+       registers[path_reg].as.object->kind!=DIAMOND_OBJECT_STRING||
+       registers[mode_reg].kind!=DIAMOND_VALUE_OBJECT||
+       registers[mode_reg].as.object->kind!=DIAMOND_OBJECT_STRING) {
+        snprintf(vm->error,sizeof vm->error,"File.open arguments must be String values");
+        VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+    }
+    const DiamondString *path=(const DiamondString *)registers[path_reg].as.object;
+    const DiamondString *mode=(const DiamondString *)registers[mode_reg].as.object;
+    errno=0;
+    FILE *stream=fopen(path->chars,mode->chars);
+    if(stream==nullptr) {
+        snprintf(vm->error,sizeof vm->error,"cannot open '%.*s': %s",
+                 (int)path->length,path->chars,strerror(errno));
+        VM_RETURN(DIAMOND_VM_IO_ERROR);
+    }
+    diamond_set_cloexec(fileno(stream));
+    DiamondFileHandle *handle=allocate_file_handle(vm,stream);
+    if(handle==nullptr) {
+        fclose(stream);
+        VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+    }
+    registers[dest]=(DiamondValue){.kind=DIAMOND_VALUE_OBJECT,
+        .as.object=(DiamondObject *)handle};
+    HELPER_DONE;
+
+}
+
+/* DIAMOND_OP_FIBER_NEW, moved out of run_chunk's switch so compiled code runs the same body
+ * (diamond_jit_outlined). The case body is unchanged apart from its macros. */
+__attribute__((noinline))
+DiamondVmStatus outlined_fiber_new(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t depth,size_t *ip_ref) {
+    size_t ip=*ip_ref;(void)depth;
+    uint16_t dest=0,callable_reg=0;
+    READ_SHORT(dest);READ_SHORT(callable_reg);
+    if(registers[callable_reg].kind!=DIAMOND_VALUE_OBJECT||
+       registers[callable_reg].as.object->kind!=DIAMOND_OBJECT_CLOSURE) {
+        snprintf(vm->error,sizeof vm->error,"Fiber.new argument must be a Callable value");
+        VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+    }
+    const DiamondClosure *callable=(const DiamondClosure *)registers[callable_reg].as.object;
+    /* See DIAMOND_OP_CALL_CLOSURE's own comment. */
+    if(callable->foreign_chunk!=nullptr) {
+        snprintf(vm->error,sizeof vm->error,
+            "a compile_method callable can only be passed to define_method");
+        VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+    }
+    if((size_t)callable->function_index>=chunk->function_count)
+        VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
+    const DiamondFunction *target_fn=chunk->functions[callable->function_index];
+    if(target_fn->arity!=0) {
+        snprintf(vm->error,sizeof vm->error,"Fiber.new callable must take no arguments");
+        VM_RETURN(DIAMOND_VM_ARITY_ERROR);
+    }
+    DiamondFiber *new_fiber=diamond_fiber_new_for_closure(chunk,callable);
+    if(new_fiber==nullptr||diamond_fiber_bind_vm(new_fiber,vm)!=DIAMOND_FIBER_OK||
+       diamond_fiber_prepare(new_fiber)!=DIAMOND_FIBER_OK) {
+        diamond_fiber_free(new_fiber);
+        VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+    }
+    DiamondFiberHandle *handle=allocate_fiber_handle(vm,new_fiber);
+    if(handle==nullptr) {
+        diamond_fiber_free(new_fiber);
+        VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+    }
+    registers[dest]=(DiamondValue){.kind=DIAMOND_VALUE_OBJECT,
+        .as.object=(DiamondObject *)handle};
+    HELPER_DONE;
+
+}
+
+/* DIAMOND_OP_YIELD, moved out of run_chunk's switch so compiled code runs the same body
+ * (diamond_jit_outlined). The case body is unchanged apart from its macros. */
+__attribute__((noinline))
+DiamondVmStatus outlined_yield(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t depth,size_t *ip_ref) {
+    size_t ip=*ip_ref;(void)depth;
+    uint16_t dest=0,source=0;
+    READ_SHORT(dest);READ_SHORT(source);
+    if(vm->running_fiber==nullptr) VM_RETURN(DIAMOND_VM_YIELD_WITHOUT_FIBER);
+    vm->running_fiber->status=DIAMOND_VM_YIELDED;
+    vm->running_fiber->result=registers[source];
+#ifdef DIAMOND_ASAN_FIBERS
+    /* Suspending, not leaving for good: this fiber's own stack
+     * (the one this frame lives on) must be preserved rather
+     * than destroyed. yield_fake_stack is a plain local: this
+     * swapcontext call is where a later resume physically
+     * continues, since this whole C frame lives on the fiber's
+     * own parked stack memory in the meantime. */
+    void *yield_fake_stack=nullptr;
+    const void *yield_dest_bottom=nullptr;size_t yield_dest_size=0;
+    diamond_resume_target_bounds(vm->running_fiber,
+        &yield_dest_bottom,&yield_dest_size);
+    __sanitizer_start_switch_fiber(&yield_fake_stack,
+        yield_dest_bottom,yield_dest_size);
+#endif
+    swapcontext(&vm->running_fiber->context,vm->running_fiber->resume_target);
+#ifdef DIAMOND_ASAN_FIBERS
+    __sanitizer_finish_switch_fiber(yield_fake_stack,nullptr,nullptr);
+#endif
+    registers[dest]=vm->running_fiber->resume_value;
+    HELPER_DONE;
+
+}
+
+/* DIAMOND_OP_ENV, moved out of run_chunk's switch so compiled code runs the same body
+ * (diamond_jit_outlined). The case body is unchanged apart from its macros. */
+__attribute__((noinline))
+DiamondVmStatus outlined_env(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t depth,size_t *ip_ref) {
+    size_t ip=*ip_ref;(void)depth;
+    uint16_t destination=0;READ_SHORT(destination);
+    registers[destination]=vm->env_value;HELPER_DONE;
+
+}
+
+/* DIAMOND_OP_ARGV, moved out of run_chunk's switch so compiled code runs the same body
+ * (diamond_jit_outlined). The case body is unchanged apart from its macros. */
+__attribute__((noinline))
+DiamondVmStatus outlined_argv(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t depth,size_t *ip_ref) {
+    size_t ip=*ip_ref;(void)depth;
+    uint16_t destination=0;READ_SHORT(destination);
+    registers[destination]=vm->argv_value;HELPER_DONE;
+
+}
+
+/* DIAMOND_OP_EXIT, moved out of run_chunk's switch so compiled code runs the same body
+ * (diamond_jit_outlined). The case body is unchanged apart from its macros. */
+__attribute__((noinline))
+DiamondVmStatus outlined_exit(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t depth,size_t *ip_ref) {
+    size_t ip=*ip_ref;(void)depth;
+    uint16_t code_register=0;
+    READ_SHORT(code_register);
+    const DiamondVmStatus exit_status=exit_helper(vm,registers[code_register]);
+    /* exit_helper only returns at all on a validation
+     * failure -- a valid code calls libc exit() and this
+     * line is never reached. */
+    VM_PROPAGATE(exit_status);
+    HELPER_DONE;
+
+}
+
+/* DIAMOND_OP_BASE64_DECODE, moved out of run_chunk's switch so compiled code runs the same body
+ * (diamond_jit_outlined). The case body is unchanged apart from its macros. */
+__attribute__((noinline))
+DiamondVmStatus outlined_base64_decode(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t depth,size_t *ip_ref) {
+    size_t ip=*ip_ref;(void)depth;
+    uint16_t destination=0,data_register=0;
+    READ_SHORT(destination);READ_SHORT(data_register);
+    const DiamondVmStatus decode_status=base64_decode_helper(vm,
+        registers[data_register],&registers[destination]);
+    VM_PROPAGATE(decode_status);HELPER_DONE;
+
+}
+
+/* DIAMOND_OP_BASE64_ENCODE, moved out of run_chunk's switch so compiled code runs the same body
+ * (diamond_jit_outlined). The case body is unchanged apart from its macros. */
+__attribute__((noinline))
+DiamondVmStatus outlined_base64_encode(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t depth,size_t *ip_ref) {
+    size_t ip=*ip_ref;(void)depth;
+    uint16_t destination=0,data_register=0;
+    READ_SHORT(destination);READ_SHORT(data_register);
+    const DiamondVmStatus encode_status=base64_encode_helper(vm,
+        registers[data_register],&registers[destination]);
+    VM_PROPAGATE(encode_status);HELPER_DONE;
+
+}
+
+/* DIAMOND_OP_GZIP_DECOMPRESS, moved out of run_chunk's switch so compiled code runs the same body
+ * (diamond_jit_outlined). The case body is unchanged apart from its macros. */
+__attribute__((noinline))
+DiamondVmStatus outlined_gzip_decompress(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t depth,size_t *ip_ref) {
+    size_t ip=*ip_ref;(void)depth;
+    uint16_t destination=0,data_register=0,max_size_register=0;
+    READ_SHORT(destination);READ_SHORT(data_register);READ_SHORT(max_size_register);
+    const DiamondVmStatus decompress_status=gzip_decompress_helper(vm,
+        registers[data_register],registers[max_size_register],
+        &registers[destination]);
+    VM_PROPAGATE(decompress_status);HELPER_DONE;
+
+}
+
+/* DIAMOND_OP_GZIP_COMPRESS, moved out of run_chunk's switch so compiled code runs the same body
+ * (diamond_jit_outlined). The case body is unchanged apart from its macros. */
+__attribute__((noinline))
+DiamondVmStatus outlined_gzip_compress(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t depth,size_t *ip_ref) {
+    size_t ip=*ip_ref;(void)depth;
+    uint16_t destination=0,data_register=0;
+    READ_SHORT(destination);READ_SHORT(data_register);
+    const DiamondVmStatus compress_status=gzip_compress_helper(vm,
+        registers[data_register],&registers[destination]);
+    VM_PROPAGATE(compress_status);HELPER_DONE;
+
+}
+
+/* DIAMOND_OP_CIPHER_DECRYPT, moved out of run_chunk's switch so compiled code runs the same body
+ * (diamond_jit_outlined). The case body is unchanged apart from its macros. */
+__attribute__((noinline))
+DiamondVmStatus outlined_cipher_decrypt(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t depth,size_t *ip_ref) {
+    size_t ip=*ip_ref;(void)depth;
+    uint16_t destination=0,key_register=0,blob_register=0;
+    READ_SHORT(destination);READ_SHORT(key_register);READ_SHORT(blob_register);
+    const DiamondVmStatus decrypt_status=aes_gcm_decrypt_helper(vm,
+        registers[key_register],registers[blob_register],
+        &registers[destination]);
+    VM_PROPAGATE(decrypt_status);HELPER_DONE;
+
+}
+
+/* DIAMOND_OP_CIPHER_ENCRYPT, moved out of run_chunk's switch so compiled code runs the same body
+ * (diamond_jit_outlined). The case body is unchanged apart from its macros. */
+__attribute__((noinline))
+DiamondVmStatus outlined_cipher_encrypt(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t depth,size_t *ip_ref) {
+    size_t ip=*ip_ref;(void)depth;
+    uint16_t destination=0,key_register=0,plaintext_register=0;
+    READ_SHORT(destination);READ_SHORT(key_register);
+    READ_SHORT(plaintext_register);
+    const DiamondVmStatus encrypt_status=aes_gcm_encrypt_helper(vm,
+        registers[key_register],registers[plaintext_register],
+        &registers[destination]);
+    VM_PROPAGATE(encrypt_status);HELPER_DONE;
+
+}
+
+/* DIAMOND_OP_HMAC_SHA1, moved out of run_chunk's switch so compiled code runs the same body
+ * (diamond_jit_outlined). The case body is unchanged apart from its macros. */
+__attribute__((noinline))
+DiamondVmStatus outlined_hmac_sha1(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t depth,size_t *ip_ref) {
+    size_t ip=*ip_ref;(void)depth;
+    uint16_t destination=0,key_register=0,data_register=0;
+    READ_SHORT(destination);READ_SHORT(key_register);READ_SHORT(data_register);
+    const DiamondVmStatus hmac_status=sha1_hex_helper(vm,
+        registers[key_register],registers[data_register],true,
+        &registers[destination]);
+    VM_PROPAGATE(hmac_status);HELPER_DONE;
+
+}
+
+/* DIAMOND_OP_DIGEST_SHA1, moved out of run_chunk's switch so compiled code runs the same body
+ * (diamond_jit_outlined). The case body is unchanged apart from its macros. */
+__attribute__((noinline))
+DiamondVmStatus outlined_digest_sha1(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t depth,size_t *ip_ref) {
+    size_t ip=*ip_ref;(void)depth;
+    uint16_t destination=0,data_register=0;
+    READ_SHORT(destination);READ_SHORT(data_register);
+    const DiamondVmStatus digest_status=sha1_hex_helper(vm,
+        DIAMOND_NIL,registers[data_register],false,&registers[destination]);
+    VM_PROPAGATE(digest_status);HELPER_DONE;
+
+}
+
+/* DIAMOND_OP_HMAC_VERIFY, moved out of run_chunk's switch so compiled code runs the same body
+ * (diamond_jit_outlined). The case body is unchanged apart from its macros. */
+__attribute__((noinline))
+DiamondVmStatus outlined_hmac_verify(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t depth,size_t *ip_ref) {
+    size_t ip=*ip_ref;(void)depth;
+    uint16_t destination=0,data_register=0,key_register=0,signature_register=0;
+    READ_SHORT(destination);READ_SHORT(data_register);
+    READ_SHORT(key_register);READ_SHORT(signature_register);
+    const DiamondVmStatus verify_status=hmac_verify_helper(vm,
+        registers[data_register],registers[key_register],
+        registers[signature_register],&registers[destination]);
+    VM_PROPAGATE(verify_status);HELPER_DONE;
+
+}
+
+/* DIAMOND_OP_HMAC_SHA256, moved out of run_chunk's switch so compiled code runs the same body
+ * (diamond_jit_outlined). The case body is unchanged apart from its macros. */
+__attribute__((noinline))
+DiamondVmStatus outlined_hmac_sha256(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t depth,size_t *ip_ref) {
+    size_t ip=*ip_ref;(void)depth;
+    uint16_t destination=0,key_register=0,data_register=0;
+    READ_SHORT(destination);READ_SHORT(key_register);READ_SHORT(data_register);
+    const DiamondVmStatus hmac_status=sha256_hex_helper(vm,
+        registers[key_register],registers[data_register],true,
+        &registers[destination]);
+    VM_PROPAGATE(hmac_status);HELPER_DONE;
+
+}
+
+/* DIAMOND_OP_DIGEST_SHA256, moved out of run_chunk's switch so compiled code runs the same body
+ * (diamond_jit_outlined). The case body is unchanged apart from its macros. */
+__attribute__((noinline))
+DiamondVmStatus outlined_digest_sha256(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t depth,size_t *ip_ref) {
+    size_t ip=*ip_ref;(void)depth;
+    uint16_t destination=0,data_register=0;
+    READ_SHORT(destination);READ_SHORT(data_register);
+    const DiamondVmStatus digest_status=sha256_hex_helper(vm,
+        DIAMOND_NIL,registers[data_register],false,&registers[destination]);
+    VM_PROPAGATE(digest_status);HELPER_DONE;
+
+}
+
+/* DIAMOND_OP_SECURE_RANDOM_HEX, moved out of run_chunk's switch so compiled code runs the same body
+ * (diamond_jit_outlined). The case body is unchanged apart from its macros. */
+__attribute__((noinline))
+DiamondVmStatus outlined_secure_random_hex(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t depth,size_t *ip_ref) {
+    size_t ip=*ip_ref;(void)depth;
+    uint16_t destination=0,count_register=0;
+    READ_SHORT(destination);READ_SHORT(count_register);
+    const DiamondVmStatus hex_status=secure_random_hex_helper(vm,
+        registers[count_register],&registers[destination]);
+    VM_PROPAGATE(hex_status);
+    HELPER_DONE;
+
+}
+
+/* DIAMOND_OP_SECURE_RANDOM_BYTES, moved out of run_chunk's switch so compiled code runs the same body
+ * (diamond_jit_outlined). The case body is unchanged apart from its macros. */
+__attribute__((noinline))
+DiamondVmStatus outlined_secure_random_bytes(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t depth,size_t *ip_ref) {
+    size_t ip=*ip_ref;(void)depth;
+    uint16_t destination=0,count_register=0;
+    READ_SHORT(destination);READ_SHORT(count_register);
+    const DiamondVmStatus bytes_status=secure_random_bytes_helper(vm,
+        registers[count_register],&registers[destination]);
+    VM_PROPAGATE(bytes_status);
+    HELPER_DONE;
+
+}
+
+/* DIAMOND_OP_BCRYPT_VERIFY, moved out of run_chunk's switch so compiled code runs the same body
+ * (diamond_jit_outlined). The case body is unchanged apart from its macros. */
+__attribute__((noinline))
+DiamondVmStatus outlined_bcrypt_verify(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t depth,size_t *ip_ref) {
+    size_t ip=*ip_ref;(void)depth;
+    uint16_t destination=0,password_register=0,digest_register=0;
+    READ_SHORT(destination);READ_SHORT(password_register);
+    READ_SHORT(digest_register);
+    const DiamondVmStatus verify_status=bcrypt_verify_helper(vm,
+        registers[password_register],registers[digest_register],
+        &registers[destination]);
+    VM_PROPAGATE(verify_status);
+    HELPER_DONE;
+
+}
+
+/* DIAMOND_OP_BCRYPT_HASH, moved out of run_chunk's switch so compiled code runs the same body
+ * (diamond_jit_outlined). The case body is unchanged apart from its macros. */
+__attribute__((noinline))
+DiamondVmStatus outlined_bcrypt_hash(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t depth,size_t *ip_ref) {
+    size_t ip=*ip_ref;(void)depth;
+    uint16_t destination=0,password_register=0,cost_register=0;
+    READ_SHORT(destination);READ_SHORT(password_register);
+    READ_SHORT(cost_register);
+    const DiamondVmStatus hash_status=bcrypt_hash_helper(vm,
+        registers[password_register],registers[cost_register],
+        &registers[destination]);
+    VM_PROPAGATE(hash_status);
+    HELPER_DONE;
+
+}
+
+/* DIAMOND_OP_PROCESS_SPAWN and DIAMOND_OP_PROCESS_SPAWN_OPTIONS, moved out of run_chunk's switch so compiled code runs the same body
+ * (diamond_jit_outlined). The case body is unchanged apart from its macros. */
+__attribute__((noinline))
+DiamondVmStatus outlined_process_spawn(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t depth,size_t *ip_ref) {
+    size_t ip=*ip_ref;(void)depth;
+    const uint8_t instruction=chunk->code[ip-1];
+    uint16_t destination=0,argv_register=0,options_register=UINT16_MAX;
+    READ_SHORT(destination);READ_SHORT(argv_register);
+    if(instruction==DIAMOND_OP_PROCESS_SPAWN_OPTIONS)READ_SHORT(options_register);
+    VM_SANDBOX_GUARD("Process.spawn", "subprocess");
+    if(registers[argv_register].kind!=DIAMOND_VALUE_OBJECT||
+       registers[argv_register].as.object->kind!=DIAMOND_OBJECT_ARRAY) {
+        snprintf(vm->error,sizeof vm->error,
+            "Process.spawn expects an Array of Strings");
+        VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+    }
+    DiamondProcessHandle *process_handle=allocate_process_handle(vm,0);
+    if(process_handle==nullptr)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+    /* Rooted immediately, before process_spawn_helper's own
+     * further allocations -- see allocate_process_handle's
+     * comment. */
+    registers[destination]=DIAMOND_OBJECT(process_handle);
+    const DiamondVmStatus spawn_status=process_spawn_helper(vm,
+        (DiamondArray *)registers[argv_register].as.object,process_handle,
+        options_register==UINT16_MAX?DIAMOND_NIL:registers[options_register]);
+    VM_PROPAGATE(spawn_status);
+    HELPER_DONE;
+
+}
+
+/* DIAMOND_OP_PROCESS_RUN and DIAMOND_OP_PROCESS_RUN_OPTIONS, moved out of run_chunk's switch so compiled code runs the same body
+ * (diamond_jit_outlined). The case body is unchanged apart from its macros. */
+__attribute__((noinline))
+DiamondVmStatus outlined_process_run(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t depth,size_t *ip_ref) {
+    size_t ip=*ip_ref;(void)depth;
+    const uint8_t instruction=chunk->code[ip-1];
+    uint16_t destination=0,argv_register=0,options_register=UINT16_MAX;
+    READ_SHORT(destination);READ_SHORT(argv_register);
+    if(instruction==DIAMOND_OP_PROCESS_RUN_OPTIONS)READ_SHORT(options_register);
+    VM_SANDBOX_GUARD("Process.run", "subprocess");
+    if(registers[argv_register].kind!=DIAMOND_VALUE_OBJECT||
+       registers[argv_register].as.object->kind!=DIAMOND_OBJECT_ARRAY) {
+        snprintf(vm->error,sizeof vm->error,
+            "Process.run expects an Array of Strings");
+        VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+    }
+    DiamondProcessResult *process_result=allocate_process_result(vm);
+    if(process_result==nullptr)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+    /* Rooted immediately, before process_run_helper's own
+     * further allocations -- see allocate_process_result's
+     * comment. */
+    registers[destination]=DIAMOND_OBJECT(process_result);
+    const DiamondVmStatus run_status=process_run_helper(vm,
+        (DiamondArray *)registers[argv_register].as.object,process_result,
+        options_register==UINT16_MAX?DIAMOND_NIL:registers[options_register]);
+    VM_PROPAGATE(run_status);
+    HELPER_DONE;
+
+}
+
+/* DIAMOND_OP_TENSOR_RANDOM, moved out of run_chunk's switch so compiled code runs the same body
+ * (diamond_jit_outlined). The case body is unchanged apart from its macros. */
+__attribute__((noinline))
+DiamondVmStatus outlined_tensor_random(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t depth,size_t *ip_ref) {
+    size_t ip=*ip_ref;(void)depth;
+    uint16_t dest=0,rows_reg=0,cols_reg=0,seed_reg=0;
+    READ_SHORT(dest);READ_SHORT(rows_reg);READ_SHORT(cols_reg);READ_SHORT(seed_reg);
+    if(registers[rows_reg].kind!=DIAMOND_VALUE_INT||
+       registers[cols_reg].kind!=DIAMOND_VALUE_INT||
+       registers[seed_reg].kind!=DIAMOND_VALUE_INT) {
+        snprintf(vm->error,sizeof vm->error,
+            "Tensor.random's rows/cols/seed arguments must be Ints");
+        VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+    }
+    const int64_t rows=registers[rows_reg].as.integer;
+    const int64_t cols=registers[cols_reg].as.integer;
+    if(rows<=0||cols<=0) {
+        snprintf(vm->error,sizeof vm->error,
+            "Tensor.random's rows/cols arguments must be positive");
+        VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+    }
+    DiamondTensor *tensor=allocate_tensor(vm,(size_t)rows,(size_t)cols);
+    if(tensor==nullptr)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+    registers[dest]=DIAMOND_OBJECT(tensor);
+    tensor_random_helper(tensor,registers[seed_reg].as.integer);
+    HELPER_DONE;
+
+}
+
+/* DIAMOND_OP_TENSOR_FROM_ARRAY, moved out of run_chunk's switch so compiled code runs the same body
+ * (diamond_jit_outlined). The case body is unchanged apart from its macros. */
+__attribute__((noinline))
+DiamondVmStatus outlined_tensor_from_array(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t depth,size_t *ip_ref) {
+    size_t ip=*ip_ref;(void)depth;
+    uint16_t dest=0,array_reg=0;
+    READ_SHORT(dest);READ_SHORT(array_reg);
+    if(registers[array_reg].kind!=DIAMOND_VALUE_OBJECT||
+       registers[array_reg].as.object->kind!=DIAMOND_OBJECT_ARRAY) {
+        snprintf(vm->error,sizeof vm->error,
+            "Tensor.from_array's argument must be an Array");
+        VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+    }
+    const DiamondVmStatus from_array_status=tensor_from_array_helper(vm,
+        (const DiamondArray *)registers[array_reg].as.object,&registers[dest]);
+    VM_PROPAGATE(from_array_status);
+    HELPER_DONE;
+
+}
+
+/* DIAMOND_OP_TENSOR_ZEROS, moved out of run_chunk's switch so compiled code runs the same body
+ * (diamond_jit_outlined). The case body is unchanged apart from its macros. */
+__attribute__((noinline))
+DiamondVmStatus outlined_tensor_zeros(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t depth,size_t *ip_ref) {
+    size_t ip=*ip_ref;(void)depth;
+    uint16_t dest=0,rows_reg=0,cols_reg=0;
+    READ_SHORT(dest);READ_SHORT(rows_reg);READ_SHORT(cols_reg);
+    if(registers[rows_reg].kind!=DIAMOND_VALUE_INT||
+       registers[cols_reg].kind!=DIAMOND_VALUE_INT) {
+        snprintf(vm->error,sizeof vm->error,
+            "Tensor.zeros's rows/cols arguments must be Ints");
+        VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+    }
+    const int64_t rows=registers[rows_reg].as.integer;
+    const int64_t cols=registers[cols_reg].as.integer;
+    if(rows<=0||cols<=0) {
+        snprintf(vm->error,sizeof vm->error,
+            "Tensor.zeros's rows/cols arguments must be positive");
+        VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+    }
+    DiamondTensor *tensor=allocate_tensor(vm,(size_t)rows,(size_t)cols);
+    if(tensor==nullptr)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+    registers[dest]=DIAMOND_OBJECT(tensor);
+    HELPER_DONE;
+
+}
+
+/* DIAMOND_OP_TIME_BUILD, moved out of run_chunk's switch so compiled code runs the same body
+ * (diamond_jit_outlined). The case body is unchanged apart from its macros. */
+__attribute__((noinline))
+DiamondVmStatus outlined_time_build(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t depth,size_t *ip_ref) {
+    size_t ip=*ip_ref;(void)depth;
+    uint16_t destination=0,base_register=0;uint8_t mode=0;
+    READ_SHORT(destination);READ_SHORT(base_register);READ_BYTE(mode);
+    const DiamondVmStatus time_status=time_build_helper(vm,
+        &registers[base_register],mode,&registers[destination]);
+    VM_PROPAGATE(time_status);
+    HELPER_DONE;
+
+}
+
+/* DIAMOND_OP_TIME_PARSE, moved out of run_chunk's switch so compiled code runs the same body
+ * (diamond_jit_outlined). The case body is unchanged apart from its macros. */
+__attribute__((noinline))
+DiamondVmStatus outlined_time_parse(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t depth,size_t *ip_ref) {
+    size_t ip=*ip_ref;(void)depth;
+    uint16_t destination=0,string_register=0;
+    READ_SHORT(destination);READ_SHORT(string_register);
+    const DiamondVmStatus time_status=time_parse_helper(vm,
+        registers[string_register],&registers[destination]);
+    VM_PROPAGATE(time_status);
+    HELPER_DONE;
+
+}
+
+/* DIAMOND_OP_TIME_AT, moved out of run_chunk's switch so compiled code runs the same body
+ * (diamond_jit_outlined). The case body is unchanged apart from its macros. */
+__attribute__((noinline))
+DiamondVmStatus outlined_time_at(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t depth,size_t *ip_ref) {
+    size_t ip=*ip_ref;(void)depth;
+    uint16_t destination=0,epoch_register=0;
+    READ_SHORT(destination);READ_SHORT(epoch_register);
+    const DiamondVmStatus time_status=
+        time_at_helper(vm,registers[epoch_register],&registers[destination]);
+    VM_PROPAGATE(time_status);
+    HELPER_DONE;
+
+}
+
+/* DIAMOND_OP_TIME_NOW, moved out of run_chunk's switch so compiled code runs the same body
+ * (diamond_jit_outlined). The case body is unchanged apart from its macros. */
+__attribute__((noinline))
+DiamondVmStatus outlined_time_now(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t depth,size_t *ip_ref) {
+    size_t ip=*ip_ref;(void)depth;
+    /* VM_PROPAGATE's argument is expanded multiple times (see
+     * its own definition) -- a function call passed directly
+     * would run time_now_helper up to 3x on any non-OK status,
+     * double-allocating. Stored in a local first, same as
+     * every other VM_PROPAGATE call site in this switch. */
+    uint16_t destination=0;uint8_t utc_flag=0;
+    READ_SHORT(destination);READ_BYTE(utc_flag);
+    const DiamondVmStatus time_status=
+        time_now_helper(vm,utc_flag!=0,&registers[destination]);
+    VM_PROPAGATE(time_status);
+    HELPER_DONE;
+
+}
+
+/* DIAMOND_OP_TIME_MONOTONIC, moved out of run_chunk's switch so compiled code runs the same body
+ * (diamond_jit_outlined). The case body is unchanged apart from its macros. */
+__attribute__((noinline))
+DiamondVmStatus outlined_time_monotonic(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t depth,size_t *ip_ref) {
+    size_t ip=*ip_ref;(void)depth;(void)vm;
+    uint16_t destination=0;
+    READ_SHORT(destination);
+    struct timespec now={};
+    clock_gettime(CLOCK_MONOTONIC,&now);
+    registers[destination]=
+        DIAMOND_FLOAT((double)now.tv_sec+(double)now.tv_nsec/1e9);
+    HELPER_DONE;
+
+}
+
+/* DIAMOND_OP_CHECK_HASH_KEY, moved out of run_chunk's switch so compiled code runs the same body
+ * (diamond_jit_outlined). The case body is unchanged apart from its macros. */
+__attribute__((noinline))
+DiamondVmStatus outlined_check_hash_key(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t depth,size_t *ip_ref) {
+    size_t ip=*ip_ref;(void)depth;
+    uint16_t source_reg=0,key_reg=0;
+    READ_SHORT(source_reg);READ_SHORT(key_reg);
+    if(registers[source_reg].kind!=DIAMOND_VALUE_OBJECT||
+       registers[source_reg].as.object->kind!=DIAMOND_OBJECT_HASH)
+        VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
+    if(hash_find((DiamondHash *)registers[source_reg].as.object,
+                 registers[key_reg])<0) {
+        snprintf(vm->error,sizeof vm->error,
+            "destructuring assignment missing required Hash key");
+        VM_RETURN(DIAMOND_VM_INDEX_ERROR);
+    }
+    HELPER_DONE;
+
+}
+
+/* DIAMOND_OP_ARRAY_SUFFIX, moved out of run_chunk's switch so compiled code runs the same body
+ * (diamond_jit_outlined). The case body is unchanged apart from its macros. */
+__attribute__((noinline))
+DiamondVmStatus outlined_array_suffix(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t depth,size_t *ip_ref) {
+    size_t ip=*ip_ref;(void)depth;(void)vm;
+    uint16_t destination=0,source_reg=0,reverse=0;
+    READ_SHORT(destination);READ_SHORT(source_reg);READ_SHORT(reverse);
+    if(registers[source_reg].kind!=DIAMOND_VALUE_OBJECT||
+       registers[source_reg].as.object->kind!=DIAMOND_OBJECT_ARRAY)
+        VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
+    const DiamondArray *source=
+        (const DiamondArray *)registers[source_reg].as.object;
+    if(reverse==0||reverse>source->count)
+        VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
+    registers[destination]=source->values[source->count-reverse];HELPER_DONE;
+
+}
+
+/* DIAMOND_OP_ARRAY_MIDDLE, moved out of run_chunk's switch so compiled code runs the same body
+ * (diamond_jit_outlined). The case body is unchanged apart from its macros. */
+__attribute__((noinline))
+DiamondVmStatus outlined_array_middle(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t depth,size_t *ip_ref) {
+    size_t ip=*ip_ref;(void)depth;
+    uint16_t destination=0,source_reg=0,bounds=0;
+    READ_SHORT(destination);READ_SHORT(source_reg);READ_SHORT(bounds);
+    if(registers[source_reg].kind!=DIAMOND_VALUE_OBJECT||
+       registers[source_reg].as.object->kind!=DIAMOND_OBJECT_ARRAY)
+        VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
+    const DiamondArray *source=
+        (const DiamondArray *)registers[source_reg].as.object;
+    const size_t prefix=(size_t)(bounds>>8);
+    const size_t suffix=(size_t)(bounds&0xffu);
+    if(prefix+suffix>source->count)VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
+    const size_t count=source->count-prefix-suffix;
+    const DiamondValue *values=count==0?nullptr:source->values+prefix;
+    DiamondArray *middle=allocate_array(vm,values,count);
+    if(middle==nullptr)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+    registers[destination]=DIAMOND_OBJECT(middle);HELPER_DONE;
+
+}
+
+/* DIAMOND_OP_HASH_REST, moved out of run_chunk's switch so compiled code runs the same body
+ * (diamond_jit_outlined). The case body is unchanged apart from its macros. */
+__attribute__((noinline))
+DiamondVmStatus outlined_hash_rest(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t depth,size_t *ip_ref) {
+    size_t ip=*ip_ref;(void)depth;
+    uint16_t destination=0,source_reg=0,excluded_reg=0;
+    READ_SHORT(destination);READ_SHORT(source_reg);READ_SHORT(excluded_reg);
+    if(registers[source_reg].kind!=DIAMOND_VALUE_OBJECT||
+       registers[source_reg].as.object->kind!=DIAMOND_OBJECT_HASH||
+       registers[excluded_reg].kind!=DIAMOND_VALUE_OBJECT||
+       registers[excluded_reg].as.object->kind!=DIAMOND_OBJECT_ARRAY)
+        VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
+    const DiamondHash *source=
+        (const DiamondHash *)registers[source_reg].as.object;
+    const DiamondArray *excluded=
+        (const DiamondArray *)registers[excluded_reg].as.object;
+    DiamondHash *rest=allocate_hash(vm);
+    if(rest==nullptr)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+    registers[destination]=DIAMOND_OBJECT(rest);
+    for(size_t entry=0;entry<source->count;entry++) {
+        bool omit=false;
+        for(size_t key=0;key<excluded->count;key++)
+            if(values_equal(source->entries[entry].key,
+                            excluded->values[key])) {omit=true;break;}
+        if(!omit&&!hash_set(vm,rest,source->entries[entry].key,
+            source->entries[entry].value))
+            VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+    }
+    HELPER_DONE;
+
+}
+
+/* DIAMOND_OP_CASE_HASH_HAS, moved out of run_chunk's switch so compiled code runs the same body
+ * (diamond_jit_outlined). The case body is unchanged apart from its macros. */
+__attribute__((noinline))
+DiamondVmStatus outlined_case_hash_has(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t depth,size_t *ip_ref) {
+    size_t ip=*ip_ref;(void)depth;(void)vm;
+    uint16_t destination=0,source=0,key=0;
+    READ_SHORT(destination);READ_SHORT(source);READ_SHORT(key);
+    bool present=false;
+    if(registers[source].kind==DIAMOND_VALUE_OBJECT&&
+       registers[source].as.object->kind==DIAMOND_OBJECT_HASH)
+        present=hash_find((DiamondHash *)registers[source].as.object,
+            registers[key])>=0;
+    registers[destination]=DIAMOND_BOOL(present);HELPER_DONE;
+
+}
+
+/* DIAMOND_OP_CASE_HASH_SHAPE, moved out of run_chunk's switch so compiled code runs the same body
+ * (diamond_jit_outlined). The case body is unchanged apart from its macros. */
+__attribute__((noinline))
+DiamondVmStatus outlined_case_hash_shape(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t depth,size_t *ip_ref) {
+    size_t ip=*ip_ref;(void)depth;(void)vm;
+    uint16_t destination=0,source=0;
+    READ_SHORT(destination);READ_SHORT(source);
+    registers[destination]=DIAMOND_BOOL(
+        registers[source].kind==DIAMOND_VALUE_OBJECT&&
+        registers[source].as.object->kind==DIAMOND_OBJECT_HASH);
+    HELPER_DONE;
+
+}
+
+/* DIAMOND_OP_ARRAY_REST, moved out of run_chunk's switch so compiled code runs the same body
+ * (diamond_jit_outlined). The case body is unchanged apart from its macros. */
+__attribute__((noinline))
+DiamondVmStatus outlined_array_rest(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t depth,size_t *ip_ref) {
+    size_t ip=*ip_ref;(void)depth;
+    uint16_t destination=0,array_reg=0,start=0;
+    READ_SHORT(destination);READ_SHORT(array_reg);READ_SHORT(start);
+    if(registers[array_reg].kind!=DIAMOND_VALUE_OBJECT||
+       registers[array_reg].as.object->kind!=DIAMOND_OBJECT_ARRAY)
+        VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
+    const DiamondArray *source=
+        (const DiamondArray *)registers[array_reg].as.object;
+    if(start>source->count)VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
+    const DiamondValue *rest_values=start==source->count?
+        nullptr:source->values+start;
+    DiamondArray *rest=allocate_array(vm,rest_values,source->count-start);
+    if(rest==nullptr)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+    registers[destination]=DIAMOND_OBJECT(rest);HELPER_DONE;
+
+}
+
+/* DIAMOND_OP_CASE_ARRAY_SHAPE, moved out of run_chunk's switch so compiled code runs the same body
+ * (diamond_jit_outlined). The case body is unchanged apart from its macros. */
+__attribute__((noinline))
+DiamondVmStatus outlined_case_array_shape(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t depth,size_t *ip_ref) {
+    size_t ip=*ip_ref;(void)depth;(void)vm;
+    uint16_t destination=0,array_reg=0,expected=0;
+    READ_SHORT(destination);READ_SHORT(array_reg);READ_SHORT(expected);
+    const bool minimum=(expected&0x8000u)!=0;
+    expected&=0x7fffu;
+    bool matches=false;
+    if(registers[array_reg].kind==DIAMOND_VALUE_OBJECT&&
+       registers[array_reg].as.object->kind==DIAMOND_OBJECT_ARRAY) {
+        const DiamondArray *array=
+            (const DiamondArray *)registers[array_reg].as.object;
+        matches=minimum?array->count>=expected:array->count==expected;
+    }
+    registers[destination]=DIAMOND_BOOL(matches);HELPER_DONE;
+
+}
+
+/* DIAMOND_OP_SET_NAMESPACE_CONSTANT, moved out of run_chunk's switch so compiled code runs the same body
+ * (diamond_jit_outlined). The case body is unchanged apart from its macros. */
+__attribute__((noinline))
+DiamondVmStatus outlined_set_namespace_constant(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t depth,size_t *ip_ref) {
+    size_t ip=*ip_ref;(void)depth;
+    uint16_t index=0,source=0;READ_SHORT(index);READ_SHORT(source);
+    if(index>=DIAMOND_MAX_NAMESPACE_CONSTANTS)
+        VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
+    if(!vm_reserve_namespace_constants(vm,(size_t)index+1))
+        VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+    if(vm->namespace_constant_initialized[index]) {
+        snprintf(vm->error,sizeof vm->error,"constant is already initialized");
+        VM_RETURN(DIAMOND_VM_CONSTANT_ERROR);
+    }
+    vm->namespace_constants[index]=registers[source];
+    vm->namespace_constant_initialized[index]=true;HELPER_DONE;
+
+}
+
+/* DIAMOND_OP_GET_IVAR_NAME and DIAMOND_OP_SET_IVAR_NAME, moved out of run_chunk's switch so compiled code runs the same body
+ * (diamond_jit_outlined). The case body is unchanged apart from its macros. */
+__attribute__((noinline))
+DiamondVmStatus outlined_get_ivar_name(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t depth,size_t *ip_ref) {
+    size_t ip=*ip_ref;(void)depth;
+    const uint8_t instruction=chunk->code[ip-1];
+    uint16_t first=0,receiver=0,name=0;
+    READ_SHORT(first);READ_SHORT(receiver);READ_SHORT(name);
+    const bool write=(DiamondOpCode)instruction==DIAMOND_OP_SET_IVAR_NAME;
+    const uint16_t recv=write?first:receiver;
+    const uint16_t source=write?name:0;
+    const uint16_t string_index=write?receiver:name;
+    if(registers[recv].kind!=DIAMOND_VALUE_OBJECT||
+       registers[recv].as.object->kind!=DIAMOND_OBJECT_INSTANCE||
+       (size_t)string_index>=chunk->string_count)
+        VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
+    DiamondInstance *instance=(DiamondInstance *)registers[recv].as.object;
+    const int resolved=named_field_index(instance,
+        &chunk->strings[string_index]);
+    if(resolved<0||(size_t)resolved>=instance->field_count)
+        VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
+    const uint8_t field=(uint8_t)resolved;
+    if(write) {
+        if(instance->object.frozen)VM_RETURN(DIAMOND_VM_FROZEN_ERROR);
+        instance_materialize_field(vm,instance,field);
+        instance->fields[field]=registers[source];
+        if(!gc_write_barrier(vm,(DiamondObject *)instance))
+            VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+    } else registers[first]=instance_field_value(instance,field);
+    HELPER_DONE;
+
+}
+
+/* DIAMOND_OP_CASE_MATCH, moved out of run_chunk's switch so compiled code runs the same body
+ * (diamond_jit_outlined). The case body is unchanged apart from its macros. */
+__attribute__((noinline))
+DiamondVmStatus outlined_case_match(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t depth,size_t *ip_ref) {
+    size_t ip=*ip_ref;(void)depth;
+    const size_t instruction_offset=ip-1;
+    const uint8_t *bytecode=chunk->code;
+    uint16_t destination=0,pattern=0,subject=0;
+    READ_SHORT(destination);READ_SHORT(pattern);READ_SHORT(subject);
+    bool matched=false;
+    const DiamondVmStatus status=case_match_value(vm,chunk,depth,
+        bytecode+instruction_offset,registers[pattern],
+        registers[subject],&matched);
+    VM_PROPAGATE(status);
+    registers[destination]=DIAMOND_BOOL(matched);HELPER_DONE;
+
+}
+
+/* DIAMOND_OP_COMPARE, moved out of run_chunk's switch so compiled code runs the same body
+ * (diamond_jit_outlined). The case body is unchanged apart from its macros. */
+__attribute__((noinline))
+DiamondVmStatus outlined_compare(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t depth,size_t *ip_ref) {
+    size_t ip=*ip_ref;(void)depth;
+    const size_t instruction_offset=ip-1;
+    const uint8_t *bytecode=chunk->code;
+    uint16_t destination=0,left=0,right=0;
+    READ_SHORT(destination);READ_SHORT(left);READ_SHORT(right);
+    if(is_int_value(registers[left])&&is_int_value(registers[right])) {
+        if(value_is_bignum(registers[left])||value_is_bignum(registers[right])) {
+            DiamondIntView left_view,right_view;
+            diamond_int_view(registers[left],&left_view);
+            diamond_int_view(registers[right],&right_view);
+            const int comparison=diamond_bignum_compare(left_view,right_view);
+            registers[destination]=
+                DIAMOND_INT(comparison<0?-1:comparison>0?1:0);
+            HELPER_DONE;
+        }
+        const int64_t a=registers[left].as.integer;
+        const int64_t b=registers[right].as.integer;
+        registers[destination]=DIAMOND_INT(a<b?-1:(a>b?1:0));
+        HELPER_DONE;
+    }
+    if((registers[left].kind==DIAMOND_VALUE_FLOAT||
+        registers[left].kind==DIAMOND_VALUE_INT)&&
+       (registers[right].kind==DIAMOND_VALUE_FLOAT||
+        registers[right].kind==DIAMOND_VALUE_INT)&&
+       (registers[left].kind==DIAMOND_VALUE_FLOAT||
+        registers[right].kind==DIAMOND_VALUE_FLOAT)) {
+        const double left_real=registers[left].kind==DIAMOND_VALUE_FLOAT?
+            registers[left].as.real:(double)registers[left].as.integer;
+        const double right_real=registers[right].kind==DIAMOND_VALUE_FLOAT?
+            registers[right].as.real:(double)registers[right].as.integer;
+        if(isnan(left_real)||isnan(right_real)) {
+            registers[destination]=DIAMOND_NIL;HELPER_DONE;
+        }
+        registers[destination]=DIAMOND_INT(
+            left_real<right_real?-1:(left_real>right_real?1:0));
+        HELPER_DONE;
+    }
+    if(registers[left].kind==DIAMOND_VALUE_OBJECT&&
+       registers[left].as.object->kind==DIAMOND_OBJECT_STRING&&
+       registers[right].kind==DIAMOND_VALUE_OBJECT&&
+       registers[right].as.object->kind==DIAMOND_OBJECT_STRING) {
+        const int comparison=diamond_string_compare(
+            (const DiamondString *)registers[left].as.object,
+            (const DiamondString *)registers[right].as.object);
+        registers[destination]=DIAMOND_INT(comparison<0?-1:(comparison>0?1:0));
+        HELPER_DONE;
+    }
+    if(registers[left].kind==DIAMOND_VALUE_OBJECT&&
+       registers[left].as.object->kind==DIAMOND_OBJECT_INSTANCE) {
+        bool found=false;DiamondValue op_result=DIAMOND_NIL;
+        const uint8_t *site=bytecode+instruction_offset;
+        const DiamondVmStatus status=invoke_operator_method(vm,chunk,depth,
+            site,(const DiamondInstance *)registers[left].as.object,
+            "<=>",3,&registers[right],1,&op_result,&found);
+        if(found) {
+            VM_PROPAGATE(status);
+            registers[destination]=op_result;HELPER_DONE;
+        }
+    }
+    registers[destination]=DIAMOND_NIL;HELPER_DONE;
+
+}
+
+/* DIAMOND_OP_BITWISE_AND, DIAMOND_OP_BITWISE_OR and DIAMOND_OP_BITWISE_XOR, moved out of run_chunk's switch so compiled code runs the same body
+ * (diamond_jit_outlined). The case body is unchanged apart from its macros. */
+__attribute__((noinline))
+DiamondVmStatus outlined_bitwise_and(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t depth,size_t *ip_ref) {
+    size_t ip=*ip_ref;(void)depth;
+    const uint8_t instruction=chunk->code[ip-1];
+    /* Int only, same scope cut as SHIFT_LEFT/SHIFT_RIGHT
+     * above. All three share one case body -- the only
+     * difference between them is which C operator runs.
+     * `bitwise_opcode` is this local case body's own copy of
+     * the switch's controlling value (the switch itself
+     * dispatches on a bare `instruction`, not a variable
+     * named `opcode` -- unlike DIAMOND_OP_EQUAL's own case,
+     * which does declare a local `opcode`, this one didn't
+     * need to until now). */
+    const DiamondOpCode bitwise_opcode=(DiamondOpCode)instruction;
+    uint16_t destination=0,left=0,right=0;
+    READ_SHORT(destination);READ_SHORT(left);READ_SHORT(right);
+    if(registers[left].kind!=DIAMOND_VALUE_INT||
+       registers[right].kind!=DIAMOND_VALUE_INT) {
+        if(is_int_value(registers[left])&&is_int_value(registers[right])) {
+            DiamondIntView left_view,right_view;
+            diamond_int_view(registers[left],&left_view);
+            diamond_int_view(registers[right],&right_view);
+            const DiamondValue combined=diamond_bignum_bitwise(vm,
+                bitwise_opcode==DIAMOND_OP_BITWISE_AND?DIAMOND_BIGNUM_BITWISE_AND:
+                bitwise_opcode==DIAMOND_OP_BITWISE_OR?DIAMOND_BIGNUM_BITWISE_OR:
+                DIAMOND_BIGNUM_BITWISE_XOR,left_view,right_view);
+            if(combined.kind==DIAMOND_VALUE_NIL)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+            registers[destination]=combined;HELPER_DONE;
+        }
+        const char *name=bitwise_opcode==DIAMOND_OP_BITWISE_AND?"&":
+            bitwise_opcode==DIAMOND_OP_BITWISE_OR?"|":"^";
+        DiamondValue prelude_result=DIAMOND_NIL;
+        DiamondVmStatus prelude_status=DIAMOND_VM_OK;
+        if(bitwise_opcode!=DIAMOND_OP_BITWISE_XOR&&
+           operator_prelude_fallback(vm,chunk,depth,registers[left],
+               registers[right],bitwise_opcode==DIAMOND_OP_BITWISE_AND?
+               "and":"or",&prelude_result,&prelude_status)) {
+            VM_PROPAGATE(prelude_status);
+            registers[destination]=prelude_result;HELPER_DONE;
+        }
+        format_operator_type_error(vm,registers[left],registers[right],name);
+        VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+    }
+    const int64_t a=registers[left].as.integer;
+    const int64_t b=registers[right].as.integer;
+    const int64_t bitwise_result=bitwise_opcode==DIAMOND_OP_BITWISE_AND?(a&b):
+        bitwise_opcode==DIAMOND_OP_BITWISE_OR?(a|b):(a^b);
+    registers[destination]=DIAMOND_INT(bitwise_result);
+    HELPER_DONE;
+
+}
+
+/* DIAMOND_OP_SHIFT_RIGHT, moved out of run_chunk's switch so compiled code runs the same body
+ * (diamond_jit_outlined). The case body is unchanged apart from its macros. */
+__attribute__((noinline))
+DiamondVmStatus outlined_shift_right(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t depth,size_t *ip_ref) {
+    size_t ip=*ip_ref;(void)depth;
+    /* Int only (a bignum on either side is handled below, not
+     * user-overloadable, no quickening; see SHIFT_LEFT). Arithmetic (sign-extending),
+     * matching Ruby's own Integer#>>, and well-defined for a
+     * negative left-hand side under C23 (this project's own
+     * -std=c23) -- not the "implementation-defined" territory
+     * an older C standard would put a signed right-shift in. */
+    uint16_t destination=0,left=0,right=0;
+    READ_SHORT(destination);READ_SHORT(left);READ_SHORT(right);
+    if(!is_int_value(registers[left])||!is_int_value(registers[right])) {
+        format_operator_type_error(vm,registers[left],registers[right],">>");
+        VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+    }
+    if(value_is_bignum(registers[right])||registers[right].as.integer<0) {
+        snprintf(vm->error,sizeof vm->error,
+            "shift amount must not be negative");
+        VM_RETURN(DIAMOND_VM_INTEGER_OVERFLOW);
+    }
+    const int64_t shift_amount=registers[right].as.integer;
+    if(registers[left].kind==DIAMOND_VALUE_INT) {
+        /* Arithmetic shift; one past the width keeps only the sign. */
+        const int64_t left_value=registers[left].as.integer;
+        registers[destination]=DIAMOND_INT(shift_amount>=64?
+            (left_value<0?-1:0):left_value>>(unsigned)shift_amount);
+        HELPER_DONE;
+    }
+    DiamondIntView left_view;
+    diamond_int_view(registers[left],&left_view);
+    const DiamondValue shifted=diamond_bignum_shift_right(vm,left_view,
+        (uint64_t)shift_amount);
+    if(shifted.kind==DIAMOND_VALUE_NIL)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+    registers[destination]=shifted;
+    HELPER_DONE;
+
+}
+
+/* DIAMOND_OP_SHIFT_LEFT, moved out of run_chunk's switch so compiled code runs the same body
+ * (diamond_jit_outlined). The case body is unchanged apart from its macros. */
+__attribute__((noinline))
+DiamondVmStatus outlined_shift_left(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t depth,size_t *ip_ref) {
+    size_t ip=*ip_ref;(void)depth;
+    /* Int << Int: bitwise left shift. Array << value: push and
+     * return the array itself (Ruby's append idiom). Not a
+     * user-overloadable operator (see docs/syntax.md) -- no
+     * invoke_operator_method dispatch, unlike the arithmetic
+     * operators, since it's native-only on these two types by
+     * design. No quickening/bignum-shift support: kept
+     * deliberately simple, unlike ADD/SUBTRACT/MULTIPLY/DIVIDE,
+     * since `<<` is rarely a hot-loop operator the way
+     * arithmetic is. */
+    uint16_t destination=0,left=0,right=0;
+    READ_SHORT(destination);READ_SHORT(left);READ_SHORT(right);
+    if(is_int_value(registers[left])&&is_int_value(registers[right])) {
+        if(value_is_bignum(registers[right])||registers[right].as.integer<0||
+           registers[right].as.integer>DIAMOND_MAX_SHIFT_BITS) {
+            snprintf(vm->error,sizeof vm->error,
+                "shift amount must be between 0 and %d",
+                (int)DIAMOND_MAX_SHIFT_BITS);
+            VM_RETURN(DIAMOND_VM_INTEGER_OVERFLOW);
+        }
+        const int64_t shift_amount=registers[right].as.integer;
+        if(registers[left].kind==DIAMOND_VALUE_INT&&shift_amount<64) {
+            const int64_t left_value=registers[left].as.integer;
+            const int64_t result_value=(int64_t)
+                ((uint64_t)left_value<<(unsigned)shift_amount);
+            if((result_value>>(unsigned)shift_amount)==left_value) {
+                registers[destination]=DIAMOND_INT(result_value);
+                HELPER_DONE;
+            }
+        }
+        /* Overflowed 64 bits, or already a bignum: the result
+         * promotes like every other Int operation. */
+        DiamondIntView left_view;
+        diamond_int_view(registers[left],&left_view);
+        const DiamondValue shifted=diamond_bignum_shift_left(vm,
+            left_view,(uint64_t)shift_amount);
+        if(shifted.kind==DIAMOND_VALUE_NIL)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+        registers[destination]=shifted;
+        HELPER_DONE;
+    }
+    if(registers[left].kind==DIAMOND_VALUE_OBJECT&&
+       registers[left].as.object->kind==DIAMOND_OBJECT_ARRAY) {
+        DiamondArray *array=(DiamondArray *)registers[left].as.object;
+        if(!array_value_satisfies_constraints(array,registers[right])) {
+            snprintf(vm->error,sizeof vm->error,
+                     "array element violates its type annotation");
+            VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+        }
+        if(!array_push(vm,array,registers[right]))
+            VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+        registers[destination]=registers[left];HELPER_DONE;
+    }
+    snprintf(vm->error,sizeof vm->error,
+        "'<<' expects an Int shift amount or a value to push onto an Array");
+    VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+
+}
+
+/* DIAMOND_OP_GETS, moved out of run_chunk's switch so compiled code runs the same body
+ * (diamond_jit_outlined). The case body is unchanged apart from its macros. */
+__attribute__((noinline))
+DiamondVmStatus outlined_gets(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t depth,size_t *ip_ref) {
+    size_t ip=*ip_ref;(void)depth;
+    uint16_t destination=0;
+    READ_SHORT(destination);
+    StringBuilder builder={};
+    bool saw_any=false;
+    DiamondVmStatus read_status=read_line(vm,stdin,&builder,&saw_any);
+    if(read_status!=DIAMOND_VM_OK) {
+        free(builder.chars);VM_RETURN(read_status);
+    }
+    if(!saw_any) {
+        free(builder.chars);
+        registers[destination]=DIAMOND_NIL;HELPER_DONE;
+    }
+    DiamondString *string=allocate_string(vm,builder.chars,builder.length);
+    free(builder.chars);
+    if(string==nullptr)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+    registers[destination]=DIAMOND_OBJECT(string);HELPER_DONE;
+
+}
+
 #undef HELPER_DONE
 #undef READ_SHORT
 #undef READ_BYTE
