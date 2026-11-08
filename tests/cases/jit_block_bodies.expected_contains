@@ -1,0 +1,10 @@
+^1430$
+^\[1, 9, 25\]$
+^21$
+^\[item 1, item 2, item 3\]$
+^\[4, 7, 10\]$
+^\[5, 7\]$
+^\[9, 3\]$
+^9$
+^nil$
+jit: 19 compiled function(s), 0 bailout(s), 1 hard propagation(s)

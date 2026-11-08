@@ -2340,13 +2340,79 @@ runs user code, so it needs no frame and does not set `has_called`.
 `diamond_jit_get_cell`, `diamond_jit_set_cell`, `diamond_jit_closure`), so a function that passes
 a block capturing its locals compiles. nbody's `advance` boxes its locals only after its loops,
 for the closing `bodies.each() do ... end`, and was rejected for it. The closure body itself
-still runs interpreted: every JIT entry passes `closure = nullptr`, and `GET_CAPTURE` and friends
-have no case.
+compiles too; see "Block bodies" below.
 
 `CLOSURE` is `diamond_make_closure`, a `static inline` in `vm_internal.h` that `run_chunk` also
 uses (an out-of-line call cost the closures benchmark 2% in the interpreter). A block records its
 creating frame's `serial` and `home` as break and return targets, so JIT frames now take a serial
 from `vm->frame_serial` the first time they create a closure (in `diamond_jit_closure`, so other
-compiled calls skip the increment); a compiled function is never a block, so its home is its own
-serial. Neither target is ever reached from compiled code: a block that breaks or
-returns marks its landing function `nonlocal_landing`, which the JIT does not compile.
+compiled calls skip the increment). Its home is `run_chunk`'s: the frame's own serial, or for a
+compiled block body the `return_target` of the closure it was entered with. Neither target is
+ever reached from compiled code: a block that breaks or returns marks its landing function
+`nonlocal_landing`, which the JIT does not compile, and the breaking or returning block itself
+has `BLOCK_BREAK`/`BLOCK_RETURN`, which have no case.
+
+## Block bodies
+
+A block or closure body compiles like any function. The difference is that it reads its captures
+through the closure it was called with, and the native entry takes that closure as a seventh
+argument. The argument sits on the caller's stack, so other calls pay almost nothing for it, and
+only a function that uses its closure reads it (`emit_load_closure`, at a fixed offset above the
+pushed registers and the frame reservation).
+
+- **Capture opcodes:** `GET_CAPTURE`, `GET_CAPTURE_CELL` and `SET_CAPTURE` compile to
+  trampolines with `run_chunk`'s checks. A missing closure (a plain call into the function) is
+  malformed bytecode in both tiers.
+- **Self-calls:** a function that reads its closure keeps the self-call trampoline. That
+  trampoline enters with no closure, as `run_chunk`'s `CALL` does, whereas the native self-call
+  would pass no seventh argument at all.
+- **How blocks are entered:** blocks reach native code through `block_call_run`, which now goes
+  through `jit_call_or_interpret`. That covers `CALL_CLOSURE` from interpreted code and the C
+  loops behind `Array#each`/`map`/`select`/`reduce`/`each_with_index` and `Int#times`.
+- **Blocks with a self slot:** these run native only when they get `self` through their captures
+  (`DIAMOND_OWNER_CAPTURED_SELF`). With a real class owner, the JIT's receiver proofs would read
+  the slot's nil placeholder as the receiver.
+- **Generic closures:** a closure with type bindings belongs to a generic function, which the
+  JIT already refuses.
+- **Ineligible functions:** `jit_call_or_interpret` goes straight to `run_chunk` for a function
+  already marked `jit_ineligible`. A block that cannot compile is called once per element, and
+  `jit_call_core`'s checks cost regex 1% before this.
+
+`GET_NAMESPACE_CONSTANT` (a top-level constant such as regex's `EMAIL`) compiles to
+`diamond_jit_get_namespace_constant`. It shares `diamond_read_namespace_constant` with
+`run_chunk`.
+
+With `DIAMOND_JIT=1`:
+
+| benchmark | instructions | wall time |
+|---|---|---|
+| blocks | 36% fewer | 91 to 76 ms |
+| iterate | 36% fewer | 152 to 116 ms |
+| regex | 5% fewer | 216 to 207 ms |
+
+The interpreter got slightly faster on both blocks and iterate: `block_call_run` kept a 4 KB
+argument buffer in its own frame for the rare self-slot case, and that case now has its own
+`noinline` function.
+
+## Slow paths that allocate
+
+The inline fast paths of the arithmetic, comparison and `==` opcodes call
+`diamond_jit_arith_slow`, `diamond_jit_compare_slow` or `diamond_jit_equal_general` for anything
+they do not handle. Those can allocate (a big integer, a concatenated String) or run a user
+operator method. They used to set only `has_called`, so a function whose other instructions
+needed no frame ran them with its registers invisible to the GC. Under stress GC,
+`(a / b) * b + a % b == a` on big integers in such a function lost its intermediate quotient
+(`tests/cases/jit_arith_slow_path_gc.d6`). This has been broken since the slow paths were added.
+
+The fix links a frame around each such call, but only when the function has no frame of its own
+(`JitCompiler.slow_frame`, `emit_slow_frame_link`/`_unlink`).
+
+- **Fast path:** the prologue reserves the frame's space, and the fast path pays two
+  instructions for it (`sub`/`add rsp`).
+- **Slow path:** it writes and links the frame just before its call. Afterwards it unlinks it
+  through RCX, which keeps the call's status in AL.
+- **Errors:** the propagate exit then sees no frame, and reads the trace line's offset from the
+  pad slot above the reservation.
+
+Linking the frame for the whole call instead cost blocks 6% and poly 3% of their instructions;
+this way costs about 1% on poly and mandelbrot.

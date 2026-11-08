@@ -141,10 +141,11 @@ are against YJIT, on call-heavy and floating-point object code: fib 2.7x, poly 2
 
 - **JIT coverage** -- the JIT speeds up `loop`, `mandelbrot` and `sieve` (simple numeric
   loops) but not calls, field access or Float objects. Traced on 0.29.0-dev:
-  - Block and closure bodies never run as native code (no JIT entry passes the closure, and
-    `GET_CAPTURE` has no case), so iterate, blocks and regex spend their time interpreted
-    even though their `run_once` compiles. Calling a closure (`CALL_CLOSURE`) and string
-    interpolation (`TO_STRING`) still reject the function.
+  - Block bodies run as native code now, but every block call still goes through C:
+    `block_call_run`, `jit_run_native`'s register copy, and trampolines for each capture read
+    and write. Calling a closure from compiled code (`CALL_CLOSURE`) and string interpolation
+    (`TO_STRING`) still reject the function, and `PUSH_ENSURE` rejects a function with
+    handlers (exceptions).
   - Polymorphic and untyped call sites pay the full dispatch per call (poly's
     `shapes[i].area()`); a per-site inline cache checked in native code would cut that.
   - A compiled function's call to itself is native now (fib 121 ms against YJIT's 60), but

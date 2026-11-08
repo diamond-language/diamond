@@ -63,16 +63,18 @@ DiamondVmStatus block_call_prepare(const DiamondChunk *chunk,
         return DIAMOND_VM_ARITY_ERROR;
     call->child=function_call_chunk(chunk,fn,&call->child_storage);
     call->called=called;
+    call->function=fn;
     call->argc=argc;
     call->self_slot=needs_self_slot;
     return DIAMOND_VM_OK;
 }
 
-DiamondVmStatus block_call_run(DiamondVm *vm,const DiamondBlockCall *call,
+/* A block with a self slot: the arguments shift up one behind a nil
+ * placeholder. Kept out of block_call_run so the buffer does not give the
+ * common call a 4 KB frame and saved registers. */
+__attribute__((noinline))
+static DiamondVmStatus block_call_run_self_slot(DiamondVm *vm,const DiamondBlockCall *call,
         const DiamondValue *arguments,size_t depth,DiamondValue *result) {
-    if(!call->self_slot)
-        return run_chunk(call->child,vm,arguments,call->argc,depth+1,
-            call->called,result);
     /* No argc>DIAMOND_MAX_ARGUMENTS guard needed here: argc is a plain
      * uint8_t (the wire format's own argument-count width), so it can
      * never exceed DIAMOND_MAX_ARGUMENTS (255) in the first place --
@@ -81,8 +83,22 @@ DiamondVmStatus block_call_run(DiamondVm *vm,const DiamondBlockCall *call,
     call_arguments[0]=DIAMOND_NIL;
     for(size_t index=0;index<call->argc;index++)
         call_arguments[index+1]=arguments[index];
+    /* A closure that materializes `self` from its captures can run as
+     * native code. A real class or module owner stays interpreted: the JIT
+     * treats register 0 of such a function as the receiver, which the nil
+     * placeholder here is not. */
+    if(call->function->owner_class==DIAMOND_OWNER_CAPTURED_SELF)
+        return jit_call_or_interpret(vm,call->function,call->child,call_arguments,
+            (size_t)call->argc+1,depth,call->called,result);
     return run_chunk(call->child,vm,call_arguments,(size_t)call->argc+1,
         depth+1,call->called,result);
+}
+
+DiamondVmStatus block_call_run(DiamondVm *vm,const DiamondBlockCall *call,
+        const DiamondValue *arguments,size_t depth,DiamondValue *result) {
+    if(call->self_slot) return block_call_run_self_slot(vm,call,arguments,depth,result);
+    return jit_call_or_interpret(vm,call->function,call->child,arguments,
+        call->argc,depth,call->called,result);
 }
 
 DiamondVmStatus call_closure_helper(DiamondVm *vm,const DiamondChunk *chunk,
@@ -146,7 +162,8 @@ __attribute__((no_sanitize("function")))
 #endif
 static inline uint8_t jit_run_native(DiamondVm *vm, const DiamondFunction *function,
         const DiamondChunk *chunk_to_interpret, const DiamondValue *arguments,
-        size_t argument_count, size_t depth, DiamondValue *result) {
+        size_t argument_count, size_t depth, const DiamondClosure *closure,
+        DiamondValue *result) {
     DiamondValue jit_registers[DIAMOND_JIT_MAX_REGISTERS];
     const size_t jit_register_count = function->register_count == 0
         ? DIAMOND_JIT_MAX_REGISTERS : function->register_count;
@@ -180,7 +197,7 @@ static inline uint8_t jit_run_native(DiamondVm *vm, const DiamondFunction *funct
      * why this status exists at all, and re-running the whole
      * function from scratch would invoke it a second time. */
     const uint8_t jit_status = jit_fn(vm, jit_registers, &jit_result,
-            argument_count, chunk_to_interpret, depth + 1);
+            argument_count, chunk_to_interpret, depth + 1, closure);
     if (jit_status == DIAMOND_VM_OK) {
         *result = jit_result;
         return DIAMOND_VM_OK;
@@ -277,7 +294,7 @@ static uint8_t jit_call_core(DiamondVm *vm, const DiamondFunction *function,
         }
         if (mutable_function->jit_code != nullptr) {
             const uint8_t jit_status = jit_run_native(vm, function, chunk_to_interpret,
-                arguments, argument_count, depth, result);
+                arguments, argument_count, depth, closure, result);
             /* A retry falls through to the ordinary interpreted call below --
              * always fully correct regardless of why the compiled attempt
              * bailed. */
@@ -1014,7 +1031,7 @@ DiamondVmStatus diamond_jit_call_self(DiamondVm *vm, const DiamondChunk *chunk,
     DiamondChunk called_storage;
     const DiamondChunk *called_chunk = plain_call_chunk_for(function, chunk, &called_storage);
     const uint8_t status = jit_run_native(vm, function, called_chunk, &registers[base], argc,
-        depth, out);
+        depth, nullptr, out);
     if (status == DIAMOND_JIT_TAIL) return jit_tail_loop(vm, called_chunk, depth, out);
     if (status == DIAMOND_JIT_RETRY)
         return run_chunk(called_chunk, vm, &registers[base], argc, depth + 1, nullptr, out);
@@ -2290,21 +2307,58 @@ DiamondVmStatus diamond_jit_invoke_any(DiamondVm *vm,const DiamondChunk *chunk,
 /* Compiled code's DIAMOND_OP_CLOSURE. The compiling function always pushes
  * a frame for it (vm->frames is that frame). The prologue leaves its
  * serial 0, so the first closure gives it one here, sparing every other
- * compiled call the increment; a compiled function is never itself a block,
- * so its frame is its own home. */
+ * compiled call the increment. Its home is run_chunk's: the frame itself,
+ * or for a do-block body (`closure`, the one it was entered with) the
+ * method the block was written in, where a `return` inside a nested block
+ * lands. */
 DiamondVmStatus diamond_jit_closure(DiamondVm *vm,const DiamondChunk *chunk,
-        DiamondValue *registers,const uint8_t *site) {
+        DiamondValue *registers,const uint8_t *site,const DiamondClosure *closure) {
     const uint16_t dest=(uint16_t)(((unsigned)site[1]<<8)|site[2]);
     DiamondFrame *frame=(DiamondFrame *)vm->frames;
     if(frame->serial==0) {
         frame->serial=++vm->frame_serial;
-        frame->home=frame->serial;
+        frame->home=closure!=nullptr&&closure->is_block&&closure->return_target!=0?
+            closure->return_target:frame->serial;
     }
     DiamondValue created=DIAMOND_NIL;
     const DiamondVmStatus status=diamond_make_closure(vm,chunk,registers,site,
         frame->serial,frame->home,&created);
     if(status!=DIAMOND_VM_OK) return status;
     registers[dest]=created;
+    return DIAMOND_VM_OK;
+}
+
+/* Compiled code's DIAMOND_OP_GET_NAMESPACE_CONSTANT. Neither allocates nor
+ * runs user code. */
+DiamondVmStatus diamond_jit_get_namespace_constant(DiamondVm *vm,DiamondValue *registers,
+        uint16_t dest,uint16_t index) {
+    return diamond_read_namespace_constant(vm,index,&registers[dest]);
+}
+
+/* A block body's captures: run_chunk's GET_CAPTURE, GET_CAPTURE_CELL and
+ * SET_CAPTURE, checks included. */
+static inline DiamondCell *jit_capture_cell(const DiamondClosure *closure,uint16_t index) {
+    if(closure==nullptr||index>=closure->capture_count) return nullptr;
+    const DiamondValue captured=closure->captures[index];
+    if(captured.kind!=DIAMOND_VALUE_OBJECT||captured.as.object->kind!=DIAMOND_OBJECT_CELL)
+        return nullptr;
+    return (DiamondCell *)captured.as.object;
+}
+
+DiamondVmStatus diamond_jit_get_capture(const DiamondClosure *closure,
+        DiamondValue *registers,uint16_t dest,uint16_t index,bool cell) {
+    DiamondCell *found=jit_capture_cell(closure,index);
+    if(found==nullptr) return DIAMOND_VM_INVALID_BYTECODE;
+    registers[dest]=cell?DIAMOND_OBJECT(found):found->value;
+    return DIAMOND_VM_OK;
+}
+
+DiamondVmStatus diamond_jit_set_capture(DiamondVm *vm,const DiamondClosure *closure,
+        DiamondValue *registers,uint16_t index,uint16_t source) {
+    DiamondCell *found=jit_capture_cell(closure,index);
+    if(found==nullptr) return DIAMOND_VM_INVALID_BYTECODE;
+    found->value=registers[source];
+    if(!gc_write_barrier(vm,&found->object)) return DIAMOND_VM_OUT_OF_MEMORY;
     return DIAMOND_VM_OK;
 }
 

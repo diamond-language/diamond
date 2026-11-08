@@ -1,0 +1,108 @@
+# Block bodies run as native code: a block reading and writing captured
+# locals, map/select/reduce/times blocks, a block that builds a nested block
+# (which captures through it), a block in a method reading `self` and an
+# instance variable through its captures, a block that allocates on every
+# call (stress GC), and a block reading a top-level constant. A `break` and a
+# `return` inside a block nested in another block land on the right frames:
+# the outer block whose call the break was written for, and the method the
+# return was written in.
+def sum_mod(values) -> Int
+  total = 0
+  values.each() do |v|
+    total += v % 7
+  end
+  values.each_with_index() do |v, i|
+    total += v * i % 5
+  end
+  values.length().times() do |i|
+    total += i % 4
+  end
+  total + values.reduce(0) do |acc, v| acc + v % 3 end
+end
+
+def squares_of_odd(values) -> Array
+  values.select() do |v|
+    v % 2 == 1
+  end.map() do |v|
+    v * v
+  end
+end
+
+def grid_total(rows) -> Int
+  count = 0
+  rows.each() do |row|
+    row.each() do |cell|
+      count += cell
+    end
+  end
+  count
+end
+
+def labels(values) -> Array
+  values.map() do |v|
+    "item " + v.to_s()
+  end
+end
+
+class Scaler
+  def initialize(factor: Int)
+    @factor = factor
+  end
+
+  def scale_all(values) -> Array
+    values.map() do |v|
+      v * @factor + self.offset()
+    end
+  end
+
+  def offset() -> Int = 1
+end
+
+LIMIT = 3
+
+def over_limit(values) -> Array
+  values.select() do |v|
+    v > LIMIT
+  end
+end
+
+def first_row_over(rows, limit: Int)
+  found = nil
+  rows.each() do |row|
+    row.each() do |cell|
+      if cell > limit
+        found = cell
+        break
+      end
+    end
+    if found != nil
+      return [found, row.length()]
+    end
+  end
+  nil
+end
+
+def first_cell_over(rows, limit: Int)
+  rows.each() do |row|
+    row.each() do |cell|
+      return cell if cell > limit
+    end
+  end
+  nil
+end
+
+values = []
+i = 0
+while i < 200
+  values.push(i * 31 % 1009)
+  i += 1
+end
+puts(sum_mod(values))
+puts(squares_of_odd([1, 2, 3, 4, 5]))
+puts(grid_total([[1, 2], [3], [4, 5, 6]]))
+puts(labels([1, 2, 3]))
+puts(Scaler.new(3).scale_all([1, 2, 3]))
+puts(over_limit([1, 5, 2, 7]))
+puts(first_row_over([[1, 2], [3, 9, 4], [10]], 5))
+puts(first_cell_over([[1, 2], [3, 9, 4], [10]], 5))
+puts(first_cell_over([[1]], 5))
