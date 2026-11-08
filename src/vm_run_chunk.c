@@ -2022,34 +2022,16 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 break;
             }
             case DIAMOND_OP_CLOSURE: op_CLOSURE: {
-                uint16_t dest=0;uint8_t count=0;uint16_t index=0;
                 READ_OPERANDS(5);
-                dest=OPERAND_SHORT(0); index=OPERAND_SHORT(2); count=OPERAND_BYTE(4);
-                /* count is a uint8_t, so DIAMOND_MAX_CAPTURES (255) bounds it; this only rejects bytecode
-                 * that names a function that does not exist. */
-                if(index>=chunk->function_count)VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
-                DiamondClosure *created=allocate_closure(vm,index,nullptr,count);
-                if(created==nullptr)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
-                for(size_t i=0;i<count;i++){uint16_t reg=0;READ_SHORT(reg);created->captures[i]=registers[reg];}
-                created->is_block=strcmp(chunk->functions[index]->name,"<block>")==0;
-                if(chunk->functions[index]->captures_type_variables) {
-                    const uint8_t variables=chunk->functions[index]->type_variable_count;
-                    if(variables==0||variables>8||variables!=chunk->type_variable_count||
-                       chunk->type_variable_bindings==nullptr)VM_RETURN(DIAMOND_VM_TYPE_ERROR);
-                    created->type_bindings=malloc(variables*sizeof *created->type_bindings);
-                    if(created->type_bindings==nullptr)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
-                    created->type_binding_count=variables;
-                    vm->bytes_allocated+=variables*sizeof *created->type_bindings;
-                    diamond_copy_bytes(created->type_bindings,chunk->type_variable_bindings,
-                        variables*sizeof *created->type_bindings);
-                }
-                if(created->is_block) {
-                    created->break_target=frame.serial;
-                    created->return_target=frame.home;
-                    created->break_call_offset=
-                        chunk->functions[index]->block_call_offset;
-                }
-                registers[dest]=DIAMOND_OBJECT(created);break;
+                const uint16_t dest=OPERAND_SHORT(0);
+                const uint8_t count=OPERAND_BYTE(4);
+                if(ip+2*(size_t)count>bytecode_count)VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
+                DiamondValue created=DIAMOND_NIL;
+                const DiamondVmStatus closure_status=diamond_make_closure(vm,chunk,
+                    registers,bytecode+instruction_offset,frame.serial,frame.home,&created);
+                VM_PROPAGATE(closure_status);
+                ip+=2*(size_t)count;
+                registers[dest]=created;break;
             }
             case DIAMOND_OP_GET_CAPTURE: op_GET_CAPTURE: {
                 uint16_t dest=0,index=0;READ_OPERANDS(4);

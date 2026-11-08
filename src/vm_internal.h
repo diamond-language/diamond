@@ -994,6 +994,49 @@ static inline DiamondCell *allocate_cell(DiamondVm *vm,DiamondValue value) {
     vm->young_objects=&cell->object;vm->bytes_allocated+=sizeof(DiamondCell);return cell;
 }
 
+DIAMOND_INTERNAL void diamond_copy_bytes(void *destination,const void *source,size_t size);
+
+/* DIAMOND_OP_CLOSURE: a closure over function `index` capturing the listed
+ * registers, shared by run_chunk and compiled code (diamond_jit_closure).
+ * `site` is the instruction, its capture list included, which the caller
+ * has bounds-checked. A block records `serial` and `home`, the creating
+ * frame's, as the targets of its break and return. */
+static inline DiamondVmStatus diamond_make_closure(DiamondVm *vm,const DiamondChunk *chunk,
+        const DiamondValue *registers,const uint8_t *site,uint64_t serial,
+        uint64_t home,DiamondValue *out) {
+    const uint16_t index=(uint16_t)(((unsigned)site[3]<<8)|site[4]);
+    const uint8_t count=site[5];
+    /* count is a uint8_t, so DIAMOND_MAX_CAPTURES (255) bounds it; this only
+     * rejects bytecode that names a function that does not exist. */
+    if(index>=chunk->function_count) return DIAMOND_VM_INVALID_BYTECODE;
+    DiamondClosure *created=allocate_closure(vm,index,nullptr,count);
+    if(created==nullptr) return DIAMOND_VM_OUT_OF_MEMORY;
+    for(size_t i=0;i<count;i++) {
+        const uint16_t reg=(uint16_t)(((unsigned)site[6+2*i]<<8)|site[7+2*i]);
+        created->captures[i]=registers[reg];
+    }
+    created->is_block=strcmp(chunk->functions[index]->name,"<block>")==0;
+    if(chunk->functions[index]->captures_type_variables) {
+        const uint8_t variables=chunk->functions[index]->type_variable_count;
+        if(variables==0||variables>8||variables!=chunk->type_variable_count||
+           chunk->type_variable_bindings==nullptr) return DIAMOND_VM_TYPE_ERROR;
+        created->type_bindings=malloc(variables*sizeof *created->type_bindings);
+        if(created->type_bindings==nullptr) return DIAMOND_VM_OUT_OF_MEMORY;
+        created->type_binding_count=variables;
+        vm->bytes_allocated+=variables*sizeof *created->type_bindings;
+        diamond_copy_bytes(created->type_bindings,chunk->type_variable_bindings,
+            variables*sizeof *created->type_bindings);
+    }
+    if(created->is_block) {
+        created->break_target=serial;
+        created->return_target=home;
+        created->break_call_offset=chunk->functions[index]->block_call_offset;
+    }
+    *out=DIAMOND_OBJECT(created);
+    return DIAMOND_VM_OK;
+}
+
+
 DIAMOND_INTERNAL DiamondFiberHandle *allocate_fiber_handle(DiamondVm *vm,DiamondFiber *fiber);
 
 /* A raw OS-thread limit, not a language-level tuning knob: real pthreads
@@ -2000,7 +2043,6 @@ static inline int64_t diamond_int_floor_divide(int64_t left,int64_t right) {
     const int64_t quotient=left/right;
     return quotient-((left%right!=0)&((left^right)<0));
 }
-DIAMOND_INTERNAL void diamond_copy_bytes(void *destination,const void *source,size_t size);
 DIAMOND_INTERNAL DiamondVmStatus outlined_call_typed(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
         size_t depth,size_t *ip_ref);
 DIAMOND_INTERNAL DiamondVmStatus outlined_call_spread(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,

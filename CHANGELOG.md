@@ -39,9 +39,9 @@ authoritative fine-grained record.
 - **The JIT compiles functions that call methods on values of unknown type.** A method call
   whose receiver the JIT could not prove the type of (an untyped parameter, an Array element, a
   polymorphic call site) used to keep the whole function interpreted; it now compiles to a call
-  into the interpreter's own dispatch, and `Math.sqrt` and the other `Math` functions compile
-  too. With `DIAMOND_JIT=1`, the poly benchmark runs about 14% fewer instructions and counts
-  about 37% fewer.
+  into the interpreter's own dispatch. Functions that pass a block capturing their locals, and
+  the `Math` functions, compile too. With `DIAMOND_JIT=1`, the counts benchmark runs about 37%
+  fewer instructions, nbody and poly about 14% fewer, and sort 13% fewer.
 
 ### Fixed
 

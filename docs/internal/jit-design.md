@@ -2296,9 +2296,25 @@ from `Thread#join` the uncaught-exception error text `run_chunk` gives it when n
 it. `INVOKE_TYPED` still has no case and rejects the function.
 
 This removes a rejection, not call overhead: poly's `total_area` now compiles but each
-`shapes[i].area()` still pays for the full dispatch and a C round trip into the callee. nbody's
-`advance` is still rejected on `BOX_LOCAL` (its block captures `dt`).
+`shapes[i].area()` still pays for the full dispatch and a C round trip into the callee.
 
 `MATH_UNARY` and `MATH_BINARY` (`Math.sqrt`, `Math.pow`, ...) compile to a call to
 `diamond_jit_math`, which shares `diamond_math_apply` with `run_chunk`. It neither allocates nor
 runs user code, so it needs no frame and does not set `has_called`.
+
+## Closures created by compiled code
+
+`BOX_LOCAL`, `GET_CELL`, `SET_CELL` and `CLOSURE` compile to trampolines (`diamond_jit_box_local`,
+`diamond_jit_get_cell`, `diamond_jit_set_cell`, `diamond_jit_closure`), so a function that passes
+a block capturing its locals compiles. nbody's `advance` boxes its locals only after its loops,
+for the closing `bodies.each() do ... end`, and was rejected for it. The closure body itself
+still runs interpreted: every JIT entry passes `closure = nullptr`, and `GET_CAPTURE` and friends
+have no case.
+
+`CLOSURE` is `diamond_make_closure`, a `static inline` in `vm_internal.h` that `run_chunk` also
+uses (an out-of-line call cost the closures benchmark 2% in the interpreter). A block records its
+creating frame's `serial` and `home` as break and return targets, so JIT frames now take a serial
+from `vm->frame_serial` the first time they create a closure (in `diamond_jit_closure`, so other
+compiled calls skip the increment); a compiled function is never a block, so its home is its own
+serial. Neither target is ever reached from compiled code: a block that breaks or
+returns marks its landing function `nonlocal_landing`, which the JIT does not compile.

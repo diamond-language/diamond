@@ -141,10 +141,10 @@ are against YJIT, on call-heavy and floating-point object code: fib 2.7x, poly 2
 
 - **JIT coverage** -- the JIT speeds up `loop`, `mandelbrot` and `sieve` (simple numeric
   loops) but not calls, field access or Float objects. Traced on 0.29.0-dev:
-  - It compiles whole functions or none. A method call on an unproven receiver now compiles
-    to the interpreter's dispatch, but blocks that capture locals (`BOX_LOCAL`,
-    `CALL_CLOSURE`) still reject the function: nbody's hot `advance`, and `run_once` in
-    iterate, blocks and closures.
+  - Block and closure bodies never run as native code (no JIT entry passes the closure, and
+    `GET_CAPTURE` has no case), so iterate, blocks and regex spend their time interpreted
+    even though their `run_once` compiles. Calling a closure (`CALL_CLOSURE`) and string
+    interpolation (`TO_STRING`) still reject the function.
   - Polymorphic and untyped call sites pay the full dispatch per call (poly's
     `shapes[i].area()`); a per-site inline cache checked in native code would cut that.
   - Where it does compile (fib, trees' `make`/`check`, objects' `dot`), calls and objects

@@ -446,6 +446,22 @@ DiamondVmStatus diamond_jit_invoke_instance(DiamondVm *vm, const DiamondChunk *c
 DiamondVmStatus diamond_jit_invoke_any(DiamondVm *vm, const DiamondChunk *chunk,
         DiamondValue *registers, const uint8_t *site, size_t depth);
 
+/* Closures created by compiled code (src/vm_calls.c). diamond_jit_closure
+ * is DIAMOND_OP_CLOSURE, read from the instruction at `site` (the same
+ * diamond_make_closure run_chunk uses), with the compiled function's own
+ * frame (vm->frames) as a block's break and return target; it allocates.
+ * BOX_LOCAL allocates a cell; GET_CELL/SET_CELL read and write one, and
+ * fail only on bytecode that names a register holding no cell (SET_CELL
+ * also on its write barrier running out of memory). None runs user code. */
+DiamondVmStatus diamond_jit_closure(DiamondVm *vm, const DiamondChunk *chunk,
+        DiamondValue *registers, const uint8_t *site);
+DiamondVmStatus diamond_jit_box_local(DiamondVm *vm, DiamondValue *registers,
+        uint16_t reg);
+DiamondVmStatus diamond_jit_get_cell(DiamondValue *registers, uint16_t dest,
+        uint16_t cell_reg);
+DiamondVmStatus diamond_jit_set_cell(DiamondVm *vm, DiamondValue *registers,
+        uint16_t cell_reg, uint16_t source);
+
 typedef enum DiamondJitNativeReadOp {
     DIAMOND_JIT_NATIVE_STRING_LENGTH,
     DIAMOND_JIT_NATIVE_STRING_INDEX_OF,

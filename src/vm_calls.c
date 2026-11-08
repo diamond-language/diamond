@@ -2265,3 +2265,57 @@ DiamondVmStatus diamond_jit_invoke_any(DiamondVm *vm,const DiamondChunk *chunk,
     if(status==DIAMOND_VM_EXCEPTION&&thread) set_uncaught_exception_error(vm);
     return status;
 }
+
+/* Compiled code's DIAMOND_OP_CLOSURE. The compiling function always pushes
+ * a frame for it (vm->frames is that frame). diamond_jit_frame_push leaves
+ * its serial 0, so the first closure gives it one here, sparing every other
+ * compiled call the increment; a compiled function is never itself a block,
+ * so its frame is its own home. */
+DiamondVmStatus diamond_jit_closure(DiamondVm *vm,const DiamondChunk *chunk,
+        DiamondValue *registers,const uint8_t *site) {
+    const uint16_t dest=(uint16_t)(((unsigned)site[1]<<8)|site[2]);
+    DiamondFrame *frame=(DiamondFrame *)vm->frames;
+    if(frame->serial==0) {
+        frame->serial=++vm->frame_serial;
+        frame->home=frame->serial;
+    }
+    DiamondValue created=DIAMOND_NIL;
+    const DiamondVmStatus status=diamond_make_closure(vm,chunk,registers,site,
+        frame->serial,frame->home,&created);
+    if(status!=DIAMOND_VM_OK) return status;
+    registers[dest]=created;
+    return DIAMOND_VM_OK;
+}
+
+/* Compiled code's DIAMOND_OP_BOX_LOCAL, GET_CELL and SET_CELL, with
+ * run_chunk's checks. Only BOX_LOCAL allocates; only SET_CELL can fail
+ * other than on malformed bytecode (its write barrier). */
+DiamondVmStatus diamond_jit_box_local(DiamondVm *vm,DiamondValue *registers,
+        uint16_t reg) {
+    if(registers[reg].kind==DIAMOND_VALUE_OBJECT&&
+       registers[reg].as.object->kind==DIAMOND_OBJECT_CELL) return DIAMOND_VM_OK;
+    DiamondCell *cell=allocate_cell(vm,registers[reg]);
+    if(cell==nullptr) return DIAMOND_VM_OUT_OF_MEMORY;
+    registers[reg]=DIAMOND_OBJECT(cell);
+    return DIAMOND_VM_OK;
+}
+
+DiamondVmStatus diamond_jit_get_cell(DiamondValue *registers,uint16_t dest,
+        uint16_t cell_reg) {
+    if(registers[cell_reg].kind!=DIAMOND_VALUE_OBJECT||
+       registers[cell_reg].as.object->kind!=DIAMOND_OBJECT_CELL)
+        return DIAMOND_VM_INVALID_BYTECODE;
+    registers[dest]=((DiamondCell *)registers[cell_reg].as.object)->value;
+    return DIAMOND_VM_OK;
+}
+
+DiamondVmStatus diamond_jit_set_cell(DiamondVm *vm,DiamondValue *registers,
+        uint16_t cell_reg,uint16_t source) {
+    if(registers[cell_reg].kind!=DIAMOND_VALUE_OBJECT||
+       registers[cell_reg].as.object->kind!=DIAMOND_OBJECT_CELL)
+        return DIAMOND_VM_INVALID_BYTECODE;
+    ((DiamondCell *)registers[cell_reg].as.object)->value=registers[source];
+    if(!gc_write_barrier(vm,registers[cell_reg].as.object))
+        return DIAMOND_VM_OUT_OF_MEMORY;
+    return DIAMOND_VM_OK;
+}
