@@ -2,7 +2,7 @@
  * Phase 2 (register moves/constants/_INT arithmetic/comparisons/jumps/
  * return, zero-argument functions only) plus Phase 2b's extension: Hash
  * reads and typed-field writes via C trampolines (jit.h/vm.c), and
- * arguments/`self` (non-variadic methods and functions, generic ones included).
+ * arguments/`self` (methods and functions, generic and variadic ones included).
  * Anything outside this whitelist (including any exceptional runtime
  * condition within a supported opcode -- overflow, division by zero,
  * INT64_MIN/-1, a trampoline reporting anything but DIAMOND_VM_OK) is a
@@ -2133,6 +2133,7 @@ static bool opcode_runs_outlined(DiamondOpCode opcode) {
 
 static bool opcode_dest_is_first_u16(DiamondOpCode opcode) {
     switch (opcode) {
+        case DIAMOND_OP_COLLECT_VARIADIC:
         case DIAMOND_OP_CALL_TYPED:
         case DIAMOND_OP_CALL_SPREAD: case DIAMOND_OP_CALL_TYPED_SPREAD:
         case DIAMOND_OP_CALL_KEYWORD_SPREAD: case DIAMOND_OP_CALL_TYPED_KEYWORD_SPREAD:
@@ -2319,6 +2320,14 @@ static bool decode_instruction_operands(const DiamondFunction *fn, size_t *pc,
     if (!decode_u16(fn, pc, &destination)) return false;
     *dest = destination;
     switch (opcode) {
+        case DIAMOND_OP_COLLECT_VARIADIC: {
+            /* Also writes the register after dest when it keeps a block,
+             * and clears the spilled temporaries past it (see run_chunk). */
+            uint16_t fixed = 0, preserved = 0;
+            if (!decode_u16(fn, pc, &fixed) || !decode_u16(fn, pc, &preserved)) return false;
+            if (preserved != 0) *second_dest = (int32_t)destination + 1;
+            return true;
+        }
         case DIAMOND_OP_NIL: case DIAMOND_OP_BOX_LOCAL:
             return true; /* dest only; BOX_LOCAL replaces its register with a cell */
         case DIAMOND_OP_ADD_INT_K: case DIAMOND_OP_SUBTRACT_INT_K: case DIAMOND_OP_MULTIPLY_INT_K:
@@ -2516,6 +2525,27 @@ bool diamond_jit_function_has_loop(const DiamondFunction *fn) {
         if (jump_target >= 0 && (size_t)jump_target <= start) return true;
     }
     return false;
+}
+
+/* Whether no instruction before COLLECT_VARIADIC (at `collect_start`) writes
+ * a register at or past `fixed_count`, where the rest arguments (and a kept
+ * block) wait. run_chunk collects from the call's untouched arguments;
+ * compiled code collects from the registers, so parameter setup that puts a
+ * temporary there (ARGUMENT_PROVIDED for a default before the rest
+ * parameter) would overwrite an argument first. Such a function stays with
+ * the interpreter. */
+static bool variadic_arguments_untouched(const DiamondFunction *fn, size_t collect_start,
+        uint16_t fixed_count) {
+    size_t pc = 0;
+    while (pc < collect_start) {
+        uint8_t raw_opcode = 0;
+        if (!decode_u8(fn, &pc, &raw_opcode)) return false;
+        int32_t dest = -1, jump_target = -1, second_dest = -1;
+        if (!decode_instruction_operands(fn, &pc, (DiamondOpCode)raw_opcode,
+                &dest, &jump_target, &second_dest)) return false;
+        if (dest >= (int32_t)fixed_count || second_dest >= (int32_t)fixed_count) return false;
+    }
+    return pc == collect_start;
 }
 
 static bool parameter_never_reassigned(const DiamondFunction *fn, uint16_t target_register) {
@@ -2859,9 +2889,9 @@ static void compile_jump_if_false(JitCompiler *jc, size_t instruction_start,
  * the first instruction (whose CHECK_TYPEs re-run, as in
  * the interpreter). The argument count register is reset
  * to the call's own, so a default left out of the tail call
- * is taken again; try_compile already refused variadic
- * functions, and a generic function's own tail call is staged through
- * compile_tail_call_other instead, to bind its type variables afresh. A retry after an iteration re-runs from the
+ * is taken again. A generic or variadic function's own tail call is staged
+ * through compile_tail_call_other instead, to bind its type variables or
+ * collect its rest afresh. A retry after an iteration re-runs from the
  * call's original arguments, which is safe for the same
  * reason every other retry is: effects set has_called. */
 static void compile_self_tail_call(JitCompiler *jc, uint16_t base, uint8_t argc) {
@@ -3093,6 +3123,32 @@ static bool compile_value_instruction(JitCompiler *jc, DiamondOpCode opcode, siz
                 !decode_u16(fn, &pc, &field)) { jc->bailed = true; return true; }
             if (field > UINT8_MAX) { jc->bailed = true; return true; }
             compile_get_ivar(jc, instruction_start, dest, recv, field);
+            break;
+        }
+        case DIAMOND_OP_COLLECT_VARIADIC: {
+            uint16_t dest = 0, fixed = 0, preserved = 0;
+            if (!decode_u16(fn, &pc, &dest) || !decode_u16(fn, &pc, &fixed) ||
+                !decode_u16(fn, &pc, &preserved)) { jc->bailed = true; return true; }
+            if (preserved > 1 || (size_t)dest + preserved >= fn->register_count) {
+                jc->bailed = true; return true;
+            }
+            if (!variadic_arguments_untouched(fn, instruction_start, fixed)) {
+                jc->bailed = true; return true;
+            }
+            /* The arguments are all in the registers: the prologue sent a
+             * call with more arguments than registers back to the
+             * interpreter (emit_variadic_guard). Allocates, so it needs the
+             * frame. */
+            jc->needs_frame = true;
+            JitBuffer *buf = &jc->buf;
+            emit_mov_rr(buf, REG_RDI, JIT_VM);
+            emit_mov_rr(buf, REG_RSI, JIT_REGISTERS_BASE);
+            emit_mov_rr(buf, REG_RDX, JIT_ARGUMENT_COUNT);
+            emit_mov_imm64(buf, REG_RCX, dest);
+            emit_mov_imm64(buf, REG_R8, (uint64_t)fixed | ((uint64_t)preserved << 16));
+            emit_mov_imm64(buf, REG_R9, fn->register_count);
+            emit_body_call(jc, (void *)(uintptr_t)diamond_jit_collect_variadic);
+            emit_bail_if_al_nonzero(jc);
             break;
         }
         case DIAMOND_OP_ARGUMENT_PROVIDED: {
@@ -3590,8 +3646,16 @@ static bool compile_control_instruction(JitCompiler *jc, DiamondOpCode opcode, s
             /* A generic function's own tail call infers its type variables again
              * from the new arguments, so it re-enters through
              * jit_run_native_generic rather than looping in place. */
+            /* A variadic function's tail call to itself goes through the staging
+             * loop, which takes only arguments that fit its registers and
+             * buffer (diamond_jit_tail_call_function); a wider one stays with
+             * the interpreter, which runs it in place. */
+            if (fn->has_variadic && (size_t)function_index == jc->self_function_index &&
+                (argc > fn->register_count || argc > DIAMOND_MAX_DECLARED_PARAMETERS)) {
+                jc->bailed = true; return true;
+            }
             if ((size_t)function_index != jc->self_function_index ||
-                fn->type_variable_count > 0) {
+                fn->type_variable_count > 0 || fn->has_variadic) {
                 compile_tail_call_other(jc, dest, function_index, base, argc);
                 break;
             }
@@ -3812,6 +3876,23 @@ static void emit_catch_stubs(JitCompiler *jc, size_t propagate_offset,
  * prologue's pushes and reservation sit in rsp_delta; the body counts from
  * this RSP, as the calls below do. Non-generic functions never emit this,
  * so their calls pay nothing for it. */
+/* A variadic function's prologue: a call passing more arguments than the
+ * function has registers, or an UNDEFINED placeholder (a keyword-path call
+ * with a block), retries in the interpreter. jit_run_native copies only as
+ * many arguments as there are registers, unfiltered, and COLLECT_VARIADIC
+ * (diamond_jit_collect_variadic) and ARGUMENT_PROVIDED read the registers.
+ * Runs before the body, so retrying repeats nothing. */
+static void emit_variadic_guard(JitCompiler *jc) {
+    JitBuffer *buf = &jc->buf;
+    buf->rsp_delta = 0;
+    emit_mov_rr(buf, REG_RDI, JIT_REGISTERS_BASE);
+    emit_mov_rr(buf, REG_RSI, JIT_ARGUMENT_COUNT);
+    emit_mov_imm64(buf, REG_RDX, jc->function->register_count);
+    emit_body_call(jc, (void *)(uintptr_t)diamond_jit_variadic_entry_ok);
+    emit_u8(buf, 0x84); emit_u8(buf, 0xC0);   /* test al, al */
+    record_global_patch(jc, emit_jcc_placeholder(buf, JCC_E), BAILOUT_RETRY_SENTINEL);
+}
+
 static void emit_generic_bind(JitCompiler *jc) {
     JitBuffer *buf = &jc->buf;
     buf->rsp_delta = 0;
@@ -3834,8 +3915,7 @@ void *diamond_jit_try_compile(const DiamondFunction *function,
     /* A register_count of 0 is a hand-built chunk's "unset" (run_chunk reads
      * it as the full width); refusing it lets jit_run_native size its
      * register file with one compare (uses_heap_registers). */
-    if (function->has_variadic ||
-        function->nonlocal_landing ||
+    if (function->nonlocal_landing ||
         function->code_count == 0 ||
         function->register_count == 0 ||
         function->register_count > DIAMOND_REGISTER_COUNT) {
@@ -3890,6 +3970,7 @@ void *diamond_jit_try_compile(const DiamondFunction *function,
     /* A generic function's bound chunk lives in its frame reservation, so it
      * links its frame (emit_generic_bind runs right after). */
     if (function->type_variable_count != 0) jc.needs_frame = true;
+    if (function->has_variadic) jc.needs_frame = true;
     if (jc.has_handlers) {
         jc.frame_reserve_bytes = (size_t)DIAMOND_JIT_HANDLER_STATE_AT +
             (size_t)DIAMOND_JIT_HANDLER_STATE_SIZE;
@@ -3934,6 +4015,7 @@ void *diamond_jit_try_compile(const DiamondFunction *function,
         emit_sub_rsp_imm32(&jc.buf, (uint32_t)jc.frame_reserve_bytes);
         emit_frame_link(&jc, 0);
         if (jc.has_handlers) emit_handler_state_link(&jc);
+        if (function->has_variadic) emit_variadic_guard(&jc);
         if (function->type_variable_count != 0) emit_generic_bind(&jc);
     } else if (jc.slow_frame) {
         /* Space only: each slow call links the frame around itself. */

@@ -70,6 +70,10 @@ class Greeter
   end
 end
 
+# A block passed with no other arguments: the keyword-path call leaves a
+# placeholder before the block, which must not land in the rest Array.
+def rest_beside_block(*rest, &block) = "#{rest.length()} #{rest}"
+
 def apply_callable2(callback: Callable[2], a, b) = callback(a, b)
 
 def apply_callable5(callback: Callable[5], a, b, c, d, e) = callback(a, b, c, d, e)
@@ -78,6 +82,9 @@ def run_tests()
   def test_zero_trailing_args_collect_an_empty_array() = Minitest.assert_equal(0, sum())
 
   def test_a_few_trailing_args_collect_correctly() = Minitest.assert_equal(6, sum(1, 2, 3))
+
+  def test_a_block_alone_leaves_the_rest_empty() =
+    Minitest.assert_equal("0 []", rest_beside_block() do |value| value end)
 
   def test_sixteen_args_at_one_call_site() = Minitest.assert_equal(136, sixteen_args_total())
 
@@ -118,6 +125,7 @@ def run_tests()
   suite.test("zero trailing args collect an empty array",
              test_zero_trailing_args_collect_an_empty_array)
   suite.test("a few trailing args collect correctly", test_a_few_trailing_args_collect_correctly)
+  suite.test("a block alone leaves the rest empty", test_a_block_alone_leaves_the_rest_empty)
   suite.test("sixteen args at one call site", test_sixteen_args_at_one_call_site)
   suite.test("fixed parameters still bind normally", test_fixed_parameters_still_bind_normally)
   suite.test("instance method variadic", test_instance_method_variadic)

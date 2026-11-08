@@ -2592,3 +2592,32 @@ came from 23 distinct functions; two that the ORM packages (Active Record, Arel)
 for 75 of them. Benchmarks are unchanged in instruction count. Compare non-PGO builds (`make release PGO=0`) with warm bytecode caches on
 both sides: two PGO builds of the same source differ by up to 5% on some benchmarks, and a
 baseline run against another build's caches adds a few million instructions.
+
+## Variadic functions
+
+`try_compile` no longer refuses `has_variadic`. `COLLECT_VARIADIC` compiles to a call to
+`diamond_jit_collect_variadic`, which does run_chunk's steps with the arguments read from the
+registers rather than the call's `arguments` array, which compiled code never sees. Two things
+make that sound:
+
+- The prologue (`emit_variadic_guard`, after the frame link) calls
+  `diamond_jit_variadic_entry_ok` and retries in the interpreter when the call passed more
+  arguments than the function has registers (`jit_run_native` copies no more than that) or
+  passed an UNDEFINED placeholder. The keyword-call path leaves one in each slot before a block,
+  and the JIT's entry contract (jit.h) assumes there are none.
+- `variadic_arguments_untouched` refuses a function whose instructions before
+  `COLLECT_VARIADIC` write a register at or past the first rest argument. ARGUMENT_PROVIDED for
+  a default before the rest parameter does that and overwrote an argument.
+
+A variadic function's tail call to itself goes through `diamond_jit_tail_call_function`'s
+staging loop (compiled code has no in-place loop for one). The loop's copy of the arguments is
+not a GC root, so it only takes calls whose arguments fit the callee's registers. A self tail
+call wider than the registers or the 32-slot buffer keeps the function interpreted (the
+interpreter runs it in place, rooting its own buffer); `tail_call_variadic`'s 41-argument
+`wide` is one.
+
+The work turned up an interpreter bug: `f() do ... end` for `def f(*rest, &block)` collected the
+placeholder into `rest`, and printing it crashed. `allocate_variadic_array` now drops
+placeholders in both paths. Rejected functions fell from 457 to 416. The only up-front refusal
+left is a block's `break` landing in the function (20 functions in 12 files). Benchmarks are
+unchanged or 0.1-0.5% fewer instructions.

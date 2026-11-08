@@ -959,6 +959,23 @@ DiamondArray *allocate_array(DiamondVm *vm,const DiamondValue *values,
     return array;
 }
 
+/* A variadic parameter's Array: the trailing arguments, less the UNDEFINED
+ * placeholders a keyword-path call leaves in the slots before a block
+ * (`f() do ... end` for `def f(*rest, &block)` passes UNDEFINED, block).
+ * They are never values, and one in a user-visible Array crashed whatever
+ * read it. */
+DiamondArray *allocate_variadic_array(DiamondVm *vm,const DiamondValue *values,
+                                      size_t count) {
+    DiamondArray *array=allocate_array(vm,values,count);
+    if(array==nullptr)return nullptr;
+    size_t kept=0;
+    for(size_t index=0;index<count;index++)
+        if(array->values[index].kind!=DIAMOND_VALUE_UNDEFINED)
+            array->values[kept++]=array->values[index];
+    array->count=kept;
+    return array;
+}
+
 DiamondHash *allocate_hash(DiamondVm *vm) {
     if (!maybe_collect(vm)) return nullptr;
     DiamondHash *hash=malloc(sizeof(DiamondHash)); if(hash==nullptr)return nullptr;
@@ -1394,6 +1411,48 @@ bool gc_protect(DiamondVm *vm, DiamondValue value) {
     return true;
 }
 
+
+/* A compiled variadic function's prologue (jit.h): true when every argument
+ * is in the registers and none is an UNDEFINED placeholder. Otherwise the
+ * call retries in the interpreter, which reads its untouched arguments. */
+bool diamond_jit_variadic_entry_ok(const DiamondValue *registers, size_t argument_count,
+        size_t register_count) {
+    if (argument_count > register_count) return false;
+    for (size_t index = 0; index < argument_count; index++)
+        if (registers[index].kind == DIAMOND_VALUE_UNDEFINED) return false;
+    return true;
+}
+
+/* COLLECT_VARIADIC for compiled code (jit.h): the same steps as run_chunk's
+ * case, with the arguments read from `registers`. */
+DiamondVmStatus diamond_jit_collect_variadic(DiamondVm *vm, DiamondValue *registers,
+        size_t argument_count, uint16_t destination, uint32_t counts, size_t register_count) {
+    const size_t fixed_count = counts & 0xFFFFu, preserved_count = counts >> 16;
+    if (argument_count > register_count || preserved_count > 1 ||
+        (size_t)destination + preserved_count >= register_count)
+        return DIAMOND_VM_INVALID_BYTECODE;
+    size_t preserved = 0;
+    if (preserved_count == 1 && argument_count > fixed_count) {
+        const DiamondValue candidate = registers[argument_count - 1];
+        if (candidate.kind == DIAMOND_VALUE_OBJECT &&
+            candidate.as.object->kind == DIAMOND_OBJECT_CLOSURE &&
+            ((DiamondClosure *)candidate.as.object)->is_block)
+            preserved = 1;
+    }
+    const size_t available = argument_count - preserved;
+    const size_t trailing = available > fixed_count ? available - fixed_count : 0;
+    /* The block (if kept) is read before allocating: it may sit in a
+     * register this instruction overwrites. */
+    const DiamondValue kept = preserved == 1 ? registers[available] : DIAMOND_NIL;
+    DiamondArray *array = allocate_variadic_array(vm,
+        trailing > 0 ? &registers[fixed_count] : nullptr, trailing);
+    if (array == nullptr) return DIAMOND_VM_OUT_OF_MEMORY;
+    registers[destination] = DIAMOND_OBJECT(array);
+    if (preserved_count == 1) registers[(size_t)destination + 1] = kept;
+    for (size_t index = (size_t)destination + preserved_count + 1; index < argument_count; index++)
+        registers[index] = DIAMOND_NIL;
+    return DIAMOND_VM_OK;
+}
 
 /* Shared ARRAY implementation. allocate_array can collect before copying
  * elements, so its source registers must already be published as GC roots. */

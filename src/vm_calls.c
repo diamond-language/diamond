@@ -1163,8 +1163,9 @@ DiamondVmStatus diamond_jit_self_call_finish(DiamondVm *vm, const DiamondChunk *
 }
 /* JIT trampoline for DIAMOND_OP_TAIL_CALL to a function other than the
  * caller. Returns DIAMOND_JIT_TAIL after staging the callee and its
- * arguments when the interpreter's own in-place switch would apply (a plain,
- * non-variadic target whose registers hold the arguments); otherwise it is
+ * arguments when the interpreter's own in-place switch would apply (a target
+ * whose registers hold the arguments: jit_tail_loop's copy of them is not a
+ * GC root, so a variadic target's overflow could not wait there); otherwise it is
  * an ordinary call whose result lands in `out` (the compiled code then
  * returns it) -- the same fallback the interpreter makes. */
 uint8_t diamond_jit_tail_call_function(DiamondVm *vm, const DiamondChunk *chunk,
@@ -1181,9 +1182,11 @@ uint8_t diamond_jit_tail_call_function(DiamondVm *vm, const DiamondChunk *chunk,
         ? DIAMOND_REGISTER_COUNT : function->register_count;
     /* A generic function's call to itself is staged too: run_chunk's in-place
      * self tail call infers its type variables again from the new arguments,
-     * which jit_tail_loop's fresh entry does (diamond_jit_bind_generic). */
-    if ((function->code != chunk->code || function->type_variable_count > 0) &&
-        !function->has_variadic &&
+     * which jit_tail_loop's fresh entry does (diamond_jit_bind_generic). A
+     * variadic function's is too: compiled code has no in-place loop for one
+     * (compile_self_tail_call), and the interpreter collects its rest afresh. */
+    if ((function->code != chunk->code || function->type_variable_count > 0 ||
+         function->has_variadic) &&
         argc <= DIAMOND_MAX_DECLARED_PARAMETERS && argc <= callee_registers) {
         vm->jit_tail_function = function;
         vm->jit_tail_count = argc;

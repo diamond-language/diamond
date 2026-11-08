@@ -9,7 +9,7 @@
  * entirely from a small whitelist of arithmetic/control-flow/Hash-read/
  * ivar-write/string-construction opcodes (see jit.c's diamond_jit_try_
  * compile for the exact list) straight to x86-64 machine code --
- * non-variadic (generic ones included), any arity (including instance methods,
+ * generic and variadic ones included, any arity (including instance methods,
  * `self` just being register 0 like any other argument). Any function
  * containing anything outside that whitelist is never compiled at all --
  * there is no partial/mixed-mode execution and no deopt needed for
@@ -341,6 +341,19 @@ DiamondVmStatus diamond_jit_new_string(DiamondVm *vm, const DiamondChunk *chunk,
  * rather than generated code. */
 DiamondVmStatus diamond_jit_new_hash(DiamondVm *vm, DiamondValue *registers,
         uint16_t base, uint16_t count, DiamondValue *out);
+
+/* A compiled variadic function's prologue check: false (retry in the
+ * interpreter) when the call has more arguments than registers or passes
+ * an UNDEFINED placeholder. */
+bool diamond_jit_variadic_entry_ok(const DiamondValue *registers, size_t argument_count,
+        size_t register_count);
+
+/* COLLECT_VARIADIC for compiled code: run_chunk's case, reading the
+ * arguments from `registers` (the prologue guarantees argument_count <=
+ * register_count and no UNDEFINED placeholder, so every argument is there).
+ * `counts` packs fixed_count (low 16 bits) and preserved_count. Allocates. */
+DiamondVmStatus diamond_jit_collect_variadic(DiamondVm *vm, DiamondValue *registers,
+        size_t argument_count, uint16_t destination, uint32_t counts, size_t register_count);
 
 /* Array literals and default arguments allocate at a GC safepoint. The
  * generated function must publish its registers through a DiamondFrame. */
