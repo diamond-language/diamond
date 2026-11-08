@@ -1358,6 +1358,16 @@ static DiamondVmStatus check_instance_method_visibility(DiamondVm *vm,const Diam
  * `site` identifies the bytecode instruction for monomorphic quickening, as
  * in diamond_jit_get_ivar. Helpers propagate statuses explicitly because
  * VM_RETURN/VM_PROPAGATE only apply inside run_chunk. */
+/* Whether `class` (or an ancestor) defines `name`: diamond_jit_invoke_instance's
+ * universal-method checks (tap, to_s, dup, respond_to?, ...), each reached
+ * only once the call's name matched. Out of line: inlined there, the method
+ * walk measured as register spills on that function's hot path. */
+__attribute__((noinline))
+static bool class_defines(const DiamondChunk *owner, const DiamondClass *class,
+        const char *name, size_t length) {
+    return lookup_method(owner, class, name, length) != nullptr;
+}
+
 DiamondVmStatus diamond_jit_invoke_instance(DiamondVm *vm, const DiamondChunk *chunk,
         const uint8_t *site, DiamondOpCode instruction, DiamondValue *registers,
         uint16_t recv, uint16_t name, uint16_t base, uint8_t argc,
@@ -1403,18 +1413,18 @@ DiamondVmStatus diamond_jit_invoke_instance(DiamondVm *vm, const DiamondChunk *c
      * interception just above this case (dup_defined) for why interception
      * order matters here but not there. */
     if(method_name->length==3&&memcmp(method_name->chars,"tap",3)==0&&
-       lookup_method(owner,instance->class,"tap",3)==nullptr) {
+       !class_defines(owner,instance->class,"tap",3)) {
         if(type_argument_count!=0)return reject_type_arguments(vm,method_name);
         return jit_instance_tap(vm,chunk,registers,recv,base,argc,depth,out);
     }
     if(method_name->length==4&&memcmp(method_name->chars,"nil?",4)==0&&
-       argc==0&&lookup_method(owner,instance->class,"nil?",4)==nullptr) {
+       argc==0&&!class_defines(owner,instance->class,"nil?",4)) {
         *out=DIAMOND_BOOL(false);return DIAMOND_VM_OK;
     }
     /* Every object answers to_s(), with the text interpolation gives it,
      * unless its class defines its own. */
     if(method_name->length==4&&memcmp(method_name->chars,"to_s",4)==0&&
-       lookup_method(owner,instance->class,"to_s",4)==nullptr) {
+       !class_defines(owner,instance->class,"to_s",4)) {
         if(type_argument_count!=0)return reject_type_arguments(vm,method_name);
         if(argc!=0) return DIAMOND_VM_ARITY_ERROR;
         return stringify_value(vm,chunk,depth,registers[recv],out);
@@ -1422,38 +1432,38 @@ DiamondVmStatus diamond_jit_invoke_instance(DiamondVm *vm, const DiamondChunk *c
     /* Every object answers inspect(): its fields, unless its class defines its
      * own inspect (any arity), which then dispatches normally. */
     if(method_name->length==7&&memcmp(method_name->chars,"inspect",7)==0&&
-       lookup_method(owner,instance->class,"inspect",7)==nullptr) {
+       !class_defines(owner,instance->class,"inspect",7)) {
         if(type_argument_count!=0)return reject_type_arguments(vm,method_name);
         if(argc!=0) return DIAMOND_VM_ARITY_ERROR;
         return inspect_value(vm,chunk,depth,registers[recv],out);
     }
     if(method_name->length==3&&memcmp(method_name->chars,"dup",3)==0&&
-       lookup_method(owner,instance->class,"dup",3)==nullptr) {
+       !class_defines(owner,instance->class,"dup",3)) {
         if(type_argument_count!=0)return reject_type_arguments(vm,method_name);
         if(argc!=0) return DIAMOND_VM_ARITY_ERROR;
         return diamond_jit_dup(vm,&registers[recv],out);
     }
     if(method_name->length==6&&memcmp(method_name->chars,"freeze",6)==0&&
-       lookup_method(owner,instance->class,"freeze",6)==nullptr) {
+       !class_defines(owner,instance->class,"freeze",6)) {
         if(type_argument_count!=0)return reject_type_arguments(vm,method_name);
         if(argc!=0) return DIAMOND_VM_ARITY_ERROR;
         return diamond_jit_freeze(vm,&registers[recv],out);
     }
     if(method_name->length==11&&memcmp(method_name->chars,"deep_freeze",11)==0&&
-       lookup_method(owner,instance->class,"deep_freeze",11)==nullptr) {
+       !class_defines(owner,instance->class,"deep_freeze",11)) {
         if(type_argument_count!=0)return reject_type_arguments(vm,method_name);
         if(argc!=0) return DIAMOND_VM_ARITY_ERROR;
         return diamond_deep_freeze(vm,&registers[recv],out);
     }
     if(method_name->length==7&&memcmp(method_name->chars,"frozen?",7)==0&&
-       lookup_method(owner,instance->class,"frozen?",7)==nullptr) {
+       !class_defines(owner,instance->class,"frozen?",7)) {
         if(type_argument_count!=0)return reject_type_arguments(vm,method_name);
         if(argc!=0) return DIAMOND_VM_ARITY_ERROR;
         return diamond_jit_frozen(vm,&registers[recv],out);
     }
     if(method_name->length==11&&
        memcmp(method_name->chars,"respond_to?",11)==0&&
-       lookup_method(owner,instance->class,"respond_to?",11)==nullptr) {
+       !class_defines(owner,instance->class,"respond_to?",11)) {
         if(type_argument_count!=0)return reject_type_arguments(vm,method_name);
         if(argc!=1) return DIAMOND_VM_ARITY_ERROR;
         if(registers[base].kind!=DIAMOND_VALUE_OBJECT||
@@ -1467,7 +1477,7 @@ DiamondVmStatus diamond_jit_invoke_instance(DiamondVm *vm, const DiamondChunk *c
     }
     if(method_name->length==11&&
        memcmp(method_name->chars,"public_send",11)==0&&
-       lookup_method(owner,instance->class,"public_send",11)==nullptr) {
+       !class_defines(owner,instance->class,"public_send",11)) {
         if(type_argument_count!=0)return reject_type_arguments(vm,method_name);
         DiamondValue sent=DIAMOND_NIL;
         const DiamondVmStatus send_status=public_send_helper(vm,chunk,
