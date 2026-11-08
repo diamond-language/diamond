@@ -982,7 +982,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                  * or hand-assembled bytecode); forming &arguments[n] from it is
                  * undefined even when nothing is copied. */
                 DiamondArray *variadic_array=
-                    allocate_array(vm,trailing>0?&arguments[fixed_count]:nullptr,trailing);
+                    allocate_variadic_array(vm,trailing>0?&arguments[fixed_count]:nullptr,trailing);
                 if(variadic_array==nullptr) VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
                 registers[destination]=DIAMOND_OBJECT(variadic_array);
                 if(preserved_count==1)

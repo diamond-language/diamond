@@ -374,6 +374,7 @@ DIAMOND_INTERNAL void tensor_random_helper(DiamondTensor *tensor,int64_t seed);
 
 /* Shared primitives that stay in vm.c (needed by tensor code) */
 DIAMOND_INTERNAL DiamondArray *allocate_array(DiamondVm *vm,const DiamondValue *values, size_t count);
+DIAMOND_INTERNAL DiamondArray *allocate_variadic_array(DiamondVm *vm,const DiamondValue *values, size_t count);
 [[nodiscard]] DIAMOND_INTERNAL bool array_push(DiamondVm *vm,DiamondArray *array,DiamondValue value);
 DIAMOND_INTERNAL bool numeric_as_double(DiamondValue value, double *out);
 

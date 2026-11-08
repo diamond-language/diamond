@@ -80,9 +80,18 @@ authoritative fine-grained record.
   hash literal, two large methods the ORM packages share) used to run interpreted; it now
   compiles, with its registers on the heap as the interpreter keeps them. Functions the JIT
   turns away fell from 553 to 457, and native calls to smaller functions cost the same as before.
+- **The JIT compiles variadic functions and methods.** `def f(head, *rest)` and
+  `def f(*rest, &block)` now compile; the rest Array is built in the compiled code, and their
+  tail calls to themselves still run in constant stack. A call with more arguments than the
+  function has registers runs in the interpreter, as does a function whose parameter setup
+  writes where its rest arguments wait (a default before the rest parameter). Functions the
+  JIT turns away fell from 457 to 416.
 
 ### Fixed
 
+- **A rest parameter no longer holds a placeholder when only a block is passed.**
+  `f() do ... end` for `def f(*rest, &block)` gave `rest` one invalid element, and reading it
+  (printing `rest`, say) crashed. It is now empty.
 - **JIT: big-integer and operator-method arithmetic no longer loses values under GC pressure.** A
   compiled function whose only allocations came from `+`, `-`, `*`, `/`, `%`, a comparison or
   `==` on operands its fast path does not handle (big integers, Strings, a user operator

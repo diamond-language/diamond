@@ -1,0 +1,71 @@
+# Variadic functions and methods compile under the JIT (threshold 1,
+# stress GC). COLLECT_VARIADIC builds the rest Array from the registers; a
+# call passing more arguments than the function has registers retries in
+# the interpreter before the body runs.
+
+def sum(*numbers)
+  total = 0
+  numbers.each() do |number|
+    total = total + number
+  end
+  total
+end
+
+def describe(head, *rest) = "#{head}:#{rest.size()}:#{rest}"
+
+# A default before the rest parameter: taken only when nothing is passed.
+def label(prefix: String = "none", *rest) -> String = prefix + "/" + rest.join(",")
+
+# The block stays out of the collected Array.
+def apply_each(*values, &block)
+  values.map() do |value|
+    yield(value)
+  end
+end
+
+# Recursion through a variadic function: its tail call to itself is an
+# ordinary call, not the in-place loop.
+def count_down(*values)
+  if values.size() == 0
+    return 0
+  end
+  return 1 + count_down(*values.drop(1))
+end
+
+class Recorder
+  def initialize()
+    @seen = []
+  end
+
+  def record(kind, *details)
+    @seen.push("#{kind}=#{details.join("+")}")
+    @seen.size()
+  end
+
+  def seen() = @seen
+end
+
+puts([sum(), sum(1), sum(1, 2, 3), sum(*[4, 5, 6, 7])])
+puts(describe("a"))
+puts(describe("b", 1, "two", :three))
+puts([label(), label("p"), label("p", "x", "y")])
+puts(apply_each(1, 2, 3) do |value| value * 10 end)
+puts(apply_each() do |value| value end)
+puts(count_down(9, 8, 7, 6))
+
+recorder = Recorder.new()
+recorder.record("open")
+recorder.record("move", 1, 2)
+puts(recorder.record("close", "x"))
+puts(recorder.seen())
+
+# More arguments than describe has registers: a direct call retries in the
+# interpreter before the body runs (a spread call goes there anyway).
+puts(describe(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39))
+many = []
+index = 0
+while index < 40
+  many.push(index)
+  index = index + 1
+end
+puts(describe(*many))
