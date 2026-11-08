@@ -436,6 +436,9 @@ int main(int argc, char **argv) {
         return 1;
     }
 
+    char current_path[PATH_BUFFER_SIZE];
+    const bool current_path_ok = format_path(current_path, sizeof current_path, "%s/.current", output_dir);
+
     size_t run_count = 0, skipped_count = 0;
     bool ok = true;
     for (size_t index = 0; index < matches.gl_pathc && ok; index++) {
@@ -453,11 +456,15 @@ int main(int argc, char **argv) {
         name[base_length] = '\0';
 
         if (!should_run_case(cases_dir, name)) { skipped_count++; continue; }
+        /* Name the case before running it: every case shares this process,
+         * so if one crashes it, tests/run.sh reads this file to say which. */
+        if (current_path_ok) (void)write_whole_file(current_path, name, base_length);
         ok = run_one_case(cases_dir, output_dir, name);
         if (ok) run_count++;
     }
     globfree(&matches);
     if (!ok) return 1;
+    if (current_path_ok) (void)unlink(current_path);
     fprintf(stderr, "run_cases: ran %zu case(s), skipped %zu (no expectation or run! marker)\n",
             run_count, skipped_count);
     return 0;

@@ -501,6 +501,15 @@ DiamondVmStatus diamond_jit_call_closure(DiamondVm *vm, const DiamondChunk *chun
 DiamondVmStatus diamond_jit_to_string(DiamondVm *vm, const DiamondChunk *chunk,
         DiamondValue *registers, uint16_t dest, uint16_t source, size_t depth);
 
+/* Runs the instruction at `offset` in `chunk` (the compiled function's own
+ * code) through the interpreter's own out-of-line body for it (src/vm_calls.c
+ * lists the opcodes; jit.c's opcode_runs_outlined must match). The body
+ * decodes its operands itself, so compiled code only passes where the
+ * instruction is. Any of them can allocate and most can run arbitrary code,
+ * so the caller sets jc->needs_frame and jc->has_called. */
+DiamondVmStatus diamond_jit_outlined(DiamondVm *vm, const DiamondChunk *chunk,
+        DiamondValue *registers, size_t depth, size_t offset);
+
 /* A direct native self-call's non-OK status (see compile_call_function):
  * runs the staged tail calls, interprets a retried call, or counts and
  * returns a status to propagate, as jit_run_native's callers do. */
@@ -564,8 +573,8 @@ DiamondVmStatus diamond_jit_native_call(DiamondVm *vm,
  * separate `out` pointer) since dest already indexes the same registers
  * array both the interpreter and the JIT's own JIT_REGISTERS_BASE share.
  * DIAMOND_OP_NEW_KEYWORDS/DIAMOND_OP_NEW_SPREAD (synthetic-chunk re-entry
- * into run_chunk) are deliberately not covered -- compile_body has no
- * case for either, so a function containing one still bails whole. Can
+ * into run_chunk) are not covered here: compiled code runs them through
+ * diamond_jit_outlined, the interpreter's own bodies. Can
  * invoke arbitrary user code (`initialize`) and allocate, so its JIT-side
  * caller (compile_new) sets both jc->needs_frame and jc->has_called
  * unconditionally, same as diamond_jit_super_call/diamond_jit_invoke_

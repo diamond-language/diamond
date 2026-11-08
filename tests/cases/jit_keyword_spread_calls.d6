@@ -1,0 +1,70 @@
+# Compiled functions whose calls pass keywords, a spread or explicit type
+# arguments: each call form runs through the interpreter's own body for it
+# (diamond_jit_outlined), so results, defaults, blocks and errors match the
+# interpreter. Run under stress GC.
+class Point
+  def initialize(x: Int, y: Int = 0)
+    @x = x
+    @y = y
+  end
+
+  def sum() -> Int = @x + @y
+
+  def scaled(factor: Int, offset: Int = 0) -> Int = (@x + @y) * factor + offset
+
+  def self.origin(x: Int = 0, y: Int = 0) -> Point = Point.new(x, y)
+end
+
+def area(width: Int, height: Int = 1, depth: Int = 1) -> Int = width * height * depth
+
+def first[T](values: Array[T]) -> T = values[0]
+
+def spreads(args: Array) -> Array
+  out = []
+  out.push(area(*args))
+  out.push(area(2, *args))
+  out.push(area(*args, depth: 10))
+  out.push(Point.new(*args).sum())
+  out.push(Point.origin(*args).sum())
+  out
+end
+
+def keywords(p) -> Array
+  out = []
+  out.push(area(3, depth: 2))
+  out.push(p.scaled(2, offset: 5))
+  out.push(p.scaled(*[3]))
+  out.push(Point.new(x: 4, y: 6).sum())
+  out.push(Point.origin(y: 7).sum())
+  out
+end
+
+def closures(callable, values: Array) -> Array
+  [callable(*values), callable(1, y: 20)]
+end
+
+def typed(values: Array) -> Int = first[Int](values)
+
+def add_pair(x: Int, y: Int = 2) -> Int = x + y
+
+def failures(p) -> Array
+  out = []
+  begin
+    area(*5)
+  rescue e
+    out.push(e.message())
+  end
+  begin
+    p.scaled(nope: 1)
+  rescue e
+    out.push(e.message())
+  end
+  out
+end
+
+adder = add_pair
+puts(spreads([3, 4]))
+puts(keywords(Point.new(1, 2)))
+puts(closures(adder, [5, 6]))
+puts(typed([9, 8]))
+puts(failures(Point.new(1, 1)))

@@ -21,4 +21,4 @@
 ^\[cleanup 1, cleanup 20, cleanup 1, cleanup 2\]$
 ^uncaught reached top: escapes 4$
 ^type error caught$
-jit: 11 compiled function(s), 0 bailout(s)
+jit: 12 compiled function(s), 0 bailout(s)

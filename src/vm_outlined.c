@@ -3213,6 +3213,475 @@ DiamondVmStatus outlined_breakpoint_check(DiamondVm *vm,const DiamondChunk *chun
     HELPER_DONE;
 }
 
+
+/* ---- Opcodes compiled code runs through diamond_jit_outlined (src/vm_calls.c) ---- */
+
+/* DIAMOND_OP_PRINT, moved out of run_chunk's switch so compiled code runs the same body (diamond_jit_outlined). The case body is unchanged
+ * apart from its macros. */
+__attribute__((noinline))
+DiamondVmStatus outlined_print(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t depth,size_t *ip_ref) {
+    size_t ip=*ip_ref;(void)depth;
+    uint16_t destination=0,source=0;uint8_t flags=0;
+    READ_SHORT(destination);READ_SHORT(source);READ_BYTE(flags);
+    const bool newline=(flags&DIAMOND_PRINT_NEWLINE)!=0;
+    /* warn() writes to stderr; print/puts to stdout. */
+    FILE *out=(flags&DIAMOND_PRINT_STDERR)!=0?stderr:stdout;
+    DiamondValue converted=DIAMOND_NIL;
+    DiamondVmStatus status=stringify_value(vm,chunk,depth,
+        registers[source],&converted);
+    VM_PROPAGATE(status);
+    const DiamondString *text=(const DiamondString *)converted.as.object;
+    errno=0;
+    const size_t written=fwrite(text->chars,1,text->length,out);
+    if(written!=text->length||ferror(out)) {
+        snprintf(vm->error,sizeof vm->error,"write error: %s",strerror(errno));
+        VM_RETURN(DIAMOND_VM_IO_ERROR);
+    }
+    if(newline) {
+        errno=0;
+        if(fputc('\n',out)==EOF||ferror(out)) {
+            snprintf(vm->error,sizeof vm->error,"write error: %s",strerror(errno));
+            VM_RETURN(DIAMOND_VM_IO_ERROR);
+        }
+        /* stdout is fully buffered (not line-buffered) once
+         * it isn't a terminal -- redirected to a file, a
+         * pipe, whatever a test harness or `> log` capture
+         * uses. Without an explicit flush, puts("ready")
+         * right before blocking in a native call (accept(),
+         * IO.poll, a receive loop -- exactly the shape every
+         * readiness-signaling test in tests/run.sh and the
+         * packages test scripts uses) could sit in the
+         * buffer indefinitely: nothing forces a flush until
+         * the buffer fills or the process exits, and a
+         * process blocked waiting for someone to *see* its
+         * own "ready" line is exactly the case that never
+         * reaches either. plain print() (no trailing
+         * newline, used to build up a line incrementally)
+         * stays fully buffered -- this only fires for the
+         * puts-style, newline-terminated case, matching
+         * ordinary line-buffered-on-a-terminal behavior
+         * unconditionally rather than only when isatty(). */
+        errno=0;
+        if(fflush(out)==EOF) {
+            snprintf(vm->error,sizeof vm->error,"write error: %s",strerror(errno));
+            VM_RETURN(DIAMOND_VM_IO_ERROR);
+        }
+    }
+    registers[destination]=DIAMOND_NIL;HELPER_DONE;
+}
+
+/* DIAMOND_OP_SYMBOL, moved out of run_chunk's switch so compiled code runs the same body (diamond_jit_outlined). The case body is unchanged
+ * apart from its macros. */
+__attribute__((noinline))
+DiamondVmStatus outlined_symbol(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t depth,size_t *ip_ref) {
+    size_t ip=*ip_ref;(void)depth;
+    uint16_t destination = 0;
+    uint16_t string_index = 0;
+    READ_SHORT(destination);READ_SHORT(string_index);
+    if ((size_t)string_index >= chunk->string_count) {
+        VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
+    }
+    const DiamondStringConstant *constant =
+        &chunk->strings[string_index];
+    DiamondSymbol *symbol = allocate_symbol(
+        vm, constant->chars, constant->length);
+    if (symbol == nullptr) VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+    registers[destination] = DIAMOND_OBJECT(symbol);
+    HELPER_DONE;
+}
+
+/* DIAMOND_OP_CLASS_NAME, moved out of run_chunk's switch so compiled code runs the same body (diamond_jit_outlined). The case body is unchanged
+ * apart from its macros. */
+__attribute__((noinline))
+DiamondVmStatus outlined_class_name(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t depth,size_t *ip_ref) {
+    size_t ip=*ip_ref;(void)depth;
+    uint16_t destination=0,source=0;
+    READ_SHORT(destination);READ_SHORT(source);
+    char name[80];
+    diamond_format_value_type(name,sizeof name,registers[source]);
+    DiamondString *class_name=allocate_string(vm,name,strlen(name));
+    if(class_name==nullptr)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+    registers[destination]=DIAMOND_OBJECT(class_name);
+    HELPER_DONE;
+}
+
+/* DIAMOND_OP_CHECK_DESTRUCTURE_COUNT, moved out of run_chunk's switch so compiled code runs the same body (diamond_jit_outlined). The case body is unchanged
+ * apart from its macros. */
+__attribute__((noinline))
+DiamondVmStatus outlined_check_destructure_count(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t depth,size_t *ip_ref) {
+    size_t ip=*ip_ref;(void)depth;
+    uint16_t array_reg=0,expected=0;
+    READ_SHORT(array_reg); READ_SHORT(expected);
+    const bool minimum=(expected&0x8000u)!=0;
+    expected&=0x7fffu;
+    if(registers[array_reg].kind!=DIAMOND_VALUE_OBJECT||
+       registers[array_reg].as.object->kind!=DIAMOND_OBJECT_ARRAY) {
+        char actual[80];
+        diamond_format_value_type(actual,sizeof actual,registers[array_reg]);
+        snprintf(vm->error,sizeof vm->error,"expected Array, got %s",actual);
+        VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+    }
+    const DiamondArray *array=(const DiamondArray *)registers[array_reg].as.object;
+    if((minimum&&array->count<expected)||(!minimum&&array->count!=expected)) {
+        snprintf(vm->error,sizeof vm->error,
+            minimum?"destructuring assignment expected at least %u element(s), got %zu":
+            "destructuring assignment expected %u element(s), got %zu",
+            (unsigned)expected,array->count);
+        VM_RETURN(DIAMOND_VM_ARITY_ERROR);
+    }
+    HELPER_DONE;
+}
+
+/* DIAMOND_OP_INVOKE_SELF_METHOD, moved out of run_chunk's switch so compiled code runs the same body (diamond_jit_outlined). The case body is unchanged
+ * apart from its macros. */
+__attribute__((noinline))
+DiamondVmStatus outlined_invoke_self_method(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t depth,size_t *ip_ref) {
+    size_t ip=*ip_ref;(void)depth;
+    uint16_t dest=0,base=0,name_index=0;uint8_t argc=0;
+    READ_SHORT(dest);READ_SHORT(name_index);READ_SHORT(base);READ_BYTE(argc);
+    if(registers[0].kind!=DIAMOND_VALUE_CLASS)
+        VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
+    const uint16_t class_operand=registers[0].as.class_index;
+    if((size_t)class_operand>=chunk->class_count||
+       (size_t)name_index>=chunk->string_count)
+        VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
+    const DiamondClass *class=chunk->classes[class_operand];
+    const DiamondStringConstant *method_name=&chunk->strings[name_index];
+    const DiamondMethod *method=lookup_singleton_method(chunk,class,
+        method_name->chars,method_name->length);
+    /* self.new(...): an instance of whichever class self is, so
+     * an inherited factory method builds the subclass it was
+     * called on. Unless the class defines its own `new`. */
+    if(method==nullptr&&method_name->length==3&&
+       memcmp(method_name->chars,"new",3)==0) {
+        if(class->sealed) {
+            snprintf(vm->error,sizeof vm->error,
+                "cannot instantiate sealed class %s directly -- "
+                "use one of its subclasses",class->name);
+            VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+        }
+        const DiamondVmStatus new_status=diamond_jit_new_instance(vm,chunk,
+            registers,dest,class_operand,base,argc,depth);
+        VM_PROPAGATE(new_status);
+        HELPER_DONE;
+    }
+    /* self.name() / self.to_s(): the class's own name, unless
+     * the class defines a singleton of that name itself. */
+    if(method==nullptr&&argc==0&&
+       ((method_name->length==4&&memcmp(method_name->chars,"name",4)==0)||
+        (method_name->length==4&&memcmp(method_name->chars,"to_s",4)==0))) {
+        DiamondString *class_name=allocate_string(vm,class->name,strlen(class->name));
+        if(class_name==nullptr)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+        registers[dest]=DIAMOND_OBJECT(class_name);HELPER_DONE;
+    }
+    if(method==nullptr) {
+        snprintf(vm->error,sizeof vm->error,
+            "undefined class singleton method '%.*s' for %s",
+            (int)method_name->length,method_name->chars,class->name);
+        VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+    }
+    if(argc<method->required_arity||
+       (argc>method->arity && !method->has_variadic))
+        VM_RETURN(DIAMOND_VM_ARITY_ERROR);
+    if((size_t)base+argc>DIAMOND_REGISTER_COUNT)
+        VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
+    if((size_t)method->function_index>=chunk->function_count)
+        VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
+    DiamondValue call_result=DIAMOND_NIL;
+    const DiamondVmStatus self_call_status=invoke_resolved_method_helper(
+        vm,chunk,method,registers[0],registers,base,argc,false,0,
+        nullptr,chunk,depth,&call_result);
+    VM_PROPAGATE(self_call_status);
+    registers[dest]=call_result;HELPER_DONE;
+}
+
+/* DIAMOND_OP_NEGATE, moved out of run_chunk's switch so compiled code runs the same body (diamond_jit_outlined); run_chunk keeps its Float and Int fast paths inline and comes here for the rest. The case body is unchanged
+ * apart from its macros. */
+__attribute__((noinline))
+DiamondVmStatus outlined_negate(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t depth,size_t *ip_ref) {
+    size_t ip=*ip_ref;(void)depth;
+    uint16_t destination = 0;
+    uint16_t operand = 0;
+    READ_SHORT(destination);READ_SHORT(operand);
+    if (registers[operand].kind == DIAMOND_VALUE_FLOAT) {
+        registers[destination] =
+            DIAMOND_FLOAT(-registers[operand].as.real);
+        HELPER_DONE;
+    }
+    if (value_is_bignum(registers[operand])) {
+        DiamondIntView operand_view;
+        diamond_int_view(registers[operand],&operand_view);
+        const DiamondValue bignum_result=
+            diamond_bignum_negate(vm,operand_view);
+        if(bignum_result.kind==DIAMOND_VALUE_NIL)
+            VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+        registers[destination]=bignum_result;
+        HELPER_DONE;
+    }
+    if (registers[operand].kind==DIAMOND_VALUE_OBJECT &&
+        registers[operand].as.object->kind==DIAMOND_OBJECT_INSTANCE) {
+        bool found=false;DiamondValue op_result=DIAMOND_NIL;
+        const uint8_t *site=chunk->code+(*ip_ref-1);
+        const DiamondVmStatus status=invoke_operator_method(vm,chunk,depth,
+            site,(const DiamondInstance *)registers[operand].as.object,
+            "negate",6,nullptr,0,&op_result,&found);
+        if(found) {
+            VM_PROPAGATE(status);
+            registers[destination]=op_result;
+            HELPER_DONE;
+        }
+    }
+    if (registers[operand].kind != DIAMOND_VALUE_INT) {
+        char actual[80];
+        diamond_format_value_type(actual,sizeof actual,registers[operand]);
+        snprintf(vm->error,sizeof vm->error,
+            "undefined method 'negate' for %s",actual);
+        VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+    }
+    int64_t result_value = 0;
+    if (ckd_sub(&result_value, 0, registers[operand].as.integer)) {
+        DiamondIntView operand_view;
+        diamond_int_view(registers[operand],&operand_view);
+        const DiamondValue bignum_result=
+            diamond_bignum_negate(vm,operand_view);
+        if(bignum_result.kind==DIAMOND_VALUE_NIL)
+            VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+        registers[destination]=bignum_result;
+        HELPER_DONE;
+    }
+    registers[destination] = DIAMOND_INT(result_value);
+    HELPER_DONE;
+}
+
+/* DIAMOND_OP_CALL_CLOSURE_KEYWORDS, moved out of run_chunk's switch so compiled code runs the same body
+ * (diamond_jit_outlined). The case body is unchanged apart from its macros. */
+__attribute__((noinline))
+DiamondVmStatus outlined_call_closure_keywords(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t depth,size_t *ip_ref) {
+    size_t ip=*ip_ref;(void)depth;
+    uint16_t dest=0,callable=0,positional_register=0;
+    uint8_t keyword_count=0;uint16_t keyword_names[DIAMOND_MAX_DECLARED_PARAMETERS];
+    uint16_t keyword_registers[DIAMOND_MAX_DECLARED_PARAMETERS];
+    READ_SHORT(dest);READ_SHORT(callable);READ_SHORT(positional_register);
+    READ_BYTE(keyword_count);
+    const bool has_block=(keyword_count&0x80u)!=0;
+    keyword_count&=0x7fu;
+    if((keyword_count==0&&!has_block)||keyword_count>DIAMOND_MAX_DECLARED_PARAMETERS)
+        VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
+    for(size_t index=0;index<keyword_count;index++) {
+        READ_SHORT(keyword_names[index]);READ_SHORT(keyword_registers[index]);
+    }
+    uint16_t block_register=0;
+    if(has_block)READ_SHORT(block_register);
+    if(has_block&&block_register>=DIAMOND_REGISTER_COUNT)
+        VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
+    if(registers[callable].kind!=DIAMOND_VALUE_OBJECT||
+       registers[callable].as.object->kind!=DIAMOND_OBJECT_CLOSURE) {
+        snprintf(vm->error,sizeof vm->error,
+            "spread call receiver must be a Callable");
+        VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+    }
+    if(registers[positional_register].kind!=DIAMOND_VALUE_OBJECT||
+       registers[positional_register].as.object->kind!=DIAMOND_OBJECT_ARRAY) {
+        snprintf(vm->error,sizeof vm->error,
+            "spread argument (*expr) must be an Array");
+        VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+    }
+    DiamondClosure *called=(DiamondClosure *)registers[callable].as.object;
+    if(called->foreign_chunk!=nullptr) {
+        snprintf(vm->error,sizeof vm->error,
+            "a compile_method callable can only be passed to define_method");
+        VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+    }
+    if(called->function_index>=chunk->function_count)
+        VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
+    const DiamondFunction *fn=chunk->functions[called->function_index];
+    DiamondValue *merged=nullptr;size_t merged_count=0;
+    const DiamondVmStatus merge_status=merge_keyword_arguments(vm,chunk,
+        fn,(const DiamondArray *)registers[positional_register].as.object,
+        keyword_names,keyword_registers,keyword_count,registers,
+        fn->arity,has_block?&registers[block_register]:nullptr,
+        &merged,&merged_count);
+    VM_PROPAGATE(merge_status);
+    DiamondArray merged_array={.count=merged_count,.values=merged};
+    DiamondValue call_result=DIAMOND_NIL;
+    const DiamondVmStatus status=call_closure_spread_helper(vm,chunk,
+        fn,called,&merged_array,depth,&call_result);
+    free(merged);VM_PROPAGATE(status);registers[dest]=call_result;HELPER_DONE;
+}
+
+/* DIAMOND_OP_CALL_CLOSURE_SPREAD, moved out of run_chunk's switch so compiled code runs the same body
+ * (diamond_jit_outlined). The case body is unchanged apart from its macros. */
+__attribute__((noinline))
+DiamondVmStatus outlined_call_closure_spread(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t depth,size_t *ip_ref) {
+    size_t ip=*ip_ref;(void)depth;
+    uint16_t dest=0,callable=0,spread_register=0;
+    READ_SHORT(dest);READ_SHORT(callable);READ_SHORT(spread_register);
+    if(registers[callable].kind!=DIAMOND_VALUE_OBJECT||
+       registers[callable].as.object->kind!=DIAMOND_OBJECT_CLOSURE) {
+        snprintf(vm->error,sizeof vm->error,
+            "spread call receiver must be a Callable");
+        VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+    }
+    if(registers[spread_register].kind!=DIAMOND_VALUE_OBJECT||
+       registers[spread_register].as.object->kind!=DIAMOND_OBJECT_ARRAY) {
+        snprintf(vm->error,sizeof vm->error,
+            "spread argument (*expr) must be an Array");
+        VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+    }
+    DiamondClosure *called=(DiamondClosure *)registers[callable].as.object;
+    if(called->foreign_chunk!=nullptr) {
+        snprintf(vm->error,sizeof vm->error,
+            "a compile_method callable can only be passed to define_method");
+        VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+    }
+    if(called->function_index>=chunk->function_count)
+        VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
+    const DiamondFunction *fn=chunk->functions[called->function_index];
+    const DiamondArray *spread=(const DiamondArray *)
+        registers[spread_register].as.object;
+    DiamondValue call_result=DIAMOND_NIL;
+    const DiamondVmStatus status=call_closure_spread_helper(vm,chunk,
+        fn,called,spread,depth,&call_result);
+    VM_PROPAGATE(status);
+    registers[dest]=call_result;HELPER_DONE;
+}
+
+/* DIAMOND_OP_NEW_KEYWORDS, moved out of run_chunk's switch so compiled code runs the same body
+ * (diamond_jit_outlined). The case body is unchanged apart from its macros. */
+__attribute__((noinline))
+DiamondVmStatus outlined_new_keywords(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t depth,uint8_t instruction,size_t *ip_ref) {
+    size_t ip=*ip_ref;(void)depth;
+    uint16_t destination=0,positional_register=0;
+    uint16_t class_index=0;uint8_t keyword_count=0;uint16_t keyword_names[DIAMOND_MAX_DECLARED_PARAMETERS];
+    uint16_t keyword_registers[DIAMOND_MAX_DECLARED_PARAMETERS];
+    uint16_t explicit_type=DIAMOND_NO_TYPE_SET;
+    READ_SHORT(destination);READ_SHORT(class_index);
+    if(instruction==DIAMOND_OP_NEW_TYPED)READ_SHORT(explicit_type);
+    READ_SHORT(positional_register);READ_BYTE(keyword_count);
+    const bool has_block=(keyword_count&0x80u)!=0;
+    keyword_count&=0x7fu;
+    if((size_t)class_index>=chunk->class_count||
+       (instruction==DIAMOND_OP_NEW_TYPED&&
+        (explicit_type>=chunk->type_set_count||
+         chunk->classes[class_index]->type_parameter[0]=='\0'))||
+       (keyword_count==0&&!has_block&&instruction!=DIAMOND_OP_NEW_TYPED)||
+       keyword_count>DIAMOND_MAX_DECLARED_PARAMETERS||
+       registers[positional_register].kind!=DIAMOND_VALUE_OBJECT||
+       registers[positional_register].as.object->kind!=DIAMOND_OBJECT_ARRAY)
+        VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
+    for(size_t index=0;index<keyword_count;index++) {
+        READ_SHORT(keyword_names[index]);READ_SHORT(keyword_registers[index]);
+    }
+    uint16_t block_register=0;
+    if(has_block)READ_SHORT(block_register);
+    if(has_block&&block_register>=DIAMOND_REGISTER_COUNT)
+        VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
+    const DiamondClass *class=chunk->classes[class_index];
+    const DiamondMethod *initialize=lookup_method(chunk,class,
+        "initialize",sizeof("initialize")-1);
+    if(instruction==DIAMOND_OP_NEW_TYPED&&initialize==nullptr&&keyword_count==0&&!has_block) {
+        const DiamondVmStatus status=new_instance_from_array(vm,chunk,registers,
+            destination,class_index,(const DiamondArray *)registers[positional_register].as.object,
+            explicit_type,depth);
+        VM_PROPAGATE(status);HELPER_DONE;
+    }
+    if(initialize==nullptr) {snprintf(vm->error,sizeof vm->error,
+        "no parameter with this name");VM_RETURN(DIAMOND_VM_ARITY_ERROR);}
+    const DiamondChunk *function_chunk=initialize->source_chunk!=nullptr?
+        initialize->source_chunk:chunk;
+    const DiamondFunction *fn=
+        function_chunk->functions[initialize->function_index];
+    DiamondValue *merged=nullptr;size_t merged_count=0;
+    const DiamondVmStatus merge_status=merge_keyword_arguments(vm,chunk,
+        fn,(const DiamondArray *)registers[positional_register].as.object,
+        keyword_names,keyword_registers,keyword_count,registers,
+        initialize->arity,has_block?&registers[block_register]:nullptr,
+        &merged,&merged_count);
+    VM_PROPAGATE(merge_status);
+    DiamondArray *merged_array=allocate_array(vm,merged,merged_count);
+    free(merged);if(merged_array==nullptr)
+        VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+    const size_t protected_count=vm->gc_protected_count;
+    if(!gc_protect(vm,DIAMOND_OBJECT(merged_array)))
+        VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+    if(instruction==DIAMOND_OP_NEW_TYPED) {
+        const DiamondVmStatus status=new_instance_from_array(vm,chunk,registers,
+            destination,class_index,merged_array,explicit_type,depth);
+        gc_unprotect(vm,protected_count);VM_PROPAGATE(status);HELPER_DONE;
+    }
+    uint8_t code[10]={DIAMOND_OP_NEW_SPREAD,0,1,
+        (uint8_t)(class_index>>8),(uint8_t)(class_index&UINT8_MAX),0,0,
+        DIAMOND_OP_RETURN,0,1};uint32_t locations[10]={0};
+    DiamondChunk synthetic=*chunk;synthetic.class_type_variable=false;synthetic.name="<keyword new>";
+    synthetic.code=code;synthetic.lines=locations;
+    synthetic.columns=locations;synthetic.code_count=10;
+    synthetic.register_count=2;
+    const DiamondValue argument=DIAMOND_OBJECT(merged_array);
+    DiamondValue constructor_result=DIAMOND_NIL;
+    const DiamondVmStatus status=run_chunk(&synthetic,vm,&argument,1,
+        depth+1,nullptr,&constructor_result);
+    gc_unprotect(vm,protected_count);VM_PROPAGATE(status);
+    registers[destination]=constructor_result;HELPER_DONE;
+}
+
+/* DIAMOND_OP_BUILD_SPREAD_ARGS, moved out of run_chunk's switch so compiled code runs the same body
+ * (diamond_jit_outlined). The case body is unchanged apart from its macros. */
+__attribute__((noinline))
+DiamondVmStatus outlined_build_spread_args(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t depth,size_t *ip_ref) {
+    size_t ip=*ip_ref;(void)depth;
+    uint16_t destination=0,prefix_base=0,spread_register=0,
+        suffix_base=0;
+    uint8_t prefix_count=0,suffix_count=0;
+    READ_SHORT(destination);READ_SHORT(prefix_base);
+    READ_BYTE(prefix_count);READ_SHORT(spread_register);
+    READ_SHORT(suffix_base);READ_BYTE(suffix_count);
+    const bool optional_block=(suffix_count&0x80u)!=0;
+    suffix_count&=0x7fu;
+    if(optional_block&&suffix_count==0)
+        VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
+    if((size_t)prefix_base+prefix_count>DIAMOND_REGISTER_COUNT||
+       (size_t)suffix_base+suffix_count>DIAMOND_REGISTER_COUNT)
+        VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
+    if(registers[spread_register].kind!=DIAMOND_VALUE_OBJECT||
+       registers[spread_register].as.object->kind!=DIAMOND_OBJECT_ARRAY) {
+        snprintf(vm->error,sizeof vm->error,
+            "spread argument (*expr) must be an Array");
+        VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+    }
+    const DiamondArray *spread=(const DiamondArray *)
+        registers[spread_register].as.object;
+    DiamondArray *combined=allocate_array(vm,nullptr,0);
+    if(combined==nullptr)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+    registers[destination]=DIAMOND_OBJECT(combined);
+    for(size_t index=0;index<prefix_count;index++)
+        if(!array_push(vm,combined,
+                registers[(size_t)prefix_base+index]))
+            VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+    for(size_t index=0;index<spread->count;index++)
+        if(!array_push(vm,combined,spread->values[index]))
+            VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+    for(size_t index=0;index<suffix_count;index++) {
+        if(optional_block&&index+1==suffix_count&&
+           registers[(size_t)suffix_base+index].kind==
+               DIAMOND_VALUE_NIL)
+            continue;
+        if(!array_push(vm,combined,
+                registers[(size_t)suffix_base+index]))
+            VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+    }
+    HELPER_DONE;
+}
+
 #undef HELPER_DONE
 #undef READ_SHORT
 #undef READ_BYTE

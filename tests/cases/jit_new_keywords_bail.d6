@@ -1,6 +1,6 @@
-# Keyword construction compiles to DIAMOND_OP_NEW_KEYWORDS (synthetic-chunk
-# re-entry into run_chunk), which compile_body has no case for, so run_once
-# still bails whole. The 1 compiled function is describe, whose
+# Keyword construction compiles to DIAMOND_OP_NEW_KEYWORDS (a synthetic-chunk
+# re-entry into run_chunk). Compiled code runs it through the interpreter's own
+# body (diamond_jit_outlined), so run_once compiles alongside describe, whose
 # interpolation compiles; initialize only stores its arguments and runs
 # without a call.
 class Box

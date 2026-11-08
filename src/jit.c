@@ -732,6 +732,7 @@ enum {
     JCC_E = 0x84,
     JCC_NE = 0x85,
     JCC_BE = 0x86,
+    JCC_A = 0x87,
     JCC_NS = 0x89,
 };
 static size_t emit_jcc_placeholder(JitBuffer *buf, uint8_t condition) {
@@ -2049,6 +2050,39 @@ static bool opcode_writes_no_register(DiamondOpCode opcode) {
         case DIAMOND_OP_JUMP_IF_TRUE:
         case DIAMOND_OP_JUMP_IF_FALSE:
         case DIAMOND_OP_RETURN:
+        case DIAMOND_OP_SET_CVAR:
+        case DIAMOND_OP_CHECK_DESTRUCTURE_COUNT:
+            return true;
+        default:
+            return false;
+    }
+}
+
+/* Opcodes compiled as a call to diamond_jit_outlined (src/vm_calls.c, whose
+ * switch must list the same ones): the interpreter's own out-of-line body
+ * runs them, so they behave exactly as interpreted. Each needs an entry in
+ * decode_instruction_operands too (its operands and the register it
+ * writes), which compile_outlined_instruction uses to step over it. */
+static bool opcode_runs_outlined(DiamondOpCode opcode) {
+    switch (opcode) {
+        case DIAMOND_OP_PRINT:
+        case DIAMOND_OP_SYMBOL:
+        case DIAMOND_OP_CLASS_NAME:
+        case DIAMOND_OP_NEGATE:
+        case DIAMOND_OP_CHECK_DESTRUCTURE_COUNT:
+        case DIAMOND_OP_INVOKE_SELF_METHOD:
+        case DIAMOND_OP_GET_CVAR:
+        case DIAMOND_OP_SET_CVAR:
+        case DIAMOND_OP_CALL_TYPED:
+        case DIAMOND_OP_CALL_SPREAD: case DIAMOND_OP_CALL_TYPED_SPREAD:
+        case DIAMOND_OP_CALL_KEYWORD_SPREAD: case DIAMOND_OP_CALL_TYPED_KEYWORD_SPREAD:
+        case DIAMOND_OP_CALL_SINGLETON_KEYWORDS: case DIAMOND_OP_CALL_TYPED_SINGLETON_KEYWORDS:
+        case DIAMOND_OP_CALL_SINGLETON_SPREAD: case DIAMOND_OP_CALL_TYPED_SINGLETON_SPREAD:
+        case DIAMOND_OP_NEW_SPREAD: case DIAMOND_OP_NEW_KEYWORDS: case DIAMOND_OP_NEW_TYPED:
+        case DIAMOND_OP_INVOKE_KEYWORDS: case DIAMOND_OP_INVOKE_TYPED_KEYWORDS:
+        case DIAMOND_OP_INVOKE_SPREAD: case DIAMOND_OP_INVOKE_TYPED_SPREAD:
+        case DIAMOND_OP_CALL_CLOSURE_KEYWORDS: case DIAMOND_OP_CALL_CLOSURE_SPREAD:
+        case DIAMOND_OP_BUILD_SPREAD_ARGS:
             return true;
         default:
             return false;
@@ -2057,6 +2091,24 @@ static bool opcode_writes_no_register(DiamondOpCode opcode) {
 
 static bool opcode_dest_is_first_u16(DiamondOpCode opcode) {
     switch (opcode) {
+        case DIAMOND_OP_CALL_TYPED:
+        case DIAMOND_OP_CALL_SPREAD: case DIAMOND_OP_CALL_TYPED_SPREAD:
+        case DIAMOND_OP_CALL_KEYWORD_SPREAD: case DIAMOND_OP_CALL_TYPED_KEYWORD_SPREAD:
+        case DIAMOND_OP_CALL_SINGLETON_KEYWORDS: case DIAMOND_OP_CALL_TYPED_SINGLETON_KEYWORDS:
+        case DIAMOND_OP_CALL_SINGLETON_SPREAD: case DIAMOND_OP_CALL_TYPED_SINGLETON_SPREAD:
+        case DIAMOND_OP_NEW_SPREAD: case DIAMOND_OP_NEW_KEYWORDS: case DIAMOND_OP_NEW_TYPED:
+        case DIAMOND_OP_INVOKE_KEYWORDS: case DIAMOND_OP_INVOKE_TYPED_KEYWORDS:
+        case DIAMOND_OP_INVOKE_SPREAD: case DIAMOND_OP_INVOKE_TYPED_SPREAD:
+        case DIAMOND_OP_CALL_CLOSURE_KEYWORDS: case DIAMOND_OP_CALL_CLOSURE_SPREAD:
+        case DIAMOND_OP_BUILD_SPREAD_ARGS:
+        case DIAMOND_OP_NOT:
+        case DIAMOND_OP_LOAD_CLASS:
+        case DIAMOND_OP_PRINT:
+        case DIAMOND_OP_SYMBOL:
+        case DIAMOND_OP_CLASS_NAME:
+        case DIAMOND_OP_NEGATE:
+        case DIAMOND_OP_INVOKE_SELF_METHOD:
+        case DIAMOND_OP_GET_CVAR:
         case DIAMOND_OP_ADD_INT_K: case DIAMOND_OP_SUBTRACT_INT_K: case DIAMOND_OP_MULTIPLY_INT_K:
         case DIAMOND_OP_MODULO_INT_K: case DIAMOND_OP_LESS_INT_K: case DIAMOND_OP_LESS_EQUAL_INT_K:
         case DIAMOND_OP_GREATER_INT_K: case DIAMOND_OP_GREATER_EQUAL_INT_K:
@@ -2127,6 +2179,29 @@ static bool opcode_dest_is_first_u16(DiamondOpCode opcode) {
  * `*second_dest` (-1 for every other instruction).
  * Returns false for an opcode outside the whitelist or a truncated stream,
  * which every caller treats as "unknown, assume the worst". */
+/* A typed call's trailer: a count byte (at most 8), then that many u16 type
+ * sets. */
+static bool skip_type_trailer(const DiamondFunction *fn, size_t *pc) {
+    uint8_t count = 0;
+    if (!decode_u8(fn, pc, &count) || count > 8 || *pc + 2 * (size_t)count > fn->code_count)
+        return false;
+    *pc += 2 * (size_t)count;
+    return true;
+}
+
+/* The keyword trailer of CALL_CLOSURE_KEYWORDS, CALL_SINGLETON_KEYWORDS,
+ * NEW_KEYWORDS and INVOKE_KEYWORDS: a count byte with 0x80 set when a block
+ * register follows, that many (u16 name, u16 register) pairs, then the block
+ * register. */
+static bool skip_keyword_trailer(const DiamondFunction *fn, size_t *pc) {
+    uint8_t encoded = 0;
+    if (!decode_u8(fn, pc, &encoded)) return false;
+    const size_t bytes = 4 * (size_t)(encoded & 0x7Fu) + ((encoded & 0x80u) != 0 ? 2 : 0);
+    if (*pc + bytes > fn->code_count) return false;
+    *pc += bytes;
+    return true;
+}
+
 static bool decode_instruction_operands(const DiamondFunction *fn, size_t *pc,
         DiamondOpCode opcode, int32_t *dest, int32_t *jump_target, int32_t *second_dest) {
     *dest = -1;
@@ -2178,6 +2253,15 @@ static bool decode_instruction_operands(const DiamondFunction *fn, size_t *pc,
             case DIAMOND_OP_RETURN: {
                 uint16_t a = 0;
                 return decode_u16(fn, pc, &a);
+            }
+            case DIAMOND_OP_SET_CVAR: {
+                uint16_t class_index = 0, slot = 0, source = 0;
+                return decode_u16(fn, pc, &class_index) && decode_u16(fn, pc, &slot) &&
+                    decode_u16(fn, pc, &source);
+            }
+            case DIAMOND_OP_CHECK_DESTRUCTURE_COUNT: {
+                uint16_t array = 0, expected = 0;
+                return decode_u16(fn, pc, &array) && decode_u16(fn, pc, &expected);
             }
             default: return false; /* unreachable given opcode_writes_no_register */
         }
@@ -2269,6 +2353,94 @@ static bool decode_instruction_operands(const DiamondFunction *fn, size_t *pc,
             return decode_u16(fn, pc, &function_index) &&
                 decode_u16(fn, pc, &base) && decode_u8(fn, pc, &argc);
         }
+        case DIAMOND_OP_NOT: case DIAMOND_OP_SYMBOL: case DIAMOND_OP_CLASS_NAME:
+        case DIAMOND_OP_NEGATE: case DIAMOND_OP_LOAD_CLASS: {
+            uint16_t a = 0;
+            return decode_u16(fn, pc, &a);
+        }
+        case DIAMOND_OP_PRINT: {
+            uint16_t source = 0; uint8_t flags = 0;
+            return decode_u16(fn, pc, &source) && decode_u8(fn, pc, &flags);
+        }
+        case DIAMOND_OP_INVOKE_SELF_METHOD: {
+            uint16_t name = 0, base = 0; uint8_t argc = 0;
+            return decode_u16(fn, pc, &name) && decode_u16(fn, pc, &base) &&
+                decode_u8(fn, pc, &argc);
+        }
+        case DIAMOND_OP_GET_CVAR: {
+            uint16_t class_index = 0, slot = 0;
+            return decode_u16(fn, pc, &class_index) && decode_u16(fn, pc, &slot);
+        }
+        /* The calls run through diamond_jit_outlined. Their layouts are the
+         * READ_SHORT/READ_BYTE sequences of the matching vm_outlined.c
+         * bodies; every one writes only its dest. */
+        case DIAMOND_OP_CALL_TYPED: {
+            uint16_t function_index = 0, base = 0; uint8_t argc = 0;
+            return decode_u16(fn, pc, &function_index) && decode_u16(fn, pc, &base) &&
+                decode_u8(fn, pc, &argc) && skip_type_trailer(fn, pc);
+        }
+        case DIAMOND_OP_CALL_SPREAD: case DIAMOND_OP_CALL_TYPED_SPREAD:
+        case DIAMOND_OP_CALL_KEYWORD_SPREAD: case DIAMOND_OP_CALL_TYPED_KEYWORD_SPREAD: {
+            uint16_t function_index = 0, array = 0;
+            if (!decode_u16(fn, pc, &function_index) || !decode_u16(fn, pc, &array)) return false;
+            if (opcode == DIAMOND_OP_CALL_KEYWORD_SPREAD ||
+                opcode == DIAMOND_OP_CALL_TYPED_KEYWORD_SPREAD) {
+                /* count, then (slot byte, u16 register) entries: no block */
+                uint8_t count = 0;
+                if (!decode_u8(fn, pc, &count) || *pc + 3 * (size_t)count > fn->code_count)
+                    return false;
+                *pc += 3 * (size_t)count;
+            }
+            return (opcode != DIAMOND_OP_CALL_TYPED_SPREAD &&
+                    opcode != DIAMOND_OP_CALL_TYPED_KEYWORD_SPREAD) ||
+                skip_type_trailer(fn, pc);
+        }
+        case DIAMOND_OP_CALL_SINGLETON_KEYWORDS: case DIAMOND_OP_CALL_TYPED_SINGLETON_KEYWORDS: {
+            uint16_t function_index = 0, positional = 0, class_index = 0; uint8_t receiver = 0;
+            return decode_u16(fn, pc, &function_index) && decode_u16(fn, pc, &positional) &&
+                decode_u16(fn, pc, &class_index) && decode_u8(fn, pc, &receiver) &&
+                skip_keyword_trailer(fn, pc) &&
+                (opcode != DIAMOND_OP_CALL_TYPED_SINGLETON_KEYWORDS || skip_type_trailer(fn, pc));
+        }
+        case DIAMOND_OP_CALL_SINGLETON_SPREAD: case DIAMOND_OP_CALL_TYPED_SINGLETON_SPREAD: {
+            uint16_t function_index = 0, spread = 0, class_index = 0; uint8_t receiver = 0;
+            return decode_u16(fn, pc, &function_index) && decode_u16(fn, pc, &spread) &&
+                decode_u16(fn, pc, &class_index) && decode_u8(fn, pc, &receiver) &&
+                (opcode != DIAMOND_OP_CALL_TYPED_SINGLETON_SPREAD || skip_type_trailer(fn, pc));
+        }
+        case DIAMOND_OP_NEW_SPREAD: case DIAMOND_OP_CALL_CLOSURE_SPREAD: {
+            uint16_t a = 0, b = 0;
+            return decode_u16(fn, pc, &a) && decode_u16(fn, pc, &b);
+        }
+        case DIAMOND_OP_NEW_KEYWORDS: case DIAMOND_OP_NEW_TYPED: {
+            uint16_t class_index = 0, explicit_type = 0, positional = 0;
+            return decode_u16(fn, pc, &class_index) &&
+                (opcode != DIAMOND_OP_NEW_TYPED || decode_u16(fn, pc, &explicit_type)) &&
+                decode_u16(fn, pc, &positional) && skip_keyword_trailer(fn, pc);
+        }
+        case DIAMOND_OP_INVOKE_KEYWORDS: case DIAMOND_OP_INVOKE_TYPED_KEYWORDS: {
+            uint16_t recv = 0, name = 0, positional = 0;
+            return decode_u16(fn, pc, &recv) && decode_u16(fn, pc, &name) &&
+                decode_u16(fn, pc, &positional) && skip_keyword_trailer(fn, pc) &&
+                (opcode != DIAMOND_OP_INVOKE_TYPED_KEYWORDS || skip_type_trailer(fn, pc));
+        }
+        case DIAMOND_OP_INVOKE_SPREAD: case DIAMOND_OP_INVOKE_TYPED_SPREAD: {
+            uint16_t recv = 0, name = 0, spread = 0;
+            return decode_u16(fn, pc, &recv) && decode_u16(fn, pc, &name) &&
+                decode_u16(fn, pc, &spread) &&
+                (opcode != DIAMOND_OP_INVOKE_TYPED_SPREAD || skip_type_trailer(fn, pc));
+        }
+        case DIAMOND_OP_CALL_CLOSURE_KEYWORDS: {
+            uint16_t callable = 0, positional = 0;
+            return decode_u16(fn, pc, &callable) && decode_u16(fn, pc, &positional) &&
+                skip_keyword_trailer(fn, pc);
+        }
+        case DIAMOND_OP_BUILD_SPREAD_ARGS: {
+            uint16_t prefix = 0, spread = 0, suffix = 0; uint8_t prefix_count = 0, suffix_count = 0;
+            return decode_u16(fn, pc, &prefix) && decode_u8(fn, pc, &prefix_count) &&
+                decode_u16(fn, pc, &spread) && decode_u16(fn, pc, &suffix) &&
+                decode_u8(fn, pc, &suffix_count);
+        }
         default: return false; /* unreachable given opcode_dest_is_first_u16 */
     }
 }
@@ -2332,164 +2504,73 @@ static bool parameter_never_reassigned(const DiamondFunction *fn, uint16_t targe
  * scanner. */
 static int32_t register_new_class_or_move_src(const DiamondFunction *fn,
         uint16_t target_register, uint16_t *move_src) {
+    /* Walks with decode_instruction_operands, the same decoder every other
+     * scan here uses, so an opcode the JIT learns is understood here too
+     * (a separate copy of the decoding drifted: functions using a newer
+     * opcode lost every class fact). Only the sole writer's own operands
+     * are read again, from its start. */
     size_t pc = 0;
     size_t write_count = 0;
-    int32_t new_class = -1;
-    bool sole_write_is_move = false;
+    size_t writer_start = SIZE_MAX;
     while (pc < fn->code_count) {
+        const size_t start = pc;
         uint8_t raw_opcode = 0;
         if (!decode_u8(fn, &pc, &raw_opcode)) return -1;
-        DiamondOpCode opcode = (DiamondOpCode)raw_opcode;
-        if (opcode_writes_no_register(opcode)) {
-            switch (opcode) {
-                case DIAMOND_OP_SET_IVAR: case DIAMOND_OP_INDEX_SET: {
-                    uint16_t a = 0, b = 0, c = 0;
-                    if (!decode_u16(fn, &pc, &a) || !decode_u16(fn, &pc, &b) ||
-                        !decode_u16(fn, &pc, &c)) return -1;
-                    break;
-                }
-                case DIAMOND_OP_CHECK_TYPE: {
-                    uint16_t a = 0, b = 0;
-                    if (!decode_u16(fn, &pc, &a) || !decode_u16(fn, &pc, &b)) return -1;
-                    break;
-                }
-                case DIAMOND_OP_JUMP: {
-                    uint8_t a = 0, b = 0;
-                    if (!decode_u8(fn, &pc, &a) || !decode_u8(fn, &pc, &b)) return -1;
-                    break;
-                }
-                case DIAMOND_OP_JUMP_IF_TRUE: case DIAMOND_OP_JUMP_IF_FALSE: {
-                    uint16_t a = 0; uint8_t b = 0, c = 0;
-                    if (!decode_u16(fn, &pc, &a) || !decode_u8(fn, &pc, &b) ||
-                        !decode_u8(fn, &pc, &c)) return -1;
-                    break;
-                }
-                case DIAMOND_OP_RETURN: {
-                    uint16_t a = 0;
-                    if (!decode_u16(fn, &pc, &a)) return -1;
-                    break;
-                }
-                default: return -1; /* unreachable given opcode_writes_no_register */
-            }
-            continue;
-        }
-        if (!opcode_dest_is_first_u16(opcode)) return -1;
-        uint16_t dest = 0;
-        if (!decode_u16(fn, &pc, &dest)) return -1;
-        const bool writes_target = dest == target_register;
-        if (writes_target) {
-            write_count++;
-            if (write_count > 1) return -1;
-        }
-        switch (opcode) {
-            case DIAMOND_OP_NIL: break;
-            case DIAMOND_OP_MOVE: {
-                uint16_t src = 0;
-                if (!decode_u16(fn, &pc, &src)) return -1;
-                if (writes_target) { sole_write_is_move = true; *move_src = src; }
-                break;
-            }
-            /* Writes dest and scratch, neither with a class. */
-            case DIAMOND_OP_ADD_INT_K: case DIAMOND_OP_SUBTRACT_INT_K: case DIAMOND_OP_MULTIPLY_INT_K:
-            case DIAMOND_OP_MODULO_INT_K: case DIAMOND_OP_LESS_INT_K: case DIAMOND_OP_LESS_EQUAL_INT_K:
-            case DIAMOND_OP_GREATER_INT_K: case DIAMOND_OP_GREATER_EQUAL_INT_K:
-            case DIAMOND_OP_EQUAL_INT_K: case DIAMOND_OP_NOT_EQUAL_INT_K: {
-                uint16_t left = 0, scratch = 0, constant = 0;
-                if (!decode_u16(fn, &pc, &left) || !decode_u16(fn, &pc, &scratch) ||
-                    !decode_u16(fn, &pc, &constant)) return -1;
-                if (scratch == target_register && ++write_count > 1) return -1;
-                break;
-            }
-            case DIAMOND_OP_BOOL: case DIAMOND_OP_CONSTANT:
-            case DIAMOND_OP_ARGUMENT_PROVIDED: case DIAMOND_OP_STRING: {
-                uint16_t a = 0;
-                if (!decode_u16(fn, &pc, &a)) return -1;
-                break;
-            }
-            case DIAMOND_OP_ADD_INT: case DIAMOND_OP_SUBTRACT_INT: case DIAMOND_OP_MULTIPLY_INT:
-            case DIAMOND_OP_DIVIDE_INT: case DIAMOND_OP_LESS_INT: case DIAMOND_OP_ADD:
-            case DIAMOND_OP_SUBTRACT: case DIAMOND_OP_MULTIPLY: case DIAMOND_OP_DIVIDE: case DIAMOND_OP_MODULO:
-            case DIAMOND_OP_LESS: case DIAMOND_OP_LESS_EQUAL: case DIAMOND_OP_LESS_EQUAL_INT:
-            case DIAMOND_OP_GREATER: case DIAMOND_OP_GREATER_INT: case DIAMOND_OP_GREATER_EQUAL:
-            case DIAMOND_OP_GREATER_EQUAL_INT: case DIAMOND_OP_EQUAL: case DIAMOND_OP_NOT_EQUAL:
-            case DIAMOND_OP_EQUAL_INT: case DIAMOND_OP_NOT_EQUAL_INT:
-            case DIAMOND_OP_INDEX_GET: case DIAMOND_OP_ARRAY: case DIAMOND_OP_HASH:
-            case DIAMOND_OP_INDEX_GET_STRING:
-            case DIAMOND_OP_IS_TYPE:
-            case DIAMOND_OP_SAME_CLASS: {
-                uint16_t a = 0, b = 0;
-                if (!decode_u16(fn, &pc, &a) || !decode_u16(fn, &pc, &b)) return -1;
-                break;
-            }
-            /* Phase 11: an ivar load is a second class-producing terminal,
-             * alongside NEW below -- see DiamondFunction.ivar_known_class's
-             * own comment (src/vm.h). ivar_known_class covers only the
-             * first DIAMOND_MAX_JIT_KNOWN_FIELDS fields; a later field just
-             * has no known class here. */
-            case DIAMOND_OP_GET_IVAR: {
-                uint16_t a = 0, field = 0;
-                if (!decode_u16(fn, &pc, &a) || !decode_u16(fn, &pc, &field)) return -1;
-                if (writes_target && field < DIAMOND_MAX_JIT_KNOWN_FIELDS &&
-                    fn->ivar_known_class[field] != DIAMOND_NO_CLASS)
-                    new_class = (int32_t)fn->ivar_known_class[field];
-                break;
-            }
-            case DIAMOND_OP_SUPER: {
-                uint16_t a = 0, b = 0, c = 0; uint8_t d = 0;
-                if (!decode_u16(fn, &pc, &c) || !decode_u16(fn, &pc, &a) ||
-                    !decode_u16(fn, &pc, &b) || !decode_u8(fn, &pc, &d)) return -1;
-                break;
-            }
-            /* Phase 12 (docs/internal/jit-design.md): a third class-
-             * producing terminal, alongside NEW and GET_IVAR above -- an
-             * INVOKE result the *compiler* already proved (real
-             * semantics, via publish_instance_return_type, not LSP
-             * heuristics) holds a single concrete class. Gated on
-             * !fn->redefine_method_used_anywhere -- see that field's own
-             * comment (src/vm.h) for why a method's declared return type,
-             * unlike NEW's own class-index operand or Phase 11's ivar
-             * fact, can go stale at runtime via redefine_method, in a way
-             * nothing else this scan trusts can. */
-            case DIAMOND_OP_INVOKE: case DIAMOND_OP_INVOKE_MONO: {
-                uint16_t a = 0, b = 0, c = 0; uint8_t d = 0;
-                if (!decode_u16(fn, &pc, &a) || !decode_u16(fn, &pc, &b) ||
-                    !decode_u16(fn, &pc, &c) || !decode_u8(fn, &pc, &d)) return -1;
-                if (writes_target && !fn->redefine_method_used_anywhere &&
-                    target_register < DIAMOND_JIT_MAX_REGISTERS &&
-                    fn->register_known_class[target_register] != DIAMOND_NO_CLASS)
-                    new_class = (int32_t)fn->register_known_class[target_register];
-                break;
-            }
-            case DIAMOND_OP_NEW: {
-                uint16_t class_index = 0, base = 0; uint8_t argc = 0;
-                if (!decode_u16(fn, &pc, &class_index) || !decode_u16(fn, &pc, &base) ||
-                    !decode_u8(fn, &pc, &argc)) return -1;
-                if (writes_target) new_class = (int32_t)class_index;
-                break;
-            }
-            /* A call's result proves no class here (a plain function's
-             * declared return type is not trusted by this scan). */
-            case DIAMOND_OP_CALL:
-            case DIAMOND_OP_TAIL_CALL: {
-                uint16_t function_index = 0, base = 0; uint8_t argc = 0;
-                if (!decode_u16(fn, &pc, &function_index) ||
-                    !decode_u16(fn, &pc, &base) || !decode_u8(fn, &pc, &argc)) return -1;
-                break;
-            }
-            default: return -1; /* unreachable given opcode_dest_is_first_u16 */
-        }
+        int32_t dest = -1, jump_target = -1, second_dest = -1;
+        if (!decode_instruction_operands(fn, &pc, (DiamondOpCode)raw_opcode,
+                &dest, &jump_target, &second_dest)) return -1;
+        if (dest == (int32_t)target_register) { write_count++; writer_start = start; }
+        if (second_dest == (int32_t)target_register) { write_count++; writer_start = SIZE_MAX; }
+        if (write_count > 1) return -1;
     }
-    /* Neither a non-NEW, non-GET_IVAR, non-MOVE write nor MOVE itself ever
-     * sets new_class, so the only way write_count==1 with new_class!=-1 is
-     * that sole write being a NEW or a known-class GET_IVAR -- covers
-     * "exactly one write, wrong opcode (or an unproven ivar)" (new_class
-     * stays -1) without needing a separate mid-loop check. sole_write_is_
-     * move can only be true when write_count==1 too (set only inside the
-     * writes_target branch, which already enforces write_count<=1 via the
-     * early return above). */
-    if (write_count != 1) return -1;
-    if (new_class >= 0) return new_class;
-    return sole_write_is_move ? -2 : -1;
+    if (write_count != 1 || writer_start == SIZE_MAX) return -1;
+    /* The writer's operands after its dest (decoded above, so in bounds). */
+    size_t operands = writer_start + 3;
+    uint16_t first = 0;
+    switch ((DiamondOpCode)fn->code[writer_start]) {
+        case DIAMOND_OP_MOVE:
+            if (!decode_u16(fn, &operands, &first)) return -1;
+            *move_src = first;
+            return -2;
+        /* Phase 11: an ivar load is a second class-producing terminal,
+         * alongside NEW below -- see DiamondFunction.ivar_known_class's
+         * own comment (src/vm.h). ivar_known_class covers only the
+         * first DIAMOND_MAX_JIT_KNOWN_FIELDS fields; a later field just
+         * has no known class here. */
+        case DIAMOND_OP_GET_IVAR: {
+            uint16_t field = 0;
+            if (!decode_u16(fn, &operands, &first) || !decode_u16(fn, &operands, &field))
+                return -1;
+            if (field < DIAMOND_MAX_JIT_KNOWN_FIELDS &&
+                fn->ivar_known_class[field] != DIAMOND_NO_CLASS)
+                return (int32_t)fn->ivar_known_class[field];
+            return -1;
+        }
+        /* Phase 12 (docs/internal/jit-design.md): a third class-
+         * producing terminal, alongside NEW and GET_IVAR above -- an
+         * INVOKE result the *compiler* already proved (real
+         * semantics, via publish_instance_return_type, not LSP
+         * heuristics) holds a single concrete class. Gated on
+         * !fn->redefine_method_used_anywhere -- see that field's own
+         * comment (src/vm.h) for why a method's declared return type,
+         * unlike NEW's own class-index operand or Phase 11's ivar
+         * fact, can go stale at runtime via redefine_method, in a way
+         * nothing else this scan trusts can. */
+        case DIAMOND_OP_INVOKE: case DIAMOND_OP_INVOKE_MONO:
+            if (!fn->redefine_method_used_anywhere &&
+                target_register < DIAMOND_JIT_MAX_REGISTERS &&
+                fn->register_known_class[target_register] != DIAMOND_NO_CLASS)
+                return (int32_t)fn->register_known_class[target_register];
+            return -1;
+        case DIAMOND_OP_NEW:
+            if (!decode_u16(fn, &operands, &first)) return -1;
+            return (int32_t)first;
+        /* Any other writer (a call's result included: a plain function's
+         * declared return type is not trusted by this scan) proves no
+         * class. */
+        default:
+            return -1;
+    }
 }
 
 /* Phase 10 (NEW) / Phase 11 (GET_IVAR): returns the compile-time class
@@ -2756,6 +2837,55 @@ static bool compile_value_instruction(JitCompiler *jc, DiamondOpCode opcode, siz
     const DiamondFunction *fn = jc->function;
     size_t pc = *pc_ref;
     switch (opcode) {
+        case DIAMOND_OP_NOT: {
+            /* true for nil and false, false for anything else (is_truthy).
+             * The source is read in full before dest is written, so the two
+             * may be the same register. */
+            uint16_t dest = 0, src = 0;
+            if (!decode_u16(fn, &pc, &dest) || !decode_u16(fn, &pc, &src)) {
+                jc->bailed = true; return true;
+            }
+            JitBuffer *buf = &jc->buf;
+            emit_load_byte_zx(buf, REG_RAX, JIT_REGISTERS_BASE, reg_disp(src, KIND_OFF));
+            emit_cmp_imm32_32(buf, REG_RAX, DIAMOND_VALUE_NIL);
+            const size_t is_nil = emit_jcc_placeholder(buf, JCC_E);
+            emit_cmp_imm32_32(buf, REG_RAX, DIAMOND_VALUE_BOOL);
+            const size_t not_bool = emit_jcc_placeholder(buf, JCC_NE);
+            emit_load_byte_zx(buf, REG_RAX, JIT_REGISTERS_BASE, reg_disp(src, AS_OFF));
+            emit_test_r8(buf, REG_RAX);
+            emit_sete_al(buf);
+            const size_t bool_done = emit_jmp_placeholder(buf);
+            patch_rel32_to_here(buf, not_bool);
+            emit_mov_imm64(buf, REG_RAX, 0);
+            const size_t truthy_done = emit_jmp_placeholder(buf);
+            patch_rel32_to_here(buf, is_nil);
+            emit_mov_imm64(buf, REG_RAX, 1);
+            patch_rel32_to_here(buf, bool_done);
+            patch_rel32_to_here(buf, truthy_done);
+            emit_store_kind_imm(buf, JIT_REGISTERS_BASE, reg_disp(dest, KIND_OFF), DIAMOND_VALUE_BOOL);
+            emit_store_byte_reg(buf, JIT_REGISTERS_BASE, reg_disp(dest, AS_OFF), REG_RAX);
+            break;
+        }
+        case DIAMOND_OP_LOAD_CLASS: {
+            /* A Class value, after run_chunk's own bounds check of the index
+             * against the chunk the function runs in. */
+            uint16_t dest = 0, class_index = 0;
+            if (!decode_u16(fn, &pc, &dest) || !decode_u16(fn, &pc, &class_index)) {
+                jc->bailed = true; return true;
+            }
+            JitBuffer *buf = &jc->buf;
+            emit_load_r64(buf, REG_RAX, JIT_CHUNK, (int32_t)offsetof(DiamondChunk, class_count));
+            emit_cmp_imm32_64(buf, REG_RAX, class_index);
+            const size_t in_range = emit_jcc_placeholder(buf, JCC_A);
+            emit_store_instruction_offset(jc);
+            emit_mov_al_imm8(buf, (uint8_t)DIAMOND_VM_INVALID_BYTECODE);
+            record_global_patch(jc, emit_jmp_placeholder(buf), bailout_target(jc));
+            patch_rel32_to_here(buf, in_range);
+            emit_store_kind_imm(buf, JIT_REGISTERS_BASE, reg_disp(dest, KIND_OFF), DIAMOND_VALUE_CLASS);
+            emit_mov_imm64(buf, REG_RAX, class_index);
+            emit_store_r64(buf, JIT_REGISTERS_BASE, reg_disp(dest, AS_OFF), REG_RAX);
+            break;
+        }
         case DIAMOND_OP_NIL: {
             uint16_t dest = 0;
             if (!decode_u16(fn, &pc, &dest)) { jc->bailed = true; return true; }
@@ -3495,6 +3625,34 @@ static bool compile_control_instruction(JitCompiler *jc, DiamondOpCode opcode, s
     return true;
 }
 
+/* An opcode the interpreter runs out of line (opcode_runs_outlined): a call
+ * to diamond_jit_outlined with the instruction's offset, after which the
+ * body has written its dest itself. decode_instruction_operands steps over
+ * the operands, the same decoder the register scans use, so the two cannot
+ * disagree about the instruction's length. Returns false for any other
+ * opcode. */
+static bool compile_outlined_instruction(JitCompiler *jc, DiamondOpCode opcode,
+        size_t instruction_start, size_t *pc_ref) {
+    if (!opcode_runs_outlined(opcode)) return false;
+    int32_t dest = -1, jump_target = -1, second_dest = -1;
+    if (!decode_instruction_operands(jc->function, pc_ref, opcode, &dest, &jump_target,
+            &second_dest)) {
+        jc->bailed = true;
+        return true;
+    }
+    jc->needs_frame = true;
+    jc->has_called = true;
+    JitBuffer *buf = &jc->buf;
+    emit_mov_rr(buf, REG_RDI, JIT_VM);
+    emit_mov_rr(buf, REG_RSI, JIT_CHUNK);
+    emit_mov_rr(buf, REG_RDX, JIT_REGISTERS_BASE);
+    emit_mov_rr(buf, REG_RCX, JIT_DEPTH);
+    emit_mov_imm64(buf, REG_R8, instruction_start);
+    emit_body_call(jc, (void *)(uintptr_t)diamond_jit_outlined);
+    emit_bail_if_al_nonzero(jc);
+    return true;
+}
+
 /* Returns false (jc->bailed set) the moment anything outside the supported
  * whitelist is found -- the caller must then discard the whole attempt. */
 static void compile_body(JitCompiler *jc) {
@@ -3515,7 +3673,8 @@ static void compile_body(JitCompiler *jc) {
         jc->bytecode_to_native[instruction_start] = jc->buf.length;
 
         if (!compile_value_instruction(jc, opcode, instruction_start, &pc) &&
-            !compile_control_instruction(jc, opcode, instruction_start, &pc)) {
+            !compile_control_instruction(jc, opcode, instruction_start, &pc) &&
+            !compile_outlined_instruction(jc, opcode, instruction_start, &pc)) {
             jc->bailed = true;
             return;
         }

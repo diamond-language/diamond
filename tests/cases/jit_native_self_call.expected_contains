@@ -4,4 +4,4 @@
 ^rescued bottom$
 ^fiber: call stack overflow$
 ^thread: call stack overflow$
-jit: 5 compiled function(s), 0 bailout(s), 189 hard propagation(s)
+jit: 6 compiled function(s), 0 bailout(s), 189 hard propagation(s)

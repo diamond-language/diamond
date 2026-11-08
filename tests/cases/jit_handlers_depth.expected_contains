@@ -1,4 +1,4 @@
 ^main: call stack overflow true$
 ^fiber: call stack overflow true$
 ^thread: call stack overflow true$
-jit: 1 compiled function(s), 0 bailout(s)
+jit: 2 compiled function(s), 0 bailout(s)

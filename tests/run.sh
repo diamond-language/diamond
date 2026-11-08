@@ -3354,7 +3354,14 @@ if [[ "${DIAMOND_CASE_RUNNER:-batch}" == "subprocess" ]]; then
         printf '%s' "$exit_code" >"$case_output_dir/$case_base.exitcode"
     done
 else
-    "$run_cases_abs" tests/cases "$case_output_dir"
+    # run_cases names each case in .current before running it, so a crash
+    # (it runs every case in one process) says which case it was on.
+    if ! "$run_cases_abs" tests/cases "$case_output_dir"; then
+        if [[ -f "$case_output_dir/.current" ]]; then
+            echo "run_cases died during case: $(<"$case_output_dir/.current")" >&2
+        fi
+        exit 1
+    fi
 fi
 
 case_count=0
