@@ -53,6 +53,9 @@ authoritative fine-grained record.
   variables are now read and written by inline machine code instead of a call per access, and
   a compiled block is entered directly from each/map/times, which takes blocks a
   further 20% (70 to 60 ms) and iterate 15% (112 to 95 ms).
+- **Closure calls and string interpolation compile under the JIT.** A function that calls a
+  block or closure it holds, or builds a string with `#{...}`, no longer stays interpreted. With
+  `DIAMOND_JIT=1`, the closures benchmark runs 5.6% fewer cycles and regex 6% fewer.
 
 ### Fixed
 
