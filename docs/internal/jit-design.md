@@ -2564,3 +2564,31 @@ fewer, with every other benchmark unchanged. array_ops (+0.9%) only moved becaus
 laid out `diamond_invoke_general` differently; its source is unchanged. Wall time for the two
 generic benchmarks is flat: each call still pays for the 200-byte chunk copy and inference that
 the interpreter pays.
+
+## Large register files
+
+A compiled function used to need at most `DIAMOND_JIT_MAX_REGISTERS` (256) registers, the size
+of the register file `jit_run_native` keeps on the C stack. Generated code addresses every
+register with a 32-bit displacement, so nothing in it depended on the limit; only three places
+did:
+
+- `jit_run_native` hands a function with more registers a register file from the heap
+  (`jit_heap_registers`), as `run_chunk` does. The compiled function frees it in
+  `emit_epilogue` and `emit_epilogue_propagate`, the two paths every `ret` goes through
+  (`emit_free_heap_registers`, which keeps the status in AL across the call), so the caller has
+  nothing to check after the call. The prologue's pad keeps RSP aligned at the epilogue with or
+  without a frame. `uses_heap_registers` in `src/jit.c` and the test in `jit_run_native` must
+  agree.
+- `try_compile` refuses a `register_count` of 0, a hand-built chunk's "unset", so the heap test
+  is one compare in place of the old zero test. Checking for the heap file after the call, or
+  making the call from a cold helper (GCC then spilled the arguments), cost every native call 2
+  to 3 instructions.
+- The native self-call reserves the callee's registers on the machine stack, so it stays limited
+  to 256 registers; a larger function calls itself through the trampoline.
+
+`register_known_class` stays 256 wide: a register past it just has no class fact. Rejected
+functions fell from 553 to 457 (pre-compile refusals from 163 to 63). The 100 refusals for size
+came from 23 distinct functions; two that the ORM packages (Active Record, Arel) share account
+for 75 of them. Benchmarks are unchanged in instruction count. Compare non-PGO builds (`make release PGO=0`) with warm bytecode caches on
+both sides: two PGO builds of the same source differ by up to 5% on some benchmarks, and a
+baseline run against another build's caches adds a few million instructions.

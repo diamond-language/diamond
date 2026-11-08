@@ -2150,10 +2150,9 @@ void publish_instance_return_type(Compiler *compiler,uint16_t reg,
      * types[reg] the real (non-tooling) branches just above set -- either
      * one, matching_target's own declared return type or a union
      * receiver's joined one -- onto DiamondFunction.register_known_class
-     * for src/jit.c's later use, bounds-checked since a function with
-     * more registers than DIAMOND_JIT_MAX_REGISTERS is already
-     * unconditionally JIT-ineligible (see that field's own comment,
-     * src/vm.h, for the full reasoning). Reading known_types[reg] here,
+     * for src/jit.c's later use, bounds-checked against the table's
+     * DIAMOND_JIT_MAX_REGISTERS width: a register past it just goes
+     * without the fact (see that field's own comment, src/vm.h). Reading known_types[reg] here,
      * after the fact, rather than threading a "was this concrete" flag
      * out of publish_call_return_type/publish_union_instance_return_type
      * individually keeps this a single check regardless of which path

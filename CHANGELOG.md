@@ -76,6 +76,10 @@ authoritative fine-grained record.
   interpreter does, so type checks and errors are unchanged. `-> Self` methods compile too.
   Functions the JIT turned away fell from 1,333 to 553. With `DIAMOND_JIT=1`, the
   typed_dispatch benchmark runs 7% fewer instructions and the new generic_calls 4.6% fewer.
+- **The JIT compiles functions with more than 256 registers.** A function that big (a long
+  hash literal, two large methods the ORM packages share) used to run interpreted; it now
+  compiles, with its registers on the heap as the interpreter keeps them. Functions the JIT
+  turns away fell from 553 to 457, and native calls to smaller functions cost the same as before.
 
 ### Fixed
 
