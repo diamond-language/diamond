@@ -50,8 +50,9 @@ authoritative fine-grained record.
   compiles, including the captured variables it reads and writes. Functions that read a
   top-level constant compile too. With `DIAMOND_JIT=1`, the blocks and iterate benchmarks run
   36% fewer instructions (91 to 76 ms and 152 to 116 ms), and regex 5% fewer. Captured
-  variables are now read and written by inline machine code instead of a call per access,
-  which takes a further 8.5% off iterate and 4% off blocks.
+  variables are now read and written by inline machine code instead of a call per access, and
+  a compiled block is entered directly from each/map/times, which takes blocks a
+  further 20% (70 to 60 ms) and iterate 15% (112 to 95 ms).
 
 ### Fixed
 

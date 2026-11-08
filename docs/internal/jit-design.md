@@ -2371,9 +2371,14 @@ pushed registers and the frame reservation).
 - **Self-calls:** a function that reads its closure keeps the self-call trampoline. That
   trampoline enters with no closure, as `run_chunk`'s `CALL` does, whereas the native self-call
   would pass no seventh argument at all.
-- **How blocks are entered:** blocks reach native code through `block_call_run`, which now goes
-  through `jit_call_or_interpret`. That covers `CALL_CLOSURE` from interpreted code and the C
+- **How blocks are entered:** blocks reach native code through `block_call_run`. That covers `CALL_CLOSURE` from interpreted code and the C
   loops behind `Array#each`/`map`/`select`/`reduce`/`each_with_index` and `Int#times`.
+  A compiled block goes straight to `block_call_native` when nothing `jit_call_core` checks could
+  stop it: the depth is under `vm->jit_depth_limit` and the VM has no instruction or wall-clock
+  budget. Every other call goes through `jit_call_or_interpret` as before. `jit_depth_limit` starts
+  at 0, so the first block call takes the long way and fills it in on the thread running the VM.
+  The native path is a `noinline` function so its 4 KB register file stays out of
+  `block_call_run`'s frame, which interpreted blocks use too.
 - **Blocks with a self slot:** these run native only when they get `self` through their captures
   (`DIAMOND_OWNER_CAPTURED_SELF`). With a real class owner, the JIT's receiver proofs would read
   the slot's nil placeholder as the receiver.
@@ -2395,8 +2400,16 @@ With `DIAMOND_JIT=1`:
 | iterate | 36% fewer | 152 to 116 ms |
 | regex | 5% fewer | 216 to 207 ms |
 
-Reading captures and cells inline took a further 8.5% of instructions off iterate and 4% off
-blocks (116 to 111 ms and 79 to 74 ms).
+Three later changes cut blocks a further 20% in cycles (70 to 60 ms) and iterate 15% (112 to
+95 ms): reading captures and cells inline, entering compiled blocks directly, and copying the
+native result as two 8-byte halves (`value_copy_from_callee`). The last change mattered most.
+`jit_run_native` copied `jit_result` with one 16-byte load right after native code had stored
+it as two 8-byte halves. That load cannot be forwarded from the stores, and it was half of
+`jit_run_native`'s samples in iterate.
+
+Zeroing only the registers after the arguments, instead of the whole register file before
+copying them in, cost closures 3% in cycles at fewer instructions, so the memset stays as it
+was.
 
 The interpreter got slightly faster on both blocks and iterate: `block_call_run` kept a 4 KB
 argument buffer in its own frame for the rare self-slot case, and that case now has its own
