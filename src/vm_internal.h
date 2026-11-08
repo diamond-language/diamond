@@ -628,6 +628,18 @@ static inline bool unwind_for_jump(UnwindHandler *handlers,size_t *count,Pending
     return true;
 }
 
+/* run_chunk's handler state (handler stack, its count, the pending unwind)
+ * for a compiled function with exception handlers, kept in its native stack
+ * reservation right after its DiamondFrame, which points at it as
+ * run_chunk's frame points at its locals. `resume` is where a caught
+ * failure continues (see diamond_jit_catch). Layout in jit.h. */
+typedef struct DiamondJitHandlerState {
+    size_t count;
+    size_t resume;
+    PendingUnwind pending;
+    UnwindHandler handlers[16];
+} DiamondJitHandlerState;
+
 typedef struct DiamondFrame {
     struct DiamondFrame *previous;
     DiamondValue *registers;

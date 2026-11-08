@@ -1,0 +1,191 @@
+# Compiled functions with begin/rescue/else/ensure/retry. Every function
+# below compiles, and each prints what it does interpreted: typed and
+# untyped rescue, a type that does not match (it propagates, after the
+# ensure clause runs), errors from calls (ZeroDivisionError, NoMethodError,
+# TypeError) caught by rescue, else, retry, nested begin blocks, a raise
+# inside rescue and inside ensure, and break, next and return leaving
+# through ensure (including a block's break and return passing through a
+# compiled function's ensure). Run under stress GC.
+class AppError < StandardError
+end
+
+class OtherError < StandardError
+end
+
+def log(trail: Array, entry) = trail.push(entry)
+
+def classify(n: Int, trail: Array) -> String
+  begin
+    raise AppError.new("app #{n}") if n == 1
+    raise OtherError.new("other #{n}") if n == 2
+    x = 10 / (n - 3)
+    log(trail, "body #{x}")
+    "ok #{x}"
+  rescue e: AppError
+    "app: #{e.message()}"
+  rescue e: ZeroDivisionError
+    "zero: #{e.message()}"
+  else
+    log(trail, "else #{n}")
+    "else"
+  ensure
+    log(trail, "ensure #{n}")
+  end
+end
+
+def untyped(value) -> String
+  begin
+    value.no_such_method()
+    "no error"
+  rescue e
+    "caught #{e.message()}"
+  end
+end
+
+def retrying(trail: Array) -> Int
+  attempts = 0
+  begin
+    attempts += 1
+    log(trail, "attempt #{attempts}")
+    raise AppError.new("again") if attempts < 3
+    attempts
+  rescue e: AppError
+    retry
+  end
+end
+
+def nested(trail: Array) -> String
+  begin
+    begin
+      raise OtherError.new("inner")
+    rescue e: AppError
+      log(trail, "wrong rescue")
+    ensure
+      log(trail, "inner ensure")
+    end
+  rescue e: OtherError
+    log(trail, "outer caught #{e.message()}")
+    begin
+      raise AppError.new("from rescue")
+    rescue e2: AppError
+      log(trail, "nested in rescue: #{e2.message()}")
+    end
+  ensure
+    log(trail, "outer ensure")
+  end
+  "nested done"
+end
+
+def raise_in_ensure() -> String
+  begin
+    begin
+      raise AppError.new("first")
+    ensure
+      raise OtherError.new("from ensure")
+    end
+  rescue e
+    "replaced by: #{e.message()}"
+  end
+end
+
+def loop_through_ensure(trail: Array) -> Int
+  total = 0
+  i = 0
+  while i < 10
+    i += 1
+    begin
+      next if i % 2 == 0
+      break if i > 6
+      total += i
+    ensure
+      log(trail, "loop ensure #{i}")
+    end
+  end
+  total
+end
+
+def early_return(trail: Array, n: Int) -> String
+  begin
+    return "early #{n}" if n > 0
+    "late"
+  ensure
+    log(trail, "return ensure #{n}")
+  end
+end
+
+def each_with_cleanup(values: Array, trail: Array, &block)
+  i = 0
+  while i < values.length()
+    begin
+      block(values[i])
+    ensure
+      log(trail, "cleanup #{values[i]}")
+    end
+    i += 1
+  end
+  nil
+end
+
+def find_first_big(values: Array, trail: Array)
+  each_with_cleanup(values, trail) do |v|
+    return v if v > 10
+  end
+  nil
+end
+
+def uncaught(n: Int) -> Int
+  begin
+    raise OtherError.new("escapes #{n}")
+  rescue e: AppError
+    0
+  ensure
+    n + 1
+  end
+end
+
+def type_error_caught() -> String
+  begin
+    1 + "x"
+  rescue e: TypeError
+    "type error caught"
+  end
+end
+
+trail = []
+[0, 1, 2, 3, 4].each() do |n|
+  begin
+    puts(classify(n, trail))
+  rescue e: OtherError
+    puts("propagated: #{e.message()}")
+  end
+end
+puts(trail)
+puts(untyped(5))
+puts(untyped("s"))
+trail = []
+puts(retrying(trail))
+puts(trail)
+trail = []
+puts(nested(trail))
+puts(trail)
+puts(raise_in_ensure())
+trail = []
+puts(loop_through_ensure(trail))
+puts(trail)
+trail = []
+puts(early_return(trail, 1))
+puts(early_return(trail, 0))
+puts(trail)
+trail = []
+puts(find_first_big([1, 20, 30], trail))
+found = each_with_cleanup([1, 2, 3], trail) do |v|
+  break v * 100 if v == 2
+end
+puts(found)
+puts(trail)
+begin
+  uncaught(4)
+rescue e: OtherError
+  puts("uncaught reached top: #{e.message()}")
+end
+puts(type_error_caught())

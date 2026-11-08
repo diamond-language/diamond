@@ -7,4 +7,4 @@
 ^nil$
 ^rescued bad 7$
 ^error: undefined method 'call' for Int$
-jit: 6 compiled function(s), 0 bailout(s)
+jit: 7 compiled function(s), 0 bailout(s)

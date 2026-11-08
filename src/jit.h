@@ -254,8 +254,9 @@ DiamondVmStatus diamond_jit_index_set(DiamondVm *vm, const DiamondChunk *chunk,
  * inline too (vm->frames = frame->previous). DiamondFrame itself is private
  * to the VM, so the offsets the generated code writes are spelled out here
  * and vm.c static_asserts each one against the struct. A JIT'd frame's
- * `pending` and handler fields stay zero (this JIT compiles no begin/rescue)
- * and its serial is assigned lazily, only when a closure needs it. */
+ * `pending` and handler fields stay zero unless the function has exception
+ * handlers (then they point into its DiamondJitHandlerState, below), and its
+ * serial is assigned lazily, only when a closure needs it. */
 enum {
     DIAMOND_JIT_FRAME_SIZE = 96,
     DIAMOND_JIT_FRAME_PREVIOUS = 0,
@@ -267,6 +268,56 @@ enum {
     DIAMOND_JIT_FRAME_INSTRUCTION_OFFSET = 56,
     DIAMOND_JIT_FRAME_SERIAL = 64,         /* serial to the end: zeroed */
 };
+/* A function with exception handlers (begin/rescue) keeps run_chunk's handler
+ * state, a DiamondJitHandlerState (src/vm_internal.h), in its reservation
+ * right after the frame; the frame's pending, handlers and handler_count
+ * point into it. The prologue zeroes `count` and `pending.kind`. */
+enum {
+    DIAMOND_JIT_HANDLER_STATE_AT = 96,       /* offset in the reservation */
+    DIAMOND_JIT_HANDLER_STATE_SIZE = 1344,
+    DIAMOND_JIT_HANDLER_COUNT_FIELD = 0,
+    DIAMOND_JIT_HANDLER_RESUME_FIELD = 8,
+    DIAMOND_JIT_HANDLER_PENDING_FIELD = 16,  /* pending.kind is its first byte */
+    DIAMOND_JIT_HANDLER_HANDLERS_FIELD = 64,
+};
+struct DiamondJitHandlerState;
+/* Exception handling in a compiled function with handlers (src/vm_exceptions.c),
+ * each run_chunk's own logic over the function's DiamondJitHandlerState:
+ *   - diamond_jit_push_rescue/diamond_jit_pop_rescue: DIAMOND_OP_PUSH_RESCUE
+ *     (read from the instruction at `site`) and DIAMOND_OP_POP_RESCUE.
+ *   - diamond_jit_catch: a failing `status` meets the handlers, as run_chunk's
+ *     VM_PROPAGATE/VM_RETURN do. Returns 0 when a handler caught it (continue
+ *     at state->resume), or the status to propagate.
+ *   - diamond_jit_raise: DIAMOND_OP_RAISE. `state` is nullptr in a function
+ *     without handlers. Returns 0 when caught (continue at state->resume),
+ *     else DIAMOND_VM_EXCEPTION with the uncaught message filled in. */
+uint8_t diamond_jit_push_rescue(struct DiamondJitHandlerState *state, const uint8_t *site,
+        size_t code_count);
+uint8_t diamond_jit_pop_rescue(struct DiamondJitHandlerState *state);
+uint8_t diamond_jit_catch(DiamondVm *vm, const DiamondChunk *chunk, DiamondValue *registers,
+        struct DiamondJitHandlerState *state, uint8_t status);
+uint8_t diamond_jit_raise(DiamondVm *vm, const DiamondChunk *chunk, DiamondValue *registers,
+        struct DiamondJitHandlerState *state, uint16_t source);
+/*   - diamond_jit_push_ensure, diamond_jit_run_ensure, diamond_jit_unwind_jump:
+ *     DIAMOND_OP_PUSH_ENSURE, RUN_ENSURE (0: continue at the ensure clause in
+ *     state->resume) and UNWIND_JUMP (0: continue at state->resume).
+ *   - diamond_jit_return: DIAMOND_OP_RETURN of `*value`. 0 when an enclosing
+ *     ensure clause runs first (state->resume); DIAMOND_JIT_HANDLER_RETURNED
+ *     once `*result` is written and the function returns.
+ *   - diamond_jit_end_ensure: DIAMOND_OP_END_ENSURE, finishing whatever the
+ *     clause interrupted: 0 to continue at state->resume, RETURNED as
+ *     above, or a status to propagate (it has already met the handlers). */
+enum { DIAMOND_JIT_HANDLER_RETURNED = 0xFD };
+uint8_t diamond_jit_push_ensure(struct DiamondJitHandlerState *state, size_t target,
+        size_t code_count);
+uint8_t diamond_jit_run_ensure(struct DiamondJitHandlerState *state, size_t continuation,
+        size_t code_count);
+uint8_t diamond_jit_unwind_jump(struct DiamondJitHandlerState *state, size_t levels,
+        size_t target, size_t code_count);
+uint8_t diamond_jit_return(struct DiamondJitHandlerState *state, const DiamondValue *value,
+        DiamondValue *result);
+uint8_t diamond_jit_end_ensure(DiamondVm *vm, const DiamondChunk *chunk,
+        DiamondValue *registers, struct DiamondJitHandlerState *state, DiamondValue *result);
 /* Propagate-exit variant: appends the frame's "at name:line:col" trace line for
  * a failing `status` before popping. */
 void diamond_jit_frame_pop_propagating(DiamondVm *vm, uint8_t status);
