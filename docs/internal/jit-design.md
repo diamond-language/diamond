@@ -2454,3 +2454,41 @@ piece of an interpolated string) used to reject the whole function. Both compile
 
 Both set `needs_frame` and `has_called`. With `DIAMOND_JIT=1`, closures runs 5.6% fewer cycles
 (77 to 73 ms) and regex 6% fewer (213 to 202 ms). json is 2% lower, and the rest are within noise.
+
+## Exception handlers
+
+A function with `begin`/`rescue`/`else`/`ensure`/`retry` used to stay interpreted, and the compiler
+wraps every `begin` in `PUSH_ENSURE`/`RUN_ENSURE`/`END_ENSURE` even without an `ensure` clause, so
+any `begin` kept the whole function out. All of these compile now, by running the interpreter's own handler
+logic over handler state kept in the native frame:
+
+- **State:** a `DiamondJitHandlerState` (handler stack of 16, its count, the pending unwind, and
+  a resume offset; 1344 bytes) sits in the frame reservation right after the `DiamondFrame`, at
+  offsets `jit.h` spells out and `vm.c` checks. The frame's `pending`, `handlers` and
+  `handler_count` point into it, so the GC marks a pending value or an active ensure's saved
+  one exactly as it does for `run_chunk`'s locals. The prologue empties it.
+- **Opcodes:** `PUSH_RESCUE`, `POP_RESCUE`, `RAISE`, `PUSH_ENSURE`, `RUN_ENSURE`, `END_ENSURE`,
+  `UNWIND_JUMP` and `RETURN` inside such a function call helpers in `vm_exceptions.c` built from
+  `run_chunk`'s pieces (`catch_exception`, `catch_runtime_error`, `enter_ensure`,
+  `unwind_for_jump`, `nonlocal_exit_arrives`). Each returns 0 for "continue at
+  `state->resume`", `DIAMOND_JIT_HANDLER_RETURNED` once the function's result is written, or a
+  status to propagate.
+- **Catching:** a failing call in such a function goes to a catch stub first.
+  `diamond_jit_catch` makes `VM_PROPAGATE`/`VM_RETURN`'s decisions: an exception meets
+  `catch_exception`, a non-local exit runs this frame's ensure clauses on its way through, and an
+  error status becomes an exception a rescue clause can take. What no clause takes goes on to the
+  propagate stub, which records the trace line as before.
+- **Resuming:** every handler target (rescue and ensure clauses, `RUN_ENSURE` continuations,
+  `UNWIND_JUMP` targets) is collected at compile time, and the resume stub compares
+  `state->resume` against each and jumps to its native code.
+- **No re-runs after a catch:** catching only happens on the propagate side of `has_called`, so
+  nothing retries the function in the interpreter after a call. A function with handlers and a
+  `raise` sets `has_called` outright after the dry run, because a caught raise carries on in
+  native code without a call. A tail call in a function with handlers keeps it interpreted.
+
+Uncaught errors and `Exception#backtrace` read the same as interpreted (checked side by side on a raising script). With `DIAMOND_JIT=1`, the exceptions
+benchmark runs 14% fewer cycles (650M to 560M; 170 to 145 ms against a local build of main). It compiled
+nothing before: `check` raises and `run_once` rescues. What remains there is building the
+exception (backtrace capture and message formatting). The change moved poly, closures and counts
+about 1% in cycles at identical instruction counts: `diamond_jit_invoke_instance`, untouched,
+came out of LTO and PGO a few bytes different.

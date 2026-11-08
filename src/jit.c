@@ -151,6 +151,16 @@ typedef struct JitCompiler {
      * (SIZE_MAX if unknown): a TAIL_CALL to it is a loop, to anything else
      * is left to the interpreter. */
     size_t self_function_index;
+    /* Set by PUSH_RESCUE (dry run as real pass): the function keeps a
+     * DiamondJitHandlerState after its frame, and a failure from a call
+     * goes to the catch stub, which continues at a rescue clause when one
+     * matches. `resume_targets` are the bytecode offsets a caught failure
+     * can continue at (every PUSH_RESCUE's target), which the resume stub
+     * dispatches on. */
+    bool has_handlers;
+    bool has_raise;
+    size_t resume_targets[64];
+    size_t resume_target_count;
 } JitCompiler;
 
 static void jit_buf_ensure(JitBuffer *buf, size_t extra) {
@@ -269,6 +279,16 @@ static void emit_lea(JitBuffer *buf, int reg, int base, int32_t disp) {
     emit_u8(buf, emit_rex(true, reg, base));
     emit_u8(buf, 0x8D);
     emit_u8(buf, (uint8_t)(0x80 | ((reg & 7) << 3) | (base & 7)));
+    emit_u32_le(buf, (uint32_t)disp);
+}
+
+/* lea reg, [rsp + disp32]: an RSP base needs a SIB byte, which emit_lea
+ * does not emit. */
+static void emit_lea_rsp(JitBuffer *buf, int reg, int32_t disp) {
+    emit_u8(buf, emit_rex(true, reg, REG_RSP));
+    emit_u8(buf, 0x8D);
+    emit_u8(buf, (uint8_t)(0x84 | ((reg & 7) << 3)));
+    emit_u8(buf, 0x24);
     emit_u32_le(buf, (uint32_t)disp);
 }
 
@@ -571,6 +591,31 @@ static void emit_body_call(JitCompiler *jc, void *function_address) {
     emit_call_trampoline(&jc->buf, function_address);
 }
 
+/* The function's DiamondJitHandlerState (jit.h) into `reg`: it sits at a
+ * fixed offset in the frame reservation, below whatever the current
+ * instruction has pushed. */
+static void emit_handler_state_address(JitCompiler *jc, int reg) {
+    emit_lea_rsp(&jc->buf, reg, jc->buf.rsp_delta + DIAMOND_JIT_HANDLER_STATE_AT);
+}
+
+/* Prologue of a function with handlers, right after emit_frame_link: point
+ * the frame's pending, handlers and handler_count at the handler state and
+ * empty it (count 0, pending.kind PENDING_NONE), as run_chunk's locals
+ * start. Only RAX is touched. */
+static void emit_handler_state_link(JitCompiler *jc) {
+    JitBuffer *buf = &jc->buf;
+    const int32_t state = DIAMOND_JIT_HANDLER_STATE_AT;
+    emit_lea_rsp(buf, REG_RAX, state + DIAMOND_JIT_HANDLER_PENDING_FIELD);
+    emit_store_r64_sib(buf, REG_RSP, DIAMOND_JIT_FRAME_PENDING, REG_RAX);
+    emit_lea_rsp(buf, REG_RAX, state + DIAMOND_JIT_HANDLER_HANDLERS_FIELD);
+    emit_store_r64_sib(buf, REG_RSP, DIAMOND_JIT_FRAME_PENDING + 8, REG_RAX);
+    emit_lea_rsp(buf, REG_RAX, state + DIAMOND_JIT_HANDLER_COUNT_FIELD);
+    emit_store_r64_sib(buf, REG_RSP, DIAMOND_JIT_FRAME_HANDLER_COUNT, REG_RAX);
+    emit_u8(buf, 0x31); emit_u8(buf, 0xC0);   /* xor eax, eax */
+    emit_store_r64_sib(buf, REG_RSP, state + DIAMOND_JIT_HANDLER_COUNT_FIELD, REG_RAX);
+    emit_store_r64_sib(buf, REG_RSP, state + DIAMOND_JIT_HANDLER_PENDING_FIELD, REG_RAX);
+}
+
 static void emit_ret(JitBuffer *buf) { emit_u8(buf, 0xC3); }
 
 /* mov al, imm8 -- the two bool/status return-value stencils */
@@ -751,6 +796,11 @@ static void record_global_patch(JitCompiler *jc, size_t rel32_offset, size_t byt
 
 #define BAILOUT_RETRY_SENTINEL SIZE_MAX
 #define BAILOUT_PROPAGATE_SENTINEL (SIZE_MAX - 1)
+/* A function with handlers: "catch" offers a failing status to its rescue
+ * clauses first (diamond_jit_catch) and propagates only what none takes;
+ * "resume" continues at the clause a caught failure picked. */
+#define BAILOUT_CATCH_SENTINEL (SIZE_MAX - 2)
+#define BAILOUT_RESUME_SENTINEL (SIZE_MAX - 3)
 
 /* Which stub a status-bearing bail site (one that already holds a real
  * DiamondVmStatus in AL, from a trampoline's own return value) should
@@ -761,7 +811,8 @@ static void record_global_patch(JitCompiler *jc, size_t rel32_offset, size_t byt
  * outright at compile time once jc->has_called is true (see compile_
  * body's ADD_INT/SUBTRACT_INT/MULTIPLY_INT/DIVIDE_INT/LESS_INT case). */
 static size_t bailout_target(const JitCompiler *jc) {
-    return jc->has_called ? BAILOUT_PROPAGATE_SENTINEL : BAILOUT_RETRY_SENTINEL;
+    if (!jc->has_called) return BAILOUT_RETRY_SENTINEL;
+    return jc->has_handlers ? BAILOUT_CATCH_SENTINEL : BAILOUT_PROPAGATE_SENTINEL;
 }
 
 static int32_t reg_disp(size_t index, int32_t field_offset) {
@@ -1983,6 +2034,12 @@ static bool parameter_is_single_class(const DiamondFunction *fn, uint16_t recv_r
  * per-case decode shapes aren't expressed as data anywhere to share from. */
 static bool opcode_writes_no_register(DiamondOpCode opcode) {
     switch (opcode) {
+        case DIAMOND_OP_POP_RESCUE:
+        case DIAMOND_OP_PUSH_ENSURE:
+        case DIAMOND_OP_RUN_ENSURE:
+        case DIAMOND_OP_END_ENSURE:
+        case DIAMOND_OP_UNWIND_JUMP:
+        case DIAMOND_OP_RAISE:
         case DIAMOND_OP_SET_IVAR:
         case DIAMOND_OP_CHECK_TYPE:
         case DIAMOND_OP_INDEX_SET:
@@ -2051,6 +2108,7 @@ static bool opcode_dest_is_first_u16(DiamondOpCode opcode) {
         case DIAMOND_OP_GET_CAPTURE:
         case DIAMOND_OP_GET_CAPTURE_CELL:
         case DIAMOND_OP_GET_NAMESPACE_CONSTANT:
+        case DIAMOND_OP_PUSH_RESCUE:
         case DIAMOND_OP_TO_STRING:
         case DIAMOND_OP_CALL_CLOSURE:
         case DIAMOND_OP_CLOSURE:
@@ -2097,6 +2155,25 @@ static bool decode_instruction_operands(const DiamondFunction *fn, size_t *pc,
                     !decode_u8(fn, pc, &low)) return false;
                 *jump_target = (int32_t)(((unsigned)high << 8) | low);
                 return true;
+            }
+            case DIAMOND_OP_POP_RESCUE: case DIAMOND_OP_END_ENSURE:
+                return true;
+            case DIAMOND_OP_PUSH_ENSURE: case DIAMOND_OP_RUN_ENSURE: {
+                uint8_t high = 0, low = 0;
+                if (!decode_u8(fn, pc, &high) || !decode_u8(fn, pc, &low)) return false;
+                *jump_target = (int32_t)(((unsigned)high << 8) | low);
+                return true;
+            }
+            case DIAMOND_OP_UNWIND_JUMP: {
+                uint8_t levels = 0, high = 0, low = 0;
+                if (!decode_u8(fn, pc, &levels) || !decode_u8(fn, pc, &high) ||
+                    !decode_u8(fn, pc, &low)) return false;
+                *jump_target = (int32_t)(((unsigned)high << 8) | low);
+                return true;
+            }
+            case DIAMOND_OP_RAISE: {
+                uint16_t a = 0;
+                return decode_u16(fn, pc, &a);
             }
             case DIAMOND_OP_RETURN: {
                 uint16_t a = 0;
@@ -2161,6 +2238,14 @@ static bool decode_instruction_operands(const DiamondFunction *fn, size_t *pc,
             uint16_t callable = 0, base = 0; uint8_t argc = 0;
             return decode_u16(fn, pc, &callable) && decode_u16(fn, pc, &base) &&
                 decode_u8(fn, pc, &argc);
+        }
+        case DIAMOND_OP_PUSH_RESCUE: {
+            /* The clause's exception variable is this instruction's dest: catching
+             * writes it. */
+            uint8_t skipped = 0;
+            for (size_t i = 0; i < 11; i++)
+                if (!decode_u8(fn, pc, &skipped)) return false;
+            return true;
         }
         case DIAMOND_OP_CLOSURE: {
             uint16_t index = 0; uint8_t count = 0;
@@ -3136,11 +3221,168 @@ static bool compile_value_instruction(JitCompiler *jc, DiamondOpCode opcode, siz
 
 /* Opcode group: calls, jumps and returns. Returns false, emitting nothing, for an opcode outside the group; otherwise
  * advances *pc_ref past the operands, or sets jc->bailed. Part of compile_body. */
+/* Marks the function as having handlers and records `target` as a place a
+ * handler can continue at (see emit_catch_stubs). False, with jc->bailed
+ * set, for a target outside the code or too many distinct targets. */
+static bool add_resume_target(JitCompiler *jc, size_t target) {
+    if (target >= jc->function->code_count) { jc->bailed = true; return false; }
+    jc->has_handlers = true;
+    jc->needs_frame = true;
+    for (size_t i = 0; i < jc->resume_target_count; i++)
+        if (jc->resume_targets[i] == target) return true;
+    if (jc->resume_target_count == 64) { jc->bailed = true; return false; }
+    jc->resume_targets[jc->resume_target_count++] = target;
+    return true;
+}
+
+/* After a handler helper whose 0 means "continue at state->resume": any
+ * other status propagates (the helper has already offered it to the
+ * handlers). With `may_return`, DIAMOND_JIT_HANDLER_RETURNED returns from
+ * the function, its result already written. */
+static void emit_handler_outcome(JitCompiler *jc, bool may_return) {
+    JitBuffer *buf = &jc->buf;
+    size_t returned = 0;
+    if (may_return) {
+        emit_u8(buf, 0x0F); emit_u8(buf, 0xB6); emit_u8(buf, 0xC0);   /* movzx eax, al */
+        emit_cmp_imm32_32(buf, REG_RAX, DIAMOND_JIT_HANDLER_RETURNED);
+        returned = emit_jcc_placeholder(buf, JCC_E);
+    }
+    emit_test_r8(buf, REG_RAX);
+    record_global_patch(jc, emit_jcc_placeholder(buf, JCC_NE), BAILOUT_PROPAGATE_SENTINEL);
+    record_global_patch(jc, emit_jmp_placeholder(buf), BAILOUT_RESUME_SENTINEL);
+    if (may_return) {
+        patch_rel32_to_here(buf, returned);
+        emit_epilogue(jc);
+        emit_mov_al_imm8(buf, DIAMOND_VM_OK);
+        emit_ret(buf);
+    }
+}
+
 static bool compile_control_instruction(JitCompiler *jc, DiamondOpCode opcode, size_t instruction_start,
         size_t *pc_ref) {
     const DiamondFunction *fn = jc->function;
     size_t pc = *pc_ref;
     switch (opcode) {
+        case DIAMOND_OP_PUSH_RESCUE: {
+            /* diamond_jit_push_rescue re-reads the operands from the
+             * instruction; here they are only checked and the clause's
+             * target recorded for the resume stub. */
+            uint16_t dest = 0; uint8_t type_count = 0, skipped = 0, high = 0, low = 0;
+            if (!decode_u16(fn, &pc, &dest) || !decode_u8(fn, &pc, &type_count)) {
+                jc->bailed = true; return true;
+            }
+            for (size_t i = 0; i < 8; i++)
+                if (!decode_u8(fn, &pc, &skipped)) { jc->bailed = true; return true; }
+            if (!decode_u8(fn, &pc, &high) || !decode_u8(fn, &pc, &low)) {
+                jc->bailed = true; return true;
+            }
+            if (!add_resume_target(jc, ((size_t)high << 8) | low)) return true;
+            JitBuffer *buf = &jc->buf;
+            emit_handler_state_address(jc, REG_RDI);
+            emit_mov_imm64(buf, REG_RSI, (uint64_t)(uintptr_t)(fn->code + instruction_start));
+            emit_mov_imm64(buf, REG_RDX, fn->code_count);
+            emit_body_call(jc, (void *)(uintptr_t)diamond_jit_push_rescue);
+            emit_bail_if_al_nonzero(jc);
+            break;
+        }
+        case DIAMOND_OP_POP_RESCUE: {
+            jc->has_handlers = true;
+            jc->needs_frame = true;
+            emit_handler_state_address(jc, REG_RDI);
+            emit_body_call(jc, (void *)(uintptr_t)diamond_jit_pop_rescue);
+            emit_bail_if_al_nonzero(jc);
+            break;
+        }
+        case DIAMOND_OP_PUSH_ENSURE: {
+            uint8_t high = 0, low = 0;
+            if (!decode_u8(fn, &pc, &high) || !decode_u8(fn, &pc, &low)) {
+                jc->bailed = true; return true;
+            }
+            const size_t target = ((size_t)high << 8) | low;
+            if (!add_resume_target(jc, target)) return true;
+            JitBuffer *buf = &jc->buf;
+            emit_handler_state_address(jc, REG_RDI);
+            emit_mov_imm64(buf, REG_RSI, target);
+            emit_mov_imm64(buf, REG_RDX, fn->code_count);
+            emit_body_call(jc, (void *)(uintptr_t)diamond_jit_push_ensure);
+            emit_bail_if_al_nonzero(jc);
+            break;
+        }
+        case DIAMOND_OP_RUN_ENSURE: {
+            /* Enters the innermost ensure clause; its END_ENSURE continues
+             * at `continuation`. */
+            uint8_t high = 0, low = 0;
+            if (!decode_u8(fn, &pc, &high) || !decode_u8(fn, &pc, &low)) {
+                jc->bailed = true; return true;
+            }
+            const size_t continuation = ((size_t)high << 8) | low;
+            if (!add_resume_target(jc, continuation)) return true;
+            JitBuffer *buf = &jc->buf;
+            emit_handler_state_address(jc, REG_RDI);
+            emit_mov_imm64(buf, REG_RSI, continuation);
+            emit_mov_imm64(buf, REG_RDX, fn->code_count);
+            emit_body_call(jc, (void *)(uintptr_t)diamond_jit_run_ensure);
+            emit_handler_outcome(jc, false);
+            break;
+        }
+        case DIAMOND_OP_UNWIND_JUMP: {
+            /* break/next leaving `levels` begin blocks: each ensure clause
+             * on the way runs first. */
+            uint8_t levels = 0, high = 0, low = 0;
+            if (!decode_u8(fn, &pc, &levels) || !decode_u8(fn, &pc, &high) ||
+                !decode_u8(fn, &pc, &low)) {
+                jc->bailed = true; return true;
+            }
+            const size_t target = ((size_t)high << 8) | low;
+            if (!add_resume_target(jc, target)) return true;
+            JitBuffer *buf = &jc->buf;
+            emit_handler_state_address(jc, REG_RDI);
+            emit_mov_imm64(buf, REG_RSI, levels);
+            emit_mov_imm64(buf, REG_RDX, target);
+            emit_mov_imm64(buf, REG_RCX, fn->code_count);
+            emit_body_call(jc, (void *)(uintptr_t)diamond_jit_unwind_jump);
+            emit_handler_outcome(jc, false);
+            break;
+        }
+        case DIAMOND_OP_END_ENSURE: {
+            jc->has_handlers = true;
+            jc->needs_frame = true;
+            JitBuffer *buf = &jc->buf;
+            emit_mov_rr(buf, REG_RDI, JIT_VM);
+            emit_mov_rr(buf, REG_RSI, JIT_CHUNK);
+            emit_mov_rr(buf, REG_RDX, JIT_REGISTERS_BASE);
+            emit_handler_state_address(jc, REG_RCX);
+            emit_mov_rr(buf, REG_R8, JIT_RESULT_PTR);
+            emit_body_call(jc, (void *)(uintptr_t)diamond_jit_end_ensure);
+            emit_handler_outcome(jc, true);
+            break;
+        }
+        case DIAMOND_OP_RAISE: {
+            /* diamond_jit_raise records the backtrace (so the frame is
+             * linked) and, in a function with handlers, tries them: 0 means
+             * a clause caught it. Anything else is final and propagates; a
+             * retry would raise the same exception a second time. */
+            uint16_t source = 0;
+            if (!decode_u16(fn, &pc, &source)) { jc->bailed = true; return true; }
+            jc->has_raise = true;
+            jc->needs_frame = true;
+            JitBuffer *buf = &jc->buf;
+            emit_mov_rr(buf, REG_RDI, JIT_VM);
+            emit_mov_rr(buf, REG_RSI, JIT_CHUNK);
+            emit_mov_rr(buf, REG_RDX, JIT_REGISTERS_BASE);
+            if (jc->has_handlers) emit_handler_state_address(jc, REG_RCX);
+            else emit_mov_imm64(buf, REG_RCX, 0);
+            emit_mov_imm64(buf, REG_R8, source);
+            emit_body_call(jc, (void *)(uintptr_t)diamond_jit_raise);
+            emit_test_r8(buf, REG_RAX);
+            const size_t raised = emit_jcc_placeholder(buf, JCC_NE);
+            record_global_patch(jc, raised, BAILOUT_PROPAGATE_SENTINEL);
+            if (jc->has_handlers) {
+                const size_t caught = emit_jmp_placeholder(buf);
+                record_global_patch(jc, caught, BAILOUT_RESUME_SENTINEL);
+            }
+            break;
+        }
         case DIAMOND_OP_SUPER: {
             uint16_t dest = 0, name = 0, base = 0;
             uint16_t owner_index = 0; uint8_t argc = 0;
@@ -3157,6 +3399,9 @@ static bool compile_control_instruction(JitCompiler *jc, DiamondOpCode opcode, s
                 !decode_u16(fn, &pc, &base) || !decode_u8(fn, &pc, &argc)) {
                 jc->bailed = true; return true;
             }
+            /* A tail call leaves the frame; with handlers it stays with the
+             * interpreter. */
+            if (jc->has_handlers) { jc->bailed = true; return true; }
             if ((size_t)function_index != jc->self_function_index) {
                 compile_tail_call_other(jc, dest, function_index, base, argc);
                 break;
@@ -3215,6 +3460,15 @@ static bool compile_control_instruction(JitCompiler *jc, DiamondOpCode opcode, s
             uint16_t source = 0;
             if (!decode_u16(fn, &pc, &source)) { jc->bailed = true; return true; }
             JitBuffer *buf = &jc->buf;
+            if (jc->has_handlers) {
+                /* An enclosing ensure clause runs before the return. */
+                emit_handler_state_address(jc, REG_RDI);
+                emit_lea(buf, REG_RSI, JIT_REGISTERS_BASE, reg_disp(source, 0));
+                emit_mov_rr(buf, REG_RDX, JIT_RESULT_PTR);
+                emit_body_call(jc, (void *)(uintptr_t)diamond_jit_return);
+                emit_handler_outcome(jc, true);
+                break;
+            }
             emit_load_r64(buf, REG_RAX, JIT_REGISTERS_BASE, reg_disp(source, 0));
             emit_load_r64(buf, REG_RCX, JIT_REGISTERS_BASE, reg_disp(source, 8));
             emit_store_r64(buf, JIT_RESULT_PTR, 0, REG_RAX);
@@ -3268,6 +3522,54 @@ static void compile_body(JitCompiler *jc) {
     }
 }
 
+/* Points the rel32 field at `field_offset` at an already-emitted
+ * `target_offset` (a backward jump to a stub). */
+static void patch_rel32_to(JitBuffer *buf, size_t field_offset, size_t target_offset) {
+    if (buf->dry_run || buf->failed) return;
+    const int32_t rel = (int32_t)(target_offset - (field_offset + 4));
+    buf->code[field_offset] = (uint8_t)(rel & 0xFF);
+    buf->code[field_offset + 1] = (uint8_t)((rel >> 8) & 0xFF);
+    buf->code[field_offset + 2] = (uint8_t)((rel >> 16) & 0xFF);
+    buf->code[field_offset + 3] = (uint8_t)((rel >> 24) & 0xFF);
+}
+
+/* The catch and resume stubs of a function with handlers, emitted after the
+ * propagate stub. Both run at the body's RSP with the frame linked.
+ *   catch: AL holds a failing status; diamond_jit_catch offers it to the
+ *     rescue clauses. 0 falls into resume; anything else (the status, or
+ *     DIAMOND_VM_EXCEPTION once it became an exception) propagates. The
+ *     pad slot still holds the failing instruction's offset, so the trace
+ *     line and backtrace name it, as run_chunk's would.
+ *   resume: jumps to the clause in state->resume, one compare per rescue
+ *     target. An offset matching none cannot happen; it propagates as
+ *     invalid bytecode rather than jumping anywhere. */
+static void emit_catch_stubs(JitCompiler *jc, size_t propagate_offset,
+        size_t *catch_offset, size_t *resume_offset) {
+    JitBuffer *buf = &jc->buf;
+    const int32_t saved_rsp_delta = buf->rsp_delta;
+    buf->rsp_delta = 0;
+    *catch_offset = buf->length;
+    emit_u8(buf, 0x0F); emit_u8(buf, 0xB6); emit_u8(buf, 0xC0);   /* movzx eax, al */
+    emit_mov_rr(buf, REG_R8, REG_RAX);
+    emit_mov_rr(buf, REG_RDI, JIT_VM);
+    emit_mov_rr(buf, REG_RSI, JIT_CHUNK);
+    emit_mov_rr(buf, REG_RDX, JIT_REGISTERS_BASE);
+    emit_handler_state_address(jc, REG_RCX);
+    emit_call_trampoline(buf, (void *)(uintptr_t)diamond_jit_catch);
+    emit_test_r8(buf, REG_RAX);
+    patch_rel32_to(buf, emit_jcc_placeholder(buf, JCC_NE), propagate_offset);
+    *resume_offset = buf->length;
+    emit_load_r64_sib(buf, REG_RAX, REG_RSP,
+        DIAMOND_JIT_HANDLER_STATE_AT + DIAMOND_JIT_HANDLER_RESUME_FIELD);
+    for (size_t i = 0; i < jc->resume_target_count; i++) {
+        emit_cmp_imm32_64(buf, REG_RAX, (uint32_t)jc->resume_targets[i]);
+        record_global_patch(jc, emit_jcc_placeholder(buf, JCC_E), jc->resume_targets[i]);
+    }
+    emit_mov_al_imm8(buf, (uint8_t)DIAMOND_VM_INVALID_BYTECODE);
+    patch_rel32_to(buf, emit_jmp_placeholder(buf), propagate_offset);
+    buf->rsp_delta = saved_rsp_delta;
+}
+
 void *diamond_jit_try_compile(const DiamondFunction *function,
         size_t self_function_index, size_t *out_size) {
     *out_size = 0;
@@ -3319,7 +3621,15 @@ void *diamond_jit_try_compile(const DiamondFunction *function,
     jc.bailed = false;
     jc.buf.dry_run = false;
     for (size_t i = 0; i < function->code_count; i++) jc.bytecode_to_native[i] = SIZE_MAX;
-    if (jc.needs_frame || jc.slow_frame) {
+    jc.resume_target_count = 0;
+    /* A raise a rescue clause catches carries on in native code, so from
+     * then on nothing may retry the function in the interpreter (it would
+     * raise again): every failure goes to the catch stub instead. */
+    if (jc.has_handlers && jc.has_raise) jc.has_called = true;
+    if (jc.has_handlers) {
+        jc.frame_reserve_bytes = (size_t)DIAMOND_JIT_HANDLER_STATE_AT +
+            (size_t)DIAMOND_JIT_HANDLER_STATE_SIZE;
+    } else if (jc.needs_frame || jc.slow_frame) {
         jc.frame_reserve_bytes = ((size_t)DIAMOND_JIT_FRAME_SIZE + 15) & ~(size_t)15;
     }
 
@@ -3353,6 +3663,7 @@ void *diamond_jit_try_compile(const DiamondFunction *function,
     if (jc.needs_frame) {
         emit_sub_rsp_imm32(&jc.buf, (uint32_t)jc.frame_reserve_bytes);
         emit_frame_link(&jc, 0);
+        if (jc.has_handlers) emit_handler_state_link(&jc);
     } else if (jc.slow_frame) {
         /* Space only: each slow call links the frame around itself. */
         emit_sub_rsp_imm32(&jc.buf, (uint32_t)jc.frame_reserve_bytes);
@@ -3378,12 +3689,18 @@ void *diamond_jit_try_compile(const DiamondFunction *function,
         size_t propagate_offset = jc.buf.length;
         emit_epilogue_propagate(&jc);
         emit_ret(&jc.buf);
+        size_t catch_offset = SIZE_MAX, resume_offset = SIZE_MAX;
+        if (jc.has_handlers) emit_catch_stubs(&jc, propagate_offset, &catch_offset, &resume_offset);
 
         for (size_t i = 0; i < jc.patch_count && !jc.buf.failed; i++) {
             size_t target_native = jc.patches[i].bytecode_target == BAILOUT_RETRY_SENTINEL
                 ? retry_offset
                 : jc.patches[i].bytecode_target == BAILOUT_PROPAGATE_SENTINEL
                     ? propagate_offset
+                : jc.patches[i].bytecode_target == BAILOUT_CATCH_SENTINEL
+                    ? catch_offset
+                : jc.patches[i].bytecode_target == BAILOUT_RESUME_SENTINEL
+                    ? resume_offset
                 : jc.patches[i].bytecode_target < function->code_count
                     ? jc.bytecode_to_native[jc.patches[i].bytecode_target]
                     : SIZE_MAX;

@@ -1,0 +1,24 @@
+^else$
+^app: app 1$
+^propagated: other 2$
+^zero: division by zero$
+^else$
+^\[body -4, else 0, ensure 0, ensure 1, ensure 2, ensure 3, body 10, else 4, ensure 4\]$
+^caught undefined method 'no_such_method' for Int$
+^caught undefined method 'no_such_method' for String$
+^3$
+^\[attempt 1, attempt 2, attempt 3\]$
+^nested done$
+^\[inner ensure, outer caught inner, nested in rescue: from rescue, outer ensure\]$
+^replaced by: from ensure$
+^9$
+^\[loop ensure 1, loop ensure 2, loop ensure 3, loop ensure 4, loop ensure 5, loop ensure 6, loop ensure 7\]$
+^early 1$
+^late$
+^\[return ensure 1, return ensure 0\]$
+^20$
+^200$
+^\[cleanup 1, cleanup 20, cleanup 1, cleanup 2\]$
+^uncaught reached top: escapes 4$
+^type error caught$
+jit: 11 compiled function(s), 0 bailout(s)

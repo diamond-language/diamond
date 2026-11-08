@@ -1,6 +1,7 @@
 #define _GNU_SOURCE
 
 #include "vm_internal.h"
+#include "jit.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -278,4 +279,170 @@ NonlocalOutcome nonlocal_exit_arrives(DiamondVm *vm,const DiamondChunk *chunk,
         return NONLOCAL_INVALID;
     }
     return NONLOCAL_PASS_ON;
+}
+
+/* Exception handling in compiled code (declared in jit.h): run_chunk's
+ * handler opcodes and failure paths over a compiled function's
+ * DiamondJitHandlerState, so both tiers make the same decisions. Each
+ * returns 0 when execution continues at state->resume, a status to
+ * propagate, or (end_ensure, return) DIAMOND_JIT_HANDLER_RETURNED once the
+ * function's result is written. A compiled function never lands a block's
+ * break or return (functions with nonlocal_landing stay interpreted), so a
+ * non-local exit only passes through it, running its ensure clauses. The
+ * function's frame is the top of vm->frames whenever these run. */
+uint8_t diamond_jit_push_rescue(DiamondJitHandlerState *state,const uint8_t *site,
+        size_t code_count) {
+    uint8_t type_count=site[3];
+    const size_t target=((size_t)site[12]<<8)|site[13];
+    const bool enabled=(type_count&0x80)==0;
+    type_count&=0x7f;
+    if(state->count==16||type_count>8||target>code_count)return DIAMOND_VM_INVALID_BYTECODE;
+    UnwindHandler *handler=&state->handlers[state->count++];
+    *handler=(UnwindHandler){.kind=HANDLER_RESCUE,.target=target,
+        .destination=(uint16_t)(((unsigned)site[1]<<8)|site[2]),
+        .type_count=type_count,.enabled=enabled};
+    for(size_t i=0;i<type_count;i++)handler->types[i]=site[4+i];
+    return DIAMOND_VM_OK;
+}
+
+uint8_t diamond_jit_pop_rescue(DiamondJitHandlerState *state) {
+    if(state->count==0||state->handlers[state->count-1].kind!=HANDLER_RESCUE)
+        return DIAMOND_VM_INVALID_BYTECODE;
+    state->count--;
+    return DIAMOND_VM_OK;
+}
+
+/* run_chunk's VM_RETURN for a status other than DIAMOND_VM_EXCEPTION (which
+ * VM_PROPAGATE has already offered to catch_exception): a non-local exit
+ * runs this frame's ensure clauses on its way through, and an error becomes
+ * an exception a rescue clause can take. */
+static uint8_t jit_unwind_status(DiamondVm *vm,const DiamondChunk *chunk,
+        DiamondValue *registers,DiamondJitHandlerState *state,uint8_t status) {
+    size_t ip=0;
+    if(status==DIAMOND_VM_NONLOCAL_EXIT) {
+        const DiamondFrame *frame=(const DiamondFrame *)vm->frames;
+        DiamondValue unused=DIAMOND_NIL;
+        switch(nonlocal_exit_arrives(vm,chunk,frame,registers,state->handlers,
+                &state->count,&state->pending,&ip,*frame->instruction_offset,&unused)) {
+            case NONLOCAL_CONTINUE: state->resume=ip; return DIAMOND_VM_OK;
+            case NONLOCAL_RETURNED:
+            case NONLOCAL_PASS_ON: return DIAMOND_VM_NONLOCAL_EXIT;
+            case NONLOCAL_INVALID: status=DIAMOND_VM_TYPE_ERROR; break;
+        }
+    }
+    if(state->count>0&&catch_runtime_error(vm,chunk,(DiamondVmStatus)status,
+           state->handlers,&state->count,&state->pending,registers,&ip)) {
+        state->resume=ip;
+        return DIAMOND_VM_OK;
+    }
+    return vm->has_exception?DIAMOND_VM_EXCEPTION:status;
+}
+
+uint8_t diamond_jit_catch(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        DiamondJitHandlerState *state,uint8_t status) {
+    if(status==DIAMOND_VM_EXCEPTION) {
+        size_t ip=0;
+        if(catch_exception(vm,chunk,state->handlers,&state->count,&state->pending,
+               registers,&ip)) {
+            state->resume=ip;
+            return DIAMOND_VM_OK;
+        }
+        return DIAMOND_VM_EXCEPTION;
+    }
+    return jit_unwind_status(vm,chunk,registers,state,status);
+}
+
+uint8_t diamond_jit_push_ensure(DiamondJitHandlerState *state,size_t target,size_t code_count) {
+    if(state->count==16||target>code_count)return DIAMOND_VM_INVALID_BYTECODE;
+    state->handlers[state->count++]=(UnwindHandler){
+        .kind=HANDLER_ENSURE,.target=target,.enabled=true};
+    return DIAMOND_VM_OK;
+}
+
+uint8_t diamond_jit_run_ensure(DiamondJitHandlerState *state,size_t continuation,
+        size_t code_count) {
+    if(state->count==0||continuation>code_count||
+       state->handlers[state->count-1].kind!=HANDLER_ENSURE)
+        return DIAMOND_VM_INVALID_BYTECODE;
+    state->resume=enter_ensure(&state->handlers[state->count-1],&state->pending,
+        (PendingUnwind){.kind=PENDING_NORMAL,.continuation=continuation});
+    return DIAMOND_VM_OK;
+}
+
+uint8_t diamond_jit_unwind_jump(DiamondJitHandlerState *state,size_t levels,size_t target,
+        size_t code_count) {
+    size_t ip=0;
+    if(target>code_count||
+       !unwind_for_jump(state->handlers,&state->count,&state->pending,levels,target,&ip))
+        return DIAMOND_VM_INVALID_BYTECODE;
+    state->resume=ip;
+    return DIAMOND_VM_OK;
+}
+
+/* DIAMOND_OP_RETURN in a function with handlers: an enclosing ensure clause
+ * runs first, and its END_ENSURE finishes the return. */
+uint8_t diamond_jit_return(DiamondJitHandlerState *state,const DiamondValue *value,
+        DiamondValue *result) {
+    while(state->count>0&&state->handlers[state->count-1].kind!=HANDLER_ENSURE)
+        (void)pop_unwind_handler(state->handlers,&state->count,&state->pending);
+    if(state->count>0) {
+        state->resume=enter_ensure(&state->handlers[state->count-1],&state->pending,
+            (PendingUnwind){.kind=PENDING_RETURN,.value=*value});
+        return DIAMOND_VM_OK;
+    }
+    *result=*value;
+    return DIAMOND_JIT_HANDLER_RETURNED;
+}
+
+uint8_t diamond_jit_end_ensure(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        DiamondJitHandlerState *state,DiamondValue *result) {
+    if(state->count==0||state->handlers[state->count-1].kind!=HANDLER_ACTIVE_ENSURE)
+        return DIAMOND_VM_INVALID_BYTECODE;
+    const PendingUnwind resume=state->pending;
+    (void)pop_unwind_handler(state->handlers,&state->count,&state->pending);
+    switch(resume.kind) {
+        case PENDING_NORMAL:
+            state->resume=resume.continuation;
+            return DIAMOND_VM_OK;
+        case PENDING_JUMP:
+            return diamond_jit_unwind_jump(state,(size_t)resume.nonlocal_target,
+                resume.continuation,chunk->code_count);
+        case PENDING_RETURN:
+            return diamond_jit_return(state,&resume.value,result);
+        case PENDING_NONLOCAL:
+            vm->nonlocal_value=resume.value;
+            vm->nonlocal_target=resume.nonlocal_target;
+            vm->nonlocal_is_break=resume.nonlocal_is_break;
+            return jit_unwind_status(vm,chunk,registers,state,DIAMOND_VM_NONLOCAL_EXIT);
+        case PENDING_EXCEPTION: {
+            vm->exception=resume.value;vm->has_exception=true;
+            size_t ip=0;
+            if(catch_exception(vm,chunk,state->handlers,&state->count,&state->pending,
+                   registers,&ip)) {
+                state->resume=ip;
+                return DIAMOND_VM_OK;
+            }
+            if(vm->error[0]=='\0')
+                format_uncaught_exception_message(vm,vm->exception,true);
+            return DIAMOND_VM_EXCEPTION;
+        }
+        case PENDING_NONE:
+            break;
+    }
+    return DIAMOND_VM_INVALID_BYTECODE;
+}
+
+uint8_t diamond_jit_raise(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        DiamondJitHandlerState *state,uint16_t source) {
+    vm->exception=registers[source];vm->has_exception=true;
+    const bool first_raise=raise_capture_backtrace_helper(vm,chunk);
+    size_t ip=0;
+    if(state!=nullptr&&catch_exception(vm,chunk,state->handlers,&state->count,
+           &state->pending,registers,&ip)) {
+        state->resume=ip;
+        return DIAMOND_VM_OK;
+    }
+    if(vm->error[0]=='\0')
+        format_uncaught_exception_message(vm,vm->exception,!first_raise);
+    return DIAMOND_VM_EXCEPTION;
 }

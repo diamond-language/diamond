@@ -56,6 +56,14 @@ authoritative fine-grained record.
 - **Closure calls and string interpolation compile under the JIT.** A function that calls a
   block or closure it holds, or builds a string with `#{...}`, no longer stays interpreted. With
   `DIAMOND_JIT=1`, the closures benchmark runs 5.6% fewer cycles and regex 6% fewer.
+- **Functions with `begin`/`rescue`/`ensure` compile under the JIT.** Exception handlers,
+  `retry`, `raise`, and `break`/`next`/`return` through `ensure` no longer keep a function
+  interpreted, with the same errors and backtraces. With `DIAMOND_JIT=1`, the exceptions
+  benchmark runs 14% fewer cycles.
+- **A memory budget keeps a VM on the interpreter under `DIAMOND_JIT=1`.** `DIAMOND_MAX_MEMORY_BYTES`
+  was not enforced in compiled code: a compiled loop that only grew one array ran past the
+  budget until the system ran out of memory. Instruction and wall-clock budgets already did
+  this.
 
 ### Fixed
 

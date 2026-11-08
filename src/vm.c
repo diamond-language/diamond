@@ -127,6 +127,14 @@ static_assert(offsetof(DiamondFrame, register_count) == DIAMOND_JIT_FRAME_REGIST
 static_assert(offsetof(DiamondFrame, chunk) == DIAMOND_JIT_FRAME_CHUNK);
 static_assert(offsetof(DiamondFrame, instruction_offset) == DIAMOND_JIT_FRAME_INSTRUCTION_OFFSET);
 static_assert(offsetof(DiamondFrame, serial) == DIAMOND_JIT_FRAME_SERIAL);
+static_assert(DIAMOND_JIT_HANDLER_STATE_AT == ((DIAMOND_JIT_FRAME_SIZE + 15) & ~15));
+static_assert(sizeof(DiamondJitHandlerState) == DIAMOND_JIT_HANDLER_STATE_SIZE);
+static_assert(DIAMOND_JIT_HANDLER_STATE_SIZE % 16 == 0);
+static_assert(offsetof(DiamondJitHandlerState, count) == DIAMOND_JIT_HANDLER_COUNT_FIELD);
+static_assert(offsetof(DiamondJitHandlerState, resume) == DIAMOND_JIT_HANDLER_RESUME_FIELD);
+static_assert(offsetof(DiamondJitHandlerState, pending) == DIAMOND_JIT_HANDLER_PENDING_FIELD);
+static_assert(offsetof(PendingUnwind, kind) == 0 && sizeof(PendingKind) == 1);
+static_assert(offsetof(DiamondJitHandlerState, handlers) == DIAMOND_JIT_HANDLER_HANDLERS_FIELD);
 #endif
 
 void diamond_jit_tail_reset(DiamondValue *registers, size_t base, size_t argc,

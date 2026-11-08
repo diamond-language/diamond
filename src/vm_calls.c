@@ -277,11 +277,15 @@ static uint8_t jit_call_core(DiamondVm *vm, const DiamondFunction *function,
         return DIAMOND_VM_STACK_OVERFLOW;
     }
     /* Native code is never interrupted and executes none of the per-
-     * instruction checks, so a VM with an instruction or wall-clock budget
-     * (or one already past a tripped budget, in its grace allowance) stays
-     * on the interpreter, where the budget is enforced. */
+     * instruction checks, so a VM with an instruction, wall-clock or memory
+     * budget (or one already past a tripped budget, in its grace allowance)
+     * stays on the interpreter, where the budget is enforced. A memory budget
+     * counts because a loop that only grows one array allocates nothing new:
+     * the interpreter notices through memory_recheck between instructions,
+     * and native code has no such point. */
     if (vm->jit && !function->jit_ineligible && vm->max_instructions == 0 &&
-        vm->max_wall_nanoseconds == 0 && !vm->resource_grace_active) {
+        vm->max_wall_nanoseconds == 0 && vm->max_memory_bytes == 0 &&
+        !vm->resource_grace_active) {
         DiamondFunction *mutable_function = (DiamondFunction *)function;
         if (mutable_function->jit_code == nullptr) {
             mutable_function->jit_call_count++;
@@ -385,12 +389,13 @@ static DiamondVmStatus block_call_native(DiamondVm *vm,const DiamondBlockCall *c
  * nothing jit_call_core checks could stop it: the depth is under the limit
  * (jit_depth_limit starts at 0, which sends the first call the long way;
  * that call fills it in, on the thread running the VM) and the VM has no
- * instruction or wall-clock budget. */
+ * instruction, wall-clock or memory budget. */
 DiamondVmStatus block_call_run(DiamondVm *vm,const DiamondBlockCall *call,
         const DiamondValue *arguments,size_t depth,DiamondValue *result) {
     if(call->self_slot) return block_call_run_self_slot(vm,call,arguments,depth,result);
     if(vm->jit && call->function->jit_code!=nullptr && depth+1<vm->jit_depth_limit &&
-       vm->max_instructions==0 && vm->max_wall_nanoseconds==0 && !vm->resource_grace_active)
+       vm->max_instructions==0 && vm->max_wall_nanoseconds==0 && vm->max_memory_bytes==0 &&
+       !vm->resource_grace_active)
         return block_call_native(vm,call,arguments,depth,result);
     if(vm->jit_depth_limit==0) vm->jit_depth_limit=diamond_call_depth_limit(vm);
     return jit_call_or_interpret(vm,call->function,call->child,arguments,

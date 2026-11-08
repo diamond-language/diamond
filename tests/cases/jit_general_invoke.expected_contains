@@ -9,4 +9,4 @@
 ^rescued from fail_now$
 ^true$
 ^true$
-jit: 10 compiled function(s), 0 bailout(s), 2 hard propagation(s)
+jit: 11 compiled function(s), 0 bailout(s), 3 hard propagation(s)

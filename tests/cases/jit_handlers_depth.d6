@@ -1,0 +1,29 @@
+# A compiled function with handlers keeps run_chunk's handler stack on its
+# native stack frame. Endless recursion through one stops at the call-depth
+# limit with a clean, rescuable error in the main program, a Fiber and a
+# Thread, and the ensure clause of every level on the way out still runs.
+def dive(n: Int, counter: Array) -> Int
+  begin
+    dive(n + 1, counter)
+  rescue e: ArgumentError
+    0
+  ensure
+    counter[0] = counter[0] + 1
+  end
+end
+
+def overflow(label: String) -> Nil
+  counter = [0]
+  begin
+    dive(0, counter)
+  rescue error: SystemStackError
+    puts("#{label}: #{error.message()} #{counter[0] > 50}")
+  end
+  nil
+end
+
+def in_fiber() = overflow("fiber")
+def in_thread() = overflow("thread")
+overflow("main")
+Fiber.new(in_fiber).resume()
+Thread.new(in_thread).join()

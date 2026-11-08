@@ -143,8 +143,8 @@ are against YJIT, on call-heavy and floating-point object code: fib 2.7x, poly 2
   loops) but not calls, field access or Float objects. Traced on 0.29.0-dev:
   - Block bodies run as native code now, but every block call still goes through C
     (`block_call_run` and a register copy) rather than a native call from the loop.
-    `PUSH_ENSURE` rejects a function with handlers (exceptions), and calls with keywords or
-    a spread (`CALL_CLOSURE_KEYWORDS`, `NEW_KEYWORDS`, ...) reject theirs.
+    Calls with keywords or a spread (`CALL_CLOSURE_KEYWORDS`, `NEW_KEYWORDS`, ...) and
+    `CLASS_NAME` (`e.class()`) still reject the function.
   - Polymorphic and untyped call sites pay the full dispatch per call (poly's
     `shapes[i].area()`); a per-site inline cache checked in native code would cut that.
   - A compiled function's call to itself is native now (fib 121 ms against YJIT's 60), but
