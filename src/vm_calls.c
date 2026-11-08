@@ -168,6 +168,7 @@ static inline uint8_t jit_run_native(DiamondVm *vm, const DiamondFunction *funct
     #if defined(__GNUC__)
     #pragma GCC diagnostic pop
     #endif
+    vm->jit_depth_limit = diamond_call_depth_limit(vm);
     /* Phase 2d: DiamondJitFn's own return convention is now 3-way,
      * not a plain bool -- see jit.h's own comment. DIAMOND_VM_OK
      * (0) means success (*result written); DIAMOND_JIT_RETRY means
@@ -1018,6 +1019,24 @@ DiamondVmStatus diamond_jit_call_self(DiamondVm *vm, const DiamondChunk *chunk,
     return (DiamondVmStatus)status;
 }
 
+
+/* What follows a direct native self-call (compile_call_function in jit.c
+ * calls its own entry without a C round trip) whose status was not
+ * DIAMOND_VM_OK: exactly what jit_run_native and diamond_jit_call_self do
+ * with that status, counters included. `arguments` are the caller's
+ * registers the call was made with, unchanged, so a retry interprets the
+ * call from them. */
+DiamondVmStatus diamond_jit_self_call_finish(DiamondVm *vm, const DiamondChunk *chunk,
+        const DiamondValue *arguments, uint8_t argc, size_t depth, DiamondValue *out,
+        uint8_t status) {
+    if (status == DIAMOND_JIT_TAIL) return jit_tail_loop(vm, chunk, depth, out);
+    if (status == DIAMOND_JIT_RETRY) {
+        vm->jit_bailouts++;
+        return run_chunk(chunk, vm, arguments, argc, depth + 1, nullptr, out);
+    }
+    vm->jit_hard_propagations++;
+    return (DiamondVmStatus)status;
+}
 /* JIT trampoline for DIAMOND_OP_TAIL_CALL to a function other than the
  * caller. Returns DIAMOND_JIT_TAIL after staging the callee and its
  * arguments when the interpreter's own in-place switch would apply (a plain,

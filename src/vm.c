@@ -670,6 +670,7 @@ DiamondFiberStatus diamond_fiber_run(DiamondFiber *fiber) {
     fiber->resumer_fiber=saved_running;
     vm->frames=fiber->native_frames;
     vm->running_fiber=fiber;
+    vm->jit_depth_limit=diamond_call_depth_limit(vm);
     diamond_fiber_entering=fiber;
     ucontext_t caller_context;
     fiber->resume_target=&caller_context;
@@ -691,6 +692,7 @@ DiamondFiberStatus diamond_fiber_run(DiamondFiber *fiber) {
     fiber->native_frames=vm->frames;
     vm->frames=saved_frames;
     vm->running_fiber=saved_running;
+    vm->jit_depth_limit=diamond_call_depth_limit(vm);
     fiber->resumer_frames=nullptr;
     fiber->resumer_fiber=nullptr;
     fiber->state=fiber->status==DIAMOND_VM_OK?DIAMOND_FIBER_COMPLETED:

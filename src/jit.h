@@ -446,6 +446,13 @@ DiamondVmStatus diamond_jit_invoke_instance(DiamondVm *vm, const DiamondChunk *c
 DiamondVmStatus diamond_jit_invoke_any(DiamondVm *vm, const DiamondChunk *chunk,
         DiamondValue *registers, const uint8_t *site, size_t depth);
 
+/* A direct native self-call's non-OK status (see compile_call_function):
+ * runs the staged tail calls, interprets a retried call, or counts and
+ * returns a status to propagate, as jit_run_native's callers do. */
+DiamondVmStatus diamond_jit_self_call_finish(DiamondVm *vm, const DiamondChunk *chunk,
+        const DiamondValue *arguments, uint8_t argc, size_t depth, DiamondValue *out,
+        uint8_t status);
+
 /* Closures created by compiled code (src/vm_calls.c). diamond_jit_closure
  * is DIAMOND_OP_CLOSURE, read from the instruction at `site` (the same
  * diamond_make_closure run_chunk uses), with the compiled function's own
