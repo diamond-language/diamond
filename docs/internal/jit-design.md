@@ -2507,6 +2507,16 @@ side effects, so a failure propagates rather than retrying in the interpreter).
   `CALL_SPREAD`, `CALL_KEYWORD_SPREAD`, the singleton keyword/spread calls, `NEW_SPREAD`,
   `NEW_KEYWORDS`, `NEW_TYPED`, `INVOKE_KEYWORDS`, `INVOKE_SPREAD`, `CALL_CLOSURE_KEYWORDS`,
   `CALL_CLOSURE_SPREAD` and `BUILD_SPREAD_ARGS`, with their `_TYPED` variants.
+- **Builtins:** every builtin opcode (bitwise and shift operators, `COMPARE`, the conversions,
+  the `CASE_*` pattern ops, JSON, regexps, encodings, digests, ciphers, `Time`, `Fiber`, sockets,
+  processes, database opens, `THREAD_NEW`, `DEFINE_METHOD`/`COMPILE_METHOD` and the rest). Their
+  operands are plain register shorts, sometimes followed by one byte, so one table,
+  `builtin_operand_layout()`, gives both `opcode_runs_outlined` and the decoder each one's
+  destination flag, short count and byte count. `run_chunk` keeps the Int fast paths for `&`,
+  `|`, `^`, `<<`, `>>`, `<=>` and `to_f` inline and calls the helper only for the slow path.
+  Moving those 64 bodies out of `run_chunk` also cut 2 to 10% of the interpreter's instructions
+  on every benchmark: the loop spills fewer registers. Only `BREAKPOINT_CHECK` and `DEBUGGER`
+  stay refused, by design.
 - **Decoding:** every covered opcode has an entry in `decode_instruction_operands`, which the
   register scans and the compiler share. Type-argument and keyword trailers are skipped with
   `skip_type_trailer` / `skip_keyword_trailer`; `CALL_KEYWORD_SPREAD` uses 3-byte keyword
@@ -2515,11 +2525,13 @@ side effects, so a failure propagates rather than retrying in the interpreter).
 - **Inline instead:** `NOT` (truthiness to Bool) and `LOAD_CLASS` (bounds-checked against
   `chunk->class_count`, bailing with `INVALID_BYTECODE` when out of range) compile to native code.
 - **Adding one:** move the `run_chunk` case body into a `vm_outlined.c` helper if it is not one
-  already, add a decoder entry and a `diamond_jit_outlined` case, and list it in
-  `opcode_runs_outlined`.
+  already, add a decoder entry (or a `builtin_operand_layout` row for a shorts-only layout) and
+  a `diamond_jit_outlined` case, and list it in `opcode_runs_outlined`.
 
 Across the test cases, benchmarks and examples, functions the JIT rejected fell from 3,041 to
 1,333 (opcode rejections 2,130 to 422). Generic functions (next section) then took it to 553.
+The builtins took the remaining tail from 363 refused functions to 17 (counted with a
+`REFUSED` trace at the `jit_ineligible` site; the earlier figures used a different count).
 
 ## Generic functions
 

@@ -1,0 +1,84 @@
+# Builtins compiled code runs through diamond_jit_outlined (threshold 1,
+# stress GC): bitwise and shift operators, <=>, conversions, case patterns,
+# JSON, regexps, encodings and digests, Time, Fiber.yield and a method
+# defined at run time. Each function is called twice, so the second call
+# runs the compiled body.
+
+def bits(a: Int, b: Int) -> Array[Int]
+  [a & b, a | b, a ^ b, a << 3, a >> 1, b << 70 >> 68, a <=> b, b <=> a, a <=> a]
+end
+
+def pushed(values: Array[Int], extra: Int) -> Array[Int]
+  values << extra
+end
+
+def converted(n: Int, x: Float) -> Array[String]
+  ["#{to_f(n)}", "#{to_i(x)}", chr(n + 60), "#{to_sym("k#{n}")}", "#{"b" <=> "a"}"]
+end
+
+def shape(value) -> String
+  case value
+  when [first, *middle, last]
+    "array #{first}..#{last} (#{middle.length()} between)"
+  when {"kind": kind, "size": size}
+    "hash #{kind}/#{size}"
+  when 1..9
+    "small"
+  else
+    "other"
+  end
+end
+
+def unpacked(values: Array[Int]) -> String
+  [head, *middle, tail] = values
+  "#{head}|#{middle}|#{tail}"
+end
+
+def encoded(text: String) -> Array[String]
+  matcher = Regexp.new("^d(i+)")
+  hit = matcher.match(text)
+  [diamond_json_stringify({"t": text, "n": [1, 2]}), Base64.encode(text),
+   Digest.sha256(text).slice(0, 12), hit == nil ? "-" : hit[1]]
+end
+
+def timed() -> Bool
+  start = Time.monotonic()
+  later = Time.at(86400)
+  later.year() == 1970 && Time.monotonic() >= start
+end
+
+def worker()
+  first = Fiber.yield(1)
+  second = Fiber.yield(first * 2)
+  first + second
+end
+
+def fibered() -> Array[Int]
+  fiber = Fiber.new(worker)
+  [fiber.resume(), fiber.resume(5), fiber.resume(7)]
+end
+
+class Greeter
+end
+
+def teach(name: String) -> String
+  Greeter.define_method(name,
+    Greeter.compile_method(name, [], "\"hello from \" + who", {"who": name}))
+  name
+end
+
+i = 0
+while i < 2
+  puts(bits(12, 10))
+  puts(pushed([1, 2], 3 + i))
+  puts(converted(5, 7.9))
+  puts([shape([1, 2, 3, 4]), shape({"kind": "box", "size": 3}), shape(4), shape("x")])
+  puts(unpacked([1, 2, 3, 4]))
+  puts(encoded("diiamond"))
+  puts(timed())
+  puts(fibered())
+  puts(teach("greet#{i}"))
+  i += 1
+end
+puts(Greeter.new().greet0())
+puts(Greeter.new().greet1())

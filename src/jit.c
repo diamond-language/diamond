@@ -2115,7 +2115,75 @@ static bool opcode_writes_no_register(DiamondOpCode opcode) {
  * runs them, so they behave exactly as interpreted. Each needs an entry in
  * decode_instruction_operands too (its operands and the register it
  * writes), which compile_outlined_instruction uses to step over it. */
+/* The builtins compiled code runs through diamond_jit_outlined (each the
+ * vm_outlined.c body run_chunk calls too). Their operand layouts are those
+ * bodies' READ_SHORT/READ_BYTE sequences: the first u16 is the register the
+ * instruction writes (`*writes_dest`, false for the four that write none),
+ * then `*shorts` more u16 operands and `*bytes` trailing bytes. Each writes
+ * only that register; the rest are read. False for any other opcode. */
+static bool builtin_operand_layout(DiamondOpCode opcode, bool *writes_dest, uint8_t *shorts,
+        uint8_t *bytes) {
+    *writes_dest = true;
+    *bytes = 0;
+    switch (opcode) {
+        case DIAMOND_OP_ARGV: case DIAMOND_OP_ENV: case DIAMOND_OP_GETS: case DIAMOND_OP_UDP_OPEN:
+        case DIAMOND_OP_PROGRAM_BUILDER_NEW: case DIAMOND_OP_TIME_MONOTONIC:
+            *shorts = 0; return true;
+        case DIAMOND_OP_TIME_NOW:
+            *shorts = 0; *bytes = 1; return true;
+        case DIAMOND_OP_BASE64_DECODE: case DIAMOND_OP_BASE64_ENCODE: case DIAMOND_OP_CASE_HASH_SHAPE:
+        case DIAMOND_OP_CHR: case DIAMOND_OP_DIGEST_SHA1: case DIAMOND_OP_DIGEST_SHA256:
+        case DIAMOND_OP_FIBER_NEW: case DIAMOND_OP_FILE_DELETE: case DIAMOND_OP_GZIP_COMPRESS:
+        case DIAMOND_OP_JSON_STRINGIFY: case DIAMOND_OP_PROCESS_RUN: case DIAMOND_OP_PROCESS_SPAWN:
+        case DIAMOND_OP_SECURE_RANDOM_BYTES: case DIAMOND_OP_SECURE_RANDOM_HEX:
+        case DIAMOND_OP_TENSOR_FROM_ARRAY: case DIAMOND_OP_TIME_AT: case DIAMOND_OP_TIME_PARSE:
+        case DIAMOND_OP_TO_FLOAT: case DIAMOND_OP_TO_INT: case DIAMOND_OP_TO_SYMBOL:
+        case DIAMOND_OP_YIELD: case DIAMOND_OP_CHANNEL_NEW: case DIAMOND_OP_SUPERVISOR_NEW:
+        case DIAMOND_OP_DIR_ENTRIES: case DIAMOND_OP_POSTGRES_OPEN:
+            *shorts = 1; return true;
+        case DIAMOND_OP_FILE_JOIN:      /* dest, base, argc: reads base..base+argc-1 */
+        case DIAMOND_OP_TIME_BUILD:     /* dest, base, mode */
+            *shorts = 1; *bytes = 1; return true;
+        case DIAMOND_OP_ARRAY_MIDDLE: case DIAMOND_OP_ARRAY_REST: case DIAMOND_OP_ARRAY_SUFFIX:
+        case DIAMOND_OP_BCRYPT_HASH: case DIAMOND_OP_BCRYPT_VERIFY: case DIAMOND_OP_BITWISE_AND:
+        case DIAMOND_OP_BITWISE_OR: case DIAMOND_OP_BITWISE_XOR: case DIAMOND_OP_CASE_ARRAY_SHAPE:
+        case DIAMOND_OP_CASE_HASH_HAS: case DIAMOND_OP_CASE_MATCH: case DIAMOND_OP_CIPHER_DECRYPT:
+        case DIAMOND_OP_CIPHER_ENCRYPT: case DIAMOND_OP_COMPARE: case DIAMOND_OP_FILE_OPEN:
+        case DIAMOND_OP_GET_IVAR_NAME: case DIAMOND_OP_GZIP_DECOMPRESS: case DIAMOND_OP_HASH_REST:
+        case DIAMOND_OP_HMAC_SHA1: case DIAMOND_OP_HMAC_SHA256: case DIAMOND_OP_JSON_STRINGIFY_OPTIONS:
+        case DIAMOND_OP_PROCESS_RUN_OPTIONS: case DIAMOND_OP_PROCESS_SPAWN_OPTIONS:
+        case DIAMOND_OP_REGEXP_NEW: case DIAMOND_OP_SHIFT_LEFT: case DIAMOND_OP_SHIFT_RIGHT:
+        case DIAMOND_OP_SIGNAL_TRAP: case DIAMOND_OP_SQLITE3_OPEN: case DIAMOND_OP_TCP_CONNECT_NONBLOCK:
+        case DIAMOND_OP_TENSOR_ZEROS: case DIAMOND_OP_UDP_BIND: case DIAMOND_OP_CHANNEL_SELECT:
+        case DIAMOND_OP_TCP_LISTEN: case DIAMOND_OP_TCP_LISTEN_NONBLOCK:
+            *shorts = 2; return true;
+        case DIAMOND_OP_THREAD_NEW:     /* dest, callable, base, argc */
+        case DIAMOND_OP_SEMVER: case DIAMOND_OP_FILE_PATH:   /* dest, two operands, selector */
+            *shorts = 2; *bytes = 1; return true;
+        case DIAMOND_OP_DNS_RESOLVE: case DIAMOND_OP_HMAC_VERIFY: case DIAMOND_OP_TCP_CONNECT:
+        case DIAMOND_OP_TENSOR_RANDOM: case DIAMOND_OP_CHANNEL_SELECT_SEND:
+        case DIAMOND_OP_DEFINE_METHOD: case DIAMOND_OP_REDEFINE_METHOD:
+        case DIAMOND_OP_TLS_CONNECT: case DIAMOND_OP_TLS_START_HANDSHAKE: case DIAMOND_OP_IO_POLL:
+            *shorts = 3; return true;
+        case DIAMOND_OP_TLS_LISTEN:
+            *shorts = 4; return true;
+        case DIAMOND_OP_COMPILE_METHOD:
+        case DIAMOND_OP_MYSQL_OPEN:
+            *shorts = 5; return true;
+        case DIAMOND_OP_EXIT:
+            *writes_dest = false; *shorts = 0; return true;
+        case DIAMOND_OP_CHECK_HASH_KEY: case DIAMOND_OP_SET_NAMESPACE_CONSTANT:
+            *writes_dest = false; *shorts = 1; return true;
+        case DIAMOND_OP_SET_IVAR_NAME:  /* receiver, name, value */
+            *writes_dest = false; *shorts = 2; return true;
+        default:
+            return false;
+    }
+}
+
 static bool opcode_runs_outlined(DiamondOpCode opcode) {
+    bool writes_dest = false; uint8_t shorts = 0, bytes = 0;
+    if (builtin_operand_layout(opcode, &writes_dest, &shorts, &bytes)) return true;
     switch (opcode) {
         case DIAMOND_OP_PRINT:
         case DIAMOND_OP_SYMBOL:
@@ -2262,6 +2330,15 @@ static bool decode_instruction_operands(const DiamondFunction *fn, size_t *pc,
     *dest = -1;
     *second_dest = -1;
     *jump_target = -1;
+    bool writes_dest = false; uint8_t shorts = 0, bytes = 0;
+    if (builtin_operand_layout(opcode, &writes_dest, &shorts, &bytes)) {
+        uint16_t first = 0, operand = 0; uint8_t trailing = 0;
+        if (!decode_u16(fn, pc, &first)) return false;
+        if (writes_dest) *dest = first;
+        for (uint8_t i = 0; i < shorts; i++) if (!decode_u16(fn, pc, &operand)) return false;
+        for (uint8_t i = 0; i < bytes; i++) if (!decode_u8(fn, pc, &trailing)) return false;
+        return true;
+    }
     if (opcode_writes_no_register(opcode)) {
         switch (opcode) {
             case DIAMOND_OP_SET_IVAR: case DIAMOND_OP_INDEX_SET: {

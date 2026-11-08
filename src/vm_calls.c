@@ -1358,6 +1358,16 @@ static DiamondVmStatus check_instance_method_visibility(DiamondVm *vm,const Diam
  * `site` identifies the bytecode instruction for monomorphic quickening, as
  * in diamond_jit_get_ivar. Helpers propagate statuses explicitly because
  * VM_RETURN/VM_PROPAGATE only apply inside run_chunk. */
+/* Whether `class` (or an ancestor) defines `name`: diamond_jit_invoke_instance's
+ * universal-method checks (tap, to_s, dup, respond_to?, ...), each reached
+ * only once the call's name matched. Out of line: inlined there, the method
+ * walk measured as register spills on that function's hot path. */
+__attribute__((noinline))
+static bool class_defines(const DiamondChunk *owner, const DiamondClass *class,
+        const char *name, size_t length) {
+    return lookup_method(owner, class, name, length) != nullptr;
+}
+
 DiamondVmStatus diamond_jit_invoke_instance(DiamondVm *vm, const DiamondChunk *chunk,
         const uint8_t *site, DiamondOpCode instruction, DiamondValue *registers,
         uint16_t recv, uint16_t name, uint16_t base, uint8_t argc,
@@ -1403,18 +1413,18 @@ DiamondVmStatus diamond_jit_invoke_instance(DiamondVm *vm, const DiamondChunk *c
      * interception just above this case (dup_defined) for why interception
      * order matters here but not there. */
     if(method_name->length==3&&memcmp(method_name->chars,"tap",3)==0&&
-       lookup_method(owner,instance->class,"tap",3)==nullptr) {
+       !class_defines(owner,instance->class,"tap",3)) {
         if(type_argument_count!=0)return reject_type_arguments(vm,method_name);
         return jit_instance_tap(vm,chunk,registers,recv,base,argc,depth,out);
     }
     if(method_name->length==4&&memcmp(method_name->chars,"nil?",4)==0&&
-       argc==0&&lookup_method(owner,instance->class,"nil?",4)==nullptr) {
+       argc==0&&!class_defines(owner,instance->class,"nil?",4)) {
         *out=DIAMOND_BOOL(false);return DIAMOND_VM_OK;
     }
     /* Every object answers to_s(), with the text interpolation gives it,
      * unless its class defines its own. */
     if(method_name->length==4&&memcmp(method_name->chars,"to_s",4)==0&&
-       lookup_method(owner,instance->class,"to_s",4)==nullptr) {
+       !class_defines(owner,instance->class,"to_s",4)) {
         if(type_argument_count!=0)return reject_type_arguments(vm,method_name);
         if(argc!=0) return DIAMOND_VM_ARITY_ERROR;
         return stringify_value(vm,chunk,depth,registers[recv],out);
@@ -1422,38 +1432,38 @@ DiamondVmStatus diamond_jit_invoke_instance(DiamondVm *vm, const DiamondChunk *c
     /* Every object answers inspect(): its fields, unless its class defines its
      * own inspect (any arity), which then dispatches normally. */
     if(method_name->length==7&&memcmp(method_name->chars,"inspect",7)==0&&
-       lookup_method(owner,instance->class,"inspect",7)==nullptr) {
+       !class_defines(owner,instance->class,"inspect",7)) {
         if(type_argument_count!=0)return reject_type_arguments(vm,method_name);
         if(argc!=0) return DIAMOND_VM_ARITY_ERROR;
         return inspect_value(vm,chunk,depth,registers[recv],out);
     }
     if(method_name->length==3&&memcmp(method_name->chars,"dup",3)==0&&
-       lookup_method(owner,instance->class,"dup",3)==nullptr) {
+       !class_defines(owner,instance->class,"dup",3)) {
         if(type_argument_count!=0)return reject_type_arguments(vm,method_name);
         if(argc!=0) return DIAMOND_VM_ARITY_ERROR;
         return diamond_jit_dup(vm,&registers[recv],out);
     }
     if(method_name->length==6&&memcmp(method_name->chars,"freeze",6)==0&&
-       lookup_method(owner,instance->class,"freeze",6)==nullptr) {
+       !class_defines(owner,instance->class,"freeze",6)) {
         if(type_argument_count!=0)return reject_type_arguments(vm,method_name);
         if(argc!=0) return DIAMOND_VM_ARITY_ERROR;
         return diamond_jit_freeze(vm,&registers[recv],out);
     }
     if(method_name->length==11&&memcmp(method_name->chars,"deep_freeze",11)==0&&
-       lookup_method(owner,instance->class,"deep_freeze",11)==nullptr) {
+       !class_defines(owner,instance->class,"deep_freeze",11)) {
         if(type_argument_count!=0)return reject_type_arguments(vm,method_name);
         if(argc!=0) return DIAMOND_VM_ARITY_ERROR;
         return diamond_deep_freeze(vm,&registers[recv],out);
     }
     if(method_name->length==7&&memcmp(method_name->chars,"frozen?",7)==0&&
-       lookup_method(owner,instance->class,"frozen?",7)==nullptr) {
+       !class_defines(owner,instance->class,"frozen?",7)) {
         if(type_argument_count!=0)return reject_type_arguments(vm,method_name);
         if(argc!=0) return DIAMOND_VM_ARITY_ERROR;
         return diamond_jit_frozen(vm,&registers[recv],out);
     }
     if(method_name->length==11&&
        memcmp(method_name->chars,"respond_to?",11)==0&&
-       lookup_method(owner,instance->class,"respond_to?",11)==nullptr) {
+       !class_defines(owner,instance->class,"respond_to?",11)) {
         if(type_argument_count!=0)return reject_type_arguments(vm,method_name);
         if(argc!=1) return DIAMOND_VM_ARITY_ERROR;
         if(registers[base].kind!=DIAMOND_VALUE_OBJECT||
@@ -1467,7 +1477,7 @@ DiamondVmStatus diamond_jit_invoke_instance(DiamondVm *vm, const DiamondChunk *c
     }
     if(method_name->length==11&&
        memcmp(method_name->chars,"public_send",11)==0&&
-       lookup_method(owner,instance->class,"public_send",11)==nullptr) {
+       !class_defines(owner,instance->class,"public_send",11)) {
         if(type_argument_count!=0)return reject_type_arguments(vm,method_name);
         DiamondValue sent=DIAMOND_NIL;
         const DiamondVmStatus send_status=public_send_helper(vm,chunk,
@@ -2613,6 +2623,161 @@ DiamondVmStatus diamond_jit_outlined(DiamondVm *vm,const DiamondChunk *chunk,
             return outlined_call_closure_spread(vm,chunk,registers,depth,&ip);
         case DIAMOND_OP_BUILD_SPREAD_ARGS:
             return outlined_build_spread_args(vm,chunk,registers,depth,&ip);
+        case DIAMOND_OP_JSON_STRINGIFY:
+        case DIAMOND_OP_JSON_STRINGIFY_OPTIONS:
+            return outlined_json_stringify(vm,chunk,registers,depth,&ip);
+        case DIAMOND_OP_TO_SYMBOL:
+            return outlined_to_symbol(vm,chunk,registers,depth,&ip);
+        case DIAMOND_OP_TO_INT:
+            return outlined_to_int(vm,chunk,registers,depth,&ip);
+        case DIAMOND_OP_TO_FLOAT:
+            return outlined_to_float(vm,chunk,registers,depth,&ip);
+        case DIAMOND_OP_CHR:
+            return outlined_chr(vm,chunk,registers,depth,&ip);
+        case DIAMOND_OP_TLS_LISTEN:
+            return outlined_tls_listen(vm,chunk,registers,depth,&ip);
+        case DIAMOND_OP_SIGNAL_TRAP:
+            return outlined_signal_trap(vm,chunk,registers,depth,&ip);
+        case DIAMOND_OP_UDP_OPEN:
+            return outlined_udp_open(vm,chunk,registers,depth,&ip);
+        case DIAMOND_OP_UDP_BIND:
+            return outlined_udp_bind(vm,chunk,registers,depth,&ip);
+        case DIAMOND_OP_TCP_CONNECT:
+            return outlined_tcp_connect(vm,chunk,registers,depth,&ip);
+        case DIAMOND_OP_TCP_CONNECT_NONBLOCK:
+            return outlined_tcp_connect_nonblock(vm,chunk,registers,depth,&ip);
+        case DIAMOND_OP_DNS_RESOLVE:
+            return outlined_dns_resolve(vm,chunk,registers,depth,&ip);
+        case DIAMOND_OP_PROGRAM_BUILDER_NEW:
+            return outlined_program_builder_new(vm,chunk,registers,depth,&ip);
+        case DIAMOND_OP_SQLITE3_OPEN:
+            return outlined_sqlite3_open(vm,chunk,registers,depth,&ip);
+        case DIAMOND_OP_REGEXP_NEW:
+            return outlined_regexp_new(vm,chunk,registers,depth,&ip);
+        case DIAMOND_OP_FILE_JOIN:
+            return outlined_file_join(vm,chunk,registers,depth,&ip);
+        case DIAMOND_OP_FILE_DELETE:
+            return outlined_file_delete(vm,chunk,registers,depth,&ip);
+        case DIAMOND_OP_FILE_OPEN:
+            return outlined_file_open(vm,chunk,registers,depth,&ip);
+        case DIAMOND_OP_FIBER_NEW:
+            return outlined_fiber_new(vm,chunk,registers,depth,&ip);
+        case DIAMOND_OP_YIELD:
+            return outlined_yield(vm,chunk,registers,depth,&ip);
+        case DIAMOND_OP_ENV:
+            return outlined_env(vm,chunk,registers,depth,&ip);
+        case DIAMOND_OP_ARGV:
+            return outlined_argv(vm,chunk,registers,depth,&ip);
+        case DIAMOND_OP_EXIT:
+            return outlined_exit(vm,chunk,registers,depth,&ip);
+        case DIAMOND_OP_BASE64_DECODE:
+            return outlined_base64_decode(vm,chunk,registers,depth,&ip);
+        case DIAMOND_OP_BASE64_ENCODE:
+            return outlined_base64_encode(vm,chunk,registers,depth,&ip);
+        case DIAMOND_OP_GZIP_DECOMPRESS:
+            return outlined_gzip_decompress(vm,chunk,registers,depth,&ip);
+        case DIAMOND_OP_GZIP_COMPRESS:
+            return outlined_gzip_compress(vm,chunk,registers,depth,&ip);
+        case DIAMOND_OP_CIPHER_DECRYPT:
+            return outlined_cipher_decrypt(vm,chunk,registers,depth,&ip);
+        case DIAMOND_OP_CIPHER_ENCRYPT:
+            return outlined_cipher_encrypt(vm,chunk,registers,depth,&ip);
+        case DIAMOND_OP_HMAC_SHA1:
+            return outlined_hmac_sha1(vm,chunk,registers,depth,&ip);
+        case DIAMOND_OP_DIGEST_SHA1:
+            return outlined_digest_sha1(vm,chunk,registers,depth,&ip);
+        case DIAMOND_OP_HMAC_VERIFY:
+            return outlined_hmac_verify(vm,chunk,registers,depth,&ip);
+        case DIAMOND_OP_HMAC_SHA256:
+            return outlined_hmac_sha256(vm,chunk,registers,depth,&ip);
+        case DIAMOND_OP_DIGEST_SHA256:
+            return outlined_digest_sha256(vm,chunk,registers,depth,&ip);
+        case DIAMOND_OP_SECURE_RANDOM_HEX:
+            return outlined_secure_random_hex(vm,chunk,registers,depth,&ip);
+        case DIAMOND_OP_SECURE_RANDOM_BYTES:
+            return outlined_secure_random_bytes(vm,chunk,registers,depth,&ip);
+        case DIAMOND_OP_BCRYPT_VERIFY:
+            return outlined_bcrypt_verify(vm,chunk,registers,depth,&ip);
+        case DIAMOND_OP_BCRYPT_HASH:
+            return outlined_bcrypt_hash(vm,chunk,registers,depth,&ip);
+        case DIAMOND_OP_PROCESS_SPAWN:
+        case DIAMOND_OP_PROCESS_SPAWN_OPTIONS:
+            return outlined_process_spawn(vm,chunk,registers,depth,&ip);
+        case DIAMOND_OP_PROCESS_RUN:
+        case DIAMOND_OP_PROCESS_RUN_OPTIONS:
+            return outlined_process_run(vm,chunk,registers,depth,&ip);
+        case DIAMOND_OP_TENSOR_RANDOM:
+            return outlined_tensor_random(vm,chunk,registers,depth,&ip);
+        case DIAMOND_OP_TENSOR_FROM_ARRAY:
+            return outlined_tensor_from_array(vm,chunk,registers,depth,&ip);
+        case DIAMOND_OP_TENSOR_ZEROS:
+            return outlined_tensor_zeros(vm,chunk,registers,depth,&ip);
+        case DIAMOND_OP_TIME_BUILD:
+            return outlined_time_build(vm,chunk,registers,depth,&ip);
+        case DIAMOND_OP_TIME_PARSE:
+            return outlined_time_parse(vm,chunk,registers,depth,&ip);
+        case DIAMOND_OP_TIME_AT:
+            return outlined_time_at(vm,chunk,registers,depth,&ip);
+        case DIAMOND_OP_TIME_NOW:
+            return outlined_time_now(vm,chunk,registers,depth,&ip);
+        case DIAMOND_OP_TIME_MONOTONIC:
+            return outlined_time_monotonic(vm,chunk,registers,depth,&ip);
+        case DIAMOND_OP_CHECK_HASH_KEY:
+            return outlined_check_hash_key(vm,chunk,registers,depth,&ip);
+        case DIAMOND_OP_ARRAY_SUFFIX:
+            return outlined_array_suffix(vm,chunk,registers,depth,&ip);
+        case DIAMOND_OP_ARRAY_MIDDLE:
+            return outlined_array_middle(vm,chunk,registers,depth,&ip);
+        case DIAMOND_OP_HASH_REST:
+            return outlined_hash_rest(vm,chunk,registers,depth,&ip);
+        case DIAMOND_OP_CASE_HASH_HAS:
+            return outlined_case_hash_has(vm,chunk,registers,depth,&ip);
+        case DIAMOND_OP_CASE_HASH_SHAPE:
+            return outlined_case_hash_shape(vm,chunk,registers,depth,&ip);
+        case DIAMOND_OP_ARRAY_REST:
+            return outlined_array_rest(vm,chunk,registers,depth,&ip);
+        case DIAMOND_OP_CASE_ARRAY_SHAPE:
+            return outlined_case_array_shape(vm,chunk,registers,depth,&ip);
+        case DIAMOND_OP_SET_NAMESPACE_CONSTANT:
+            return outlined_set_namespace_constant(vm,chunk,registers,depth,&ip);
+        case DIAMOND_OP_GET_IVAR_NAME:
+        case DIAMOND_OP_SET_IVAR_NAME:
+            return outlined_get_ivar_name(vm,chunk,registers,depth,&ip);
+        case DIAMOND_OP_CASE_MATCH:
+            return outlined_case_match(vm,chunk,registers,depth,&ip);
+        case DIAMOND_OP_COMPARE:
+            return outlined_compare(vm,chunk,registers,depth,&ip);
+        case DIAMOND_OP_BITWISE_AND:
+        case DIAMOND_OP_BITWISE_OR:
+        case DIAMOND_OP_BITWISE_XOR:
+            return outlined_bitwise_and(vm,chunk,registers,depth,&ip);
+        case DIAMOND_OP_SHIFT_RIGHT:
+            return outlined_shift_right(vm,chunk,registers,depth,&ip);
+        case DIAMOND_OP_SHIFT_LEFT:
+            return outlined_shift_left(vm,chunk,registers,depth,&ip);
+        case DIAMOND_OP_GETS:
+            return outlined_gets(vm,chunk,registers,depth,&ip);
+        /* Bodies run_chunk already called out of line. */
+        case DIAMOND_OP_THREAD_NEW: return outlined_thread_new(vm,chunk,registers,&ip);
+        case DIAMOND_OP_CHANNEL_NEW: return outlined_channel_new(vm,chunk,registers,&ip);
+        case DIAMOND_OP_CHANNEL_SELECT: return outlined_channel_select(vm,chunk,registers,&ip);
+        case DIAMOND_OP_CHANNEL_SELECT_SEND:
+            return outlined_channel_select_send(vm,chunk,registers,&ip);
+        case DIAMOND_OP_SUPERVISOR_NEW: return outlined_supervisor_new(vm,chunk,registers,&ip);
+        case DIAMOND_OP_DIR_ENTRIES: return outlined_dir_entries(vm,chunk,registers,&ip);
+        case DIAMOND_OP_SEMVER: return outlined_semver(vm,chunk,registers,&ip);
+        case DIAMOND_OP_FILE_PATH: return outlined_file_path(vm,chunk,registers,&ip);
+        case DIAMOND_OP_POSTGRES_OPEN: return outlined_postgres_open(vm,chunk,registers,&ip);
+        case DIAMOND_OP_MYSQL_OPEN: return outlined_mysql_open(vm,chunk,registers,&ip);
+        case DIAMOND_OP_TCP_LISTEN: case DIAMOND_OP_TCP_LISTEN_NONBLOCK:
+            return outlined_tcp_listen_nonblock(vm,chunk,registers,chunk->code[offset],&ip);
+        case DIAMOND_OP_TLS_CONNECT: case DIAMOND_OP_TLS_START_HANDSHAKE:
+            return outlined_tls_connect(vm,chunk,registers,chunk->code[offset],&ip);
+        case DIAMOND_OP_IO_POLL: return outlined_io_poll(vm,chunk,registers,depth,&ip);
+        /* Each invalidates the method caches compiled code reads too. */
+        case DIAMOND_OP_DEFINE_METHOD: return outlined_define_method(vm,chunk,registers,&ip);
+        case DIAMOND_OP_REDEFINE_METHOD: return outlined_redefine_method(vm,chunk,registers,&ip);
+        case DIAMOND_OP_COMPILE_METHOD: return outlined_compile_method(vm,chunk,registers,&ip);
         /* The JIT checked these operands' extent when it compiled them. */
         case DIAMOND_OP_GET_CVAR:
             return get_cvar_helper(vm,chunk,jit_outlined_short(chunk,offset+3),

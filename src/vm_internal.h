@@ -2101,6 +2101,134 @@ DIAMOND_INTERNAL DiamondVmStatus outlined_invoke_self_method(DiamondVm *vm,const
         size_t depth,size_t *ip_ref);
 DIAMOND_INTERNAL DiamondVmStatus outlined_negate(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
         size_t depth,size_t *ip_ref);
+DIAMOND_INTERNAL DiamondVmStatus outlined_json_stringify(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t depth,size_t *ip_ref);
+DIAMOND_INTERNAL DiamondVmStatus outlined_to_symbol(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t depth,size_t *ip_ref);
+DIAMOND_INTERNAL DiamondVmStatus outlined_to_int(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t depth,size_t *ip_ref);
+DIAMOND_INTERNAL DiamondVmStatus outlined_to_float(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t depth,size_t *ip_ref);
+DIAMOND_INTERNAL DiamondVmStatus outlined_chr(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t depth,size_t *ip_ref);
+DIAMOND_INTERNAL DiamondVmStatus outlined_tls_listen(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t depth,size_t *ip_ref);
+DIAMOND_INTERNAL DiamondVmStatus outlined_signal_trap(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t depth,size_t *ip_ref);
+DIAMOND_INTERNAL DiamondVmStatus outlined_udp_open(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t depth,size_t *ip_ref);
+DIAMOND_INTERNAL DiamondVmStatus outlined_udp_bind(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t depth,size_t *ip_ref);
+DIAMOND_INTERNAL DiamondVmStatus outlined_tcp_connect(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t depth,size_t *ip_ref);
+DIAMOND_INTERNAL DiamondVmStatus outlined_tcp_connect_nonblock(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t depth,size_t *ip_ref);
+DIAMOND_INTERNAL DiamondVmStatus outlined_dns_resolve(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t depth,size_t *ip_ref);
+DIAMOND_INTERNAL DiamondVmStatus outlined_program_builder_new(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t depth,size_t *ip_ref);
+DIAMOND_INTERNAL DiamondVmStatus outlined_sqlite3_open(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t depth,size_t *ip_ref);
+DIAMOND_INTERNAL DiamondVmStatus outlined_regexp_new(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t depth,size_t *ip_ref);
+DIAMOND_INTERNAL DiamondVmStatus outlined_file_join(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t depth,size_t *ip_ref);
+DIAMOND_INTERNAL DiamondVmStatus outlined_file_delete(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t depth,size_t *ip_ref);
+DIAMOND_INTERNAL DiamondVmStatus outlined_file_open(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t depth,size_t *ip_ref);
+DIAMOND_INTERNAL DiamondVmStatus outlined_fiber_new(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t depth,size_t *ip_ref);
+DIAMOND_INTERNAL DiamondVmStatus outlined_yield(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t depth,size_t *ip_ref);
+DIAMOND_INTERNAL DiamondVmStatus outlined_env(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t depth,size_t *ip_ref);
+DIAMOND_INTERNAL DiamondVmStatus outlined_argv(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t depth,size_t *ip_ref);
+DIAMOND_INTERNAL DiamondVmStatus outlined_exit(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t depth,size_t *ip_ref);
+DIAMOND_INTERNAL DiamondVmStatus outlined_base64_decode(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t depth,size_t *ip_ref);
+DIAMOND_INTERNAL DiamondVmStatus outlined_base64_encode(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t depth,size_t *ip_ref);
+DIAMOND_INTERNAL DiamondVmStatus outlined_gzip_decompress(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t depth,size_t *ip_ref);
+DIAMOND_INTERNAL DiamondVmStatus outlined_gzip_compress(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t depth,size_t *ip_ref);
+DIAMOND_INTERNAL DiamondVmStatus outlined_cipher_decrypt(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t depth,size_t *ip_ref);
+DIAMOND_INTERNAL DiamondVmStatus outlined_cipher_encrypt(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t depth,size_t *ip_ref);
+DIAMOND_INTERNAL DiamondVmStatus outlined_hmac_sha1(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t depth,size_t *ip_ref);
+DIAMOND_INTERNAL DiamondVmStatus outlined_digest_sha1(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t depth,size_t *ip_ref);
+DIAMOND_INTERNAL DiamondVmStatus outlined_hmac_verify(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t depth,size_t *ip_ref);
+DIAMOND_INTERNAL DiamondVmStatus outlined_hmac_sha256(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t depth,size_t *ip_ref);
+DIAMOND_INTERNAL DiamondVmStatus outlined_digest_sha256(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t depth,size_t *ip_ref);
+DIAMOND_INTERNAL DiamondVmStatus outlined_secure_random_hex(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t depth,size_t *ip_ref);
+DIAMOND_INTERNAL DiamondVmStatus outlined_secure_random_bytes(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t depth,size_t *ip_ref);
+DIAMOND_INTERNAL DiamondVmStatus outlined_bcrypt_verify(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t depth,size_t *ip_ref);
+DIAMOND_INTERNAL DiamondVmStatus outlined_bcrypt_hash(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t depth,size_t *ip_ref);
+DIAMOND_INTERNAL DiamondVmStatus outlined_process_spawn(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t depth,size_t *ip_ref);
+DIAMOND_INTERNAL DiamondVmStatus outlined_process_run(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t depth,size_t *ip_ref);
+DIAMOND_INTERNAL DiamondVmStatus outlined_tensor_random(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t depth,size_t *ip_ref);
+DIAMOND_INTERNAL DiamondVmStatus outlined_tensor_from_array(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t depth,size_t *ip_ref);
+DIAMOND_INTERNAL DiamondVmStatus outlined_tensor_zeros(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t depth,size_t *ip_ref);
+DIAMOND_INTERNAL DiamondVmStatus outlined_time_build(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t depth,size_t *ip_ref);
+DIAMOND_INTERNAL DiamondVmStatus outlined_time_parse(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t depth,size_t *ip_ref);
+DIAMOND_INTERNAL DiamondVmStatus outlined_time_at(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t depth,size_t *ip_ref);
+DIAMOND_INTERNAL DiamondVmStatus outlined_time_now(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t depth,size_t *ip_ref);
+DIAMOND_INTERNAL DiamondVmStatus outlined_time_monotonic(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t depth,size_t *ip_ref);
+DIAMOND_INTERNAL DiamondVmStatus outlined_check_hash_key(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t depth,size_t *ip_ref);
+DIAMOND_INTERNAL DiamondVmStatus outlined_array_suffix(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t depth,size_t *ip_ref);
+DIAMOND_INTERNAL DiamondVmStatus outlined_array_middle(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t depth,size_t *ip_ref);
+DIAMOND_INTERNAL DiamondVmStatus outlined_hash_rest(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t depth,size_t *ip_ref);
+DIAMOND_INTERNAL DiamondVmStatus outlined_case_hash_has(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t depth,size_t *ip_ref);
+DIAMOND_INTERNAL DiamondVmStatus outlined_case_hash_shape(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t depth,size_t *ip_ref);
+DIAMOND_INTERNAL DiamondVmStatus outlined_array_rest(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t depth,size_t *ip_ref);
+DIAMOND_INTERNAL DiamondVmStatus outlined_case_array_shape(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t depth,size_t *ip_ref);
+DIAMOND_INTERNAL DiamondVmStatus outlined_set_namespace_constant(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t depth,size_t *ip_ref);
+DIAMOND_INTERNAL DiamondVmStatus outlined_get_ivar_name(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t depth,size_t *ip_ref);
+DIAMOND_INTERNAL DiamondVmStatus outlined_case_match(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t depth,size_t *ip_ref);
+DIAMOND_INTERNAL DiamondVmStatus outlined_compare(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t depth,size_t *ip_ref);
+DIAMOND_INTERNAL DiamondVmStatus outlined_bitwise_and(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t depth,size_t *ip_ref);
+DIAMOND_INTERNAL DiamondVmStatus outlined_shift_right(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t depth,size_t *ip_ref);
+DIAMOND_INTERNAL DiamondVmStatus outlined_shift_left(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t depth,size_t *ip_ref);
+DIAMOND_INTERNAL DiamondVmStatus outlined_gets(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t depth,size_t *ip_ref);
 DIAMOND_INTERNAL DiamondVmStatus outlined_call_closure_keywords(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
         size_t depth,size_t *ip_ref);
 DIAMOND_INTERNAL DiamondVmStatus outlined_call_closure_spread(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
