@@ -1,6 +1,7 @@
 # A plain CALL from compiled code runs the callee as native code too: results,
 # argument defaults, nested allocation and deep recursion all match the
-# interpreter.
+# interpreter. label and total compile too, their method calls going through
+# the general dispatch.
 def fib(n)
   if n < 2
     n

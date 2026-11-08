@@ -4,8 +4,10 @@
 # correctly rejected -- an interface has no single concrete runtime class
 # by construction (Box and OtherDoubler both satisfy Doubler here, so no
 # compile-time proof of "always an Instance of one specific class" could
-# ever be sound for this receiver). `run_loop` never compiles;
-# `Box#double` still does (1, not 2: `initialize` only stores its argument, written without a call).
+# ever be sound for this receiver). `run_loop`
+# compiles anyway, its call going through the general dispatch (diamond_jit_invoke_any) instead of the direct Instance call the proof would allow;
+# `Box#double` compiles too (2, not 3: `initialize` only stores its argument,
+# written without a call).
 interface Doubler
   def double()
 end

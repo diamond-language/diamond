@@ -22,6 +22,7 @@
 #include <netdb.h>
 #include <sys/socket.h>
 #include <fcntl.h>
+#include <math.h>
 #include <unistd.h>
 
 #define DIAMOND_INTERNAL __attribute__((visibility("hidden")))
@@ -359,6 +360,24 @@ DIAMOND_INTERNAL void tensor_random_helper(DiamondTensor *tensor,int64_t seed);
 DIAMOND_INTERNAL DiamondArray *allocate_array(DiamondVm *vm,const DiamondValue *values, size_t count);
 [[nodiscard]] DIAMOND_INTERNAL bool array_push(DiamondVm *vm,DiamondArray *array,DiamondValue value);
 DIAMOND_INTERNAL bool numeric_as_double(DiamondValue value, double *out);
+
+/* DIAMOND_OP_MATH_UNARY/MATH_BINARY's arithmetic, shared by run_chunk and
+ * the JIT's diamond_jit_math. `right` is ignored by the unary functions.
+ * False for a function id the opcode does not have. */
+static inline bool diamond_math_apply(uint8_t function_id,double left,double right,
+        double *result) {
+    switch((DiamondMathFunction)function_id) {
+        case DIAMOND_MATH_SQRT: *result=sqrt(left); return true;
+        case DIAMOND_MATH_SIN: *result=sin(left); return true;
+        case DIAMOND_MATH_COS: *result=cos(left); return true;
+        case DIAMOND_MATH_TAN: *result=tan(left); return true;
+        case DIAMOND_MATH_EXP: *result=exp(left); return true;
+        case DIAMOND_MATH_LOG: *result=log(left); return true;
+        case DIAMOND_MATH_TANH: *result=tanh(left); return true;
+        case DIAMOND_MATH_POW: *result=pow(left,right); return true;
+    }
+    return false;
+}
 
 /* vm_regexp.c: entry points called from run_chunk and the rest of vm.c */
 DIAMOND_INTERNAL DiamondVmStatus regexp_match_helper(DiamondVm *vm, const DiamondRegexp *regexp, const DiamondString *subject, bool test_only, DiamondValue *registers, uint16_t dest);
@@ -974,6 +993,49 @@ static inline DiamondCell *allocate_cell(DiamondVm *vm,DiamondValue value) {
     *cell=(DiamondCell){.object={.next=vm->young_objects,.kind=DIAMOND_OBJECT_CELL},.value=value};
     vm->young_objects=&cell->object;vm->bytes_allocated+=sizeof(DiamondCell);return cell;
 }
+
+DIAMOND_INTERNAL void diamond_copy_bytes(void *destination,const void *source,size_t size);
+
+/* DIAMOND_OP_CLOSURE: a closure over function `index` capturing the listed
+ * registers, shared by run_chunk and compiled code (diamond_jit_closure).
+ * `site` is the instruction, its capture list included, which the caller
+ * has bounds-checked. A block records `serial` and `home`, the creating
+ * frame's, as the targets of its break and return. */
+static inline DiamondVmStatus diamond_make_closure(DiamondVm *vm,const DiamondChunk *chunk,
+        const DiamondValue *registers,const uint8_t *site,uint64_t serial,
+        uint64_t home,DiamondValue *out) {
+    const uint16_t index=(uint16_t)(((unsigned)site[3]<<8)|site[4]);
+    const uint8_t count=site[5];
+    /* count is a uint8_t, so DIAMOND_MAX_CAPTURES (255) bounds it; this only
+     * rejects bytecode that names a function that does not exist. */
+    if(index>=chunk->function_count) return DIAMOND_VM_INVALID_BYTECODE;
+    DiamondClosure *created=allocate_closure(vm,index,nullptr,count);
+    if(created==nullptr) return DIAMOND_VM_OUT_OF_MEMORY;
+    for(size_t i=0;i<count;i++) {
+        const uint16_t reg=(uint16_t)(((unsigned)site[6+2*i]<<8)|site[7+2*i]);
+        created->captures[i]=registers[reg];
+    }
+    created->is_block=strcmp(chunk->functions[index]->name,"<block>")==0;
+    if(chunk->functions[index]->captures_type_variables) {
+        const uint8_t variables=chunk->functions[index]->type_variable_count;
+        if(variables==0||variables>8||variables!=chunk->type_variable_count||
+           chunk->type_variable_bindings==nullptr) return DIAMOND_VM_TYPE_ERROR;
+        created->type_bindings=malloc(variables*sizeof *created->type_bindings);
+        if(created->type_bindings==nullptr) return DIAMOND_VM_OUT_OF_MEMORY;
+        created->type_binding_count=variables;
+        vm->bytes_allocated+=variables*sizeof *created->type_bindings;
+        diamond_copy_bytes(created->type_bindings,chunk->type_variable_bindings,
+            variables*sizeof *created->type_bindings);
+    }
+    if(created->is_block) {
+        created->break_target=serial;
+        created->return_target=home;
+        created->break_call_offset=chunk->functions[index]->block_call_offset;
+    }
+    *out=DIAMOND_OBJECT(created);
+    return DIAMOND_VM_OK;
+}
+
 
 DIAMOND_INTERNAL DiamondFiberHandle *allocate_fiber_handle(DiamondVm *vm,DiamondFiber *fiber);
 
@@ -1666,6 +1728,10 @@ DIAMOND_INTERNAL DiamondVmStatus diamond_jit_invoke_instance(DiamondVm *vm, cons
         uint16_t recv, uint16_t name, uint16_t base, uint8_t argc,
         uint8_t type_argument_count, const uint16_t *type_arguments,
         size_t depth, DiamondValue *out);
+DIAMOND_INTERNAL DiamondVmStatus diamond_invoke_general(DiamondVm *vm,const DiamondChunk *chunk,
+        DiamondValue *registers,const uint8_t *site,size_t depth);
+DIAMOND_INTERNAL DiamondVmStatus diamond_jit_invoke_any(DiamondVm *vm,const DiamondChunk *chunk,
+        DiamondValue *registers,const uint8_t *site,size_t depth);
 
 DIAMOND_INTERNAL DiamondVmStatus diamond_jit_new_instance(DiamondVm *vm, const DiamondChunk *chunk,
         DiamondValue *registers, uint16_t dest, uint16_t class_index,
@@ -1977,7 +2043,6 @@ static inline int64_t diamond_int_floor_divide(int64_t left,int64_t right) {
     const int64_t quotient=left/right;
     return quotient-((left%right!=0)&((left^right)<0));
 }
-DIAMOND_INTERNAL void diamond_copy_bytes(void *destination,const void *source,size_t size);
 DIAMOND_INTERNAL DiamondVmStatus outlined_call_typed(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
         size_t depth,size_t *ip_ref);
 DIAMOND_INTERNAL DiamondVmStatus outlined_call_spread(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,

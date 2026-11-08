@@ -1978,3 +1978,344 @@ DiamondVmStatus merge_keyword_arguments(DiamondVm *vm,
     if(block!=nullptr)values[block_slot]=*block;
     *merged=values;*merged_count=count;return DIAMOND_VM_OK;
 }
+
+/* DIAMOND_OP_INVOKE/INVOKE_MONO/INVOKE_TYPED for every receiver once
+ * run_chunk's inline fast paths (a warm monomorphic Instance site, and
+ * Array/Hash/String #length and #push) have not handled the call. Shared by
+ * the interpreter and by compiled code (diamond_jit_invoke_any), so the two
+ * dispatch in the same order and report the same errors. `site` is the
+ * instruction, whose operands (and INVOKE_TYPED's type arguments) the caller
+ * has already bounds-checked; they are read from it here, as
+ * diamond_mono_invoke does, so every argument travels in a register. Writes
+ * registers[dest] on success. An exception Thread#join re-raises comes back
+ * as DIAMOND_VM_EXCEPTION, and the caller decides whether it was caught. */
+DiamondVmStatus diamond_invoke_general(DiamondVm *vm,const DiamondChunk *chunk,
+        DiamondValue *registers,const uint8_t *site,size_t depth) {
+    const DiamondOpCode instruction=(DiamondOpCode)site[0];
+    const uint16_t dest=(uint16_t)(((unsigned)site[1]<<8)|site[2]);
+    const uint16_t recv=(uint16_t)(((unsigned)site[3]<<8)|site[4]);
+    const uint16_t name=(uint16_t)(((unsigned)site[5]<<8)|site[6]);
+    const uint16_t base=(uint16_t)(((unsigned)site[7]<<8)|site[8]);
+    const uint8_t argc=site[9];
+    uint8_t type_argument_count=0;
+    uint16_t type_arguments[8];
+    if(instruction==DIAMOND_OP_INVOKE_TYPED) {
+        type_argument_count=site[10];
+        if(type_argument_count>8) return DIAMOND_VM_INVALID_BYTECODE;
+        for(size_t index=0;index<type_argument_count;index++)
+            type_arguments[index]=(uint16_t)(((unsigned)site[11+2*index]<<8)|
+                site[12+2*index]);
+    }
+    if((size_t)name>=chunk->string_count) return DIAMOND_VM_TYPE_ERROR;
+    const DiamondStringConstant *method_name=&chunk->strings[name];
+    /* tap/dup -- universal for every native receiver kind (a
+     * primitive, String, Symbol, Array, or Hash can't ever
+     * define its own method to shadow these, unlike an
+     * Instance, which gets its own version of both checks
+     * further down, gated on the class NOT already defining a
+     * same-named method of its own -- see that comment for
+     * why interception order matters there but not here). */
+    if(registers[recv].kind!=DIAMOND_VALUE_OBJECT||
+       registers[recv].as.object->kind!=DIAMOND_OBJECT_INSTANCE) {
+        if(method_name->length==11&&
+           memcmp(method_name->chars,"public_send",11)==0) {
+            if(type_argument_count!=0)return reject_type_arguments(vm,method_name);
+            DiamondValue sent=DIAMOND_NIL;
+            const DiamondVmStatus send_status=public_send_helper(vm,chunk,
+                registers[recv],&registers[base],argc,depth,&sent);
+            if(send_status!=DIAMOND_VM_OK)return send_status;
+            registers[dest]=sent;return DIAMOND_VM_OK;
+        }
+        if(method_name->length==3&&
+           memcmp(method_name->chars,"tap",3)==0) {
+            if(type_argument_count!=0)return reject_type_arguments(vm,method_name);
+            const DiamondVmStatus tap_status=outlined_invoke_tap(vm,chunk,registers,recv,base,argc,dest,depth);
+            return tap_status;
+        }
+        /* Array#shuffle and #sample: uniform choices from
+         * OpenSSL's RAND_bytes (as SecureRandom uses), with
+         * rejection sampling so no index is favoured. */
+        if(registers[recv].kind==DIAMOND_VALUE_OBJECT&&
+           registers[recv].as.object->kind==DIAMOND_OBJECT_ARRAY&&
+           argc==0&&type_argument_count==0&&
+           ((method_name->length==7&&memcmp(method_name->chars,"shuffle",7)==0)||
+            (method_name->length==6&&memcmp(method_name->chars,"sample",6)==0))) {
+            const DiamondVmStatus shuffle_status=outlined_array_shuffle_sample(vm,registers,recv,dest,method_name);
+            return shuffle_status;
+        }
+        /* nil?() on any built-in value, as in Ruby. */
+        if(method_name->length==4&&memcmp(method_name->chars,"nil?",4)==0&&
+           argc==0&&type_argument_count==0&&
+           (registers[recv].kind!=DIAMOND_VALUE_OBJECT||
+            registers[recv].as.object->kind!=DIAMOND_OBJECT_INSTANCE)) {
+            registers[dest]=DIAMOND_BOOL(registers[recv].kind==DIAMOND_VALUE_NIL);
+            return DIAMOND_VM_OK;
+        }
+        /* Callable#arity: how many arguments it declares (its
+         * required ones, for a callable with optional or rest
+         * parameters -- no Ruby-style negative encoding). */
+        if(method_name->length==5&&memcmp(method_name->chars,"arity",5)==0&&
+           argc==0&&type_argument_count==0&&
+           registers[recv].kind==DIAMOND_VALUE_OBJECT&&
+           registers[recv].as.object->kind==DIAMOND_OBJECT_CLOSURE) {
+            const DiamondVmStatus arity_status=outlined_callable_arity(chunk,registers,recv,dest);
+            return arity_status;
+        }
+        /* to_s() on any built-in value: the same text string
+         * interpolation produces. (Int, Float, and Time also
+         * have their own to_s further down; this matches them.) */
+        if(method_name->length==4&&memcmp(method_name->chars,"to_s",4)==0&&
+           argc==0&&(registers[recv].kind!=DIAMOND_VALUE_OBJECT||
+            registers[recv].as.object->kind!=DIAMOND_OBJECT_INSTANCE)) {
+            if(type_argument_count!=0)return reject_type_arguments(vm,method_name);
+            DiamondValue text=DIAMOND_NIL;
+            const DiamondVmStatus to_s_status=
+                stringify_value(vm,chunk,depth,registers[recv],&text);
+            if(to_s_status!=DIAMOND_VM_OK)return to_s_status;
+            registers[dest]=text;return DIAMOND_VM_OK;
+        }
+        /* inspect() on any built-in value: like to_s(), but Strings
+         * are quoted and Symbols keep their colon, so the text shows
+         * what the value is rather than how it prints. */
+        if(method_name->length==7&&memcmp(method_name->chars,"inspect",7)==0&&
+           argc==0&&(registers[recv].kind!=DIAMOND_VALUE_OBJECT||
+            registers[recv].as.object->kind!=DIAMOND_OBJECT_INSTANCE)) {
+            if(type_argument_count!=0)return reject_type_arguments(vm,method_name);
+            DiamondValue text=DIAMOND_NIL;
+            const DiamondVmStatus inspect_status=
+                inspect_value(vm,chunk,depth,registers[recv],&text);
+            if(inspect_status!=DIAMOND_VM_OK)return inspect_status;
+            registers[dest]=text;return DIAMOND_VM_OK;
+        }
+        /* dup only where a real (or trivially self-returning)
+         * shallow copy is well-defined -- everything else
+         * (Regexp/Time/File/Socket/...) falls through to its
+         * own per-type block below and gets that type's own
+         * accurate "undefined method 'dup' for X" instead of a
+         * generic one here. */
+        const bool dup_defined=registers[recv].kind!=DIAMOND_VALUE_OBJECT||
+            registers[recv].as.object->kind==DIAMOND_OBJECT_STRING||
+            registers[recv].as.object->kind==DIAMOND_OBJECT_SYMBOL||
+            registers[recv].as.object->kind==DIAMOND_OBJECT_ARRAY||
+            registers[recv].as.object->kind==DIAMOND_OBJECT_HASH;
+        if(dup_defined&&method_name->length==3&&
+           memcmp(method_name->chars,"dup",3)==0) {
+            if(type_argument_count!=0)return reject_type_arguments(vm,method_name);
+            if(argc!=0)return DIAMOND_VM_ARITY_ERROR;
+            const DiamondVmStatus dup_status=
+                diamond_jit_dup(vm,&registers[recv],&registers[dest]);
+            return dup_status;
+        }
+        /* freeze/frozen? -- defined for exactly the same
+         * receiver set dup_defined already names. For a
+         * primitive or an already-immutable String/Symbol,
+         * mirrors dup's own "already immutable, return self/
+         * true unchanged" precedent (see that block's own
+         * comment) rather than raising "undefined method" --
+         * freeze() is a harmless no-op, frozen?() is always
+         * true. Array/Hash get the real, effectful check:
+         * every native mutation they support (push, pop,
+         * `[]=`, and everything built from those -- see
+         * docs/classes-and-modules.md's "freeze / frozen?"
+         * section) tests object.frozen before proceeding. */
+        if(dup_defined&&method_name->length==6&&
+           memcmp(method_name->chars,"freeze",6)==0) {
+            if(type_argument_count!=0)return reject_type_arguments(vm,method_name);
+            if(argc!=0)return DIAMOND_VM_ARITY_ERROR;
+            const DiamondVmStatus freeze_status=
+                diamond_jit_freeze(vm,&registers[recv],&registers[dest]);
+            return freeze_status;
+        }
+        /* deep_freeze: same receiver set as freeze (no-op on a
+         * primitive/String/Symbol); Array/Hash get the real,
+         * transitive walk. Not JIT-compiled -- jit.c bails on
+         * any method name it doesn't list, which is correct. */
+        if(dup_defined&&method_name->length==11&&
+           memcmp(method_name->chars,"deep_freeze",11)==0) {
+            if(type_argument_count!=0)return reject_type_arguments(vm,method_name);
+            if(argc!=0)return DIAMOND_VM_ARITY_ERROR;
+            const DiamondVmStatus deep_status=
+                diamond_deep_freeze(vm,&registers[recv],&registers[dest]);
+            return deep_status;
+        }
+        if(dup_defined&&method_name->length==7&&
+           memcmp(method_name->chars,"frozen?",7)==0) {
+            if(type_argument_count!=0)return reject_type_arguments(vm,method_name);
+            if(argc!=0)return DIAMOND_VM_ARITY_ERROR;
+            const DiamondVmStatus frozen_status=
+                diamond_jit_frozen(vm,&registers[recv],&registers[dest]);
+            return frozen_status;
+        }
+    }
+    /* Int#to_s(base) on a promoted Int: digits in base 2..36. */
+    if(value_is_bignum(registers[recv])&&argc==1&&
+       method_name->length==4&&memcmp(method_name->chars,"to_s",4)==0) {
+        const DiamondVmStatus radix_status=outlined_bignum_to_s_base(vm,registers,recv,base,dest);
+        return radix_status;
+    }
+    /* An Int past 64 bits is a bignum object; give it the same
+     * conversions as a small Int. */
+    if(value_is_bignum(registers[recv])&&argc==0&&
+       ((method_name->length==4&&(memcmp(method_name->chars,"to_s",4)==0||
+         memcmp(method_name->chars,"to_i",4)==0||
+         memcmp(method_name->chars,"to_f",4)==0))||
+        (method_name->length==3&&memcmp(method_name->chars,"abs",3)==0))) {
+        const DiamondVmStatus convert_status=outlined_bignum_convert(vm,registers,recv,dest,method_name);
+        return convert_status;
+    }
+    if(registers[recv].kind==DIAMOND_VALUE_INT||
+       registers[recv].kind==DIAMOND_VALUE_FLOAT) {
+        const DiamondVmStatus dispatch_status=numeric_invoke_helper(vm,chunk,depth,registers,recv,base,argc,dest,method_name);
+        return dispatch_status;
+    }
+    if(registers[recv].kind!=DIAMOND_VALUE_OBJECT) {
+        /* Every native-type "no such method" site above (and
+         * the DIAMOND_OBJECT_INSTANCE case further down) names
+         * the method and the receiver's type; this catch-all
+         * for a primitive receiver (nil, Bool, or an Int/Float
+         * whose method name didn't match the numeric-method
+         * dispatch just above) previously fell through silently
+         * to a bare DIAMOND_VM_TYPE_ERROR with no message, so
+         * `nil.foo()` (and, notably, `self.foo(...)` called
+         * from inside a module_function method invoked via its
+         * qualified form -- self's slot is always nil there,
+         * see emit_singleton_call's own comment, src/compiler.c
+         * -- deliberately not given a `self` story) just said
+         * "runtime error: type error" with no further detail. */
+        char actual[80];
+        diamond_format_value_type(actual,sizeof actual,registers[recv]);
+        snprintf(vm->error,sizeof vm->error,
+            "undefined method '%.*s' for %s",
+            (int)method_name->length,method_name->chars,actual);
+        return DIAMOND_VM_TYPE_ERROR;
+    }
+    const DiamondObjectKind receiver_kind=registers[recv].as.object->kind;
+    if(receiver_kind==DIAMOND_OBJECT_ARRAY||
+       receiver_kind==DIAMOND_OBJECT_HASH||
+       receiver_kind==DIAMOND_OBJECT_STRING) {
+        if(type_argument_count!=0)return reject_type_arguments(vm,method_name);
+        return collection_invoke_helper(vm,chunk,depth,registers,recv,base,argc,dest,method_name);
+    }
+    if(receiver_kind==DIAMOND_OBJECT_FIBER) {
+        if(type_argument_count!=0)return reject_type_arguments(vm,method_name);
+        const DiamondVmStatus dispatch_status=fiber_invoke_helper(
+            vm,registers,recv,base,argc,dest,method_name);
+        return dispatch_status;
+    }
+    if(receiver_kind==DIAMOND_OBJECT_THREAD) {
+        if(type_argument_count!=0)return reject_type_arguments(vm,method_name);
+        return thread_invoke_helper(vm,chunk,registers,recv,argc,dest,method_name);
+    }
+    if(receiver_kind!=DIAMOND_OBJECT_INSTANCE) {
+        bool native_handled=false;
+        const DiamondVmStatus native_status=outlined_native_object_invoke(vm,chunk,depth,registers,recv,base,
+            argc,dest,method_name,type_argument_count,receiver_kind,&native_handled);
+        if(native_status!=DIAMOND_VM_OK||native_handled)return native_status;
+    }
+    /* Everything else is an Instance (or a receiver with no such method,
+     * which diamond_jit_invoke_instance reports). */
+    DiamondValue call_result=DIAMOND_NIL;
+    const DiamondVmStatus status=diamond_jit_invoke_instance(vm,chunk,
+        site,instruction,registers,recv,name,base,argc,
+        type_argument_count,type_arguments,depth,&call_result);
+    if(status!=DIAMOND_VM_OK)return status;
+    registers[dest]=call_result;
+    return DIAMOND_VM_OK;
+}
+
+/* Compiled code's DIAMOND_OP_INVOKE/INVOKE_MONO on a receiver whose type it
+ * could not prove: the interpreter's whole dispatch (diamond_mono_invoke for
+ * a warm site, then diamond_invoke_general). A compiled function has no
+ * exception handlers, so a Thread#join exception is uncaught here and gets
+ * the error text run_chunk gives it in that case. `site` is the instruction,
+ * read as diamond_invoke_general reads it. */
+DiamondVmStatus diamond_jit_invoke_any(DiamondVm *vm,const DiamondChunk *chunk,
+        DiamondValue *registers,const uint8_t *site,size_t depth) {
+    const DiamondOpCode instruction=(DiamondOpCode)site[0];
+    const uint16_t dest=(uint16_t)(((unsigned)site[1]<<8)|site[2]);
+    const uint16_t recv=(uint16_t)(((unsigned)site[3]<<8)|site[4]);
+    const uint16_t name=(uint16_t)(((unsigned)site[5]<<8)|site[6]);
+    const uint16_t base=(uint16_t)(((unsigned)site[7]<<8)|site[8]);
+    const uint8_t argc=site[9];
+    const bool instance=registers[recv].kind==DIAMOND_VALUE_OBJECT&&
+        registers[recv].as.object->kind==DIAMOND_OBJECT_INSTANCE;
+    if(instruction==DIAMOND_OP_INVOKE_MONO&&instance) {
+        DiamondValue mono_result;
+        const DiamondVmStatus mono_status=diamond_mono_invoke(vm,chunk,
+            registers,site,depth,&mono_result);
+        if(mono_status==DIAMOND_VM_OK) {
+            value_copy_from_callee(&registers[dest],&mono_result);
+            return DIAMOND_VM_OK;
+        }
+        if(mono_status!=DIAMOND_VM_NOT_CACHED) return mono_status;
+    }
+    /* As in run_chunk: an Instance passes every check before the method
+     * call in diamond_invoke_general. */
+    if(instance) {
+        DiamondValue call_result=DIAMOND_NIL;
+        const DiamondVmStatus status=diamond_jit_invoke_instance(vm,chunk,site,
+            instruction,registers,recv,name,base,argc,0,nullptr,depth,&call_result);
+        if(status!=DIAMOND_VM_OK) return status;
+        registers[dest]=call_result;
+        return DIAMOND_VM_OK;
+    }
+    const bool thread=registers[recv].kind==DIAMOND_VALUE_OBJECT&&
+        registers[recv].as.object->kind==DIAMOND_OBJECT_THREAD;
+    const DiamondVmStatus status=diamond_invoke_general(vm,chunk,registers,site,depth);
+    if(status==DIAMOND_VM_EXCEPTION&&thread) set_uncaught_exception_error(vm);
+    return status;
+}
+
+/* Compiled code's DIAMOND_OP_CLOSURE. The compiling function always pushes
+ * a frame for it (vm->frames is that frame). diamond_jit_frame_push leaves
+ * its serial 0, so the first closure gives it one here, sparing every other
+ * compiled call the increment; a compiled function is never itself a block,
+ * so its frame is its own home. */
+DiamondVmStatus diamond_jit_closure(DiamondVm *vm,const DiamondChunk *chunk,
+        DiamondValue *registers,const uint8_t *site) {
+    const uint16_t dest=(uint16_t)(((unsigned)site[1]<<8)|site[2]);
+    DiamondFrame *frame=(DiamondFrame *)vm->frames;
+    if(frame->serial==0) {
+        frame->serial=++vm->frame_serial;
+        frame->home=frame->serial;
+    }
+    DiamondValue created=DIAMOND_NIL;
+    const DiamondVmStatus status=diamond_make_closure(vm,chunk,registers,site,
+        frame->serial,frame->home,&created);
+    if(status!=DIAMOND_VM_OK) return status;
+    registers[dest]=created;
+    return DIAMOND_VM_OK;
+}
+
+/* Compiled code's DIAMOND_OP_BOX_LOCAL, GET_CELL and SET_CELL, with
+ * run_chunk's checks. Only BOX_LOCAL allocates; only SET_CELL can fail
+ * other than on malformed bytecode (its write barrier). */
+DiamondVmStatus diamond_jit_box_local(DiamondVm *vm,DiamondValue *registers,
+        uint16_t reg) {
+    if(registers[reg].kind==DIAMOND_VALUE_OBJECT&&
+       registers[reg].as.object->kind==DIAMOND_OBJECT_CELL) return DIAMOND_VM_OK;
+    DiamondCell *cell=allocate_cell(vm,registers[reg]);
+    if(cell==nullptr) return DIAMOND_VM_OUT_OF_MEMORY;
+    registers[reg]=DIAMOND_OBJECT(cell);
+    return DIAMOND_VM_OK;
+}
+
+DiamondVmStatus diamond_jit_get_cell(DiamondValue *registers,uint16_t dest,
+        uint16_t cell_reg) {
+    if(registers[cell_reg].kind!=DIAMOND_VALUE_OBJECT||
+       registers[cell_reg].as.object->kind!=DIAMOND_OBJECT_CELL)
+        return DIAMOND_VM_INVALID_BYTECODE;
+    registers[dest]=((DiamondCell *)registers[cell_reg].as.object)->value;
+    return DIAMOND_VM_OK;
+}
+
+DiamondVmStatus diamond_jit_set_cell(DiamondVm *vm,DiamondValue *registers,
+        uint16_t cell_reg,uint16_t source) {
+    if(registers[cell_reg].kind!=DIAMOND_VALUE_OBJECT||
+       registers[cell_reg].as.object->kind!=DIAMOND_OBJECT_CELL)
+        return DIAMOND_VM_INVALID_BYTECODE;
+    ((DiamondCell *)registers[cell_reg].as.object)->value=registers[source];
+    if(!gc_write_barrier(vm,registers[cell_reg].as.object))
+        return DIAMOND_VM_OUT_OF_MEMORY;
+    return DIAMOND_VM_OK;
+}

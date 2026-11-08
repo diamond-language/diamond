@@ -363,10 +363,16 @@ static DiamondVmStatus string_scan_method(DiamondVm *vm,DiamondValue *registers,
     const DiamondVmStatus pattern_status=string_pattern_argument(vm,registers,base,dest,
         "scan",&pattern);
     if(pattern_status!=DIAMOND_VM_OK)return pattern_status;
+    /* A String pattern's compiled Regexp is rooted only in registers[dest],
+     * which regexp_scan_helper overwrites with its result Array before it
+     * allocates the matches, so it is protected for the scan. */
+    const size_t protect_mark=vm->gc_protected_count;
+    if(!gc_protect(vm,DIAMOND_OBJECT((DiamondRegexp *)pattern)))
+        return DIAMOND_VM_OUT_OF_MEMORY;
     const DiamondVmStatus scan_status=regexp_scan_helper(vm,pattern,source,
         registers,dest);
-    if(scan_status!=DIAMOND_VM_OK)return scan_status;
-    return DIAMOND_VM_OK;
+    gc_unprotect(vm,protect_mark);
+    return scan_status;
 }
 
 __attribute__((noinline))

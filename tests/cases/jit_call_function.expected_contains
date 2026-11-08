@@ -3,4 +3,4 @@
 ^a2?$
 ^650$
 ^\[item-0!, item-1!, item-2!\]$
-jit: 2 compiled function(s), 0 bailout(s), 0 hard propagation(s)
+jit: 4 compiled function(s), 0 bailout(s), 0 hard propagation(s)

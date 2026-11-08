@@ -3,8 +3,8 @@
 # routes to compiler->tooling_type_sets (LSP-only) instead of known_
 # types/known_type_sets, "never known_type_sets (and therefore never
 # type checks or opcode choice)" per that function's own comment. `x`'s
-# register_known_class must stay UINT8_MAX; `run` correctly never
-# becomes eligible.
+# register_known_class must stay UINT8_MAX; `run`
+# compiles anyway, its call going through the general dispatch (diamond_jit_invoke_any) instead of the direct Instance call the proof would allow.
 class Widget
   def initialize(n)
     @n = n

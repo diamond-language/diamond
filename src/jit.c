@@ -1557,6 +1557,26 @@ static void compile_invoke_dispatch(JitCompiler *jc, size_t instruction_start,
     emit_bail_if_al_nonzero(jc);
 }
 
+/* DIAMOND_OP_INVOKE/INVOKE_MONO on a receiver none of compile_invoke's proofs
+ * cover: calls diamond_jit_invoke_any, the interpreter's own dispatch, so any
+ * receiver and method name compiles instead of rejecting the whole function.
+ * It reads the operands from the instruction at run time, opcode byte
+ * included, so it sees the INVOKE/INVOKE_MONO quickening the interpreter
+ * applies to the site (the two share a layout). */
+static void compile_invoke_any(JitCompiler *jc, size_t instruction_start) {
+    jc->needs_frame = true;
+    jc->has_called = true;
+    JitBuffer *buf = &jc->buf;
+    emit_mov_rr(buf, REG_RDI, JIT_VM);
+    emit_mov_rr(buf, REG_RSI, JIT_CHUNK);
+    emit_mov_rr(buf, REG_RDX, JIT_REGISTERS_BASE);
+    emit_mov_imm64(buf, REG_RCX,
+        (uint64_t)(uintptr_t)(jc->function->code + instruction_start));
+    emit_mov_rr(buf, REG_R8, JIT_DEPTH);
+    emit_body_call(jc, (void *)(uintptr_t)diamond_jit_invoke_any);
+    emit_bail_if_al_nonzero(jc);
+}
+
 static void compile_native_call(JitCompiler *jc,uint16_t dest,uint16_t recv,
         uint16_t base,DiamondJitNativeReadOp operation) {
     if(operation==DIAMOND_JIT_NATIVE_STRING_SLICE) {
@@ -1678,6 +1698,7 @@ static bool opcode_writes_no_register(DiamondOpCode opcode) {
         case DIAMOND_OP_SET_IVAR:
         case DIAMOND_OP_CHECK_TYPE:
         case DIAMOND_OP_INDEX_SET:
+        case DIAMOND_OP_SET_CELL:
         case DIAMOND_OP_JUMP:
         case DIAMOND_OP_JUMP_IF_TRUE:
         case DIAMOND_OP_JUMP_IF_FALSE:
@@ -1732,8 +1753,13 @@ static bool opcode_dest_is_first_u16(DiamondOpCode opcode) {
         case DIAMOND_OP_NEW:
         case DIAMOND_OP_CALL:
         case DIAMOND_OP_TAIL_CALL:
+        case DIAMOND_OP_MATH_UNARY:
+        case DIAMOND_OP_MATH_BINARY:
         case DIAMOND_OP_IS_TYPE:
         case DIAMOND_OP_SAME_CLASS:
+        case DIAMOND_OP_BOX_LOCAL:
+        case DIAMOND_OP_GET_CELL:
+        case DIAMOND_OP_CLOSURE:
             return true;
         default:
             return false;
@@ -1761,7 +1787,7 @@ static bool decode_instruction_operands(const DiamondFunction *fn, size_t *pc,
                 return decode_u16(fn, pc, &a) && decode_u16(fn, pc, &b) &&
                     decode_u16(fn, pc, &c);
             }
-            case DIAMOND_OP_CHECK_TYPE: {
+            case DIAMOND_OP_CHECK_TYPE: case DIAMOND_OP_SET_CELL: {
                 uint16_t a = 0, b = 0;
                 return decode_u16(fn, pc, &a) && decode_u16(fn, pc, &b);
             }
@@ -1790,7 +1816,8 @@ static bool decode_instruction_operands(const DiamondFunction *fn, size_t *pc,
     if (!decode_u16(fn, pc, &destination)) return false;
     *dest = destination;
     switch (opcode) {
-        case DIAMOND_OP_NIL: return true; /* dest only */
+        case DIAMOND_OP_NIL: case DIAMOND_OP_BOX_LOCAL:
+            return true; /* dest only; BOX_LOCAL replaces its register with a cell */
         case DIAMOND_OP_ADD_INT_K: case DIAMOND_OP_SUBTRACT_INT_K: case DIAMOND_OP_MULTIPLY_INT_K:
         case DIAMOND_OP_MODULO_INT_K: case DIAMOND_OP_LESS_INT_K: case DIAMOND_OP_LESS_EQUAL_INT_K:
         case DIAMOND_OP_GREATER_INT_K: case DIAMOND_OP_GREATER_EQUAL_INT_K:
@@ -1802,6 +1829,7 @@ static bool decode_instruction_operands(const DiamondFunction *fn, size_t *pc,
             return true;
         }
         case DIAMOND_OP_BOOL: case DIAMOND_OP_MOVE: case DIAMOND_OP_CONSTANT:
+        case DIAMOND_OP_GET_CELL:
         case DIAMOND_OP_ARGUMENT_PROVIDED: case DIAMOND_OP_STRING: {
             uint16_t a = 0;
             return decode_u16(fn, pc, &a);
@@ -1833,6 +1861,22 @@ static bool decode_instruction_operands(const DiamondFunction *fn, size_t *pc,
             uint16_t a = 0, b = 0; uint8_t c = 0;
             return decode_u16(fn, pc, &b) && decode_u16(fn, pc, &a) &&
                 decode_u8(fn, pc, &c);
+        }
+        case DIAMOND_OP_CLOSURE: {
+            uint16_t index = 0; uint8_t count = 0;
+            if (!decode_u16(fn, pc, &index) || !decode_u8(fn, pc, &count) ||
+                *pc + 2 * (size_t)count > fn->code_count) return false;
+            *pc += 2 * (size_t)count;
+            return true;
+        }
+        case DIAMOND_OP_MATH_UNARY: {
+            uint16_t source = 0; uint8_t function_id = 0;
+            return decode_u16(fn, pc, &source) && decode_u8(fn, pc, &function_id);
+        }
+        case DIAMOND_OP_MATH_BINARY: {
+            uint16_t left = 0, right = 0; uint8_t function_id = 0;
+            return decode_u16(fn, pc, &left) && decode_u16(fn, pc, &right) &&
+                decode_u8(fn, pc, &function_id);
         }
         case DIAMOND_OP_CALL:
         case DIAMOND_OP_TAIL_CALL: {
@@ -2128,8 +2172,10 @@ static bool jit_native_read_operation(uint16_t site_type,
     return supported;
 }
 
-/* Merges four independently-scoped compile-time strategies for
- * this one opcode pair, tried in order:
+/* Compiles DIAMOND_OP_INVOKE/INVOKE_MONO. A site whose receiver type is
+ * known gets the cheapest call that type allows, tried in order:
+ *  0. A String/Array/Hash receiver known at the site: an inline native
+ *     read (length, index_of, ...) through compile_native_call.
  *  1. Phase 7 (self.method(), any name): when recv==0 in a
  *     function whose owner_class proves register 0 is always
  *     the receiver (a real class index, not the DIAMOND_OWNER_NONE/
@@ -2148,31 +2194,14 @@ static bool jit_native_read_operation(uint16_t site_type,
  *     writer is DIAMOND_OP_NEW, or a DIAMOND_OP_GET_IVAR of a
  *     field DiamondFunction.ivar_known_class already proves is
  *     a single concrete class -- see register_new_class_if_
- *     sole_writer's own comment. Strategies 1/2/3 are
- *     each a strict superset of strategy 4 for the receiver
- *     they cover -- any method name, not just dup/freeze/
- *     frozen?, and correct override dispatch via the same
- *     lookup_method-gated logic the interpreter itself uses.
- *  4. Phase 4/6 (dup/freeze/frozen? on ANY receiver, including
- *     non-self, unproven types included): only the three
- *     receiver-kind-agnostic pseudo-methods, requires argc==0
- *     and !jc->has_called. None of the three can ever invoke
- *     arbitrary user code, so this never sets jc->has_called
- *     itself -- but by the same token, a call to one of them is
- *     only ever safe to compile while has_called is still
- *     false (see jit.h's own comment on diamond_jit_dup/
- *     freeze/frozen). Bytecode-guaranteed to always be plain
- *     DIAMOND_OP_INVOKE, never _MONO: an un-overridden dup/
- *     freeze/frozen? call is intercepted by the interpreter's
- *     own case before it ever reaches the inline-cache/
- *     quickening logic that would rewrite it, so this strategy
- *     never needs to handle _MONO at all.
- * Every other INVOKE -- every native per-type method, non-self
- * Instance dispatch through an unproven-type receiver to any
- * other method name, `tap`, `public_send`, DIAMOND_OP_
- * INVOKE_TYPED (no case for it at all, falls to default: below)
- * -- bails the whole function, the same structural treatment
- * as any other still-unsupported construct. */
+ *     sole_writer's own comment. Phase 15 adds the same for a
+ *     receiver the compiler narrowed at this one site.
+ * Strategies 1-3 call diamond_jit_invoke_instance, which skips the
+ * receiver-kind checks. Every other site -- an untyped receiver, a native
+ * per-type method, a polymorphic Instance site -- goes through
+ * compile_invoke_any, the interpreter's own dispatch, so it no longer keeps
+ * the whole function interpreted. DIAMOND_OP_INVOKE_TYPED has no case at
+ * all and still rejects the function. */
 static void compile_invoke(JitCompiler *jc, size_t instruction_start, DiamondOpCode opcode,
         uint16_t dest, uint16_t recv, uint16_t name, uint16_t base, uint8_t argc) {
     const DiamondFunction *fn = jc->function;
@@ -2214,14 +2243,7 @@ static void compile_invoke(JitCompiler *jc, size_t instruction_start, DiamondOpC
      * owner_class where register 0 actually means self
      * instead, so gating on recv!=0 here would only wrongly
      * exclude that legitimate self_offset==0/recv==0 case, not
-     * add any real safety. Tried before the dup/freeze/
-     * frozen? path below since it's a strict superset for a
-     * proven-Instance receiver (any method name, real override
-     * dispatch, including dup/freeze/frozen? themselves via
-     * diamond_jit_invoke_instance's own universal-method
-     * interception) -- unlike that path, which only ever
-     * handles those three pseudo-methods but works for any
-     * receiver kind, proven or not. */
+     * add any real safety. */
     if (parameter_is_single_class(jc->function, recv) &&
         parameter_never_reassigned(jc->function, recv)) {
         compile_invoke_dispatch(jc, instruction_start, dest, recv, name, base, argc,
@@ -2259,30 +2281,8 @@ static void compile_invoke(JitCompiler *jc, size_t instruction_start, DiamondOpC
             return;
         }
     }
-    if (opcode == DIAMOND_OP_INVOKE_MONO || jc->has_called ||
-        argc != 0 || name >= fn->string_count) {
-        jc->bailed = true; return;
-    }
-    const DiamondStringConstant *method_name = &fn->strings[name];
-    void *trampoline = nullptr;
-    if (method_name->length == 3 && memcmp(method_name->chars, "dup", 3) == 0) {
-        trampoline = (void *)(uintptr_t)diamond_jit_dup;
-        jc->needs_frame = true;
-    } else if (method_name->length == 6 &&
-               memcmp(method_name->chars, "freeze", 6) == 0) {
-        trampoline = (void *)(uintptr_t)diamond_jit_freeze;
-    } else if (method_name->length == 7 &&
-               memcmp(method_name->chars, "frozen?", 7) == 0) {
-        trampoline = (void *)(uintptr_t)diamond_jit_frozen;
-    } else {
-        jc->bailed = true; return;
-    }
-    JitBuffer *buf = &jc->buf;
-    emit_mov_rr(buf, REG_RDI, JIT_VM);
-    emit_lea(buf, REG_RSI, JIT_REGISTERS_BASE, reg_disp(recv, 0));
-    emit_lea(buf, REG_RDX, JIT_REGISTERS_BASE, reg_disp(dest, 0));
-    emit_body_call(jc, trampoline);
-    emit_bail_if_al_nonzero(jc);
+    if (name >= fn->string_count) { jc->bailed = true; return; }
+    compile_invoke_any(jc, instruction_start);
 }
 
 /* JUMP_IF_TRUE: jump to target unless the condition is nil or false. */
@@ -2544,6 +2544,89 @@ static bool compile_value_instruction(JitCompiler *jc, DiamondOpCode opcode, siz
             uint16_t source = 0, set_index = 0;
             if (!decode_u16(fn, &pc, &source) || !decode_u16(fn, &pc, &set_index)) { jc->bailed = true; return true; }
             compile_check_type(jc, source, set_index);
+            break;
+        }
+        case DIAMOND_OP_BOX_LOCAL: {
+            /* Allocates the cell, so the frame keeps registers visible to
+             * the GC; no user code runs. */
+            uint16_t reg = 0;
+            if (!decode_u16(fn, &pc, &reg)) { jc->bailed = true; return true; }
+            jc->needs_frame = true;
+            JitBuffer *buf = &jc->buf;
+            emit_mov_rr(buf, REG_RDI, JIT_VM);
+            emit_mov_rr(buf, REG_RSI, JIT_REGISTERS_BASE);
+            emit_mov_imm64(buf, REG_RDX, reg);
+            emit_body_call(jc, (void *)(uintptr_t)diamond_jit_box_local);
+            emit_bail_if_al_nonzero(jc);
+            break;
+        }
+        case DIAMOND_OP_GET_CELL: {
+            uint16_t dest = 0, cell = 0;
+            if (!decode_u16(fn, &pc, &dest) || !decode_u16(fn, &pc, &cell)) {
+                jc->bailed = true; return true;
+            }
+            JitBuffer *buf = &jc->buf;
+            emit_mov_rr(buf, REG_RDI, JIT_REGISTERS_BASE);
+            emit_mov_imm64(buf, REG_RSI, dest);
+            emit_mov_imm64(buf, REG_RDX, cell);
+            emit_body_call(jc, (void *)(uintptr_t)diamond_jit_get_cell);
+            emit_bail_if_al_nonzero(jc);
+            break;
+        }
+        case DIAMOND_OP_SET_CELL: {
+            uint16_t cell = 0, source = 0;
+            if (!decode_u16(fn, &pc, &cell) || !decode_u16(fn, &pc, &source)) {
+                jc->bailed = true; return true;
+            }
+            JitBuffer *buf = &jc->buf;
+            emit_mov_rr(buf, REG_RDI, JIT_VM);
+            emit_mov_rr(buf, REG_RSI, JIT_REGISTERS_BASE);
+            emit_mov_imm64(buf, REG_RDX, cell);
+            emit_mov_imm64(buf, REG_RCX, source);
+            emit_body_call(jc, (void *)(uintptr_t)diamond_jit_set_cell);
+            emit_bail_if_al_nonzero(jc);
+            break;
+        }
+        case DIAMOND_OP_CLOSURE: {
+            /* diamond_jit_closure reads the capture list from the
+             * instruction; here it is only skipped. It allocates and reads
+             * the frame's serial, so the function always gets a frame. */
+            uint16_t dest = 0, index = 0; uint8_t count = 0;
+            if (!decode_u16(fn, &pc, &dest) || !decode_u16(fn, &pc, &index) ||
+                !decode_u8(fn, &pc, &count) || pc + 2 * (size_t)count > fn->code_count) {
+                jc->bailed = true; return true;
+            }
+            pc += 2 * (size_t)count;
+            jc->needs_frame = true;
+            JitBuffer *buf = &jc->buf;
+            emit_mov_rr(buf, REG_RDI, JIT_VM);
+            emit_mov_rr(buf, REG_RSI, JIT_CHUNK);
+            emit_mov_rr(buf, REG_RDX, JIT_REGISTERS_BASE);
+            emit_mov_imm64(buf, REG_RCX,
+                (uint64_t)(uintptr_t)(fn->code + instruction_start));
+            emit_body_call(jc, (void *)(uintptr_t)diamond_jit_closure);
+            emit_bail_if_al_nonzero(jc);
+            break;
+        }
+        case DIAMOND_OP_MATH_UNARY:
+        case DIAMOND_OP_MATH_BINARY: {
+            /* Math.sqrt/sin/.../pow: diamond_jit_math, which neither
+             * allocates nor runs user code, so no frame and no has_called;
+             * its only failure (a non-numeric operand) is a plain status. */
+            uint16_t dest = 0, left = 0, right = 0; uint8_t function_id = 0;
+            const bool binary = opcode == DIAMOND_OP_MATH_BINARY;
+            if (!decode_u16(fn, &pc, &dest) || !decode_u16(fn, &pc, &left) ||
+                (binary && !decode_u16(fn, &pc, &right)) ||
+                !decode_u8(fn, &pc, &function_id)) { jc->bailed = true; return true; }
+            JitBuffer *buf = &jc->buf;
+            emit_mov_rr(buf, REG_RDI, JIT_VM);
+            emit_lea(buf, REG_RSI, JIT_REGISTERS_BASE, reg_disp(left, 0));
+            if (binary) emit_lea(buf, REG_RDX, JIT_REGISTERS_BASE, reg_disp(right, 0));
+            else emit_mov_imm64(buf, REG_RDX, 0);
+            emit_mov_imm64(buf, REG_RCX, function_id);
+            emit_lea(buf, REG_R8, JIT_REGISTERS_BASE, reg_disp(dest, 0));
+            emit_body_call(jc, (void *)(uintptr_t)diamond_jit_math);
+            emit_bail_if_al_nonzero(jc);
             break;
         }
         case DIAMOND_OP_IS_TYPE: {

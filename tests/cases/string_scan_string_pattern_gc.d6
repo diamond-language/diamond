@@ -1,0 +1,12 @@
+# String#scan with a String pattern compiles a Regexp that only the call's
+# destination register holds; the scan overwrites that register with its
+# result, so under stress GC the Regexp must stay protected while it runs.
+text = "a1 b22 c333 " * 20
+count = 0
+round = 0
+while round < 50
+  count += text.scan("22").length()
+  round += 1
+end
+puts(count)
+puts("1+1=2, 1+1".scan("1+1"))

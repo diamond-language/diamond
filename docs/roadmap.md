@@ -141,11 +141,12 @@ are against YJIT, on call-heavy and floating-point object code: fib 2.7x, poly 2
 
 - **JIT coverage** -- the JIT speeds up `loop`, `mandelbrot` and `sieve` (simple numeric
   loops) but not calls, field access or Float objects. Traced on 0.29.0-dev:
-  - It compiles whole functions or none, and any `INVOKE` on a receiver it can't prove the
-    type of rejects the whole function. nbody's `advance` and `energy` die at
-    `bodies.length()` on an untyped parameter; poly's `build` and `total_area` likewise. A
-    generic `INVOKE` trampoline (the interpreter's dispatch, called from native code) would
-    let those compile.
+  - Block and closure bodies never run as native code (no JIT entry passes the closure, and
+    `GET_CAPTURE` has no case), so iterate, blocks and regex spend their time interpreted
+    even though their `run_once` compiles. Calling a closure (`CALL_CLOSURE`) and string
+    interpolation (`TO_STRING`) still reject the function.
+  - Polymorphic and untyped call sites pay the full dispatch per call (poly's
+    `shapes[i].area()`); a per-site inline cache checked in native code would cut that.
   - Where it does compile (fib, trees' `make`/`check`, objects' `dot`), calls and objects
     still go through C trampolines. In fib, ~45% of samples are `diamond_jit_call_self`,
     `jit_run_native`, frame push/pop and the register memset/memmove around each call; in

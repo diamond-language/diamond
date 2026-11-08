@@ -1,0 +1,51 @@
+# Compiled functions that box locals and create blocks: a block reading and
+# writing captured locals, a closure returned and called after its function
+# has returned, a block nested in another, and the boxed locals read back by
+# the compiled code afterwards. A function whose block breaks stays
+# interpreted (its frame is the break's landing) and still works.
+def total_with_offset(values, offset: Int) -> Int
+  sum = 0
+  i = 0
+  while i < values.length()
+    sum += values[i]
+    i += 1
+  end
+  values.each() do |value|
+    sum += value + offset
+  end
+  sum
+end
+
+def make_adder(amount: Int)
+  doubled = amount * 2
+  def add(x: Int) -> Int = x + doubled
+  add
+end
+
+def nested(rows)
+  count = 0
+  rows.each() do |row|
+    row.each() do |cell|
+      count += cell
+    end
+  end
+  count
+end
+
+def first_over(values, limit: Int)
+  found = nil
+  values.each() do |value|
+    if value > limit
+      found = value
+      break
+    end
+  end
+  found
+end
+
+puts(total_with_offset([1, 2, 3], 10))
+add5 = make_adder(5)
+puts(add5(1))
+puts(make_adder(-1)(10))
+puts(nested([[1, 2], [3], [4, 5, 6]]))
+puts(first_over([1, 5, 9, 12], 6))
