@@ -1,0 +1,38 @@
+# Generic calls -- a generic function whose type variable is inferred from
+# its argument on every call, and the methods of a generic class (Pair[T]),
+# whose type variable comes from the receiver. Each call binds its type
+# variables on entry and checks its parameters and return against them.
+def pick[T](first: T, second: T, take_first: Bool) -> T
+  if take_first
+    return first
+  end
+  second
+end
+
+class Pair[T]
+  def initialize(left: T, right: T)
+    @left = left
+    @right = right
+  end
+
+  def left() -> T = @left
+
+  def swap(value: T) -> T
+    old = @left
+    @left = value
+    old
+  end
+end
+
+def run()
+  pair = Pair[Int].new(1, 2)
+  total = 0
+  index = 0
+  while index < 1000000
+    total = total + pick(index, 3, index % 2 == 0)
+    total = total + pair.swap(index) - pair.left()
+    index = index + 1
+  end
+  total
+end
+run()

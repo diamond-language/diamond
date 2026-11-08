@@ -9,7 +9,7 @@
  * entirely from a small whitelist of arithmetic/control-flow/Hash-read/
  * ivar-write/string-construction opcodes (see jit.c's diamond_jit_try_
  * compile for the exact list) straight to x86-64 machine code --
- * non-generic, non-variadic, any arity (including instance methods,
+ * non-variadic (generic ones included), any arity (including instance methods,
  * `self` just being register 0 like any other argument). Any function
  * containing anything outside that whitelist is never compiled at all --
  * there is no partial/mixed-mode execution and no deopt needed for
@@ -490,6 +490,22 @@ DiamondVmStatus diamond_jit_invoke_instance(DiamondVm *vm, const DiamondChunk *c
  * jc->needs_frame and jc->has_called. */
 DiamondVmStatus diamond_jit_invoke_any(DiamondVm *vm, const DiamondChunk *chunk,
         DiamondValue *registers, const uint8_t *site, size_t depth);
+/* DIAMOND_OP_INVOKE_TYPED, the same dispatch with the instruction's explicit
+ * type arguments passed to an Instance's method. Same contract. */
+DiamondVmStatus diamond_jit_invoke_typed(DiamondVm *vm, const DiamondChunk *chunk,
+        DiamondValue *registers, const uint8_t *site, size_t depth);
+
+/* A generic function's bound chunk and type bindings, in its compiled frame
+ * reservation (DiamondJitGenericState, filled by diamond_jit_bind_generic
+ * from the prologue). The body runs with JIT_CHUNK and frame->chunk pointing
+ * at `execution`, as run_chunk runs in its own bound copy. */
+typedef struct DiamondJitGenericState {
+    DiamondChunk execution;
+    DiamondTypeBinding bindings[8];
+} DiamondJitGenericState;
+const DiamondChunk *diamond_jit_bind_generic(DiamondVm *vm, const DiamondChunk *chunk,
+        const DiamondValue *registers, size_t argument_count,
+        const DiamondClosure *closure, DiamondJitGenericState *state);
 
 /* DIAMOND_OP_CALL_CLOSURE, read from the instruction at `site`, and
  * DIAMOND_OP_TO_STRING for a non-String value (src/vm_calls.c): run_chunk's

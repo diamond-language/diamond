@@ -122,6 +122,10 @@ typedef struct JitCompiler {
      * the body correctly aligned -- set once, right before emitting the
      * real prologue, from DIAMOND_JIT_FRAME_SIZE. */
     size_t frame_reserve_bytes;
+    /* A generic function's DiamondJitGenericState: its offset in the frame
+     * reservation, past the frame (and handler state), for the prologue's
+     * emit_generic_bind. Unused (0) in other functions. */
+    size_t generic_state_at;
     /* Set by an opcode that reads the closure the function was entered with
      * (GET_CAPTURE, GET_CAPTURE_CELL, SET_CAPTURE, CLOSURE), in the dry run
      * as in the real pass, so the real pass knows it from the start. */
@@ -1755,7 +1759,7 @@ static void compile_call_function(JitCompiler *jc, uint16_t dest,
      * argument, which the native self-call does not pass: its self-calls
      * keep the trampoline, which enters with no closure as run_chunk's CALL
      * does. A generic function keeps it too: its plain call to itself infers
-     * fresh bindings from the new arguments (jit_run_native_generic), where
+     * fresh bindings from the new arguments (emit_generic_bind), where
      * the native self-call would carry the caller's chunk and bindings on.
      */
     const bool calls_self = function_index == jc->self_function_index && !jc->reads_closure &&
@@ -1846,7 +1850,7 @@ static void compile_tail_call_other(JitCompiler *jc, uint16_t dest,
  * parameter whose static type is a single concrete class and which the
  * function body never reassigns (Phase 9: see parameter_is_single_class/
  * parameter_never_reassigned below). DIAMOND_OP_INVOKE_TYPED never comes
- * here (it compiles through compile_invoke_any, which passes its type
+ * here (it compiles to diamond_jit_invoke_typed, which passes its type
  * arguments), so type_argument_count/type_arguments are always the "no type
  * arguments" constants.
  * Sets both jc->needs_frame (invoke_resolved_method_helper/method_missing_
@@ -1905,7 +1909,7 @@ static void compile_invoke_dispatch(JitCompiler *jc, size_t instruction_start,
  * It reads the operands from the instruction at run time, opcode byte
  * included, so it sees the INVOKE/INVOKE_MONO quickening the interpreter
  * applies to the site (the two share a layout). */
-static void compile_invoke_any(JitCompiler *jc, size_t instruction_start) {
+static void compile_invoke_helper(JitCompiler *jc, size_t instruction_start, void *helper) {
     jc->needs_frame = true;
     jc->has_called = true;
     JitBuffer *buf = &jc->buf;
@@ -1915,8 +1919,12 @@ static void compile_invoke_any(JitCompiler *jc, size_t instruction_start) {
     emit_mov_imm64(buf, REG_RCX,
         (uint64_t)(uintptr_t)(jc->function->code + instruction_start));
     emit_mov_rr(buf, REG_R8, JIT_DEPTH);
-    emit_body_call(jc, (void *)(uintptr_t)diamond_jit_invoke_any);
+    emit_body_call(jc, helper);
     emit_bail_if_al_nonzero(jc);
+}
+
+static void compile_invoke_any(JitCompiler *jc, size_t instruction_start) {
+    compile_invoke_helper(jc, instruction_start, (void *)(uintptr_t)diamond_jit_invoke_any);
 }
 
 static void compile_native_call(JitCompiler *jc,uint16_t dest,uint16_t recv,
@@ -2682,8 +2690,8 @@ static bool jit_native_read_operation(uint16_t site_type,
  * receiver-kind checks. Every other site -- an untyped receiver, a native
  * per-type method, a polymorphic Instance site -- goes through
  * compile_invoke_any, the interpreter's own dispatch, so it no longer keeps
- * the whole function interpreted. DIAMOND_OP_INVOKE_TYPED always takes
- * compile_invoke_any (compile_body's own case). */
+ * the whole function interpreted. DIAMOND_OP_INVOKE_TYPED always calls
+ * diamond_jit_invoke_typed (compile_body's own case). */
 static void compile_invoke(JitCompiler *jc, size_t instruction_start, DiamondOpCode opcode,
         uint16_t dest, uint16_t recv, uint16_t name, uint16_t base, uint8_t argc) {
     const DiamondFunction *fn = jc->function;
@@ -3640,7 +3648,8 @@ static bool compile_control_instruction(JitCompiler *jc, DiamondOpCode opcode, s
             break;
         }
         /* Explicit type arguments (`recv.method[Type]()`): the interpreter's
-         * own dispatch, which reads them from the instruction. */
+         * own dispatch (diamond_jit_invoke_typed), which reads them from the
+         * instruction. */
         case DIAMOND_OP_INVOKE_TYPED: {
             uint16_t dest = 0, recv = 0, name = 0, base = 0;
             uint8_t argc = 0;
@@ -3649,7 +3658,8 @@ static bool compile_control_instruction(JitCompiler *jc, DiamondOpCode opcode, s
                 !decode_u8(fn, &pc, &argc) || !skip_type_trailer(fn, &pc)) {
                 jc->bailed = true; return true;
             }
-            compile_invoke_any(jc, instruction_start);
+            compile_invoke_helper(jc, instruction_start,
+                (void *)(uintptr_t)diamond_jit_invoke_typed);
             break;
         }
         default:
@@ -3763,6 +3773,31 @@ static void emit_catch_stubs(JitCompiler *jc, size_t propagate_offset,
     buf->rsp_delta = saved_rsp_delta;
 }
 
+/* Prologue of a generic function, right after the frame link: binds this
+ * call's type variables as run_chunk's entry does (diamond_jit_bind_generic,
+ * into the reservation's DiamondJitGenericState) and runs the body in the
+ * bound chunk: JIT_CHUNK and the frame's chunk both point at it, so type
+ * checks, nested calls and closures read the bindings from there. A failed
+ * binding retries the call in the interpreter before anything has run. The
+ * prologue's pushes and reservation sit in rsp_delta; the body counts from
+ * this RSP, as the calls below do. Non-generic functions never emit this,
+ * so their calls pay nothing for it. */
+static void emit_generic_bind(JitCompiler *jc) {
+    JitBuffer *buf = &jc->buf;
+    buf->rsp_delta = 0;
+    emit_mov_rr(buf, REG_RDI, JIT_VM);
+    emit_mov_rr(buf, REG_RSI, JIT_CHUNK);
+    emit_mov_rr(buf, REG_RDX, JIT_REGISTERS_BASE);
+    emit_mov_rr(buf, REG_RCX, JIT_ARGUMENT_COUNT);
+    emit_load_closure(jc, REG_R8);
+    emit_lea_rsp(buf, REG_R9, (int32_t)jc->generic_state_at);
+    emit_body_call(jc, (void *)(uintptr_t)diamond_jit_bind_generic);
+    emit_u8(buf, 0x48); emit_u8(buf, 0x85); emit_u8(buf, 0xC0);   /* test rax, rax */
+    record_global_patch(jc, emit_jcc_placeholder(buf, JCC_E), BAILOUT_RETRY_SENTINEL);
+    emit_mov_rr(buf, JIT_CHUNK, REG_RAX);
+    emit_store_r64_sib(buf, REG_RSP, DIAMOND_JIT_FRAME_CHUNK, JIT_CHUNK);
+}
+
 void *diamond_jit_try_compile(const DiamondFunction *function,
         size_t self_function_index, size_t *out_size) {
     *out_size = 0;
@@ -3819,11 +3854,20 @@ void *diamond_jit_try_compile(const DiamondFunction *function,
      * then on nothing may retry the function in the interpreter (it would
      * raise again): every failure goes to the catch stub instead. */
     if (jc.has_handlers && jc.has_raise) jc.has_called = true;
+    /* A generic function's bound chunk lives in its frame reservation, so it
+     * links its frame (emit_generic_bind runs right after). */
+    if (function->type_variable_count != 0) jc.needs_frame = true;
     if (jc.has_handlers) {
         jc.frame_reserve_bytes = (size_t)DIAMOND_JIT_HANDLER_STATE_AT +
             (size_t)DIAMOND_JIT_HANDLER_STATE_SIZE;
     } else if (jc.needs_frame || jc.slow_frame) {
         jc.frame_reserve_bytes = ((size_t)DIAMOND_JIT_FRAME_SIZE + 15) & ~(size_t)15;
+    }
+    /* A generic function binds its type variables in its prologue into a
+     * DiamondJitGenericState after the rest of the reservation. */
+    if (function->type_variable_count != 0) {
+        jc.generic_state_at = jc.frame_reserve_bytes;
+        jc.frame_reserve_bytes += (sizeof(DiamondJitGenericState) + 15) & ~(size_t)15;
     }
 
     /* Prologue: save the 6 persistent registers, then load them from the
@@ -3857,6 +3901,7 @@ void *diamond_jit_try_compile(const DiamondFunction *function,
         emit_sub_rsp_imm32(&jc.buf, (uint32_t)jc.frame_reserve_bytes);
         emit_frame_link(&jc, 0);
         if (jc.has_handlers) emit_handler_state_link(&jc);
+        if (function->type_variable_count != 0) emit_generic_bind(&jc);
     } else if (jc.slow_frame) {
         /* Space only: each slow call links the frame around itself. */
         emit_sub_rsp_imm32(&jc.buf, (uint32_t)jc.frame_reserve_bytes);
