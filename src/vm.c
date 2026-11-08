@@ -112,57 +112,23 @@ void diamond_resume_target_bounds(const DiamondFiber *fiber,
 }
 #endif
 
-/* JIT trampolines for Phase 2c (docs/internal/jit-design.md) -- DiamondFrame
- * is private to this file, so jit.c can never construct or link one
- * directly; it only ever reserves opaque bytes on its own native stack and
- * calls these to manage them, the same "risky logic stays in real C, not
- * hand-rolled machine code" pattern already used for SET_IVAR/INDEX_GET/
- * CHECK_TYPE. diamond_jit_frame_size is called once per *compile* (not per
- * generated call) so jit.c learns the exact byte count to reserve without
- * a hardcoded constant that could silently drift out of sync with this
- * struct's own layout -- unlike DIAMOND_JIT_MAX_REGISTERS (a bare enum,
- * nothing to query), sizeof() on a real struct is exactly this available
- * here. The extra trailing size_t past the frame itself is instruction_
- * offset's own backing storage: that field is a *pointer* to a live value
- * for the frame's whole lifetime (see its own struct comment above), not
- * a copy, and a JIT'd function has no `ip`-like local of its own to point
- * at -- this reserves one, initialized to 0 (a synthetic placeholder;
- * this JIT compiles no begin/rescue and nothing it calls through these
- * trampolines can itself raise, so no code path today ever reads it back
- * for a real backtrace, but a future one might). */
-size_t diamond_jit_frame_size(void) {
-    return sizeof(DiamondFrame);
-}
-
-/* `offset_slot` is the prologue's pad slot, just above the frame: the frame's
- * instruction_offset points at it, and every trampoline call from the body
- * stores the current bytecode offset there (emit_body_call in jit.c), so a
- * backtrace and an error trace line both read the call being made. */
-void diamond_jit_frame_push(void *frame_storage, DiamondVm *vm,
-        DiamondValue *registers, size_t register_count, const DiamondChunk *chunk,
-        size_t *offset_slot) {
-    DiamondFrame *frame = (DiamondFrame *)frame_storage;
-    *offset_slot = 0;
-    *frame = (DiamondFrame){
-        .previous = vm->frames,
-        .registers = registers,
-        .pending = nullptr,
-        .register_count = register_count,
-        .chunk = chunk,
-        .instruction_offset = offset_slot,
-    };
-    vm->frames = frame;
-}
+/* The JIT prologue and exits write and unlink DiamondFrame inline at these
+ * offsets (jit.h); keep them in step with the struct. */
+static_assert(sizeof(DiamondFrame) == DIAMOND_JIT_FRAME_SIZE);
+static_assert(offsetof(DiamondFrame, previous) == DIAMOND_JIT_FRAME_PREVIOUS);
+static_assert(offsetof(DiamondFrame, registers) == DIAMOND_JIT_FRAME_REGISTERS);
+static_assert(offsetof(DiamondFrame, pending) == DIAMOND_JIT_FRAME_PENDING);
+static_assert(offsetof(DiamondFrame, handlers) == DIAMOND_JIT_FRAME_PENDING + 8);
+static_assert(offsetof(DiamondFrame, handler_count) == DIAMOND_JIT_FRAME_HANDLER_COUNT);
+static_assert(offsetof(DiamondFrame, register_count) == DIAMOND_JIT_FRAME_REGISTER_COUNT);
+static_assert(offsetof(DiamondFrame, chunk) == DIAMOND_JIT_FRAME_CHUNK);
+static_assert(offsetof(DiamondFrame, instruction_offset) == DIAMOND_JIT_FRAME_INSTRUCTION_OFFSET);
+static_assert(offsetof(DiamondFrame, serial) == DIAMOND_JIT_FRAME_SERIAL);
 
 void diamond_jit_tail_reset(DiamondValue *registers, size_t base, size_t argc,
         size_t live) {
     memmove(registers, registers + base, argc * sizeof *registers);
     memset(registers + argc, 0, (live - argc) * sizeof *registers);
-}
-
-void diamond_jit_frame_pop(DiamondVm *vm) {
-    DiamondFrame *frame = (DiamondFrame *)vm->frames;
-    vm->frames = frame->previous;
 }
 
 /* Appends "\n  at name:line:col" for the instruction at `offset` of `chunk`

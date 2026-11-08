@@ -168,7 +168,6 @@ static inline uint8_t jit_run_native(DiamondVm *vm, const DiamondFunction *funct
     #if defined(__GNUC__)
     #pragma GCC diagnostic pop
     #endif
-    vm->jit_depth_limit = diamond_call_depth_limit(vm);
     /* Phase 2d: DiamondJitFn's own return convention is now 3-way,
      * not a plain bool -- see jit.h's own comment. DIAMOND_VM_OK
      * (0) means success (*result written); DIAMOND_JIT_RETRY means
@@ -1008,7 +1007,10 @@ DiamondVmStatus diamond_jit_call_self(DiamondVm *vm, const DiamondChunk *chunk,
         ? chunk->functions[function_index] : nullptr;
     if (function == nullptr || function->code != chunk->code || function->jit_code == nullptr)
         return diamond_jit_call_function(vm, chunk, registers, function_index, base, argc, depth, out);
-    if (depth + 1 >= diamond_call_depth_limit(vm)) return DIAMOND_VM_STACK_OVERFLOW;
+    /* The native self-call's limit (compile_self_call_native), filled in
+     * here on this thread the first time it comes through. */
+    vm->jit_depth_limit = diamond_call_depth_limit(vm);
+    if (depth + 1 >= vm->jit_depth_limit) return DIAMOND_VM_STACK_OVERFLOW;
     DiamondChunk called_storage;
     const DiamondChunk *called_chunk = plain_call_chunk_for(function, chunk, &called_storage);
     const uint8_t status = jit_run_native(vm, function, called_chunk, &registers[base], argc,
@@ -2286,8 +2288,8 @@ DiamondVmStatus diamond_jit_invoke_any(DiamondVm *vm,const DiamondChunk *chunk,
 }
 
 /* Compiled code's DIAMOND_OP_CLOSURE. The compiling function always pushes
- * a frame for it (vm->frames is that frame). diamond_jit_frame_push leaves
- * its serial 0, so the first closure gives it one here, sparing every other
+ * a frame for it (vm->frames is that frame). The prologue leaves its
+ * serial 0, so the first closure gives it one here, sparing every other
  * compiled call the increment; a compiled function is never itself a block,
  * so its frame is its own home. */
 DiamondVmStatus diamond_jit_closure(DiamondVm *vm,const DiamondChunk *chunk,

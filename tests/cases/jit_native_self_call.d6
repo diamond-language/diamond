@@ -1,0 +1,48 @@
+# A compiled function calling itself calls its own native code directly,
+# with the callee's registers on the native stack. Under stress GC: a
+# recursion that allocates at every level (each frame's registers are GC
+# roots while deeper levels collect), one that recurses close to the depth
+# limit, one that raises from deep inside, and endless recursion in a Fiber
+# and a Thread, which stops at their own depth limit with a clean error.
+def build(n: Int) -> String
+  if n == 0
+    return ""
+  end
+  build(n - 1) + (n % 2 == 0 ? "a" : "b")
+end
+
+def collect(n: Int) -> Array = n == 0 ? [] : collect(n - 1) + [n * n]
+
+def depth(n: Int) -> Int = n == 0 ? 0 : 1 + depth(n - 1)
+
+def fail_at(n: Int) -> Int
+  if n == 0
+    raise ArgumentError.new("bottom")
+  end
+  1 + fail_at(n - 1)
+end
+
+def forever(n: Int) -> Int = 1 + forever(n + 1)
+
+puts(build(25))
+puts(collect(12))
+puts(depth(100))
+begin
+  fail_at(40)
+rescue error: ArgumentError
+  puts("rescued #{error.message()}")
+end
+
+def overflow(label: String) -> Nil
+  begin
+    forever(0)
+  rescue error: SystemStackError
+    puts("#{label}: #{error.message()}")
+  end
+  nil
+end
+
+def in_fiber() = overflow("fiber")
+def in_thread() = overflow("thread")
+Fiber.new(in_fiber).resume()
+Thread.new(in_thread).join()

@@ -147,11 +147,14 @@ are against YJIT, on call-heavy and floating-point object code: fib 2.7x, poly 2
     interpolation (`TO_STRING`) still reject the function.
   - Polymorphic and untyped call sites pay the full dispatch per call (poly's
     `shapes[i].area()`); a per-site inline cache checked in native code would cut that.
-  - Where it does compile (fib, trees' `make`/`check`, objects' `dot`), calls and objects
-    still go through C trampolines. In fib, ~45% of samples are `diamond_jit_call_self`,
-    `jit_run_native`, frame push/pop and the register memset/memmove around each call; in
-    trees, `diamond_jit_invoke_instance` and `diamond_jit_new_instance` lead. Gains need
-    native-to-native calls with a lighter frame, and inline field reads and writes.
+  - A compiled function's call to itself is native now (fib 121 ms against YJIT's 60), but
+    calls to other functions and methods still go through C trampolines: in trees,
+    `diamond_jit_invoke_instance` and `diamond_jit_new_instance` lead. Gains need native
+    calls between compiled functions, and inline field reads and writes.
+  - Compiled bodies keep every value in memory and re-check types the caller already proved
+    (fib's `n < 2` reloads and re-tests the tag of a parameter the entry check just
+    confirmed). Most of fib's remaining gap to YJIT is register allocation and type
+    propagation inside a body.
 - **Call machinery** -- about 300 of a fib call's ~450 instructions are call setup (prologue,
   register zeroing, CALL and RETURN), spread thinly, and frame size is not the cost. A
   VM-stack frame design is the remaining large lever; inline frames were tried and lost cycles
