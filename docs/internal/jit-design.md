@@ -2360,9 +2360,14 @@ argument. The argument sits on the caller's stack, so other calls pay almost not
 only a function that uses its closure reads it (`emit_load_closure`, at a fixed offset above the
 pushed registers and the frame reservation).
 
-- **Capture opcodes:** `GET_CAPTURE`, `GET_CAPTURE_CELL` and `SET_CAPTURE` compile to
-  trampolines with `run_chunk`'s checks. A missing closure (a plain call into the function) is
-  malformed bytecode in both tiers.
+- **Capture opcodes:** `GET_CAPTURE`, `GET_CAPTURE_CELL` and `SET_CAPTURE` read the closure's
+  capture slot inline after two checks: the closure is present and has that many captures.
+  `GET_CELL` and `SET_CELL` check that the register holds a cell and copy its value inline.
+  `SET_CELL` and a `SET_CAPTURE` into a cell repeat `gc_write_barrier`'s test inline: an old
+  cell not yet remembered takes the trampoline, which stores and remembers it. Anything else
+  that fails a check (a missing closure, a non-cell register) takes the trampoline too, which
+  raises `run_chunk`'s error. A missing closure (a plain call into the function) is malformed
+  bytecode in both tiers.
 - **Self-calls:** a function that reads its closure keeps the self-call trampoline. That
   trampoline enters with no closure, as `run_chunk`'s `CALL` does, whereas the native self-call
   would pass no seventh argument at all.
@@ -2389,6 +2394,9 @@ With `DIAMOND_JIT=1`:
 | blocks | 36% fewer | 91 to 76 ms |
 | iterate | 36% fewer | 152 to 116 ms |
 | regex | 5% fewer | 216 to 207 ms |
+
+Reading captures and cells inline took a further 8.5% of instructions off iterate and 4% off
+blocks (116 to 111 ms and 79 to 74 ms).
 
 The interpreter got slightly faster on both blocks and iterate: `block_call_run` kept a 4 KB
 argument buffer in its own frame for the rare self-slot case, and that case now has its own

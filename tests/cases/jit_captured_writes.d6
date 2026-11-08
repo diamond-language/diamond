@@ -1,0 +1,35 @@
+# Compiled blocks and a nested function read and write captured locals
+# inline (all 4 compile). Under minor-GC stress the captured cells are
+# promoted to the old generation at once while each round stores a freshly
+# allocated String into them; every such store into an old cell must
+# remember the cell, or the next minor collection frees the young String the
+# cell still points at and the junk allocated next reuses its memory.
+def churn(rounds: Int) -> Int
+  previous = ""
+  held = [""]
+  bad = 0
+  rounds.times() do |i|
+    junk = "zzzzzzzz" + i.to_s()
+    junk_array = [junk, junk]
+    if i > 0
+      bad += 1 if previous != "v" + (i - 1).to_s()
+      bad += 1 if held[0] != "h" + (i - 1).to_s()
+    end
+    previous = "v" + i.to_s()
+    held = ["h" + i.to_s()]
+  end
+  bad
+end
+
+def counter() -> Int
+  count = 0
+  def bump(n: Int) -> Int
+    count += n
+    count
+  end
+  10000.times() do |i| bump(i % 3) end
+  count
+end
+
+puts(churn(5000))
+puts(counter())
