@@ -1,0 +1,22 @@
+# A memory budget keeps a VM on the interpreter, like the instruction and
+# wall-clock budgets. fill() and run() both have a loop or handlers the JIT
+# would compile on their first call. fill() only grows one array, which
+# allocates nothing new, so only the interpreter's between-instruction
+# recheck notices the budget. Compiled, the loop grew without bound.
+def fill(items: Array)
+  index = 0
+  while true
+    items.push(index)
+    index = index + 1
+  end
+end
+
+def run() -> String
+  begin
+    fill([])
+  rescue error: ResourceLimitError
+    return "caught"
+  end
+  "not caught"
+end
+puts(run())

@@ -60,6 +60,10 @@ authoritative fine-grained record.
   `retry`, `raise`, and `break`/`next`/`return` through `ensure` no longer keep a function
   interpreted, with the same errors and backtraces. With `DIAMOND_JIT=1`, the exceptions
   benchmark runs 14% fewer cycles.
+- **A memory budget keeps a VM on the interpreter under `DIAMOND_JIT=1`.** `DIAMOND_MAX_MEMORY_BYTES`
+  was not enforced in compiled code: a compiled loop that only grew one array ran past the
+  budget until the system ran out of memory. Instruction and wall-clock budgets already did
+  this.
 
 ### Fixed
 

@@ -112,9 +112,11 @@ DIAMOND_MAX_MEMORY_BYTES=100000000 d6 untrusted.d6
 - `DIAMOND_MAX_WALL_MILLISECONDS` -- wall-clock budget.
 - `DIAMOND_MAX_MEMORY_BYTES` -- live (post-collection) memory budget.
 
-The instruction and wall-clock budgets are enforced by the interpreter between
-instructions, so a VM that has either set (or is past a tripped one) never runs
-JIT-compiled code, even with `DIAMOND_JIT=1`.
+All three budgets are enforced by the interpreter between instructions, so a VM
+that has any of them set (or is past a tripped one) never runs JIT-compiled code,
+even with `DIAMOND_JIT=1`. The memory budget counts too, because a loop that only
+grows one array allocates nothing new, and the interpreter catches that between
+instructions.
 
 All three raise a rescuable `ResourceLimitError` once exceeded -- the same way as any
 other catchable error, including for the memory budget specifically: a genuine host
