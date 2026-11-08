@@ -182,7 +182,7 @@ DiamondVmStatus forward_to_top_level_helper(DiamondVm *vm,
 #if defined(__clang__)
 __attribute__((no_sanitize("function")))
 #endif
-static inline uint8_t jit_run_native(DiamondVm *vm, const DiamondFunction *function,
+static inline uint8_t jit_run_native_body(DiamondVm *vm, const DiamondFunction *function,
         const DiamondChunk *chunk_to_interpret, const DiamondValue *arguments,
         size_t argument_count, size_t depth, const DiamondClosure *closure,
         DiamondValue *result) {
@@ -231,6 +231,51 @@ static inline uint8_t jit_run_native(DiamondVm *vm, const DiamondFunction *funct
     }
     vm->jit_bailouts++;
     return DIAMOND_JIT_RETRY;
+}
+
+/* A generic function's native entry: the same bind_generic_entry run_chunk
+ * makes, so compiled code gets the chunk carrying this call's type bindings
+ * in JIT_CHUNK and every check, nested call and closure inside reads them
+ * from there, as interpreted. A binding that fails retries in the
+ * interpreter, which fails it the same way and reports it. */
+#if defined(__clang__)
+__attribute__((no_sanitize("function")))
+#endif
+__attribute__((noinline))
+static uint8_t jit_run_native_generic(DiamondVm *vm, const DiamondFunction *function,
+        const DiamondChunk *chunk_to_interpret, const DiamondValue *arguments,
+        size_t argument_count, size_t depth, const DiamondClosure *closure,
+        DiamondValue *result) {
+    DiamondChunk execution;
+    DiamondTypeBinding bindings[8];
+    DiamondVmStatus status = DIAMOND_VM_OK;
+    const DiamondChunk *bound = bind_generic_entry(chunk_to_interpret, vm, arguments,
+        argument_count, closure, &execution, bindings, &status);
+    if (bound == nullptr) {
+        vm->jit_bailouts++;
+        return DIAMOND_JIT_RETRY;
+    }
+    return jit_run_native_body(vm, function, bound, arguments, argument_count, depth,
+        closure, result);
+}
+
+/* Native entry for every caller (jit_call_core, block_call_native,
+ * diamond_jit_call_self). Generic entries take the out-of-line path above,
+ * under run_chunk's own condition, so other calls pay one test. */
+#if defined(__clang__)
+__attribute__((no_sanitize("function")))
+#endif
+static inline uint8_t jit_run_native(DiamondVm *vm, const DiamondFunction *function,
+        const DiamondChunk *chunk_to_interpret, const DiamondValue *arguments,
+        size_t argument_count, size_t depth, const DiamondClosure *closure,
+        DiamondValue *result) {
+    if (__builtin_expect(chunk_to_interpret->type_variable_count > 0 ||
+            chunk_to_interpret->class_type_variable ||
+            (closure != nullptr && closure->type_binding_count > 0), 0))
+        return jit_run_native_generic(vm, function, chunk_to_interpret, arguments,
+            argument_count, depth, closure, result);
+    return jit_run_native_body(vm, function, chunk_to_interpret, arguments, argument_count,
+        depth, closure, result);
 }
 
 /* Phase 2b baseline JIT (docs/internal/jit-design.md) -- shared by every
@@ -1135,7 +1180,11 @@ uint8_t diamond_jit_tail_call_function(DiamondVm *vm, const DiamondChunk *chunk,
         return DIAMOND_VM_ARITY_ERROR;
     const size_t callee_registers = function->register_count == 0
         ? DIAMOND_REGISTER_COUNT : function->register_count;
-    if (function->code != chunk->code && !function->has_variadic &&
+    /* A generic function's call to itself is staged too: run_chunk's in-place
+     * self tail call infers its type variables again from the new arguments,
+     * which jit_tail_loop's fresh entry (jit_run_native_generic) does. */
+    if ((function->code != chunk->code || function->type_variable_count > 0) &&
+        !function->has_variadic &&
         argc <= DIAMOND_MAX_DECLARED_PARAMETERS && argc <= callee_registers) {
         vm->jit_tail_function = function;
         vm->jit_tail_count = argc;

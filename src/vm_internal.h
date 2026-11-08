@@ -1706,6 +1706,14 @@ static inline DiamondVmStatus set_cvar_helper(DiamondVm *vm,const DiamondChunk *
     return DIAMOND_VM_OK;
 }
 
+/* A generic function's entry (src/vm_run_chunk.c): installs its type bindings (a
+ * closure's, the receiver's, explicit ones already on `chunk`, or inferred from the
+ * arguments) in `execution`, backed by `bindings`, and returns the chunk to run
+ * it in, or nullptr with *status set. run_chunk and native entry both use it. */
+DIAMOND_INTERNAL const DiamondChunk *bind_generic_entry(const DiamondChunk *chunk,
+        DiamondVm *vm,const DiamondValue *arguments,size_t argument_count,
+        const DiamondClosure *closure,DiamondChunk *execution,
+        DiamondTypeBinding *bindings,DiamondVmStatus *status);
 DIAMOND_INTERNAL DiamondVmStatus jit_call_with_jit(DiamondVm *vm, const DiamondFunction *function,
         const DiamondChunk *chunk_to_interpret, const DiamondValue *arguments,
         size_t argument_count, size_t depth, const DiamondClosure *closure,

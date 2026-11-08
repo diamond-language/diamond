@@ -1754,8 +1754,12 @@ static void compile_call_function(JitCompiler *jc, uint16_t dest,
     /* A function that reads its closure gets it as the entry's seventh
      * argument, which the native self-call does not pass: its self-calls
      * keep the trampoline, which enters with no closure as run_chunk's CALL
-     * does. */
+     * does. A generic function keeps it too: its plain call to itself infers
+     * fresh bindings from the new arguments (jit_run_native_generic), where
+     * the native self-call would carry the caller's chunk and bindings on.
+     */
     const bool calls_self = function_index == jc->self_function_index && !jc->reads_closure &&
+        self->type_variable_count == 0 &&
         argc >= self->required_arity && argc <= self->arity && !self->has_variadic &&
         (size_t)base + argc <= DIAMOND_REGISTER_COUNT;
     size_t slow_jumps[4] = {0, 0, 0, 0};
@@ -2805,8 +2809,9 @@ static void compile_jump_if_false(JitCompiler *jc, size_t instruction_start,
  * the first instruction (whose CHECK_TYPEs re-run, as in
  * the interpreter). The argument count register is reset
  * to the call's own, so a default left out of the tail call
- * is taken again; try_compile already refused variadic and
- * generic functions. A retry after an iteration re-runs from the
+ * is taken again; try_compile already refused variadic
+ * functions, and a generic function's own tail call is staged through
+ * compile_tail_call_other instead, to bind its type variables afresh. A retry after an iteration re-runs from the
  * call's original arguments, which is safe for the same
  * reason every other retry is: effects set has_called. */
 static void compile_self_tail_call(JitCompiler *jc, uint16_t base, uint8_t argc) {
@@ -3532,7 +3537,11 @@ static bool compile_control_instruction(JitCompiler *jc, DiamondOpCode opcode, s
             /* A tail call leaves the frame; with handlers it stays with the
              * interpreter. */
             if (jc->has_handlers) { jc->bailed = true; return true; }
-            if ((size_t)function_index != jc->self_function_index) {
+            /* A generic function's own tail call infers its type variables again
+             * from the new arguments, so it re-enters through
+             * jit_run_native_generic rather than looping in place. */
+            if ((size_t)function_index != jc->self_function_index ||
+                fn->type_variable_count > 0) {
                 compile_tail_call_other(jc, dest, function_index, base, argc);
                 break;
             }
@@ -3732,7 +3741,7 @@ static void emit_catch_stubs(JitCompiler *jc, size_t propagate_offset,
 void *diamond_jit_try_compile(const DiamondFunction *function,
         size_t self_function_index, size_t *out_size) {
     *out_size = 0;
-    if (function->has_variadic || function->type_variable_count != 0 ||
+    if (function->has_variadic ||
         function->nonlocal_landing ||
         function->code_count == 0 ||
         function->register_count > DIAMOND_JIT_MAX_REGISTERS ||
