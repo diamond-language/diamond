@@ -134,16 +134,13 @@ enum {
      * once full, same fail-safe-by-construction convention as every
      * other side table this JIT already uses. */
     DIAMOND_MAX_INVOKE_SITES = 64,
-    /* A JIT-eligible function's register_count must fit this v1's call-site
-     * stack array (src/vm.c's DIAMOND_OP_CALL interception), which never
-     * heap-allocates the way run_chunk itself does for an oversized
-     * function -- see src/jit.c's diamond_jit_try_compile, which rejects
-     * anything larger outright. Lives here (not src/jit.h, where it
-     * originated) because DiamondFunction.register_known_class below
-     * (Phase 12, docs/internal/jit-design.md) needs the same bound visible
-     * from src/compiler.c, which doesn't include jit.h; jit.h's own
-     * #include "vm.h" still brings this in unchanged for every existing
-     * caller. */
+    /* The register file jit_run_native (src/vm_calls.c) keeps on the C
+     * stack for a compiled function, and the most registers a native
+     * self-call reserves on the machine stack. A compiled function with
+     * more registers gets a heap register file and calls itself through
+     * the trampoline. Lives here (not src/jit.h) because
+     * DiamondFunction.register_known_class below is sized by it and
+     * src/compiler.c, which doesn't include jit.h, fills it. */
     DIAMOND_JIT_MAX_REGISTERS = 256,
     /* Every namespace constant in a program, prelude and packages
      * included: the 16-bit GET/SET_NAMESPACE_CONSTANT operand's range.
@@ -1456,12 +1453,10 @@ typedef struct DiamondFunction {
      * *declared* (never inferred-only) return-type path -- see that
      * function's own comment for why the inferred-only path must never
      * feed this. Sized DIAMOND_JIT_MAX_REGISTERS, not a function's real
-     * register_count: any function needing more registers than that is
-     * already unconditionally JIT-ineligible (diamond_jit_try_compile's
-     * own gate), so the compiler bounds-checks its own write against this
-     * same constant and simply skips recording the fact past it -- a
-     * missed optimization for a function that could never be JIT-compiled
-     * anyway, never a correctness gap. Trustworthy only when this
+     * register_count: the compiler bounds-checks its own write against this
+     * same constant and skips recording the fact past it, and src/jit.c
+     * checks its read the same way -- a missed optimization in a very
+     * large function, never a correctness gap. Trustworthy only when this
      * function's own redefine_method_used_anywhere (below) is false --
      * see that field's own comment for why a method's return type, unlike
      * an ivar's declared type, can go stale at runtime. */

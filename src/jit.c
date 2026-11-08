@@ -2,7 +2,7 @@
  * Phase 2 (register moves/constants/_INT arithmetic/comparisons/jumps/
  * return, zero-argument functions only) plus Phase 2b's extension: Hash
  * reads and typed-field writes via C trampolines (jit.h/vm.c), and
- * arguments/`self` (non-generic, non-variadic methods and functions).
+ * arguments/`self` (non-variadic methods and functions, generic ones included).
  * Anything outside this whitelist (including any exceptional runtime
  * condition within a supported opcode -- overflow, division by zero,
  * INT64_MIN/-1, a trampoline reporting anything but DIAMOND_VM_OK) is a
@@ -651,11 +651,37 @@ static void emit_pop_persistent_registers(JitBuffer *buf) {
  * that isn't Phase 2d's propagate stub (the success RETURN and the retry
  * bailout stub) calls this immediately before `ret`, after its own AL has
  * already been set. */
+/* Whether the caller (jit_run_native, src/vm_calls.c) hands this function a
+ * register file from the heap rather than its stack buffer: more registers
+ * than the buffer holds (try_compile refuses a register_count of 0). The
+ * function frees that file itself on the way out (emit_free_heap_registers),
+ * so the caller's common path has nothing to check after the call. Must
+ * match jit_run_native's own test exactly. */
+static bool uses_heap_registers(const DiamondFunction *function) {
+    return function->register_count > DIAMOND_JIT_MAX_REGISTERS;
+}
+
+/* free(registers) on an exit path, keeping the status in AL: it rides in
+ * JIT_RESULT_PTR, which no exit path needs again (the persistent-register
+ * pops restore it). The prologue's pad keeps RSP 16-byte aligned at the body
+ * level whether or not the function reserved a frame, so the call is safe
+ * wherever an epilogue starts. */
+static void emit_free_heap_registers(JitCompiler *jc) {
+    if (!uses_heap_registers(jc->function)) return;
+    JitBuffer *buf = &jc->buf;
+    emit_u8(buf, 0x0F); emit_u8(buf, 0xB6); emit_u8(buf, 0xC0);   /* movzx eax, al */
+    emit_mov_rr(buf, JIT_RESULT_PTR, REG_RAX);
+    emit_mov_rr(buf, REG_RDI, JIT_REGISTERS_BASE);
+    emit_call_trampoline(buf, (void *)(uintptr_t)free);
+    emit_mov_rr(buf, REG_RAX, JIT_RESULT_PTR);
+}
+
 static void emit_epilogue(JitCompiler *jc) {
     JitBuffer *buf = &jc->buf;
     /* An exit stub unwinds the stack on its own path only: code emitted after
      * it (a RETURN inside the body) still runs with the body's RSP. */
     const int32_t saved_rsp_delta = buf->rsp_delta;
+    emit_free_heap_registers(jc);
     if (jc->needs_frame) {
         /* vm->frames = frame->previous, through RCX: AL holds the status. */
         emit_load_r64_sib(buf, REG_RCX, REG_RSP, DIAMOND_JIT_FRAME_PREVIOUS);
@@ -717,6 +743,10 @@ static void emit_epilogue_propagate(JitCompiler *jc) {
          * frame in, if any (already unlinked by then). */
         emit_load_r64_sib(buf, REG_RCX, REG_RSP, (int32_t)jc->frame_reserve_bytes);
         emit_call_trampoline(buf, (void *)(uintptr_t)diamond_jit_record_propagating);
+    }
+    if (uses_heap_registers(jc->function)) {
+        emit_mov_rr(buf, REG_RDI, JIT_REGISTERS_BASE);
+        emit_call_trampoline(buf, (void *)(uintptr_t)free);
     }
     emit_mov_rr(buf, REG_RAX, JIT_RESULT_PTR);
     if (jc->needs_frame || jc->slow_frame)
@@ -1582,8 +1612,7 @@ static void compile_new_hash(JitCompiler *jc, uint16_t dest, uint16_t base, uint
 /* ARRAY uses the same rooted allocation path as HASH, including empty
  * literals used by default arguments. Preserve element registers across GC. */
 static void compile_new_array(JitCompiler *jc, uint16_t dest, uint16_t base, uint16_t count) {
-    if (dest >= DIAMOND_JIT_MAX_REGISTERS ||
-        (size_t)base + count > DIAMOND_JIT_MAX_REGISTERS) {
+    if ((size_t)base + count > DIAMOND_REGISTER_COUNT) {
         jc->bailed = true;
         return;
     }
@@ -1764,6 +1793,7 @@ static void compile_call_function(JitCompiler *jc, uint16_t dest,
      */
     const bool calls_self = function_index == jc->self_function_index && !jc->reads_closure &&
         self->type_variable_count == 0 &&
+        self->register_count <= DIAMOND_JIT_MAX_REGISTERS &&
         argc >= self->required_arity && argc <= self->arity && !self->has_variadic &&
         (size_t)base + argc <= DIAMOND_REGISTER_COUNT;
     size_t slow_jumps[4] = {0, 0, 0, 0};
@@ -3801,11 +3831,14 @@ static void emit_generic_bind(JitCompiler *jc) {
 void *diamond_jit_try_compile(const DiamondFunction *function,
         size_t self_function_index, size_t *out_size) {
     *out_size = 0;
+    /* A register_count of 0 is a hand-built chunk's "unset" (run_chunk reads
+     * it as the full width); refusing it lets jit_run_native size its
+     * register file with one compare (uses_heap_registers). */
     if (function->has_variadic ||
         function->nonlocal_landing ||
         function->code_count == 0 ||
-        function->register_count > DIAMOND_JIT_MAX_REGISTERS ||
-        (size_t)function->arity + 1 > DIAMOND_JIT_MAX_REGISTERS) {
+        function->register_count == 0 ||
+        function->register_count > DIAMOND_REGISTER_COUNT) {
         return nullptr;
     }
 

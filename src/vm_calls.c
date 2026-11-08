@@ -182,13 +182,10 @@ DiamondVmStatus forward_to_top_level_helper(DiamondVm *vm,
 #if defined(__clang__)
 __attribute__((no_sanitize("function")))
 #endif
-static inline uint8_t jit_run_native(DiamondVm *vm, const DiamondFunction *function,
+static inline uint8_t jit_run_native_in(DiamondVm *vm, const DiamondFunction *function,
         const DiamondChunk *chunk_to_interpret, const DiamondValue *arguments,
         size_t argument_count, size_t depth, const DiamondClosure *closure,
-        DiamondValue *result) {
-    DiamondValue jit_registers[DIAMOND_JIT_MAX_REGISTERS];
-    const size_t jit_register_count = function->register_count == 0
-        ? DIAMOND_JIT_MAX_REGISTERS : function->register_count;
+        DiamondValue *result, DiamondValue *jit_registers, size_t jit_register_count) {
     memset(jit_registers, 0, jit_register_count * sizeof(DiamondValue));
     const size_t copy_count = argument_count < jit_register_count
         ? argument_count : jit_register_count;
@@ -231,6 +228,36 @@ static inline uint8_t jit_run_native(DiamondVm *vm, const DiamondFunction *funct
     }
     vm->jit_bailouts++;
     return DIAMOND_JIT_RETRY;
+}
+
+/* A function with more registers than jit_run_native's stack buffer holds
+ * gets its register file from the heap, as run_chunk does; the compiled
+ * code roots the registers through its own frame while it runs and frees
+ * them on its way out (uses_heap_registers in src/jit.c, which must agree
+ * with the test in jit_run_native). The JIT never compiles a function whose
+ * register_count is 0 (a hand-built chunk's "unset"), so the common case
+ * costs one compare, no more than the zero test it replaces. */
+__attribute__((noinline, cold))
+static DiamondValue *jit_heap_registers(const DiamondFunction *function) {
+    return malloc((size_t)function->register_count * sizeof(DiamondValue));
+}
+
+#if defined(__clang__)
+__attribute__((no_sanitize("function")))
+#endif
+static inline uint8_t jit_run_native(DiamondVm *vm, const DiamondFunction *function,
+        const DiamondChunk *chunk_to_interpret, const DiamondValue *arguments,
+        size_t argument_count, size_t depth, const DiamondClosure *closure,
+        DiamondValue *result) {
+    DiamondValue stack_registers[DIAMOND_JIT_MAX_REGISTERS];
+    DiamondValue *jit_registers = stack_registers;
+    const size_t jit_register_count = function->register_count;
+    if (__builtin_expect(jit_register_count > DIAMOND_JIT_MAX_REGISTERS, 0)) {
+        jit_registers = jit_heap_registers(function);
+        if (jit_registers == nullptr) return DIAMOND_JIT_RETRY;
+    }
+    return jit_run_native_in(vm, function, chunk_to_interpret, arguments,
+        argument_count, depth, closure, result, jit_registers, jit_register_count);
 }
 
 /* A generic function's compiled prologue (src/jit.c): run_chunk's own

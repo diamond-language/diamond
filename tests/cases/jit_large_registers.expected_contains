@@ -1,0 +1,7 @@
+^57375$
+^\[w3-0, w3-149, w2-0, w2-149, w1-0, w1-149\]$
+^7$
+^checked: expected Int, got String$
+^raised 149$
+^rescued here 0$
+jit: 6 compiled function(s), 1 bailout(s), 3 hard propagation(s)
