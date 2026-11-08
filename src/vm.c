@@ -113,7 +113,10 @@ void diamond_resume_target_bounds(const DiamondFiber *fiber,
 #endif
 
 /* The JIT prologue and exits write and unlink DiamondFrame inline at these
- * offsets (jit.h); keep them in step with the struct. */
+ * offsets (jit.h); keep them in step with the struct. Checked where the JIT
+ * runs (x86-64): elsewhere, such as wasm32, pointers are smaller and jit.c
+ * is built but never enabled. */
+#if defined(__x86_64__) || defined(_M_X64)
 static_assert(sizeof(DiamondFrame) == DIAMOND_JIT_FRAME_SIZE);
 static_assert(offsetof(DiamondFrame, previous) == DIAMOND_JIT_FRAME_PREVIOUS);
 static_assert(offsetof(DiamondFrame, registers) == DIAMOND_JIT_FRAME_REGISTERS);
@@ -124,6 +127,7 @@ static_assert(offsetof(DiamondFrame, register_count) == DIAMOND_JIT_FRAME_REGIST
 static_assert(offsetof(DiamondFrame, chunk) == DIAMOND_JIT_FRAME_CHUNK);
 static_assert(offsetof(DiamondFrame, instruction_offset) == DIAMOND_JIT_FRAME_INSTRUCTION_OFFSET);
 static_assert(offsetof(DiamondFrame, serial) == DIAMOND_JIT_FRAME_SERIAL);
+#endif
 
 void diamond_jit_tail_reset(DiamondValue *registers, size_t base, size_t argc,
         size_t live) {
