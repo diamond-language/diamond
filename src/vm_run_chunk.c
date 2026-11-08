@@ -929,19 +929,8 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 break;
             }
             case DIAMOND_OP_SYMBOL: op_SYMBOL: {
-                uint16_t destination = 0;
-                uint16_t string_index = 0;
-                READ_OPERANDS(4);
-                destination=OPERAND_SHORT(0); string_index=OPERAND_SHORT(2);
-                if ((size_t)string_index >= chunk->string_count) {
-                    VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
-                }
-                const DiamondStringConstant *constant =
-                    &chunk->strings[string_index];
-                DiamondSymbol *symbol = allocate_symbol(
-                    vm, constant->chars, constant->length);
-                if (symbol == nullptr) VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
-                registers[destination] = DIAMOND_OBJECT(symbol);
+                ip_slot=ip;const DiamondVmStatus helper_status=outlined_symbol(vm,chunk,registers,depth,&ip_slot);ip=ip_slot;
+                VM_PROPAGATE(helper_status);
                 break;
             }
             case DIAMOND_OP_NIL: op_NIL: {
@@ -1022,53 +1011,9 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 registers[destination]=converted;break;
             }
             case DIAMOND_OP_PRINT: op_PRINT: {
-                uint16_t destination=0,source=0;uint8_t flags=0;
-                READ_SHORT(destination);READ_SHORT(source);READ_BYTE(flags);
-                const bool newline=(flags&DIAMOND_PRINT_NEWLINE)!=0;
-                /* warn() writes to stderr; print/puts to stdout. */
-                FILE *out=(flags&DIAMOND_PRINT_STDERR)!=0?stderr:stdout;
-                DiamondValue converted=DIAMOND_NIL;
-                DiamondVmStatus status=stringify_value(vm,chunk,depth,
-                    registers[source],&converted);
-                VM_PROPAGATE(status);
-                const DiamondString *text=(const DiamondString *)converted.as.object;
-                errno=0;
-                const size_t written=fwrite(text->chars,1,text->length,out);
-                if(written!=text->length||ferror(out)) {
-                    snprintf(vm->error,sizeof vm->error,"write error: %s",strerror(errno));
-                    VM_RETURN(DIAMOND_VM_IO_ERROR);
-                }
-                if(newline) {
-                    errno=0;
-                    if(fputc('\n',out)==EOF||ferror(out)) {
-                        snprintf(vm->error,sizeof vm->error,"write error: %s",strerror(errno));
-                        VM_RETURN(DIAMOND_VM_IO_ERROR);
-                    }
-                    /* stdout is fully buffered (not line-buffered) once
-                     * it isn't a terminal -- redirected to a file, a
-                     * pipe, whatever a test harness or `> log` capture
-                     * uses. Without an explicit flush, puts("ready")
-                     * right before blocking in a native call (accept(),
-                     * IO.poll, a receive loop -- exactly the shape every
-                     * readiness-signaling test in tests/run.sh and the
-                     * packages test scripts uses) could sit in the
-                     * buffer indefinitely: nothing forces a flush until
-                     * the buffer fills or the process exits, and a
-                     * process blocked waiting for someone to *see* its
-                     * own "ready" line is exactly the case that never
-                     * reaches either. plain print() (no trailing
-                     * newline, used to build up a line incrementally)
-                     * stays fully buffered -- this only fires for the
-                     * puts-style, newline-terminated case, matching
-                     * ordinary line-buffered-on-a-terminal behavior
-                     * unconditionally rather than only when isatty(). */
-                    errno=0;
-                    if(fflush(out)==EOF) {
-                        snprintf(vm->error,sizeof vm->error,"write error: %s",strerror(errno));
-                        VM_RETURN(DIAMOND_VM_IO_ERROR);
-                    }
-                }
-                registers[destination]=DIAMOND_NIL;break;
+                ip_slot=ip;const DiamondVmStatus helper_status=outlined_print(vm,chunk,registers,depth,&ip_slot);ip=ip_slot;
+                VM_PROPAGATE(helper_status);
+                break;
             }
             case DIAMOND_OP_GETS: op_GETS: {
                 uint16_t destination=0;
@@ -1412,13 +1357,8 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 break;
             }
             case DIAMOND_OP_CLASS_NAME: op_CLASS_NAME: {
-                uint16_t destination=0,source=0;
-                READ_SHORT(destination);READ_SHORT(source);
-                char name[80];
-                diamond_format_value_type(name,sizeof name,registers[source]);
-                DiamondString *class_name=allocate_string(vm,name,strlen(name));
-                if(class_name==nullptr)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
-                registers[destination]=DIAMOND_OBJECT(class_name);
+                ip_slot=ip;const DiamondVmStatus helper_status=outlined_class_name(vm,chunk,registers,depth,&ip_slot);ip=ip_slot;
+                VM_PROPAGATE(helper_status);
                 break;
             }
             case DIAMOND_OP_MODULO: op_MODULO: {
@@ -1463,48 +1403,17 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                         DIAMOND_FLOAT(-registers[operand].as.real);
                     break;
                 }
-                if (value_is_bignum(registers[operand])) {
-                    DiamondIntView operand_view;
-                    diamond_int_view(registers[operand],&operand_view);
-                    const DiamondValue bignum_result=
-                        diamond_bignum_negate(vm,operand_view);
-                    if(bignum_result.kind==DIAMOND_VALUE_NIL)
-                        VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
-                    registers[destination]=bignum_result;
+                int64_t negated = 0;
+                if (registers[operand].kind == DIAMOND_VALUE_INT &&
+                    !ckd_sub(&negated, 0, registers[operand].as.integer)) {
+                    registers[destination] = DIAMOND_INT(negated);
                     break;
                 }
-                if (registers[operand].kind==DIAMOND_VALUE_OBJECT &&
-                    registers[operand].as.object->kind==DIAMOND_OBJECT_INSTANCE) {
-                    bool found=false;DiamondValue op_result=DIAMOND_NIL;
-                    const uint8_t *site=bytecode+instruction_offset;
-                    const DiamondVmStatus status=invoke_operator_method(vm,chunk,depth,
-                        site,(const DiamondInstance *)registers[operand].as.object,
-                        "negate",6,nullptr,0,&op_result,&found);
-                    if(found) {
-                        VM_PROPAGATE(status);
-                        registers[destination]=op_result;
-                        break;
-                    }
-                }
-                if (registers[operand].kind != DIAMOND_VALUE_INT) {
-                    char actual[80];
-                    diamond_format_value_type(actual,sizeof actual,registers[operand]);
-                    snprintf(vm->error,sizeof vm->error,
-                        "undefined method 'negate' for %s",actual);
-                    VM_RETURN(DIAMOND_VM_TYPE_ERROR);
-                }
-                int64_t result_value = 0;
-                if (ckd_sub(&result_value, 0, registers[operand].as.integer)) {
-                    DiamondIntView operand_view;
-                    diamond_int_view(registers[operand],&operand_view);
-                    const DiamondValue bignum_result=
-                        diamond_bignum_negate(vm,operand_view);
-                    if(bignum_result.kind==DIAMOND_VALUE_NIL)
-                        VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
-                    registers[destination]=bignum_result;
-                    break;
-                }
-                registers[destination] = DIAMOND_INT(result_value);
+                /* A bignum, an Instance's own negate, an overflowing
+                 * INT64_MIN or an error: the shared body, which compiled
+                 * code runs too. */
+                ip_slot=ip-4;const DiamondVmStatus helper_status=outlined_negate(vm,chunk,registers,depth,&ip_slot);ip=ip_slot;
+                VM_PROPAGATE(helper_status);
                 break;
             }
             case DIAMOND_OP_EQUAL: op_EQUAL:
@@ -2551,25 +2460,8 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
              * parameter-count check reuses) rather than a new exception
              * class, for the same "wrong count of things" shape. */
             case DIAMOND_OP_CHECK_DESTRUCTURE_COUNT: op_CHECK_DESTRUCTURE_COUNT: {
-                uint16_t array_reg=0,expected=0;
-                READ_SHORT(array_reg); READ_SHORT(expected);
-                const bool minimum=(expected&0x8000u)!=0;
-                expected&=0x7fffu;
-                if(registers[array_reg].kind!=DIAMOND_VALUE_OBJECT||
-                   registers[array_reg].as.object->kind!=DIAMOND_OBJECT_ARRAY) {
-                    char actual[80];
-                    diamond_format_value_type(actual,sizeof actual,registers[array_reg]);
-                    snprintf(vm->error,sizeof vm->error,"expected Array, got %s",actual);
-                    VM_RETURN(DIAMOND_VM_TYPE_ERROR);
-                }
-                const DiamondArray *array=(const DiamondArray *)registers[array_reg].as.object;
-                if((minimum&&array->count<expected)||(!minimum&&array->count!=expected)) {
-                    snprintf(vm->error,sizeof vm->error,
-                        minimum?"destructuring assignment expected at least %u element(s), got %zu":
-                        "destructuring assignment expected %u element(s), got %zu",
-                        (unsigned)expected,array->count);
-                    VM_RETURN(DIAMOND_VM_ARITY_ERROR);
-                }
+                ip_slot=ip;const DiamondVmStatus helper_status=outlined_check_destructure_count(vm,chunk,registers,depth,&ip_slot);ip=ip_slot;
+                VM_PROPAGATE(helper_status);
                 break;
             }
             case DIAMOND_OP_CASE_ARRAY_SHAPE: op_CASE_ARRAY_SHAPE: {
@@ -3375,62 +3267,9 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
              * is the entire point: an inherited method reaches whichever
              * subclass actually received the original external call. */
             case DIAMOND_OP_INVOKE_SELF_METHOD: op_INVOKE_SELF_METHOD: {
-                uint16_t dest=0,base=0,name_index=0;uint8_t argc=0;
-                READ_SHORT(dest);READ_SHORT(name_index);READ_SHORT(base);READ_BYTE(argc);
-                if(registers[0].kind!=DIAMOND_VALUE_CLASS)
-                    VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
-                const uint16_t class_operand=registers[0].as.class_index;
-                if((size_t)class_operand>=chunk->class_count||
-                   (size_t)name_index>=chunk->string_count)
-                    VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
-                const DiamondClass *class=chunk->classes[class_operand];
-                const DiamondStringConstant *method_name=&chunk->strings[name_index];
-                const DiamondMethod *method=lookup_singleton_method(chunk,class,
-                    method_name->chars,method_name->length);
-                /* self.new(...): an instance of whichever class self is, so
-                 * an inherited factory method builds the subclass it was
-                 * called on. Unless the class defines its own `new`. */
-                if(method==nullptr&&method_name->length==3&&
-                   memcmp(method_name->chars,"new",3)==0) {
-                    if(class->sealed) {
-                        snprintf(vm->error,sizeof vm->error,
-                            "cannot instantiate sealed class %s directly -- "
-                            "use one of its subclasses",class->name);
-                        VM_RETURN(DIAMOND_VM_TYPE_ERROR);
-                    }
-                    const DiamondVmStatus new_status=diamond_jit_new_instance(vm,chunk,
-                        registers,dest,class_operand,base,argc,depth);
-                    VM_PROPAGATE(new_status);
-                    break;
-                }
-                /* self.name() / self.to_s(): the class's own name, unless
-                 * the class defines a singleton of that name itself. */
-                if(method==nullptr&&argc==0&&
-                   ((method_name->length==4&&memcmp(method_name->chars,"name",4)==0)||
-                    (method_name->length==4&&memcmp(method_name->chars,"to_s",4)==0))) {
-                    DiamondString *class_name=allocate_string(vm,class->name,strlen(class->name));
-                    if(class_name==nullptr)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
-                    registers[dest]=DIAMOND_OBJECT(class_name);break;
-                }
-                if(method==nullptr) {
-                    snprintf(vm->error,sizeof vm->error,
-                        "undefined class singleton method '%.*s' for %s",
-                        (int)method_name->length,method_name->chars,class->name);
-                    VM_RETURN(DIAMOND_VM_TYPE_ERROR);
-                }
-                if(argc<method->required_arity||
-                   (argc>method->arity && !method->has_variadic))
-                    VM_RETURN(DIAMOND_VM_ARITY_ERROR);
-                if((size_t)base+argc>DIAMOND_REGISTER_COUNT)
-                    VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
-                if((size_t)method->function_index>=chunk->function_count)
-                    VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
-                DiamondValue call_result=DIAMOND_NIL;
-                const DiamondVmStatus self_call_status=invoke_resolved_method_helper(
-                    vm,chunk,method,registers[0],registers,base,argc,false,0,
-                    nullptr,chunk,depth,&call_result);
-                VM_PROPAGATE(self_call_status);
-                registers[dest]=call_result;break;
+                ip_slot=ip;const DiamondVmStatus helper_status=outlined_invoke_self_method(vm,chunk,registers,depth,&ip_slot);ip=ip_slot;
+                VM_PROPAGATE(helper_status);
+                break;
             }
             case DIAMOND_OP_FIBER_NEW: op_FIBER_NEW: {
                 uint16_t dest=0,callable_reg=0;

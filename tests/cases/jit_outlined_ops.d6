@@ -1,0 +1,92 @@
+# Compiled functions using opcodes the JIT runs through the interpreter's own
+# out-of-line bodies (PRINT, SYMBOL, CLASS_NAME, NEGATE, GET_CVAR, SET_CVAR,
+# CHECK_DESTRUCTURE_COUNT, INVOKE_SELF_METHOD) or compiles inline (NOT,
+# LOAD_CLASS). Each prints what it does interpreted, errors included, under
+# stress GC.
+class Vector
+  def initialize(x: Int)
+    @x = x
+  end
+
+  def x() -> Int = @x
+
+  def negate() -> Vector = Vector.new(0 - @x)
+end
+
+class Registry
+  def self.add(n: Int) -> Int
+    @@total = (@@total || 0) + n
+    @@total
+  end
+
+  def self.total() = @@total
+
+  def self.build() = self.new()
+
+  def self.label() -> String = self.name()
+end
+
+def logic(values: Array) -> Array
+  out = []
+  values.each() do |v|
+    out.push(!v)
+  end
+  out
+end
+
+def negations(n: Int) -> Array
+  big = 9223372036854775807
+  [-n, -(n * 1.5), -(0 - big - 1), -Vector.new(n)]
+end
+
+def shapes(pairs: Array) -> Int
+  total = 0
+  pairs.each() do |pair|
+    a, b = pair
+    total += a * b
+  end
+  total
+end
+
+def labels(n: Int) -> String
+  i = 0
+  while i < n
+    Registry.add(i)
+    i += 1
+  end
+  "#{:sym} #{Registry.label()} #{Registry.build().class()} #{Registry.total()}"
+end
+
+def printing(n: Int)
+  i = 0
+  while i < n
+    print(i)
+    i += 1
+  end
+  puts("")
+end
+
+def failures() -> Array
+  out = []
+  begin
+    a, b = [1]
+  rescue e
+    out.push(e.message())
+  end
+  begin
+    -"text"
+  rescue e
+    out.push(e.message())
+  end
+  out
+end
+
+puts(logic([nil, false, true, 0, "", []]))
+puts(negations(4)[0])
+puts(negations(4)[1])
+puts(negations(4)[2])
+puts(negations(4)[3].x())
+puts(shapes([[1, 2], [3, 4], [5, 6]]))
+puts(labels(5))
+printing(4)
+puts(failures())

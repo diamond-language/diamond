@@ -2482,3 +2482,38 @@ DiamondVmStatus diamond_jit_set_cell(DiamondVm *vm,DiamondValue *registers,
         return DIAMOND_VM_OUT_OF_MEMORY;
     return DIAMOND_VM_OK;
 }
+
+/* Compiled code's way into an opcode whose interpreter body lives outside
+ * run_chunk (declared in src/jit.h). The bodies decode their own operands,
+ * so this only dispatches; jit.c's opcode_runs_outlined is the matching
+ * list, and decode_instruction_operands knows each one's operands and the
+ * register it writes. */
+static uint16_t jit_outlined_short(const DiamondChunk *chunk,size_t offset) {
+    return (uint16_t)(((unsigned)chunk->code[offset]<<8)|chunk->code[offset+1]);
+}
+
+DiamondVmStatus diamond_jit_outlined(DiamondVm *vm,const DiamondChunk *chunk,
+        DiamondValue *registers,size_t depth,size_t offset) {
+    size_t ip=offset+1;
+    switch((DiamondOpCode)chunk->code[offset]) {
+        case DIAMOND_OP_PRINT: return outlined_print(vm,chunk,registers,depth,&ip);
+        case DIAMOND_OP_SYMBOL: return outlined_symbol(vm,chunk,registers,depth,&ip);
+        case DIAMOND_OP_CLASS_NAME: return outlined_class_name(vm,chunk,registers,depth,&ip);
+        case DIAMOND_OP_NEGATE: return outlined_negate(vm,chunk,registers,depth,&ip);
+        case DIAMOND_OP_CHECK_DESTRUCTURE_COUNT:
+            return outlined_check_destructure_count(vm,chunk,registers,depth,&ip);
+        case DIAMOND_OP_INVOKE_SELF_METHOD:
+            return outlined_invoke_self_method(vm,chunk,registers,depth,&ip);
+        /* The JIT checked these operands' extent when it compiled them. */
+        case DIAMOND_OP_GET_CVAR:
+            return get_cvar_helper(vm,chunk,jit_outlined_short(chunk,offset+3),
+                jit_outlined_short(chunk,offset+5),
+                &registers[jit_outlined_short(chunk,offset+1)]);
+        case DIAMOND_OP_SET_CVAR:
+            return set_cvar_helper(vm,chunk,jit_outlined_short(chunk,offset+1),
+                jit_outlined_short(chunk,offset+3),
+                registers[jit_outlined_short(chunk,offset+5)]);
+        default:
+            return DIAMOND_VM_INVALID_BYTECODE;
+    }
+}

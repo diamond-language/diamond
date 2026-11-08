@@ -2078,6 +2078,18 @@ static inline int64_t diamond_int_floor_divide(int64_t left,int64_t right) {
 }
 DIAMOND_INTERNAL DiamondVmStatus outlined_call_typed(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
         size_t depth,size_t *ip_ref);
+DIAMOND_INTERNAL DiamondVmStatus outlined_print(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t depth,size_t *ip_ref);
+DIAMOND_INTERNAL DiamondVmStatus outlined_symbol(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t depth,size_t *ip_ref);
+DIAMOND_INTERNAL DiamondVmStatus outlined_class_name(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t depth,size_t *ip_ref);
+DIAMOND_INTERNAL DiamondVmStatus outlined_check_destructure_count(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t depth,size_t *ip_ref);
+DIAMOND_INTERNAL DiamondVmStatus outlined_invoke_self_method(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t depth,size_t *ip_ref);
+DIAMOND_INTERNAL DiamondVmStatus outlined_negate(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t depth,size_t *ip_ref);
 DIAMOND_INTERNAL DiamondVmStatus outlined_call_spread(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
         size_t depth,uint8_t instruction,size_t *ip_ref);
 DIAMOND_INTERNAL DiamondVmStatus outlined_call_singleton_keywords(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
