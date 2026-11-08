@@ -233,6 +233,23 @@ static inline uint8_t jit_run_native(DiamondVm *vm, const DiamondFunction *funct
     return DIAMOND_JIT_RETRY;
 }
 
+/* A generic function's compiled prologue (src/jit.c): run_chunk's own
+ * bind_generic_entry over the arguments in `registers`, into `state` in the
+ * function's frame reservation. Returns the chunk the body runs in, or
+ * nullptr to retry the call in the interpreter, which binds the same way
+ * and reports any failure itself. The registers hold only as many arguments
+ * as the function has registers, so a call passing more retries too. */
+const DiamondChunk *diamond_jit_bind_generic(DiamondVm *vm, const DiamondChunk *chunk,
+        const DiamondValue *registers, size_t argument_count,
+        const DiamondClosure *closure, DiamondJitGenericState *state) {
+    const size_t register_count = chunk->register_count == 0
+        ? DIAMOND_JIT_MAX_REGISTERS : chunk->register_count;
+    if (argument_count > register_count) return nullptr;
+    DiamondVmStatus status = DIAMOND_VM_OK;
+    return bind_generic_entry(chunk, vm, registers, argument_count, closure,
+        &state->execution, state->bindings, &status);
+}
+
 /* Phase 2b baseline JIT (docs/internal/jit-design.md) -- shared by every
  * call site that invokes a DiamondFunction with an already-assembled
  * arguments buffer: DIAMOND_OP_CALL below, and invoke_resolved_method_
@@ -1135,7 +1152,11 @@ uint8_t diamond_jit_tail_call_function(DiamondVm *vm, const DiamondChunk *chunk,
         return DIAMOND_VM_ARITY_ERROR;
     const size_t callee_registers = function->register_count == 0
         ? DIAMOND_REGISTER_COUNT : function->register_count;
-    if (function->code != chunk->code && !function->has_variadic &&
+    /* A generic function's call to itself is staged too: run_chunk's in-place
+     * self tail call infers its type variables again from the new arguments,
+     * which jit_tail_loop's fresh entry does (diamond_jit_bind_generic). */
+    if ((function->code != chunk->code || function->type_variable_count > 0) &&
+        !function->has_variadic &&
         argc <= DIAMOND_MAX_DECLARED_PARAMETERS && argc <= callee_registers) {
         vm->jit_tail_function = function;
         vm->jit_tail_count = argc;
@@ -2365,6 +2386,40 @@ DiamondVmStatus diamond_jit_invoke_any(DiamondVm *vm,const DiamondChunk *chunk,
     return status;
 }
 
+/* Compiled code's DIAMOND_OP_INVOKE_TYPED (`recv.method[Type]()`), read from
+ * the instruction at `site`: run_chunk's dispatch for it, with the explicit
+ * type arguments that follow the operands passed to an Instance's method.
+ * Separate from diamond_jit_invoke_any so untyped calls don't pay for the
+ * decode. jit.c checked the trailer's bounds when it compiled the site. */
+DiamondVmStatus diamond_jit_invoke_typed(DiamondVm *vm,const DiamondChunk *chunk,
+        DiamondValue *registers,const uint8_t *site,size_t depth) {
+    const uint16_t dest=(uint16_t)(((unsigned)site[1]<<8)|site[2]);
+    const uint16_t recv=(uint16_t)(((unsigned)site[3]<<8)|site[4]);
+    const uint16_t name=(uint16_t)(((unsigned)site[5]<<8)|site[6]);
+    const uint16_t base=(uint16_t)(((unsigned)site[7]<<8)|site[8]);
+    const uint8_t argc=site[9];
+    const uint8_t type_argument_count=site[10];
+    if(type_argument_count>8)return DIAMOND_VM_INVALID_BYTECODE;
+    uint16_t type_arguments[8];
+    for(size_t index=0;index<type_argument_count;index++)
+        type_arguments[index]=(uint16_t)(((unsigned)site[11+2*index]<<8)|site[12+2*index]);
+    if(registers[recv].kind==DIAMOND_VALUE_OBJECT&&
+       registers[recv].as.object->kind==DIAMOND_OBJECT_INSTANCE) {
+        DiamondValue call_result=DIAMOND_NIL;
+        const DiamondVmStatus status=diamond_jit_invoke_instance(vm,chunk,site,
+            DIAMOND_OP_INVOKE_TYPED,registers,recv,name,base,argc,type_argument_count,
+            type_arguments,depth,&call_result);
+        if(status!=DIAMOND_VM_OK) return status;
+        registers[dest]=call_result;
+        return DIAMOND_VM_OK;
+    }
+    const bool thread=registers[recv].kind==DIAMOND_VALUE_OBJECT&&
+        registers[recv].as.object->kind==DIAMOND_OBJECT_THREAD;
+    const DiamondVmStatus status=diamond_invoke_general(vm,chunk,registers,site,depth);
+    if(status==DIAMOND_VM_EXCEPTION&&thread) set_uncaught_exception_error(vm);
+    return status;
+}
+
 /* Compiled code's DIAMOND_OP_CALL_CLOSURE, read from the instruction at
  * `site`: run_chunk's call_closure_value. Writes registers[dest]. */
 DiamondVmStatus diamond_jit_call_closure(DiamondVm *vm,const DiamondChunk *chunk,
@@ -2534,6 +2589,10 @@ DiamondVmStatus diamond_jit_outlined(DiamondVm *vm,const DiamondChunk *chunk,
                 &registers[jit_outlined_short(chunk,offset+1)]);
         case DIAMOND_OP_SET_CVAR:
             return set_cvar_helper(vm,chunk,jit_outlined_short(chunk,offset+1),
+                jit_outlined_short(chunk,offset+3),
+                registers[jit_outlined_short(chunk,offset+5)]);
+        case DIAMOND_OP_CHECK_SELF_RETURN:
+            return check_self_return(vm,chunk,registers[jit_outlined_short(chunk,offset+1)],
                 jit_outlined_short(chunk,offset+3),
                 registers[jit_outlined_short(chunk,offset+5)]);
         default:

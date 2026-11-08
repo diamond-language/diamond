@@ -2521,6 +2521,46 @@ side effects, so a failure propagates rather than retrying in the interpreter).
   `opcode_runs_outlined`.
 
 Across the test cases, benchmarks and examples, functions the JIT rejected fell from 3,041 to
-1,333 (opcode rejections 2,130 to 422). What remains is mostly generic functions, register-limit
-and variadic functions, and a tail of native opcodes (`SQLITE3_OPEN`, `JSON_STRINGIFY`,
-`CASE_MATCH`, ...).
+1,333 (opcode rejections 2,130 to 422). Generic functions (next section) then took it to 553.
+
+## Generic functions
+
+A function with type variables (a generic function, a generic class's methods, a block that
+captures its creator's type variables) compiles like any other. `run_chunk` binds such a call's
+type variables on entry (`bind_generic_entry`: a closure's bindings, the receiver's, explicit
+ones already on the chunk, or inferred from the arguments) into a copy of the chunk, and every
+type check, nested call and closure afterwards reads them from that copy. Compiled code takes its
+chunk in `JIT_CHUNK`, so it needs only the same copy:
+
+- **Prologue:** a generic function reserves a `DiamondJitGenericState` (the chunk copy and eight
+  bindings) after its frame and links its frame. Right after the link, `emit_generic_bind` calls
+  `diamond_jit_bind_generic`, which runs `bind_generic_entry` over the argument registers, then
+  points `JIT_CHUNK` and `frame->chunk` at the copy. A failed binding jumps to the retry stub,
+  before anything has run, and the interpreter binds again and reports the error. A call with
+  more arguments than the function has registers also retries, since the registers do not hold
+  them all.
+- **Cost:** only generic functions emit the binding, so other calls run the same code as
+  before. (A first version tested for generics in `jit_run_native` on every native entry and
+  cost about 4 instructions per call: +0.8% on the dispatch benchmarks.)
+- **Recursion:** a plain call to itself skips the direct native self-call and goes through the
+  trampoline, and its own tail call is staged through `jit_tail_loop`
+  (`diamond_jit_tail_call_function` stages a generic function's self call too) rather than
+  looping in place. Both re-enter the prologue, so the type variables are inferred again from
+  the new arguments, as `run_chunk`'s plain call and its self tail call do.
+- **Type facts:** the facts the JIT derives from type sets are unaffected: a type variable's id
+  (`DIAMOND_TYPE_VARIABLE_BASE` and up) is neither a class id nor a plain type, so no fact or
+  inline type guard ever comes from one. `CHECK_TYPE` against such a set calls the interpreter's
+  matcher with the bound chunk.
+- **Related opcodes:** `INVOKE_TYPED` (`recv.method[Type]()`) calls `diamond_jit_invoke_typed`,
+  which reads the instruction's type arguments and passes them to the method, as `run_chunk`
+  does. It is a separate helper from `diamond_jit_invoke_any` because decoding the trailer there
+  cost every untyped call about 20 instructions (array_ops +5%). `CHECK_SELF_RETURN`
+  (`-> Self`) runs through `diamond_jit_outlined`.
+
+Across the test cases, benchmarks and examples, rejected functions fell from 1,333 to 553: 163
+refused up front (too many registers, variadic, a block's `break` landing in them) and 390 by
+opcode. With `DIAMOND_JIT=1`, typed_dispatch runs 7.0% fewer instructions and generic_calls 4.6%
+fewer, with every other benchmark unchanged. array_ops (+0.9%) only moved because the PGO build
+laid out `diamond_invoke_general` differently; its source is unchanged. Wall time for the two
+generic benchmarks is flat: each call still pays for the 200-byte chunk copy and inference that
+the interpreter pays.

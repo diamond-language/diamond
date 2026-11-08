@@ -1,0 +1,3 @@
+^7$
+^rejected: expected Int, got String$
+jit: 4 compiled function(s), 1 bailout(s), 1 hard propagation(s)

@@ -1,0 +1,61 @@
+# Generic functions and methods of generic classes compile under the JIT
+# (threshold 1, stress GC). Each native entry binds the call's own type
+# variables, as run_chunk does: inferred from the arguments, given
+# explicitly, taken from the receiver, or captured by a block.
+
+def identity[T](value: T) -> T = value
+
+# A plain recursive call infers T again from its own arguments, so it goes
+# through the binding entry rather than the direct native self-call.
+def nest[T](value: T, depth: Int) -> Array[T]
+  if depth == 0
+    return [value]
+  end
+  nest(value, depth - 1)
+end
+
+def first[T](values: Array[T]) -> T = values[0]
+
+# The block captures T from the call that created it.
+def wrap_each[T](values: Array[T]) -> Array[Array[T]]
+  values.map() do |value|
+    [value]
+  end
+end
+
+class Box[T]
+  def initialize(value: T)
+    @value = value
+  end
+
+  def get() -> T = @value
+
+  def set(value: T) -> T
+    @value = value
+  end
+end
+
+# Untyped, so only the check inside Box[Int]#set (T bound from the
+# receiver) can reject the String.
+def poke(box, value) = box.set(value)
+
+# Each call binds T differently; a binding left over from the previous call
+# would fail the return check.
+puts([identity(1), identity("two"), identity(3.5), identity(:four)])
+puts([nest(7, 3), nest("deep", 2)])
+puts([first[String](["a", "b"]), first([9, 8])])
+puts(wrap_each([1, 2]))
+puts(wrap_each(["x"]))
+
+ints = Box[Int].new(1)
+words = Box[String].new("one")
+ints.set(41)
+words.set("forty-two")
+puts([ints.get() + 1, words.get()])
+puts(poke(ints, 5))
+begin
+  poke(ints, "five")
+rescue error: TypeError
+  puts("rejected: #{error.message()}")
+end
+puts(ints.get())

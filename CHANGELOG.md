@@ -69,8 +69,13 @@ authoritative fine-grained record.
   symbols, `.class()`, and calls that pass keywords, a `*spread` or explicit type arguments no
   longer keep a function interpreted. These run the interpreter's own code for the
   instruction, so results and errors are unchanged. Across the test cases, benchmarks and
-  examples, functions the JIT turned away fell from 3,041 to 1,333. The rest are mostly
-  generic functions, which stay interpreted.
+  examples, functions the JIT turned away fell from 3,041 to 1,333.
+- **Generic functions and methods of generic classes compile under the JIT.** Each compiled
+  call binds its type variables on entry, from the arguments, explicit type arguments
+  (`f[Int](x)`, `obj.method[Int](x)`), the receiver or a block's creator, exactly as the
+  interpreter does, so type checks and errors are unchanged. `-> Self` methods compile too.
+  Functions the JIT turned away fell from 1,333 to 553. With `DIAMOND_JIT=1`, the
+  typed_dispatch benchmark runs 7% fewer instructions and the new generic_calls 4.6% fewer.
 
 ### Fixed
 

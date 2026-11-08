@@ -106,7 +106,7 @@ static inline bool collection_invoke_fast(DiamondVm *vm,DiamondValue *registers,
  * loop and costs every call about 40 instructions. Returns the chunk to run
  * (`execution` when bindings were installed), or nullptr with *status set. */
 __attribute__((noinline,cold))
-static const DiamondChunk *bind_generic_entry(const DiamondChunk *chunk,
+const DiamondChunk *bind_generic_entry(const DiamondChunk *chunk,
         DiamondVm *vm,const DiamondValue *arguments,size_t argument_count,
         const DiamondClosure *closure,DiamondChunk *execution,
         DiamondTypeBinding *bindings,DiamondVmStatus *status) {

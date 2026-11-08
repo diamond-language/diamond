@@ -1,0 +1,8 @@
+^\[1, two, 3\.5, four\]$
+^\[\[7\], \[deep\]\]$
+^\[a, 9\]$
+^\[\[1\], \[2\]\]$
+^\[\[x\]\]$
+^\[42, forty-two\]$
+^rejected: expected Int, got String$
+jit: 8 compiled function(s), 1 bailout(s), 1 hard propagation(s)
