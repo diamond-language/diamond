@@ -49,7 +49,10 @@ authoritative fine-grained record.
 - **Blocks run as machine code under the JIT.** The body of a `do ... end` block or closure now
   compiles, including the captured variables it reads and writes. Functions that read a
   top-level constant compile too. With `DIAMOND_JIT=1`, the blocks and iterate benchmarks run
-  36% fewer instructions (91 to 76 ms and 152 to 116 ms), and regex 5% fewer.
+  36% fewer instructions (91 to 76 ms and 152 to 116 ms), and regex 5% fewer. Captured
+  variables are now read and written by inline machine code instead of a call per access, and
+  a compiled block is entered directly from each/map/times, which takes blocks a
+  further 20% (70 to 60 ms) and iterate 15% (112 to 95 ms).
 
 ### Fixed
 

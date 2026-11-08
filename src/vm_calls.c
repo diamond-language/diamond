@@ -94,13 +94,6 @@ static DiamondVmStatus block_call_run_self_slot(DiamondVm *vm,const DiamondBlock
         depth+1,call->called,result);
 }
 
-DiamondVmStatus block_call_run(DiamondVm *vm,const DiamondBlockCall *call,
-        const DiamondValue *arguments,size_t depth,DiamondValue *result) {
-    if(call->self_slot) return block_call_run_self_slot(vm,call,arguments,depth,result);
-    return jit_call_or_interpret(vm,call->function,call->child,arguments,
-        call->argc,depth,call->called,result);
-}
-
 DiamondVmStatus call_closure_helper(DiamondVm *vm,const DiamondChunk *chunk,
         const DiamondFunction *fn,const DiamondClosure *called,
         const DiamondValue *registers,uint16_t base,uint8_t argc,size_t depth,
@@ -199,7 +192,7 @@ static inline uint8_t jit_run_native(DiamondVm *vm, const DiamondFunction *funct
     const uint8_t jit_status = jit_fn(vm, jit_registers, &jit_result,
             argument_count, chunk_to_interpret, depth + 1, closure);
     if (jit_status == DIAMOND_VM_OK) {
-        *result = jit_result;
+        value_copy_from_callee(result, &jit_result);
         return DIAMOND_VM_OK;
     }
     if (jit_status == DIAMOND_JIT_TAIL) return DIAMOND_JIT_TAIL;
@@ -339,6 +332,40 @@ DiamondVmStatus jit_call_with_jit(DiamondVm *vm, const DiamondFunction *function
     if (status == DIAMOND_JIT_TAIL)
         return jit_tail_loop(vm, chunk_to_interpret, depth, result);
     return (DiamondVmStatus)status;
+}
+
+/* A compiled block, entered without jit_call_core's tier-up bookkeeping:
+ * block_call_run checked everything jit_call_core would. Out of line so
+ * the native register file stays out of block_call_run's frame, which
+ * the interpreter's block calls share. */
+#if defined(__clang__)
+__attribute__((no_sanitize("function")))
+#endif
+__attribute__((noinline))
+static DiamondVmStatus block_call_native(DiamondVm *vm,const DiamondBlockCall *call,
+        const DiamondValue *arguments,size_t depth,DiamondValue *result) {
+    const uint8_t status=jit_run_native(vm,call->function,call->child,arguments,
+        call->argc,depth,call->called,result);
+    if(status==DIAMOND_JIT_TAIL) return jit_tail_loop(vm,call->child,depth,result);
+    if(status!=DIAMOND_JIT_RETRY) return (DiamondVmStatus)status;
+    return run_chunk(call->child,vm,arguments,call->argc,depth+1,call->called,result);
+}
+
+/* A block's every call lands here (the C loops behind each/map/times and
+ * CALL_CLOSURE), so a compiled block goes straight to its native code when
+ * nothing jit_call_core checks could stop it: the depth is under the limit
+ * (jit_depth_limit starts at 0, which sends the first call the long way;
+ * that call fills it in, on the thread running the VM) and the VM has no
+ * instruction or wall-clock budget. */
+DiamondVmStatus block_call_run(DiamondVm *vm,const DiamondBlockCall *call,
+        const DiamondValue *arguments,size_t depth,DiamondValue *result) {
+    if(call->self_slot) return block_call_run_self_slot(vm,call,arguments,depth,result);
+    if(vm->jit && call->function->jit_code!=nullptr && depth+1<vm->jit_depth_limit &&
+       vm->max_instructions==0 && vm->max_wall_nanoseconds==0 && !vm->resource_grace_active)
+        return block_call_native(vm,call,arguments,depth,result);
+    if(vm->jit_depth_limit==0) vm->jit_depth_limit=diamond_call_depth_limit(vm);
+    return jit_call_or_interpret(vm,call->function,call->child,arguments,
+        call->argc,depth,call->called,result);
 }
 
 /* Shared by DIAMOND_OP_NEW's #initialize call, DIAMOND_OP_INVOKE/_MONO/

@@ -769,6 +769,62 @@ static int32_t reg_disp(size_t index, int32_t field_offset) {
 }
 
 static const int32_t KIND_OFF = offsetof(DiamondValue, kind);
+
+/* Inline cell and capture access (GET_CELL, SET_CELL and a block's
+ * GET_CAPTURE, GET_CAPTURE_CELL, SET_CAPTURE). Each guard appends the jumps
+ * taken on anything unusual to `fail`; those land on the instruction's
+ * trampoline, which repeats the access with run_chunk's checks and errors,
+ * so the inline path only ever handles the plain case. */
+static void emit_cell_guard(JitBuffer *buf, int base, int32_t disp, size_t *fail, size_t *count) {
+    /* The value at [base + disp] is an object whose kind is Cell; the cell
+     * pointer is left in RDX. Clobbers RCX. */
+    emit_load_byte_zx(buf, REG_RCX, base, disp + KIND_OFF);
+    emit_cmp_imm32_32(buf, REG_RCX, DIAMOND_VALUE_OBJECT);
+    fail[(*count)++] = emit_jcc_placeholder(buf, JCC_NE);
+    emit_load_r64(buf, REG_RDX, base, disp + 8);
+    emit_load_byte_zx(buf, REG_RCX, REG_RDX, (int32_t)offsetof(DiamondObject, kind));
+    emit_cmp_imm32_32(buf, REG_RCX, DIAMOND_OBJECT_CELL);
+    fail[(*count)++] = emit_jcc_placeholder(buf, JCC_NE);
+}
+
+/* Copies a 16-byte DiamondValue as two 8-byte moves through RSI, as MOVE
+ * does (a 16-byte load right after 8-byte stores would stall on store
+ * forwarding). */
+static void emit_copy_value(JitBuffer *buf, int dst, int32_t dst_disp, int src, int32_t src_disp) {
+    emit_load_r64(buf, REG_RSI, src, src_disp);
+    emit_store_r64(buf, dst, dst_disp, REG_RSI);
+    emit_load_r64(buf, REG_RSI, src, src_disp + 8);
+    emit_store_r64(buf, dst, dst_disp + 8, REG_RSI);
+}
+
+/* gc_write_barrier's test on the cell in RDX: an old object not yet in the
+ * remembered set takes the trampoline, which stores again and remembers
+ * it. Clobbers RCX. */
+static void emit_barrier_guard(JitBuffer *buf, size_t *fail, size_t *count) {
+    emit_load_byte_zx(buf, REG_RCX, REG_RDX, (int32_t)offsetof(DiamondObject, old));
+    emit_test_r8(buf, REG_RCX);
+    const size_t young = emit_jcc_placeholder(buf, JCC_E);
+    emit_load_byte_zx(buf, REG_RCX, REG_RDX, (int32_t)offsetof(DiamondObject, remembered));
+    emit_test_r8(buf, REG_RCX);
+    fail[(*count)++] = emit_jcc_placeholder(buf, JCC_E);
+    patch_rel32_to_here(buf, young);
+}
+
+static int32_t capture_disp(uint16_t index) {
+    return (int32_t)(offsetof(DiamondClosure, captures) + (size_t)index * sizeof(DiamondValue));
+}
+
+/* The closure the function was entered with into RAX, failing to `fail`
+ * when there is none or it has no capture `index`. Clobbers RCX. */
+static void emit_capture_guard(JitCompiler *jc, uint16_t index, size_t *fail, size_t *count) {
+    JitBuffer *buf = &jc->buf;
+    emit_load_closure(jc, REG_RAX);
+    emit_u8(buf, 0x48); emit_u8(buf, 0x85); emit_u8(buf, 0xC0);   /* test rax, rax */
+    fail[(*count)++] = emit_jcc_placeholder(buf, JCC_E);
+    emit_load_byte_zx(buf, REG_RCX, REG_RAX, (int32_t)offsetof(DiamondClosure, capture_count));
+    emit_cmp_imm32_32(buf, REG_RCX, index);
+    fail[(*count)++] = emit_jcc_placeholder(buf, JCC_BE);
+}
 static const int32_t AS_OFF = offsetof(DiamondValue, as);
 
 /* Phase 3: unlike the removed emit_check_kind_int_or_bail, this jumps to a
@@ -2798,11 +2854,18 @@ static bool compile_value_instruction(JitCompiler *jc, DiamondOpCode opcode, siz
                 jc->bailed = true; return true;
             }
             JitBuffer *buf = &jc->buf;
+            size_t fail[2]; size_t fail_count = 0;
+            emit_cell_guard(buf, JIT_REGISTERS_BASE, reg_disp(cell, 0), fail, &fail_count);
+            emit_copy_value(buf, JIT_REGISTERS_BASE, reg_disp(dest, 0), REG_RDX,
+                (int32_t)offsetof(DiamondCell, value));
+            const size_t done = emit_jmp_placeholder(buf);
+            for (size_t i = 0; i < fail_count; i++) patch_rel32_to_here(buf, fail[i]);
             emit_mov_rr(buf, REG_RDI, JIT_REGISTERS_BASE);
             emit_mov_imm64(buf, REG_RSI, dest);
             emit_mov_imm64(buf, REG_RDX, cell);
             emit_body_call(jc, (void *)(uintptr_t)diamond_jit_get_cell);
             emit_bail_if_al_nonzero(jc);
+            patch_rel32_to_here(buf, done);
             break;
         }
         case DIAMOND_OP_SET_CELL: {
@@ -2811,12 +2874,20 @@ static bool compile_value_instruction(JitCompiler *jc, DiamondOpCode opcode, siz
                 jc->bailed = true; return true;
             }
             JitBuffer *buf = &jc->buf;
+            size_t fail[3]; size_t fail_count = 0;
+            emit_cell_guard(buf, JIT_REGISTERS_BASE, reg_disp(cell, 0), fail, &fail_count);
+            emit_copy_value(buf, REG_RDX, (int32_t)offsetof(DiamondCell, value),
+                JIT_REGISTERS_BASE, reg_disp(source, 0));
+            emit_barrier_guard(buf, fail, &fail_count);
+            const size_t done = emit_jmp_placeholder(buf);
+            for (size_t i = 0; i < fail_count; i++) patch_rel32_to_here(buf, fail[i]);
             emit_mov_rr(buf, REG_RDI, JIT_VM);
             emit_mov_rr(buf, REG_RSI, JIT_REGISTERS_BASE);
             emit_mov_imm64(buf, REG_RDX, cell);
             emit_mov_imm64(buf, REG_RCX, source);
             emit_body_call(jc, (void *)(uintptr_t)diamond_jit_set_cell);
             emit_bail_if_al_nonzero(jc);
+            patch_rel32_to_here(buf, done);
             break;
         }
         case DIAMOND_OP_GET_CAPTURE:
@@ -2830,6 +2901,17 @@ static bool compile_value_instruction(JitCompiler *jc, DiamondOpCode opcode, siz
             }
             jc->reads_closure = true;
             JitBuffer *buf = &jc->buf;
+            size_t fail[4]; size_t fail_count = 0;
+            emit_capture_guard(jc, index, fail, &fail_count);
+            emit_cell_guard(buf, REG_RAX, capture_disp(index), fail, &fail_count);
+            if (opcode == DIAMOND_OP_GET_CAPTURE_CELL)
+                emit_copy_value(buf, JIT_REGISTERS_BASE, reg_disp(dest, 0), REG_RAX,
+                    capture_disp(index));
+            else
+                emit_copy_value(buf, JIT_REGISTERS_BASE, reg_disp(dest, 0), REG_RDX,
+                    (int32_t)offsetof(DiamondCell, value));
+            const size_t done = emit_jmp_placeholder(buf);
+            for (size_t i = 0; i < fail_count; i++) patch_rel32_to_here(buf, fail[i]);
             emit_load_closure(jc, REG_RDI);
             emit_mov_rr(buf, REG_RSI, JIT_REGISTERS_BASE);
             emit_mov_imm64(buf, REG_RDX, dest);
@@ -2837,6 +2919,7 @@ static bool compile_value_instruction(JitCompiler *jc, DiamondOpCode opcode, siz
             emit_mov_imm64(buf, REG_R8, opcode == DIAMOND_OP_GET_CAPTURE_CELL ? 1 : 0);
             emit_body_call(jc, (void *)(uintptr_t)diamond_jit_get_capture);
             emit_bail_if_al_nonzero(jc);
+            patch_rel32_to_here(buf, done);
             break;
         }
         case DIAMOND_OP_GET_NAMESPACE_CONSTANT: {
@@ -2860,6 +2943,14 @@ static bool compile_value_instruction(JitCompiler *jc, DiamondOpCode opcode, siz
             }
             jc->reads_closure = true;
             JitBuffer *buf = &jc->buf;
+            size_t fail[5]; size_t fail_count = 0;
+            emit_capture_guard(jc, index, fail, &fail_count);
+            emit_cell_guard(buf, REG_RAX, capture_disp(index), fail, &fail_count);
+            emit_copy_value(buf, REG_RDX, (int32_t)offsetof(DiamondCell, value),
+                JIT_REGISTERS_BASE, reg_disp(source, 0));
+            emit_barrier_guard(buf, fail, &fail_count);
+            const size_t done = emit_jmp_placeholder(buf);
+            for (size_t i = 0; i < fail_count; i++) patch_rel32_to_here(buf, fail[i]);
             emit_mov_rr(buf, REG_RDI, JIT_VM);
             emit_load_closure(jc, REG_RSI);
             emit_mov_rr(buf, REG_RDX, JIT_REGISTERS_BASE);
@@ -2867,6 +2958,7 @@ static bool compile_value_instruction(JitCompiler *jc, DiamondOpCode opcode, siz
             emit_mov_imm64(buf, REG_R8, source);
             emit_body_call(jc, (void *)(uintptr_t)diamond_jit_set_capture);
             emit_bail_if_al_nonzero(jc);
+            patch_rel32_to_here(buf, done);
             break;
         }
         case DIAMOND_OP_CLOSURE: {

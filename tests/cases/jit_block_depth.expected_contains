@@ -1,0 +1,4 @@
+^main: call stack overflow$
+^fiber: call stack overflow$
+^thread: call stack overflow$
+jit: 2 compiled function(s)

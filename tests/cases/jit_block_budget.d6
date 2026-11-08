@@ -1,0 +1,15 @@
+# Native code never counts instructions, so under an instruction budget a
+# compiled block runs interpreted: the budget still interrupts a loop of
+# block calls, here with a ResourceLimitError the program rescues.
+def spin() -> Int
+  total = 0
+  begin
+    while true
+      [1, 2, 3].each() do |v| total += v end
+    end
+  rescue error: ResourceLimitError
+    puts("budget: #{error.message()}")
+  end
+  total
+end
+puts(spin() > 0)

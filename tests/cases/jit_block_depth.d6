@@ -1,0 +1,22 @@
+# A compiled block is entered straight from block_call_run when nothing
+# jit_call_core checks could stop it. Endless recursion through a block (in
+# the main program, a Fiber and a Thread) still stops at the depth limit
+# with a clean error.
+def dive(n: Int) -> Int
+  [n].map() do |x| dive(x + 1) end.first()
+end
+
+def overflow(label: String) -> Nil
+  begin
+    dive(0)
+  rescue error: SystemStackError
+    puts("#{label}: #{error.message()}")
+  end
+  nil
+end
+
+def in_fiber() = overflow("fiber")
+def in_thread() = overflow("thread")
+overflow("main")
+Fiber.new(in_fiber).resume()
+Thread.new(in_thread).join()
