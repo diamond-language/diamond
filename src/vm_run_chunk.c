@@ -2919,43 +2919,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
             case DIAMOND_OP_BLOCK_BREAK: op_BLOCK_BREAK: {
                 uint16_t source=0;READ_SHORT(source);
                 const bool is_break=bytecode[instruction_offset]==DIAMOND_OP_BLOCK_BREAK;
-                const uint64_t target=closure==nullptr?0:
-                    (is_break?closure->break_target:closure->return_target);
-                if(target==0) {
-                    /* A block copied into another VM (Thread.new) has no
-                     * frame to go back to there. */
-                    snprintf(vm->error,sizeof vm->error,is_break?
-                        "break from a block outside the call it was passed to":
-                        "return from a block outside the method it was written in");
-                    VM_RETURN(DIAMOND_VM_TYPE_ERROR);
-                }
-                /* Check the target is still live on this stack (and, for a
-                 * break, still inside the call it was passed to) before
-                 * unwinding anything, so a stale target is an ordinary
-                 * rescuable error raised right here. */
-                const DiamondFrame *callee=nullptr;
-                for(const DiamondFrame *walk=&frame;walk!=nullptr;walk=walk->previous) {
-                    if(walk->previous!=nullptr&&walk->previous->serial==target) {
-                        callee=walk;break;
-                    }
-                    if(walk->serial==target) {callee=walk;break;}
-                }
-                /* A break lands only in the very call the block was
-                 * written for, not a later one it was handed to. */
-                const bool live=callee!=nullptr&&(is_break?
-                    callee->serial!=target&&closure->break_call_offset!=0&&
-                    *callee->previous->instruction_offset==
-                        closure->break_call_offset:true);
-                if(!live) {
-                    snprintf(vm->error,sizeof vm->error,is_break?
-                        "break from a block outside the call it was passed to":
-                        "return from a block outside the method it was written in");
-                    VM_RETURN(DIAMOND_VM_TYPE_ERROR);
-                }
-                vm->nonlocal_value=registers[source];
-                vm->nonlocal_target=target;
-                vm->nonlocal_is_break=is_break;
-                VM_RETURN(DIAMOND_VM_NONLOCAL_EXIT);
+                VM_RETURN(begin_block_exit(vm,closure,&frame,registers[source],is_break));
             }
             case DIAMOND_OP_END_ENSURE: op_END_ENSURE: {
                 if(handler_count==0 ||

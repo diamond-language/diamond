@@ -281,15 +281,66 @@ NonlocalOutcome nonlocal_exit_arrives(DiamondVm *vm,const DiamondChunk *chunk,
     return NONLOCAL_PASS_ON;
 }
 
+/* DIAMOND_OP_BLOCK_BREAK / BLOCK_RETURN of `value` from the block `closure`
+ * running in `frame` (run_chunk's and compiled code's alike): starts the
+ * non-local exit (DIAMOND_VM_NONLOCAL_EXIT, vm->nonlocal_* set), or fails
+ * with DIAMOND_VM_TYPE_ERROR and vm->error when the target is gone. */
+DiamondVmStatus begin_block_exit(DiamondVm *vm,const DiamondClosure *closure,
+        const DiamondFrame *frame,DiamondValue value,bool is_break) {
+    const uint64_t target=closure==nullptr?0:
+        (is_break?closure->break_target:closure->return_target);
+    if(target==0) {
+        /* A block copied into another VM (Thread.new) has no frame to go
+         * back to there. */
+        snprintf(vm->error,sizeof vm->error,is_break?
+            "break from a block outside the call it was passed to":
+            "return from a block outside the method it was written in");
+        return DIAMOND_VM_TYPE_ERROR;
+    }
+    /* Check the target is still live on this stack (and, for a break, still
+     * inside the call it was passed to) before unwinding anything, so a
+     * stale target is an ordinary rescuable error raised right here. */
+    const DiamondFrame *callee=nullptr;
+    for(const DiamondFrame *walk=frame;walk!=nullptr;walk=walk->previous) {
+        if(walk->previous!=nullptr&&walk->previous->serial==target) {
+            callee=walk;break;
+        }
+        if(walk->serial==target) {callee=walk;break;}
+    }
+    /* A break lands only in the very call the block was written for, not a
+     * later one it was handed to. */
+    const bool live=callee!=nullptr&&(is_break?
+        callee->serial!=target&&closure->break_call_offset!=0&&
+        *callee->previous->instruction_offset==closure->break_call_offset:true);
+    if(!live) {
+        snprintf(vm->error,sizeof vm->error,is_break?
+            "break from a block outside the call it was passed to":
+            "return from a block outside the method it was written in");
+        return DIAMOND_VM_TYPE_ERROR;
+    }
+    vm->nonlocal_value=value;
+    vm->nonlocal_target=target;
+    vm->nonlocal_is_break=is_break;
+    return DIAMOND_VM_NONLOCAL_EXIT;
+}
+
+/* Compiled code's DIAMOND_OP_BLOCK_BREAK / BLOCK_RETURN (declared in jit.h):
+ * the block's frame is the top of vm->frames. */
+uint8_t diamond_jit_block_exit(DiamondVm *vm,const DiamondValue *value,
+        const DiamondClosure *closure,bool is_break) {
+    return (uint8_t)begin_block_exit(vm,closure,(const DiamondFrame *)vm->frames,*value,is_break);
+}
+
 /* Exception handling in compiled code (declared in jit.h): run_chunk's
  * handler opcodes and failure paths over a compiled function's
  * DiamondJitHandlerState, so both tiers make the same decisions. Each
  * returns 0 when execution continues at state->resume, a status to
- * propagate, or (end_ensure, return) DIAMOND_JIT_HANDLER_RETURNED once the
- * function's result is written. A compiled function never lands a block's
- * break or return (functions with nonlocal_landing stay interpreted), so a
- * non-local exit only passes through it, running its ensure clauses. The
- * function's frame is the top of vm->frames whenever these run. */
+ * propagate, or DIAMOND_JIT_HANDLER_RETURNED once the function's result is
+ * written. A non-local exit passing through runs the function's ensure
+ * clauses; one headed for this function lands as run_chunk's VM_RETURN lands
+ * it (a function a block's break or return lands in compiles with handler
+ * state for this). The function's frame is the top of vm->frames whenever
+ * these run. */
 uint8_t diamond_jit_push_rescue(DiamondJitHandlerState *state,const uint8_t *site,
         size_t code_count) {
     uint8_t type_count=site[3];
@@ -317,15 +368,22 @@ uint8_t diamond_jit_pop_rescue(DiamondJitHandlerState *state) {
  * runs this frame's ensure clauses on its way through, and an error becomes
  * an exception a rescue clause can take. */
 static uint8_t jit_unwind_status(DiamondVm *vm,const DiamondChunk *chunk,
-        DiamondValue *registers,DiamondJitHandlerState *state,uint8_t status) {
+        DiamondValue *registers,DiamondJitHandlerState *state,uint8_t status,
+        DiamondValue *result) {
     size_t ip=0;
     if(status==DIAMOND_VM_NONLOCAL_EXIT) {
         const DiamondFrame *frame=(const DiamondFrame *)vm->frames;
-        DiamondValue unused=DIAMOND_NIL;
+        /* A break landing here continues after the call it interrupted,
+         * which only the compiled code knows the end of (see
+         * DIAMOND_JIT_RESUME_AFTER_CALL). */
+        const bool lands_break=vm->nonlocal_is_break&&vm->nonlocal_target==frame->serial;
+        const size_t offset=*frame->instruction_offset;
         switch(nonlocal_exit_arrives(vm,chunk,frame,registers,state->handlers,
-                &state->count,&state->pending,&ip,*frame->instruction_offset,&unused)) {
-            case NONLOCAL_CONTINUE: state->resume=ip; return DIAMOND_VM_OK;
-            case NONLOCAL_RETURNED:
+                &state->count,&state->pending,&ip,offset,result)) {
+            case NONLOCAL_CONTINUE:
+                state->resume=lands_break?(size_t)DIAMOND_JIT_RESUME_AFTER_CALL|offset:ip;
+                return DIAMOND_VM_OK;
+            case NONLOCAL_RETURNED: return DIAMOND_JIT_HANDLER_RETURNED;
             case NONLOCAL_PASS_ON: return DIAMOND_VM_NONLOCAL_EXIT;
             case NONLOCAL_INVALID: status=DIAMOND_VM_TYPE_ERROR; break;
         }
@@ -339,7 +397,7 @@ static uint8_t jit_unwind_status(DiamondVm *vm,const DiamondChunk *chunk,
 }
 
 uint8_t diamond_jit_catch(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
-        DiamondJitHandlerState *state,uint8_t status) {
+        DiamondJitHandlerState *state,uint8_t status,DiamondValue *result) {
     if(status==DIAMOND_VM_EXCEPTION) {
         size_t ip=0;
         if(catch_exception(vm,chunk,state->handlers,&state->count,&state->pending,
@@ -349,7 +407,7 @@ uint8_t diamond_jit_catch(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *
         }
         return DIAMOND_VM_EXCEPTION;
     }
-    return jit_unwind_status(vm,chunk,registers,state,status);
+    return jit_unwind_status(vm,chunk,registers,state,status,result);
 }
 
 uint8_t diamond_jit_push_ensure(DiamondJitHandlerState *state,size_t target,size_t code_count) {
@@ -413,7 +471,7 @@ uint8_t diamond_jit_end_ensure(DiamondVm *vm,const DiamondChunk *chunk,DiamondVa
             vm->nonlocal_value=resume.value;
             vm->nonlocal_target=resume.nonlocal_target;
             vm->nonlocal_is_break=resume.nonlocal_is_break;
-            return jit_unwind_status(vm,chunk,registers,state,DIAMOND_VM_NONLOCAL_EXIT);
+            return jit_unwind_status(vm,chunk,registers,state,DIAMOND_VM_NONLOCAL_EXIT,result);
         case PENDING_EXCEPTION: {
             vm->exception=resume.value;vm->has_exception=true;
             size_t ip=0;

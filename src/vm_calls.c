@@ -351,8 +351,9 @@ static uint8_t jit_call_core(DiamondVm *vm, const DiamondFunction *function,
                         self_index = index;
                         break;
                     }
-                void *compiled = diamond_jit_try_compile(function, self_index,
-                    &jit_code_size);
+                void *compiled = diamond_jit_try_compile(function,
+                    chunk_to_interpret->functions, chunk_to_interpret->function_count,
+                    self_index, &jit_code_size);
                 if (compiled != nullptr) {
                     mutable_function->jit_code = compiled;
                     mutable_function->jit_code_size = jit_code_size;

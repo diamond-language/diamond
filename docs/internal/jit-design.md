@@ -2347,10 +2347,8 @@ uses (an out-of-line call cost the closures benchmark 2% in the interpreter). A 
 creating frame's `serial` and `home` as break and return targets, so JIT frames now take a serial
 from `vm->frame_serial` the first time they create a closure (in `diamond_jit_closure`, so other
 compiled calls skip the increment). Its home is `run_chunk`'s: the frame's own serial, or for a
-compiled block body the `return_target` of the closure it was entered with. Neither target is
-ever reached from compiled code: a block that breaks or returns marks its landing function
-`nonlocal_landing`, which the JIT does not compile, and the breaking or returning block itself
-has `BLOCK_BREAK`/`BLOCK_RETURN`, which have no case.
+compiled block body the `return_target` of the closure it was entered with. Compiled code both
+starts and lands non-local exits; see "Block break and return" below.
 
 ## Block bodies
 
@@ -2619,5 +2617,43 @@ interpreter runs it in place, rooting its own buffer); `tail_call_variadic`'s 41
 The work turned up an interpreter bug: `f() do ... end` for `def f(*rest, &block)` collected the
 placeholder into `rest`, and printing it crashed. `allocate_variadic_array` now drops
 placeholders in both paths. Rejected functions fell from 457 to 416. The only up-front refusal
-left is a block's `break` landing in the function (20 functions in 12 files). Benchmarks are
+left was a block's `break` landing in the function (20 functions in 12 files). Benchmarks are
 unchanged or 0.1-0.5% fewer instructions.
+
+## Block break and return
+
+A block's `break` ends the call the block was passed to, which gets the break's value, and a
+`return` in a block returns from the method it was written in. Both unwind as
+`DIAMOND_VM_NONLOCAL_EXIT` toward a frame serial the closure recorded (`break_target`,
+`return_target`), running ensure clauses on the way. The compiler marks the function such an
+exit lands in `nonlocal_landing`, and the JIT used to refuse it, along with the block itself
+(`BLOCK_BREAK`/`BLOCK_RETURN` had no case).
+
+Starting the exit is `begin_block_exit` (`vm_exceptions.c`), which `run_chunk`'s case now calls
+too. It checks the target frame is still on the stack (and, for a break, still inside the very
+call the block was written for) and sets `vm->nonlocal_*`. The compiled case calls it through
+`diamond_jit_block_exit` with the block's frame linked and its closure, and treats the status
+like any failing call: the propagate stub, or the catch stub when the block has handlers. It
+sets `has_called`, so nothing retries the block.
+
+Landing reuses the exception-handler machinery. A `nonlocal_landing` function compiles with
+handler state (`has_handlers`) even without a `begin`, so every failing call goes to the catch
+stub. `diamond_jit_catch` takes the function's result pointer now, and `jit_unwind_status`
+lands an exit aimed at this frame as `run_chunk`'s `VM_RETURN` does:
+
+- A `return` writes the result; the catch stub sees `DIAMOND_JIT_HANDLER_RETURNED` and returns
+  `DIAMOND_VM_OK`. An enclosing ensure clause runs first, as for a plain `return`.
+- A `break` writes the call's destination register and continues with the instruction after
+  the call. Only the compiled code knows where that is, so `state->resume` becomes
+  `DIAMOND_JIT_RESUME_AFTER_CALL | call offset` and the resume stub has one more key per such
+  call. The calls come from the function's `CLOSURE` instructions: a block with a break names
+  its call (`block_call_offset`) in the program's function table, which `try_compile` now
+  receives. The pad slot already holds the failing call's offset, and `begin_block_exit`
+  matches the call against it through the frame's `instruction_offset`, as for an interpreted
+  frame.
+
+A landing function pays for handler state it may not otherwise need: a 1.3 KB larger
+reservation, and `RETURN` goes through `diamond_jit_return`. Either is cheap next to the block
+call it comes with. A tail call in such a function still keeps it interpreted. Rejected functions
+fell from 434 to 363 over the test cases, benchmarks and examples (a recount that includes this
+change's test). What remains is a tail of opcodes.

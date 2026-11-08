@@ -86,6 +86,11 @@ authoritative fine-grained record.
   function has registers runs in the interpreter, as does a function whose parameter setup
   writes where its rest arguments wait (a default before the rest parameter). Functions the
   JIT turns away fell from 457 to 416.
+- **The JIT compiles blocks that `break` or `return`, and the functions they land in.** A
+  function whose block breaks out of the call it was passed to, or returns from the function,
+  used to run interpreted, and so did the block. Both compile now, ensure clauses still run on
+  the way out, and a break from a block whose call has finished is still a rescuable error.
+  About 70 fewer functions are turned away.
 
 ### Fixed
 

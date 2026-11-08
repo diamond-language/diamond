@@ -1,0 +1,11 @@
+^\[5, nil\]$
+^\[found 70, found \[1\]\]$
+^\[2[+]6, none\]$
+^\[306, 306\]$
+^30$
+^\[stopped 20, inner 10, inner 20, inner 30, outer, stopped 20, inner 10, inner 20, inner 30, outer\]$
+^\[broke at 2, broke at 2\]$
+^\[walk done, walk done\]$
+^720$
+^stale: break from a block outside the call it was passed to$
+jit: 22 compiled function(s), 0 bailout(s), 33 hard propagation(s)
