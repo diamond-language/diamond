@@ -243,36 +243,30 @@ DiamondVmStatus diamond_jit_index_set(DiamondVm *vm, const DiamondChunk *chunk,
         size_t depth, const uint8_t *site, const DiamondValue *receiver,
         const DiamondValue *index, const DiamondValue *source);
 
-/* Phase 2c: opaque DiamondFrame management -- DiamondFrame's own layout is
- * private to vm.c (not declared in vm.h), so a JIT'd function can never
- * construct or link one directly; it only ever reserves
- * diamond_jit_frame_size() bytes on its own native stack (queried once per
- * *compile*, not per generated call, so this self-syncs against the
- * struct's real layout instead of duplicating a hardcoded constant) and
- * calls these two to manage it:
- *
- *   diamond_jit_frame_push(storage, vm, registers, register_count, chunk, offset_slot)
- *     placement-constructs a frame into `storage` and links it onto
- *     vm->frames, exactly like run_chunk's own entry setup -- called once,
- *     in a compiled function's own prologue, before anything that can
- *     allocate.
- *   diamond_jit_frame_pop(vm)
- *     unlinks it (vm->frames = vm->frames->previous) -- called once, on
- *     every exit path (the success RETURN and the shared bailout stub),
- *     mirroring run_chunk's own single pop on every return path.
- *
- * A JIT'd frame's `pending` is always nullptr (mark_frame_chain already
- * treats that as "nothing to mark here," and this JIT compiles no begin/
- * rescue, so nothing could ever populate it) and its `instruction_offset`
- * points at a synthetic size_t (zero-initialized, reserved as part of the
- * same storage block) rather than a real, advancing bytecode position --
- * a backtrace captured through a JIT'd frame is therefore approximate,
- * not exact, which is fine today since nothing this JIT calls through
- * these trampolines can itself raise. */
-size_t diamond_jit_frame_size(void);
-void diamond_jit_frame_push(void *frame_storage, DiamondVm *vm,
-        DiamondValue *registers, size_t register_count, const DiamondChunk *chunk, size_t *offset_slot);
-void diamond_jit_frame_pop(DiamondVm *vm);
+/* DiamondFrame management. A compiled function that needs a frame reserves
+ * DIAMOND_JIT_FRAME_SIZE bytes on its own native stack and its prologue
+ * writes the frame inline, exactly like run_chunk's own entry setup: zero
+ * the fields nothing else sets (pending, handlers, handler_count, and serial
+ * through the end), then store `previous` (the old vm->frames), `registers`,
+ * `register_count`, `chunk` and `instruction_offset` (the prologue's pad
+ * slot, just above the frame, which every call from the body updates with
+ * its bytecode offset), and link it onto vm->frames. Every exit unlinks it
+ * inline too (vm->frames = frame->previous). DiamondFrame itself is private
+ * to the VM, so the offsets the generated code writes are spelled out here
+ * and vm.c static_asserts each one against the struct. A JIT'd frame's
+ * `pending` and handler fields stay zero (this JIT compiles no begin/rescue)
+ * and its serial is assigned lazily, only when a closure needs it. */
+enum {
+    DIAMOND_JIT_FRAME_SIZE = 96,
+    DIAMOND_JIT_FRAME_PREVIOUS = 0,
+    DIAMOND_JIT_FRAME_REGISTERS = 8,
+    DIAMOND_JIT_FRAME_PENDING = 16,        /* pending, handlers: zeroed */
+    DIAMOND_JIT_FRAME_HANDLER_COUNT = 32,  /* zeroed */
+    DIAMOND_JIT_FRAME_REGISTER_COUNT = 40,
+    DIAMOND_JIT_FRAME_CHUNK = 48,
+    DIAMOND_JIT_FRAME_INSTRUCTION_OFFSET = 56,
+    DIAMOND_JIT_FRAME_SERIAL = 64,         /* serial to the end: zeroed */
+};
 /* Propagate-exit variant: appends the frame's "at name:line:col" trace line for
  * a failing `status` before popping. */
 void diamond_jit_frame_pop_propagating(DiamondVm *vm, uint8_t status);
@@ -445,6 +439,13 @@ DiamondVmStatus diamond_jit_invoke_instance(DiamondVm *vm, const DiamondChunk *c
  * jc->needs_frame and jc->has_called. */
 DiamondVmStatus diamond_jit_invoke_any(DiamondVm *vm, const DiamondChunk *chunk,
         DiamondValue *registers, const uint8_t *site, size_t depth);
+
+/* A direct native self-call's non-OK status (see compile_call_function):
+ * runs the staged tail calls, interprets a retried call, or counts and
+ * returns a status to propagate, as jit_run_native's callers do. */
+DiamondVmStatus diamond_jit_self_call_finish(DiamondVm *vm, const DiamondChunk *chunk,
+        const DiamondValue *arguments, uint8_t argc, size_t depth, DiamondValue *out,
+        uint8_t status);
 
 /* Closures created by compiled code (src/vm_calls.c). diamond_jit_closure
  * is DIAMOND_OP_CLOSURE, read from the instruction at `site` (the same

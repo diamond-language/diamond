@@ -2304,6 +2304,14 @@ struct DiamondVm {
      * like every other stop in Diamond -- a child parked in a blocking
      * native call notices only when that call returns. */
     atomic_bool *interrupt_flag;
+    /* diamond_call_depth_limit(vm) for the context running now, kept in a
+     * field so compiled code can check a direct call against it with one
+     * load (the limit reads a thread-local otherwise). 0 at first, which
+     * sends the first self-call to diamond_jit_call_self; that fills it in on
+     * the thread running the VM, which owns the thread-local. Refreshed on
+     * every fiber switch (diamond_fiber_run), the only place running_fiber
+     * changes. Refreshing it on every native entry instead cost poly 0.9%. */
+    size_t jit_depth_limit;
     /* The native database call this VM is blocked in, so the thread that sets
      * interrupt_flag can cancel it (sqlite3_interrupt, PQcancel). Only
      * touched when interrupt_flag is set; see vm_blocking_call_begin. */

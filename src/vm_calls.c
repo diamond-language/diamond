@@ -1007,7 +1007,10 @@ DiamondVmStatus diamond_jit_call_self(DiamondVm *vm, const DiamondChunk *chunk,
         ? chunk->functions[function_index] : nullptr;
     if (function == nullptr || function->code != chunk->code || function->jit_code == nullptr)
         return diamond_jit_call_function(vm, chunk, registers, function_index, base, argc, depth, out);
-    if (depth + 1 >= diamond_call_depth_limit(vm)) return DIAMOND_VM_STACK_OVERFLOW;
+    /* The native self-call's limit (compile_self_call_native), filled in
+     * here on this thread the first time it comes through. */
+    vm->jit_depth_limit = diamond_call_depth_limit(vm);
+    if (depth + 1 >= vm->jit_depth_limit) return DIAMOND_VM_STACK_OVERFLOW;
     DiamondChunk called_storage;
     const DiamondChunk *called_chunk = plain_call_chunk_for(function, chunk, &called_storage);
     const uint8_t status = jit_run_native(vm, function, called_chunk, &registers[base], argc,
@@ -1018,6 +1021,24 @@ DiamondVmStatus diamond_jit_call_self(DiamondVm *vm, const DiamondChunk *chunk,
     return (DiamondVmStatus)status;
 }
 
+
+/* What follows a direct native self-call (compile_call_function in jit.c
+ * calls its own entry without a C round trip) whose status was not
+ * DIAMOND_VM_OK: exactly what jit_run_native and diamond_jit_call_self do
+ * with that status, counters included. `arguments` are the caller's
+ * registers the call was made with, unchanged, so a retry interprets the
+ * call from them. */
+DiamondVmStatus diamond_jit_self_call_finish(DiamondVm *vm, const DiamondChunk *chunk,
+        const DiamondValue *arguments, uint8_t argc, size_t depth, DiamondValue *out,
+        uint8_t status) {
+    if (status == DIAMOND_JIT_TAIL) return jit_tail_loop(vm, chunk, depth, out);
+    if (status == DIAMOND_JIT_RETRY) {
+        vm->jit_bailouts++;
+        return run_chunk(chunk, vm, arguments, argc, depth + 1, nullptr, out);
+    }
+    vm->jit_hard_propagations++;
+    return (DiamondVmStatus)status;
+}
 /* JIT trampoline for DIAMOND_OP_TAIL_CALL to a function other than the
  * caller. Returns DIAMOND_JIT_TAIL after staging the callee and its
  * arguments when the interpreter's own in-place switch would apply (a plain,
@@ -2267,8 +2288,8 @@ DiamondVmStatus diamond_jit_invoke_any(DiamondVm *vm,const DiamondChunk *chunk,
 }
 
 /* Compiled code's DIAMOND_OP_CLOSURE. The compiling function always pushes
- * a frame for it (vm->frames is that frame). diamond_jit_frame_push leaves
- * its serial 0, so the first closure gives it one here, sparing every other
+ * a frame for it (vm->frames is that frame). The prologue leaves its
+ * serial 0, so the first closure gives it one here, sparing every other
  * compiled call the increment; a compiled function is never itself a block,
  * so its frame is its own home. */
 DiamondVmStatus diamond_jit_closure(DiamondVm *vm,const DiamondChunk *chunk,

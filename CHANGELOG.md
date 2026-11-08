@@ -42,6 +42,10 @@ authoritative fine-grained record.
   into the interpreter's own dispatch. Functions that pass a block capturing their locals, and
   the `Math` functions, compile too. With `DIAMOND_JIT=1`, the counts benchmark runs about 37%
   fewer instructions, nbody and poly about 14% fewer, and sort 13% fewer.
+- **Faster recursion under the JIT.** A compiled function calling itself now calls its own
+  machine code directly, with the callee's registers on the native stack, instead of going
+  back through the VM. With `DIAMOND_JIT=1`, fib runs 53% fewer instructions (160 to 121 ms)
+  and trees 14% fewer. The call-depth limit and its stack-overflow error are unchanged.
 
 ### Fixed
 

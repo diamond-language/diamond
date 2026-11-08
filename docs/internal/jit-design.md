@@ -73,7 +73,10 @@ than duplicating a hardcoded constant), `diamond_jit_frame_push`/
 `diamond_jit_frame_pop` (placement-construct/unlink a `DiamondFrame` into
 caller-reserved stack space, mirroring `run_chunk`'s own one-frame-per-
 activation model), and `diamond_jit_new_string` (wraps `allocate_string`,
-the first trampoline that can actually trigger a collection). Whether a
+the first trampoline that can actually trigger a collection). (Since
+2026-11-07 the prologue and exits write and unlink the frame inline instead
+of calling the push/pop trampolines, at offsets `src/jit.h` spells out and
+`vm.c` static_asserts; see "Self-calls" below.) Whether a
 given function needs any of this is decided by a **dry-run compile pass**:
 `compile_body` runs once with a `dry_run` flag (checked in `emit_u8`,
 which every other emitter bottoms out through, so it's a true no-op) purely
@@ -2272,11 +2275,40 @@ Both this path and the interpreter's `CALL` use `plain_call_chunk_for`, which re
 chunk when the caller is the same function (recursion) instead of building the 200-byte
 `DiamondChunk` again.
 
-What is left per recursive call is the C round trip (about 175 instructions on `fib` against
-about 113 in the native body). Removing it would mean calling the native entry directly, with the
-callee's register file on the native stack. The obstacle is the depth limit, which is
-thread-local and depends on whether a fiber is running, so native code cannot read it without a
-new slot in the JIT calling convention.
+### Native self-calls
+
+That trampoline is now the slow path. In front of it `compile_self_call_native` emits the call
+in native code, without the C round trip (about 175 instructions per call on `fib`):
+
+1. It checks at run time what `diamond_jit_call_self` would: the chunk's code is the one this
+   function was compiled against and its function table still holds this function at its own
+   index. It also checks that `depth + 1` is under `vm->jit_depth_limit`.
+2. It reserves the callee's register file on the native stack (`register_count` slots), copies
+   the arguments in and zeroes the rest with SSE stores (`rep stosq` past 32 slots).
+3. It calls buffer offset 0, its own entry, with the usual six arguments: the stack window as
+   `registers`, the caller's destination register as `result`, and `depth + 1`.
+4. A non-zero status goes to `diamond_jit_self_call_finish`, which does what
+   `diamond_jit_call_self` does after `jit_run_native`: a staged tail call runs through
+   `jit_tail_loop`, a retry reruns the call in `run_chunk` from the same arguments (still in the
+   caller's registers), and anything else propagates.
+
+`vm->jit_depth_limit` holds `diamond_call_depth_limit(vm)` for whatever is running, so native
+code can read it with one load. It starts at 0, so the first self-call fails the check and runs
+the trampoline, which fills it in. That happens on the thread running the VM, which owns the
+thread-local limit. `diamond_fiber_run` refreshes it on every fiber switch, the only place
+`running_fiber` changes. Refreshing it on every native entry instead cost poly 0.9% of its
+instructions. A failed check always takes the trampoline, which raises the overflow with the
+real limit.
+
+The frame push and pop the prologue and exits used to call (`diamond_jit_frame_push`/`_pop`)
+are inline now too, at `DiamondFrame` offsets `src/jit.h` spells out and `vm.c` static_asserts.
+Each field is stored once: zeroing the whole 96-byte frame first and then writing five fields
+showed up as store-buffer stalls, 7% of fib's cycles.
+
+On fib this is 53% fewer instructions (1,886M to 894M) and 160 to 121 ms; trees runs 14% fewer
+instructions, from its recursive `make` and `check`. What is left per call is the code itself: a
+compiled body keeps every value in memory and re-checks types the caller already proved, so the
+gap to YJIT (60 ms on fib) is now register allocation and type propagation, not call overhead.
 
 ## Method calls on receivers of unknown type
 
