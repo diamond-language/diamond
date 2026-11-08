@@ -1,15 +1,9 @@
-# A method containing BOTH a self.method() call (compiles via this phase's
-# new compile_invoke_self path) AND a non-self other.method() call to a
-# name that isn't dup/freeze/frozen? (unsupported, still bails) must still
-# bail as a WHOLE function -- confirms the new recv==0 gate doesn't
-# accidentally widen eligibility for the rest of the function. `greet_both`
-# (the caller, containing the non-self call) correctly never compiles
-# (`name` is a plain getter, read without a call, and `initialize` only stores its argument, written without a call,
-# so neither runs to compile) -- 0 compiled, with 0 counted
-# bailouts (a function that never becomes eligible in the first place
-# isn't a "bailout" in DIAMOND_TRACE_JIT's own sense -- that counter is a
-# runtime guard-failure count for code that DID compile; see jit_call_or_
-# interpret's own jit_bailouts++ site).
+# A method with both a self.method() call and a call on another receiver of
+# unproven type, ending in string interpolation, compiles as a whole: the
+# self call through compile_invoke_self, the other through the interpreter's
+# dispatch, and the interpolation through TO_STRING. `name` is a plain getter
+# and `initialize` only stores its argument, so neither runs to compile:
+# greet_both is the 1 compiled function.
 class Greeter
   def initialize(name)
     @name = name

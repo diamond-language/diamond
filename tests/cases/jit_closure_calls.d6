@@ -1,0 +1,68 @@
+# Compiled functions that call closures and interpolate strings. A function
+# calling a block or closure it was given compiles, as does one using string
+# interpolation: a String piece is copied inline, an Int, Float, nil, Array
+# or an object with its own to_s goes through the interpreter's conversion.
+# Under stress GC: a closure that allocates, a `break` out of a block called
+# by a compiled function (it lands on the call that passed the block), a
+# `return` from a block inside the method that wrote it, an error raised by
+# the closure and rescued outside, and calling something that is not
+# callable.
+class Point
+  def initialize(x: Int, y: Int)
+    @x = x
+    @y = y
+  end
+
+  def to_s() -> String = "(#{@x}, #{@y})"
+end
+
+def twice(f, x)
+  f(f(x))
+end
+
+def apply_all(values, &f) -> Array
+  out = []
+  i = 0
+  while i < values.length()
+    out.push(f(values[i]))
+    i += 1
+  end
+  out
+end
+
+def describe(label: String, n: Int, ratio: Float, things: Array, point: Point) -> String
+  "#{label}: n=#{n} ratio=#{ratio} nothing=#{nil} things=#{things} at #{point}"
+end
+
+def first_big(values)
+  apply_all(values) do |v|
+    return v if v > 10
+    v
+  end
+  nil
+end
+
+def inc(x) = x + 1
+def shout(s) = s + "!"
+
+puts(twice(inc, 1))
+puts(twice(shout, "hi"))
+puts(apply_all([1, 2, 3]) do |v| "v#{v}" end)
+puts(describe("pt", 3, 1.5, [1, "a"], Point.new(2, 5)))
+found = apply_all([1, 2, 30, 4]) do |v|
+  break v * 100 if v > 10
+  v
+end
+puts(found)
+puts(first_big([1, 20, 3]))
+puts(first_big([1, 2]))
+begin
+  apply_all([7]) do |x| raise ArgumentError.new("bad #{x}") end
+rescue error: ArgumentError
+  puts("rescued #{error.message()}")
+end
+begin
+  twice(5, 1)
+rescue error
+  puts("error: #{error.message()}")
+end

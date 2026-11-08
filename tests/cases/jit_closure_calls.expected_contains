@@ -1,0 +1,10 @@
+^3$
+^hi!!$
+^\[v1, v2, v3\]$
+^pt: n=3 ratio=1.5 nothing=nil things=\[1, a\] at (2, 5)$
+^3000$
+^20$
+^nil$
+^rescued bad 7$
+^error: undefined method 'call' for Int$
+jit: 6 compiled function(s), 0 bailout(s)

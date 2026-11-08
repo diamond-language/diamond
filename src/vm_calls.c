@@ -104,6 +104,35 @@ DiamondVmStatus call_closure_helper(DiamondVm *vm,const DiamondChunk *chunk,
     return block_call_run(vm,&call,&registers[base],depth,result);
 }
 
+/* DIAMOND_OP_CALL_CLOSURE: registers[callable] called with argc arguments
+ * from registers[base]. Shared by run_chunk and compiled code
+ * (diamond_jit_call_closure), so both raise the same errors. */
+DiamondVmStatus call_closure_value(DiamondVm *vm,const DiamondChunk *chunk,
+        const DiamondValue *registers,uint16_t callable,uint16_t base,uint8_t argc,
+        size_t depth,DiamondValue *result) {
+    if(registers[callable].kind!=DIAMOND_VALUE_OBJECT||
+       registers[callable].as.object->kind!=DIAMOND_OBJECT_CLOSURE) {
+        char actual[80];
+        diamond_format_value_type(actual,sizeof actual,registers[callable]);
+        snprintf(vm->error,sizeof vm->error,"undefined method 'call' for %s",actual);
+        return DIAMOND_VM_TYPE_ERROR;
+    }
+    const DiamondClosure *called=(const DiamondClosure *)registers[callable].as.object;
+    /* A ClassName.compile_method result is scoped to being passed to
+     * define_method (see DIAMOND_OP_DEFINE_METHOD) -- its function_index is
+     * relative to its own foreign_chunk, not the ambient one
+     * call_closure_helper assumes, so calling it directly is rejected rather
+     * than silently running the wrong bytecode. */
+    if(called->foreign_chunk!=nullptr) {
+        snprintf(vm->error,sizeof vm->error,
+            "a compile_method callable can only be passed to define_method");
+        return DIAMOND_VM_TYPE_ERROR;
+    }
+    if(called->function_index>=chunk->function_count)return DIAMOND_VM_INVALID_BYTECODE;
+    return call_closure_helper(vm,chunk,chunk->functions[called->function_index],called,
+        registers,base,argc,depth,result);
+}
+
 /* Shared by DIAMOND_OP_INVOKE's Int-primitive (times/upto/downto) and
  * Array/Hash-collection-extension forwarding arms: both resolve a native
  * receiver method to an ordinary prelude/user top-level function and call
@@ -2329,6 +2358,33 @@ DiamondVmStatus diamond_jit_invoke_any(DiamondVm *vm,const DiamondChunk *chunk,
     const DiamondVmStatus status=diamond_invoke_general(vm,chunk,registers,site,depth);
     if(status==DIAMOND_VM_EXCEPTION&&thread) set_uncaught_exception_error(vm);
     return status;
+}
+
+/* Compiled code's DIAMOND_OP_CALL_CLOSURE, read from the instruction at
+ * `site`: run_chunk's call_closure_value. Writes registers[dest]. */
+DiamondVmStatus diamond_jit_call_closure(DiamondVm *vm,const DiamondChunk *chunk,
+        DiamondValue *registers,const uint8_t *site,size_t depth) {
+    const uint16_t dest=(uint16_t)(((unsigned)site[1]<<8)|site[2]);
+    const uint16_t callable=(uint16_t)(((unsigned)site[3]<<8)|site[4]);
+    const uint16_t base=(uint16_t)(((unsigned)site[5]<<8)|site[6]);
+    DiamondValue call_result=DIAMOND_NIL;
+    const DiamondVmStatus status=call_closure_value(vm,chunk,registers,callable,base,
+        site[7],depth,&call_result);
+    if(status!=DIAMOND_VM_OK)return status;
+    value_copy_from_callee(&registers[dest],&call_result);
+    return DIAMOND_VM_OK;
+}
+
+/* Compiled code's DIAMOND_OP_TO_STRING for a value that is not already a
+ * String (native code copies a String itself): run_chunk's stringify_value.
+ * Writes registers[dest]. */
+DiamondVmStatus diamond_jit_to_string(DiamondVm *vm,const DiamondChunk *chunk,
+        DiamondValue *registers,uint16_t dest,uint16_t source,size_t depth) {
+    DiamondValue converted=DIAMOND_NIL;
+    const DiamondVmStatus status=stringify_value(vm,chunk,depth,registers[source],&converted);
+    if(status!=DIAMOND_VM_OK)return status;
+    value_copy_from_callee(&registers[dest],&converted);
+    return DIAMOND_VM_OK;
 }
 
 /* Compiled code's DIAMOND_OP_CLOSURE. The compiling function always pushes
