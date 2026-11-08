@@ -1867,6 +1867,8 @@ DIAMOND_INTERNAL NonlocalOutcome nonlocal_exit_arrives(DiamondVm *vm,const Diamo
         const DiamondFrame *frame,DiamondValue *registers,UnwindHandler *handlers,
         size_t *handler_count,PendingUnwind *pending,size_t *ip,
         size_t instruction_offset,DiamondValue *result);
+DIAMOND_INTERNAL DiamondVmStatus begin_block_exit(DiamondVm *vm,const DiamondClosure *closure,
+        const DiamondFrame *frame,DiamondValue value,bool is_break);
 
 DIAMOND_INTERNAL DiamondVmStatus peer_address_helper(DiamondVm *vm,int fd,DiamondValue *dest);
 

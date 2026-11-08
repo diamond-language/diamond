@@ -159,12 +159,23 @@ typedef struct JitCompiler {
      * DiamondJitHandlerState after its frame, and a failure from a call
      * goes to the catch stub, which continues at a rescue clause when one
      * matches. `resume_targets` are the bytecode offsets a caught failure
-     * can continue at (every PUSH_RESCUE's target), which the resume stub
-     * dispatches on. */
+     * can continue at (every PUSH_RESCUE's target), and `resume_keys` the
+     * state->resume values the resume stub dispatches on: the target
+     * itself, or for a block's break landing after a call,
+     * DIAMOND_JIT_RESUME_AFTER_CALL | the call's offset. */
     bool has_handlers;
     bool has_raise;
+    size_t resume_keys[64];
     size_t resume_targets[64];
     size_t resume_target_count;
+    /* The program's function table (try_compile's `functions`), and the
+     * offsets of the calls a block's break lands at in this function,
+     * collected from its CLOSURE instructions (the block's
+     * block_call_offset). Each call's next instruction is a resume target. */
+    struct DiamondFunction *const *functions;
+    size_t function_count;
+    size_t landing_calls[16];
+    size_t landing_call_count;
 } JitCompiler;
 
 static void jit_buf_ensure(JitBuffer *buf, size_t extra) {
@@ -2290,7 +2301,9 @@ static bool decode_instruction_operands(const DiamondFunction *fn, size_t *pc,
                 *jump_target = (int32_t)(((unsigned)high << 8) | low);
                 return true;
             }
-            case DIAMOND_OP_RAISE: {
+            case DIAMOND_OP_RAISE:
+            case DIAMOND_OP_BLOCK_BREAK:
+            case DIAMOND_OP_BLOCK_RETURN: {
                 uint16_t a = 0;
                 return decode_u16(fn, pc, &a);
             }
@@ -2915,6 +2928,27 @@ static void compile_self_tail_call(JitCompiler *jc, uint16_t base, uint8_t argc)
     record_global_patch(jc, field, 0);
 }
 
+/* CLOSURE of function `index` in a function a block's break lands in: a
+ * block with a break names the call it is passed to (block_call_offset, a
+ * later instruction of this function), whose next instruction compile_body
+ * then makes a resume target. False, with jc->bailed set, for a block
+ * outside the table or too many landing calls. */
+static bool record_landing_call(JitCompiler *jc, size_t index) {
+    if (jc->functions == nullptr || index >= jc->function_count ||
+        jc->functions[index] == nullptr) {
+        jc->bailed = true;
+        return false;
+    }
+    const size_t call = jc->functions[index]->block_call_offset;
+    if (call == 0) return true;   /* no break in this block */
+    if (call >= jc->function->code_count) { jc->bailed = true; return false; }
+    for (size_t i = 0; i < jc->landing_call_count; i++)
+        if (jc->landing_calls[i] == call) return true;
+    if (jc->landing_call_count == 16) { jc->bailed = true; return false; }
+    jc->landing_calls[jc->landing_call_count++] = call;
+    return true;
+}
+
 /* Opcode group: loads, moves, arithmetic, comparisons, ivars, type checks and collections. Returns false, emitting nothing, for an opcode outside the group; otherwise
  * advances *pc_ref past the operands, or sets jc->bailed. Part of compile_body. */
 static bool compile_value_instruction(JitCompiler *jc, DiamondOpCode opcode, size_t instruction_start,
@@ -3359,6 +3393,7 @@ static bool compile_value_instruction(JitCompiler *jc, DiamondOpCode opcode, siz
             }
             pc += 2 * (size_t)count;
             jc->needs_frame = true;
+            if (fn->nonlocal_landing && !record_landing_call(jc, index)) return true;
             JitBuffer *buf = &jc->buf;
             emit_mov_rr(buf, REG_RDI, JIT_VM);
             emit_mov_rr(buf, REG_RSI, JIT_CHUNK);
@@ -3465,15 +3500,19 @@ static bool compile_value_instruction(JitCompiler *jc, DiamondOpCode opcode, siz
 /* Marks the function as having handlers and records `target` as a place a
  * handler can continue at (see emit_catch_stubs). False, with jc->bailed
  * set, for a target outside the code or too many distinct targets. */
-static bool add_resume_target(JitCompiler *jc, size_t target) {
+static bool add_resume_entry(JitCompiler *jc, size_t key, size_t target) {
     if (target >= jc->function->code_count) { jc->bailed = true; return false; }
     jc->has_handlers = true;
     jc->needs_frame = true;
     for (size_t i = 0; i < jc->resume_target_count; i++)
-        if (jc->resume_targets[i] == target) return true;
+        if (jc->resume_keys[i] == key) return true;
     if (jc->resume_target_count == 64) { jc->bailed = true; return false; }
+    jc->resume_keys[jc->resume_target_count] = key;
     jc->resume_targets[jc->resume_target_count++] = target;
     return true;
+}
+static bool add_resume_target(JitCompiler *jc, size_t target) {
+    return add_resume_entry(jc, target, target);
 }
 
 /* After a handler helper whose 0 means "continue at state->resume": any
@@ -3596,6 +3635,27 @@ static bool compile_control_instruction(JitCompiler *jc, DiamondOpCode opcode, s
             emit_mov_rr(buf, REG_R8, JIT_RESULT_PTR);
             emit_body_call(jc, (void *)(uintptr_t)diamond_jit_end_ensure);
             emit_handler_outcome(jc, true);
+            break;
+        }
+        case DIAMOND_OP_BLOCK_BREAK:
+        case DIAMOND_OP_BLOCK_RETURN: {
+            /* diamond_jit_block_exit checks the target frame is still live and
+             * starts the non-local exit, which leaves as any failing status
+             * does: through this block's ensure clauses (the catch stub) and
+             * out. Never a retry, which would run the block's work again. */
+            uint16_t source = 0;
+            if (!decode_u16(fn, &pc, &source)) { jc->bailed = true; return true; }
+            jc->needs_frame = true;
+            jc->has_called = true;
+            jc->reads_closure = true;
+            JitBuffer *buf = &jc->buf;
+            emit_mov_rr(buf, REG_RDI, JIT_VM);
+            emit_lea(buf, REG_RSI, JIT_REGISTERS_BASE, reg_disp(source, 0));
+            emit_load_closure(jc, REG_RDX);
+            emit_mov_imm64(buf, REG_RCX, opcode == DIAMOND_OP_BLOCK_BREAK);
+            emit_body_call(jc, (void *)(uintptr_t)diamond_jit_block_exit);
+            /* Always nonzero; the jump keeps the stub choice in one place. */
+            emit_bail_if_al_nonzero(jc);
             break;
         }
         case DIAMOND_OP_RAISE: {
@@ -3816,6 +3876,12 @@ static void compile_body(JitCompiler *jc) {
             jc->bailed = true;
             return;
         }
+        /* A block's break landing at this call continues with the next
+         * instruction (DIAMOND_JIT_RESUME_AFTER_CALL). */
+        for (size_t i = 0; i < jc->landing_call_count; i++)
+            if (jc->landing_calls[i] == instruction_start &&
+                !add_resume_entry(jc, (size_t)DIAMOND_JIT_RESUME_AFTER_CALL | instruction_start,
+                    pc)) return;
     }
 }
 
@@ -3833,13 +3899,16 @@ static void patch_rel32_to(JitBuffer *buf, size_t field_offset, size_t target_of
 /* The catch and resume stubs of a function with handlers, emitted after the
  * propagate stub. Both run at the body's RSP with the frame linked.
  *   catch: AL holds a failing status; diamond_jit_catch offers it to the
- *     rescue clauses. 0 falls into resume; anything else (the status, or
- *     DIAMOND_VM_EXCEPTION once it became an exception) propagates. The
+ *     rescue clauses. 0 falls into resume; DIAMOND_JIT_HANDLER_RETURNED (a
+ *     block's `return` landed here) returns, the result written; anything
+ *     else (the status, or DIAMOND_VM_EXCEPTION once it became an
+ *     exception) propagates. The
  *     pad slot still holds the failing instruction's offset, so the trace
  *     line and backtrace name it, as run_chunk's would.
- *   resume: jumps to the clause in state->resume, one compare per rescue
- *     target. An offset matching none cannot happen; it propagates as
- *     invalid bytecode rather than jumping anywhere. */
+ *   resume: jumps to the clause in state->resume, one compare per resume
+ *     key (a rescue target, or the end of a call a break lands at). An
+ *     offset matching none cannot happen; it propagates as invalid bytecode
+ *     rather than jumping anywhere. */
 static void emit_catch_stubs(JitCompiler *jc, size_t propagate_offset,
         size_t *catch_offset, size_t *resume_offset) {
     JitBuffer *buf = &jc->buf;
@@ -3852,14 +3921,22 @@ static void emit_catch_stubs(JitCompiler *jc, size_t propagate_offset,
     emit_mov_rr(buf, REG_RSI, JIT_CHUNK);
     emit_mov_rr(buf, REG_RDX, JIT_REGISTERS_BASE);
     emit_handler_state_address(jc, REG_RCX);
+    emit_mov_rr(buf, REG_R9, JIT_RESULT_PTR);
     emit_call_trampoline(buf, (void *)(uintptr_t)diamond_jit_catch);
+    emit_u8(buf, 0x0F); emit_u8(buf, 0xB6); emit_u8(buf, 0xC0);   /* movzx eax, al */
+    emit_cmp_imm32_32(buf, REG_RAX, DIAMOND_JIT_HANDLER_RETURNED);
+    const size_t not_returned = emit_jcc_placeholder(buf, JCC_NE);
+    emit_epilogue(jc);
+    emit_mov_al_imm8(buf, DIAMOND_VM_OK);
+    emit_ret(buf);
+    patch_rel32_to_here(buf, not_returned);
     emit_test_r8(buf, REG_RAX);
     patch_rel32_to(buf, emit_jcc_placeholder(buf, JCC_NE), propagate_offset);
     *resume_offset = buf->length;
     emit_load_r64_sib(buf, REG_RAX, REG_RSP,
         DIAMOND_JIT_HANDLER_STATE_AT + DIAMOND_JIT_HANDLER_RESUME_FIELD);
     for (size_t i = 0; i < jc->resume_target_count; i++) {
-        emit_cmp_imm32_64(buf, REG_RAX, (uint32_t)jc->resume_targets[i]);
+        emit_cmp_imm32_64(buf, REG_RAX, (uint32_t)jc->resume_keys[i]);
         record_global_patch(jc, emit_jcc_placeholder(buf, JCC_E), jc->resume_targets[i]);
     }
     emit_mov_al_imm8(buf, (uint8_t)DIAMOND_VM_INVALID_BYTECODE);
@@ -3910,12 +3987,13 @@ static void emit_generic_bind(JitCompiler *jc) {
 }
 
 void *diamond_jit_try_compile(const DiamondFunction *function,
+        struct DiamondFunction *const *functions, size_t function_count,
         size_t self_function_index, size_t *out_size) {
     *out_size = 0;
     /* A register_count of 0 is a hand-built chunk's "unset" (run_chunk reads
      * it as the full width); refusing it lets jit_run_native size its
      * register file with one compare (uses_heap_registers). */
-    if (function->nonlocal_landing ||
+    if ((function->nonlocal_landing && functions == nullptr) ||
         function->code_count == 0 ||
         function->register_count == 0 ||
         function->register_count > DIAMOND_REGISTER_COUNT) {
@@ -3925,6 +4003,15 @@ void *diamond_jit_try_compile(const DiamondFunction *function,
     JitCompiler jc = {0};
     jc.self_function_index = self_function_index;
     jc.function = function;
+    jc.functions = functions;
+    jc.function_count = function_count;
+    /* A block's break or return landing here goes through the catch stub
+     * (diamond_jit_catch), so the function keeps handler state, and a frame
+     * whose serial the block's targets name. */
+    if (function->nonlocal_landing) {
+        jc.has_handlers = true;
+        jc.needs_frame = true;
+    }
     jc.bytecode_to_native = malloc(function->code_count * sizeof(size_t));
     if (jc.bytecode_to_native == nullptr) return nullptr;
     for (size_t i = 0; i < function->code_count; i++) jc.bytecode_to_native[i] = SIZE_MAX;
@@ -3963,6 +4050,7 @@ void *diamond_jit_try_compile(const DiamondFunction *function,
     jc.buf.dry_run = false;
     for (size_t i = 0; i < function->code_count; i++) jc.bytecode_to_native[i] = SIZE_MAX;
     jc.resume_target_count = 0;
+    jc.landing_call_count = 0;
     /* A raise a rescue clause catches carries on in native code, so from
      * then on nothing may retry the function in the interpreter (it would
      * raise again): every failure goes to the catch stub instead. */

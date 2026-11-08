@@ -1,0 +1,122 @@
+# Functions a block's `break` or `return` lands in compile under the JIT
+# (threshold 1, stress GC). A break gives its value to the call the block
+# was passed to and carries on after that call; a `return` from the block
+# returns from the function. Both run ensure clauses on the way out.
+
+def first_over(values: Array[Int], limit: Int) -> Int | Nil
+  values.each() do |v|
+    return v if v > limit
+  end
+  nil
+end
+
+def found(values: Array[Int], limit: Int) -> String
+  hit = values.each() do |v|
+    break v * 10 if v > limit
+  end
+  "found #{hit}"
+end
+
+def pair_sum(target: Int) -> String
+  [1, 2, 3].each() do |a|
+    [4, 5, 6].each() do |b|
+      return "#{a}+#{b}" if a + b == target
+    end
+  end
+  "none"
+end
+
+# Breaks land many times in one call, at two different calls.
+def counted(rows: Int) -> Int
+  total = 0
+  i = 0
+  while i < rows
+    total += [1, 2, 3, 4].each() do |x|
+      break x if x > i
+    end
+    total += 5.times() do |t|
+      break 100 if t == 2
+    end
+    i += 1
+  end
+  total
+end
+
+# The landing function's own handlers: a break inside a begin stays in it,
+# a return from the block runs the ensure first.
+def guarded(log: Array[String]) -> Int
+  begin
+    stopped = [10, 20, 30].each() do |v|
+      break v if v == 20
+    end
+    log.push("stopped #{stopped}")
+    [10, 20, 30].each() do |v|
+      begin
+        return v if v == 30
+      ensure
+        log.push("inner #{v}")
+      end
+    end
+  rescue e: Exception
+    log.push("rescued")
+  ensure
+    log.push("outer")
+  end
+  0
+end
+
+# The method the block was passed to runs its ensure as the break passes.
+def walk(log: Array[String], &block) -> String
+  begin
+    [1, 2, 3].each() do |v|
+      yield(v)
+    end
+  ensure
+    log.push("walk done")
+  end
+  "walked"
+end
+
+def through(log: Array[String]) -> String
+  result = walk(log) do |v|
+    break "broke at #{v}" if v == 2
+  end
+  result
+end
+
+def fact(n: Int) -> Int
+  return 1 if n <= 1
+  [n].each() do |m|
+    return m * fact(m - 1)
+  end
+  0
+end
+
+# A break from a block run after its call finished is an ordinary error.
+def keep(&blk) -> Callable = blk
+def stale() -> String
+  breaker = keep() do
+    break 2
+  end
+  begin
+    breaker()
+  rescue e: Exception
+    return "stale: #{e.message()}"
+  end
+  "no error"
+end
+
+puts([first_over([1, 5, 9], 4), first_over([1], 4)])
+puts([found([1, 7, 9], 5), found([1], 5)])
+puts([pair_sum(8), pair_sum(100)])
+puts([counted(3), counted(3)])
+log = []
+puts(guarded(log))
+puts(guarded(log))
+puts(log)
+walk_log = []
+puts([through(walk_log), through(walk_log)])
+puts(walk_log)
+puts(fact(6))
+puts(stale())
+puts(stale())

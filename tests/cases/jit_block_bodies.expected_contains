@@ -7,4 +7,4 @@
 ^\[9, 3\]$
 ^9$
 ^nil$
-jit: 19 compiled function(s), 0 bailout(s), 1 hard propagation(s)
+jit: 24 compiled function(s), 0 bailout(s), 4 hard propagation(s)

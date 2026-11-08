@@ -142,9 +142,13 @@ typedef uint8_t (*DiamondJitFn)(DiamondVm *vm, DiamondValue *registers,
  * caller should record that outcome, e.g. via DiamondFunction's own
  * jit_ineligible field, and never retry). The returned pointer is
  * executable memory owned by this module -- see diamond_jit_free. */
-/* `self_function_index` is the function's own index in its program's table
- * (SIZE_MAX if unknown): only a TAIL_CALL to it is compiled. */
+/* `functions` is the program's function table (`function_count` entries;
+ * nullptr when unknown) and `self_function_index` the function's own index in
+ * it (SIZE_MAX if unknown): only a TAIL_CALL to it is compiled, and a block
+ * whose `break` lands in this function names its call there
+ * (block_call_offset). Without the table such a function is refused. */
 void *diamond_jit_try_compile(const DiamondFunction *function,
+        struct DiamondFunction *const *functions, size_t function_count,
         size_t self_function_index, size_t *out_size);
 
 /* A compiled function's own tail call: moves the `argc` arguments at
@@ -287,7 +291,11 @@ struct DiamondJitHandlerState;
  *     (read from the instruction at `site`) and DIAMOND_OP_POP_RESCUE.
  *   - diamond_jit_catch: a failing `status` meets the handlers, as run_chunk's
  *     VM_PROPAGATE/VM_RETURN do. Returns 0 when a handler caught it (continue
- *     at state->resume), or the status to propagate.
+ *     at state->resume), DIAMOND_JIT_HANDLER_RETURNED when a block's `return`
+ *     landed here (`*result` written), or the status to propagate. A block's
+ *     `break` landing here writes the call's destination and continues after
+ *     the call: state->resume is then DIAMOND_JIT_RESUME_AFTER_CALL | the
+ *     call's offset.
  *   - diamond_jit_raise: DIAMOND_OP_RAISE. `state` is nullptr in a function
  *     without handlers. Returns 0 when caught (continue at state->resume),
  *     else DIAMOND_VM_EXCEPTION with the uncaught message filled in. */
@@ -295,7 +303,8 @@ uint8_t diamond_jit_push_rescue(struct DiamondJitHandlerState *state, const uint
         size_t code_count);
 uint8_t diamond_jit_pop_rescue(struct DiamondJitHandlerState *state);
 uint8_t diamond_jit_catch(DiamondVm *vm, const DiamondChunk *chunk, DiamondValue *registers,
-        struct DiamondJitHandlerState *state, uint8_t status);
+        struct DiamondJitHandlerState *state, uint8_t status, DiamondValue *result);
+enum { DIAMOND_JIT_RESUME_AFTER_CALL = 1 << 30 };
 uint8_t diamond_jit_raise(DiamondVm *vm, const DiamondChunk *chunk, DiamondValue *registers,
         struct DiamondJitHandlerState *state, uint16_t source);
 /*   - diamond_jit_push_ensure, diamond_jit_run_ensure, diamond_jit_unwind_jump:
@@ -318,6 +327,11 @@ uint8_t diamond_jit_return(struct DiamondJitHandlerState *state, const DiamondVa
         DiamondValue *result);
 uint8_t diamond_jit_end_ensure(DiamondVm *vm, const DiamondChunk *chunk,
         DiamondValue *registers, struct DiamondJitHandlerState *state, DiamondValue *result);
+/* DIAMOND_OP_BLOCK_BREAK / BLOCK_RETURN of `*value` in a compiled block (its
+ * frame linked): DIAMOND_VM_NONLOCAL_EXIT to unwind toward the target, or
+ * DIAMOND_VM_TYPE_ERROR (vm->error set) when the target is gone. */
+uint8_t diamond_jit_block_exit(DiamondVm *vm, const DiamondValue *value,
+        const struct DiamondClosure *closure, bool is_break);
 /* Propagate-exit variant: appends the frame's "at name:line:col" trace line for
  * a failing `status` before popping. */
 void diamond_jit_frame_pop_propagating(DiamondVm *vm, uint8_t status);
