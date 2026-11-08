@@ -2095,31 +2095,9 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 callable=OPERAND_SHORT(2);
                 base=OPERAND_SHORT(4);
                 argc=OPERAND_BYTE(6);
-                if(registers[callable].kind!=DIAMOND_VALUE_OBJECT||
-                   registers[callable].as.object->kind!=DIAMOND_OBJECT_CLOSURE) {
-                    char actual[80];
-                    diamond_format_value_type(actual,sizeof actual,registers[callable]);
-                    snprintf(vm->error,sizeof vm->error,
-                        "undefined method 'call' for %s",actual);
-                    VM_RETURN(DIAMOND_VM_TYPE_ERROR);
-                }
-                DiamondClosure *called=(DiamondClosure *)registers[callable].as.object;
-                /* A ClassName.compile_method result is scoped to being
-                 * passed to define_method (see DIAMOND_OP_DEFINE_METHOD) --
-                 * its function_index is relative to its own foreign_chunk,
-                 * not the ambient one call_closure_helper below assumes,
-                 * so calling it directly is rejected rather than silently
-                 * running the wrong bytecode. */
-                if(called->foreign_chunk!=nullptr) {
-                    snprintf(vm->error,sizeof vm->error,
-                        "a compile_method callable can only be passed to define_method");
-                    VM_RETURN(DIAMOND_VM_TYPE_ERROR);
-                }
-                if(called->function_index>=chunk->function_count)VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
-                const DiamondFunction *fn=chunk->functions[called->function_index];
                 DiamondValue call_result=DIAMOND_NIL;
-                const DiamondVmStatus status=call_closure_helper(vm,chunk,fn,called,
-                    registers,base,argc,depth,&call_result);
+                const DiamondVmStatus status=call_closure_value(vm,chunk,registers,
+                    callable,base,argc,depth,&call_result);
                 VM_PROPAGATE(status);
                 registers[dest]=call_result;break;
             }

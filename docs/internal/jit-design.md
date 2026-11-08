@@ -2437,3 +2437,20 @@ The fix links a frame around each such call, but only when the function has no f
 
 Linking the frame for the whole call instead cost blocks 6% and poly 3% of their instructions;
 this way costs about 1% on poly and mandelbrot.
+
+## Closure calls and string interpolation
+
+`CALL_CLOSURE` (calling a block or closure a function holds) and `TO_STRING` (each non-literal
+piece of an interpolated string) used to reject the whole function. Both compile now:
+
+- **`CALL_CLOSURE`** calls `diamond_jit_call_closure`, which reads the instruction and runs
+  `call_closure_value`. That is run_chunk's own case (the not-callable and `compile_method` errors,
+  then `call_closure_helper`), moved into `vm_calls.c` so both tiers share it. A compiled block it
+  calls goes through `block_call_run`'s direct native entry. A `break` or `return` out of the block
+  comes back as a status the compiled caller propagates, as other trampolines' do.
+- **`TO_STRING`** copies a String inline (`emit_object_kind_guard`, shared with the cell guard) and
+  sends anything else to `diamond_jit_to_string`, which runs `stringify_value` and can call a `to_s`
+  method.
+
+Both set `needs_frame` and `has_called`. With `DIAMOND_JIT=1`, closures runs 5.6% fewer cycles
+(77 to 73 ms) and regex 6% fewer (213 to 202 ms). json is 2% lower, and the rest are within noise.

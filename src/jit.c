@@ -775,16 +775,21 @@ static const int32_t KIND_OFF = offsetof(DiamondValue, kind);
  * taken on anything unusual to `fail`; those land on the instruction's
  * trampoline, which repeats the access with run_chunk's checks and errors,
  * so the inline path only ever handles the plain case. */
-static void emit_cell_guard(JitBuffer *buf, int base, int32_t disp, size_t *fail, size_t *count) {
-    /* The value at [base + disp] is an object whose kind is Cell; the cell
+static void emit_object_kind_guard(JitBuffer *buf, int base, int32_t disp, uint32_t kind,
+        size_t *fail, size_t *count) {
+    /* The value at [base + disp] is an object of kind `kind`; the object
      * pointer is left in RDX. Clobbers RCX. */
     emit_load_byte_zx(buf, REG_RCX, base, disp + KIND_OFF);
     emit_cmp_imm32_32(buf, REG_RCX, DIAMOND_VALUE_OBJECT);
     fail[(*count)++] = emit_jcc_placeholder(buf, JCC_NE);
     emit_load_r64(buf, REG_RDX, base, disp + 8);
     emit_load_byte_zx(buf, REG_RCX, REG_RDX, (int32_t)offsetof(DiamondObject, kind));
-    emit_cmp_imm32_32(buf, REG_RCX, DIAMOND_OBJECT_CELL);
+    emit_cmp_imm32_32(buf, REG_RCX, kind);
     fail[(*count)++] = emit_jcc_placeholder(buf, JCC_NE);
+}
+
+static void emit_cell_guard(JitBuffer *buf, int base, int32_t disp, size_t *fail, size_t *count) {
+    emit_object_kind_guard(buf, base, disp, DIAMOND_OBJECT_CELL, fail, count);
 }
 
 /* Copies a 16-byte DiamondValue as two 8-byte moves through RSI, as MOVE
@@ -2046,6 +2051,8 @@ static bool opcode_dest_is_first_u16(DiamondOpCode opcode) {
         case DIAMOND_OP_GET_CAPTURE:
         case DIAMOND_OP_GET_CAPTURE_CELL:
         case DIAMOND_OP_GET_NAMESPACE_CONSTANT:
+        case DIAMOND_OP_TO_STRING:
+        case DIAMOND_OP_CALL_CLOSURE:
         case DIAMOND_OP_CLOSURE:
             return true;
         default:
@@ -2118,7 +2125,7 @@ static bool decode_instruction_operands(const DiamondFunction *fn, size_t *pc,
         case DIAMOND_OP_BOOL: case DIAMOND_OP_MOVE: case DIAMOND_OP_CONSTANT:
         case DIAMOND_OP_GET_CELL: case DIAMOND_OP_GET_CAPTURE: case DIAMOND_OP_GET_CAPTURE_CELL:
         case DIAMOND_OP_GET_NAMESPACE_CONSTANT:
-        case DIAMOND_OP_ARGUMENT_PROVIDED: case DIAMOND_OP_STRING: {
+        case DIAMOND_OP_ARGUMENT_PROVIDED: case DIAMOND_OP_STRING: case DIAMOND_OP_TO_STRING: {
             uint16_t a = 0;
             return decode_u16(fn, pc, &a);
         }
@@ -2149,6 +2156,11 @@ static bool decode_instruction_operands(const DiamondFunction *fn, size_t *pc,
             uint16_t a = 0, b = 0; uint8_t c = 0;
             return decode_u16(fn, pc, &b) && decode_u16(fn, pc, &a) &&
                 decode_u8(fn, pc, &c);
+        }
+        case DIAMOND_OP_CALL_CLOSURE: {
+            uint16_t callable = 0, base = 0; uint8_t argc = 0;
+            return decode_u16(fn, pc, &callable) && decode_u16(fn, pc, &base) &&
+                decode_u8(fn, pc, &argc);
         }
         case DIAMOND_OP_CLOSURE: {
             uint16_t index = 0; uint8_t count = 0;
@@ -2959,6 +2971,55 @@ static bool compile_value_instruction(JitCompiler *jc, DiamondOpCode opcode, siz
             emit_body_call(jc, (void *)(uintptr_t)diamond_jit_set_capture);
             emit_bail_if_al_nonzero(jc);
             patch_rel32_to_here(buf, done);
+            break;
+        }
+        case DIAMOND_OP_TO_STRING: {
+            /* A String is its own text: copied inline. Anything else goes
+             * through diamond_jit_to_string, which can call a to_s method. */
+            uint16_t dest = 0, source = 0;
+            if (!decode_u16(fn, &pc, &dest) || !decode_u16(fn, &pc, &source)) {
+                jc->bailed = true; return true;
+            }
+            jc->needs_frame = true;
+            jc->has_called = true;
+            JitBuffer *buf = &jc->buf;
+            size_t fail[2]; size_t fail_count = 0;
+            emit_object_kind_guard(buf, JIT_REGISTERS_BASE, reg_disp(source, 0),
+                DIAMOND_OBJECT_STRING, fail, &fail_count);
+            emit_copy_value(buf, JIT_REGISTERS_BASE, reg_disp(dest, 0),
+                JIT_REGISTERS_BASE, reg_disp(source, 0));
+            const size_t done = emit_jmp_placeholder(buf);
+            for (size_t i = 0; i < fail_count; i++) patch_rel32_to_here(buf, fail[i]);
+            emit_mov_rr(buf, REG_RDI, JIT_VM);
+            emit_mov_rr(buf, REG_RSI, JIT_CHUNK);
+            emit_mov_rr(buf, REG_RDX, JIT_REGISTERS_BASE);
+            emit_mov_imm64(buf, REG_RCX, dest);
+            emit_mov_imm64(buf, REG_R8, source);
+            emit_mov_rr(buf, REG_R9, JIT_DEPTH);
+            emit_body_call(jc, (void *)(uintptr_t)diamond_jit_to_string);
+            emit_bail_if_al_nonzero(jc);
+            patch_rel32_to_here(buf, done);
+            break;
+        }
+        case DIAMOND_OP_CALL_CLOSURE: {
+            /* run_chunk's whole closure call (call_closure_value), which
+             * enters a compiled block's native code itself. */
+            uint16_t dest = 0, callable = 0, base = 0; uint8_t argc = 0;
+            if (!decode_u16(fn, &pc, &dest) || !decode_u16(fn, &pc, &callable) ||
+                !decode_u16(fn, &pc, &base) || !decode_u8(fn, &pc, &argc)) {
+                jc->bailed = true; return true;
+            }
+            jc->needs_frame = true;
+            jc->has_called = true;
+            JitBuffer *buf = &jc->buf;
+            emit_mov_rr(buf, REG_RDI, JIT_VM);
+            emit_mov_rr(buf, REG_RSI, JIT_CHUNK);
+            emit_mov_rr(buf, REG_RDX, JIT_REGISTERS_BASE);
+            emit_mov_imm64(buf, REG_RCX,
+                (uint64_t)(uintptr_t)(jc->function->code + instruction_start));
+            emit_mov_rr(buf, REG_R8, JIT_DEPTH);
+            emit_body_call(jc, (void *)(uintptr_t)diamond_jit_call_closure);
+            emit_bail_if_al_nonzero(jc);
             break;
         }
         case DIAMOND_OP_CLOSURE: {

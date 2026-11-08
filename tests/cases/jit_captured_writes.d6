@@ -1,6 +1,7 @@
 # Compiled blocks and a nested function read and write captured locals
-# inline (all 4 compile). Under minor-GC stress the captured cells are
-# promoted to the old generation at once while each round stores a freshly
+# inline (all 5 compile, including the function that calls the nested
+# one). Under minor-GC stress the captured cells are promoted to the old
+# generation at once while each round stores a freshly
 # allocated String into them; every such store into an old cell must
 # remember the cell, or the next minor collection frees the young String the
 # cell still points at and the junk allocated next reuses its memory.
