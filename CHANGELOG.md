@@ -91,6 +91,16 @@ authoritative fine-grained record.
   used to run interpreted, and so did the block. Both compile now, ensure clauses still run on
   the way out, and a break from a block whose call has finished is still a rescuable error.
   About 70 fewer functions are turned away.
+- **The JIT compiles functions that use the builtins.** Bitwise and shift operators, `<=>`,
+  `to_i`/`to_f`/`to_sym`, `case` patterns, JSON, `Regexp.new`, encodings, digests, ciphers,
+  `Time`, `Fiber`, sockets, processes, database opens, `Thread.new`, `define_method` and the
+  rest of the builtin calls no longer send a function back to the interpreter. Across the test
+  cases, benchmarks and examples the functions the JIT turns away fell from 363 to 17, and
+  those 17 only stop under the debugger.
+- **The interpreter is faster.** 64 builtin opcode bodies moved out of its main loop, which
+  leaves the compiler more registers for the hot path: 2 to 10% fewer instructions on every
+  benchmark (fibonacci and tail calls about 10%), and with the JIT on `fiber_switch` and
+  `case_pattern_matching` run about 18% fewer.
 
 ### Fixed
 

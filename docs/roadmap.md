@@ -143,11 +143,6 @@ are against YJIT, on call-heavy and floating-point object code: fib 2.7x, poly 2
   loops) but not calls, field access or Float objects. Traced on 0.29.0-dev:
   - Block bodies run as native code now, but every block call still goes through C
     (`block_call_run` and a register copy) rather than a native call from the loop.
-  - Functions the JIT still turns away, across the test cases, benchmarks and examples, are
-    down to a tail of opcodes: `SQLITE3_OPEN` (39 files), `JSON_STRINGIFY` (25),
-    `CASE_MATCH` (25), `THREAD_NEW` (15), `GET_IVAR_NAME` (14), `REGEXP_NEW` (13), `TO_INT` (11).
-    Opcodes with an out-of-line interpreter body can join `diamond_jit_outlined` with just a
-    decoder entry each.
   - Polymorphic and untyped call sites pay the full dispatch per call (poly's
     `shapes[i].area()`); a per-site inline cache checked in native code would cut that.
   - A compiled function's call to itself is native now (fib 121 ms against YJIT's 60), but
