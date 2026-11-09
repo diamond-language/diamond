@@ -97,6 +97,13 @@ authoritative fine-grained record.
   rest of the builtin calls no longer send a function back to the interpreter. Across the test
   cases, benchmarks and examples the functions the JIT turns away fell from 363 to 17, and
   those 17 only stop under the debugger.
+- **Compiled code calls other compiled functions and methods directly.** With the JIT on, a
+  call from compiled code to another compiled function, or to a method of an object whose class
+  the call site has seen before (up to four classes per site), no longer goes through the
+  interpreter's call machinery, and getters and setters called that way compile too. Instruction
+  counts fell 49% on a polymorphic `shapes[i].area()` loop, 38% on small objects, 28% on an
+  n-body simulation and 20% on structs; method dispatch benchmarks run 44 to 73% fewer.
+  Redefining a method with `redefine_method` or `define_method` still takes effect at once.
 - **The interpreter is faster.** 64 builtin opcode bodies moved out of its main loop, which
   leaves the compiler more registers for the hot path: 2 to 10% fewer instructions on every
   benchmark (fibonacci and tail calls about 10%), and with the JIT on `fiber_switch` and
