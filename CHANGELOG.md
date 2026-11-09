@@ -4,6 +4,8 @@ d6 is currently pre-release. This file records user-visible capability
 milestones rather than every implementation step; the Git history remains the
 authoritative fine-grained record.
 
+## Unreleased
+
 ## 0.29.0 — 2026-11-08
 
 ### Added
