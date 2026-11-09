@@ -104,6 +104,11 @@ authoritative fine-grained record.
   counts fell 49% on a polymorphic `shapes[i].area()` loop, 38% on small objects, 28% on an
   n-body simulation and 20% on structs; method dispatch benchmarks run 44 to 73% fewer.
   Redefining a method with `redefine_method` or `define_method` still takes effect at once.
+- **A block boxes only the locals it reads.** Creating a `do ... end` block used to move every
+  local visible at that point into a heap cell, and every later read of those locals went
+  through the cell. Now only the ones the block's body names are, so the rest stay plain
+  registers: an n-body step that runs one `bodies.each() do ... end` per call does 11% fewer
+  instructions in the interpreter and, with the JIT, 45% fewer than before these JIT changes.
 - **The interpreter is faster.** 64 builtin opcode bodies moved out of its main loop, which
   leaves the compiler more registers for the hot path: 2 to 10% fewer instructions on every
   benchmark (fibonacci and tail calls about 10%), and with the JIT on `fiber_switch` and
@@ -111,6 +116,9 @@ authoritative fine-grained record.
 
 ### Fixed
 
+- **A block inside a string interpolation no longer turns a local into a Cell.** In
+  `out.push("#{list.map() do |v| out.length() + v end}")`, `out` was read before the block boxed
+  it, so the call failed with `undefined method 'push' for Cell`.
 - **A rest parameter no longer holds a placeholder when only a block is passed.**
   `f() do ... end` for `def f(*rest, &block)` gave `rest` one invalid element, and reading it
   (printing `rest`, say) crashed. It is now empty.

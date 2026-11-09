@@ -1367,6 +1367,16 @@ class Parser
     nil
   end
 
+  # Whether a string token's `#{...}` might hold a `do` block, which the
+  # token scans below cannot see into. Mirrors compiler_flow.c's
+  # string_may_hold_block.
+  def string_may_hold_block?(token) -> Bool
+    return false if token.kind() != :string
+    text = self.token_text(token)
+    text.include?("#" + "{") &&
+      Regexp.new("(^|[^A-Za-z0-9_])do($|[^A-Za-z0-9_?!])").match(text) != nil
+  end
+
   # Does the statement starting at @current contain a `do` block or a def
   # before its first line ends (brackets let it span lines)? Mirrors
   # compiler.c's statement_may_capture. A block boxes every visible local
@@ -1374,10 +1384,12 @@ class Parser
   # of `items.map() do ... end`) would otherwise turn into the Cell.
   def statement_may_capture?()
     lookahead = @lexer.clone()
-    kind = @current.kind()
+    token = @current
+    kind = token.kind()
     depth = 0
     while kind != :eof
       return true if kind == :do || kind == :def || kind == :closure
+      return true if self.string_may_hold_block?(token)
       if kind == :left_paren || kind == :left_bracket || kind == :left_brace
         depth = depth + 1
       elsif kind == :right_paren || kind == :right_bracket || kind == :right_brace
@@ -1386,7 +1398,8 @@ class Parser
       elsif kind == :newline
         return false if depth == 0
       end
-      kind = lookahead.next_token().kind()
+      token = lookahead.next_token()
+      kind = token.kind()
     end
     false
   end
@@ -1411,10 +1424,12 @@ class Parser
   # boxing).
   def loop_body_may_capture?()
     lookahead = @lexer.clone()
-    kind = @current.kind()
+    token = @current
+    kind = token.kind()
     depth = 0
     while kind != :eof
       return true if kind == :def || kind == :closure || kind == :do
+      return true if self.string_may_hold_block?(token)
       if kind == :if || kind == :unless || kind == :while || kind == :until ||
           kind == :loop || kind == :case || kind == :begin || kind == :class ||
           kind == :module || kind == :interface
@@ -1423,7 +1438,8 @@ class Parser
         return false if depth == 0
         depth = depth - 1
       end
-      kind = lookahead.next_token().kind()
+      token = lookahead.next_token()
+      kind = token.kind()
     end
     false
   end

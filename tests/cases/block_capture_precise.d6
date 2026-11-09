@@ -1,0 +1,92 @@
+# A block boxes only the enclosing locals it reads, so the others stay plain
+# registers: reads of them elsewhere in the same statement or loop, before
+# and after the block, see the value, never a Cell. A block inside a
+# string interpolation counts too.
+
+# The block inside the interpolation reads only k; out stays plain.
+def interp(n: Int) -> Array[String]
+  out = []
+  i = 0
+  while i < n
+    k = i * 10
+    out.push("#{[1, 2].map() do |v| v + k end}")
+    i += 1
+  end
+  out
+end
+
+# Two blocks on one statement, the second spanning lines.
+def same_line(xs: Array[Int]) -> Array[Int]
+  a = 1
+  b = 2
+  [a, xs.map() do |v| v + a end, b, xs.map() do |w|
+    w * b
+  end, a + b].flatten()
+end
+
+# A loop whose block reads j only; the postfix `if` must not end the scan early.
+def loop_blocks(n: Int) -> Array[Int]
+  cells = []
+  i = 0
+  while i < n
+    j = i
+    unused = i * 2
+    unused = 7 if unused > 100
+    cells.push([0].map() do |z| j + z end)
+    i += 1
+  end
+  cells.flatten()
+end
+
+# A nested block reaches base through the outer block.
+def nested(xs: Array[Int]) -> Array[Int]
+  base = 100
+  other = 5
+  xs.map() do |x|
+    y = x + 1
+    [y].map() do |v| v + base end
+  end.flatten()
+end
+
+# A block that assigns an enclosing local.
+def writes(xs: Array[Int]) -> Int
+  total = 0
+  skip = 3
+  xs.each() do |x|
+    total += x
+  end
+  total + skip
+end
+
+# The same inside a loop.
+def loop_write(n: Int) -> Int
+  sum = 0
+  i = 0
+  while i < n
+    [i].each() do |v| sum += v end
+    i += 1
+  end
+  sum
+end
+
+puts(interp(3))
+puts(same_line([1, 2]))
+puts(loop_blocks(3))
+puts(nested([1, 2]))
+puts(writes([1, 2, 3]))
+puts(loop_write(5))
+
+# An interpolated block that reads the local the statement also uses.
+def interp_used() -> Array[String]
+
+  out = ["a"]
+
+  out.push("#{[1].map() do |v| out.length() + v end}")
+
+  out
+
+end
+
+
+
+puts(interp_used())

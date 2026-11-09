@@ -1813,6 +1813,12 @@ void note_capture_use(const Compiler *compiler,size_t index) {
     if(index<256)use->used[index/64]|=UINT64_C(1)<<(index%64);
 }
 
+/* Records that the block being compiled reads capture slot `capture`. */
+void mark_capture_needed(Compiler *compiler,size_t capture) {
+    if(capture<DIAMOND_MAX_CAPTURES)
+        compiler->capture_needed[capture/64]|=UINT64_C(1)<<(capture%64);
+}
+
 int find_local(const Compiler *compiler, DiamondSpan name) {
     for (size_t index = compiler->local_count; index > 0; index--) {
         if (spans_equal(compiler, compiler->locals[index - 1].name, name)) {
@@ -2002,14 +2008,17 @@ uint16_t define_local_with_register(Compiler *compiler, DiamondSpan name,
         ? allocate_register(compiler) : preferred_register;
     /* .captured starts true, rather than the usual false, whenever this
      * declaration happens inside a loop body a def/closure was found
-     * somewhere in (loop_captures_pending) -- a local declared fresh
+     * somewhere in (loop_captures_pending) and, for a loop whose captures
+     * are all `do` blocks, one of them reads this local's slot
+     * (loop_local_captured) -- a local declared fresh
      * inside such a loop, then captured later in that same body, needs
      * every one of its own subsequent reads/writes (including ones
      * compiled before that later def/closure is even reached) to already
      * be box-aware, for the same reason a pre-existing outer local does
      * (see loop_captures_pending's own comment). */
+    const bool captured = loop_local_captured(compiler, compiler->local_count);
     compiler->locals[compiler->local_count++] =
-        (Local){.name = name, .reg = reg, .captured = compiler->loop_captures_pending};
+        (Local){.name = name, .reg = reg, .captured = captured};
     return reg;
 }
 
@@ -2259,6 +2268,7 @@ uint16_t parse_identifier(Compiler *compiler) {
                 if(capture==DIAMOND_MAX_CAPTURES){fail(compiler,compiler->previous.span,"too many captured variables");return 0;}
                 compiler->capture_registers[compiler->capture_count++]=compiler->enclosing_locals[i-1].reg;
             }
+            mark_capture_needed(compiler,capture);
             const uint16_t destination=allocate_register(compiler);
             emit_instruction(compiler,DIAMOND_OP_GET_CAPTURE,destination,(uint8_t)capture,0,2);
             return destination;
@@ -3226,10 +3236,11 @@ uint16_t compile_sequence(Compiler *compiler) {
                 compiler->function->columns[check_offset]=(uint32_t)statement_span.column;
             }
         }
+        uint64_t statement_capture_mask[4];
         if(compiler->current.kind!=DIAMOND_TOKEN_DEF&&
            compiler->current.kind!=DIAMOND_TOKEN_CLOSURE&&
-           statement_may_capture(compiler))
-            mark_locals_captured(compiler);
+           statement_may_capture(compiler,statement_capture_mask))
+            mark_locals_captured_in(compiler,statement_capture_mask);
         bool statement_is_raise = false;
         /* A statement that never falls through to the next one. With a
          * postfix condition (`return x if y == nil`), everything after it

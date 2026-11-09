@@ -3029,6 +3029,7 @@ uint16_t compile_assignment_store(Compiler *compiler, DiamondSpan name,
                 if(capture==DIAMOND_MAX_CAPTURES){fail(compiler,name,"too many captured variables");return 0;}
                 compiler->capture_registers[compiler->capture_count++]=compiler->enclosing_locals[i-1].reg;
             }
+            mark_capture_needed(compiler,capture);
             emit_instruction(compiler,DIAMOND_OP_SET_CAPTURE,(uint8_t)capture,value,0,2);
             return value;
         }

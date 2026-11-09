@@ -293,6 +293,10 @@ typedef struct Compiler {
      * already true skips its own scan/premark -- see parse_while/
      * parse_loop's own comments). */
     bool loop_captures_pending;
+    /* With loop_captures_pending: which local indices a block in that loop
+     * reads (from the discovery pass's BlockCaptureUse records), so only
+     * those locals start out boxed. All ones when that is not known. */
+    uint64_t loop_capture_mask[4];
     uint16_t known_types[DIAMOND_REGISTER_COUNT];
     int32_t known_type_sets[DIAMOND_REGISTER_COUNT];
     /* LSP-only inferred return facts. Kept separate from known_type_sets so
@@ -412,6 +416,10 @@ typedef struct Compiler {
     size_t enclosing_local_count;
     uint16_t capture_registers[DIAMOND_MAX_CAPTURES];
     size_t capture_count;
+    /* Which capture slots the block being compiled reads (bound in its
+     * prologue or reached through the GET/SET_CAPTURE fallback): only those
+     * enclosing locals are boxed when its CLOSURE is made. */
+    uint64_t capture_needed[4];
     Narrowing narrowing;
     /* Set by compile_sequence right before it returns, true only when the
      * sequence's own last top-level statement was a bare `raise` -- that
@@ -739,6 +747,7 @@ DIAMOND_INTERNAL int find_local(const Compiler *compiler, DiamondSpan name);
 DIAMOND_INTERNAL BlockCaptureUse *find_block_capture_use(const BlockCaptureUses *uses,size_t block_start);
 DIAMOND_INTERNAL bool open_block_capture_use(BlockCaptureUses *uses,size_t block_start,size_t enclosing_count);
 DIAMOND_INTERNAL void note_capture_use(const Compiler *compiler,size_t index);
+DIAMOND_INTERNAL void mark_capture_needed(Compiler *compiler,size_t capture);
 DIAMOND_INTERNAL bool register_is_named(const Compiler *compiler, uint16_t reg);
 DIAMOND_INTERNAL bool try_rewrite_producer_destination(Compiler *compiler, uint16_t value,
                                               uint16_t destination);
@@ -1072,8 +1081,9 @@ DIAMOND_INTERNAL void finish_loop_flow(Compiler *compiler,LoopContext *loop,
         size_t effective_start);
 DIAMOND_INTERNAL void publish_indexed_result_type(Compiler *compiler,uint16_t destination,
         uint16_t receiver);
-DIAMOND_INTERNAL void mark_locals_captured(Compiler *compiler);
-DIAMOND_INTERNAL bool statement_may_capture(const Compiler *compiler);
+DIAMOND_INTERNAL bool statement_may_capture(const Compiler *compiler,uint64_t *mask);
+DIAMOND_INTERNAL void mark_locals_captured_in(Compiler *compiler,const uint64_t *mask);
+DIAMOND_INTERNAL bool loop_local_captured(const Compiler *compiler,size_t index);
 DIAMOND_INTERNAL uint16_t parse_while(Compiler *compiler,bool inverted);
 DIAMOND_INTERNAL uint16_t parse_postfix_while(Compiler *compiler,bool inverted,DiamondLexer after_modifier);
 DIAMOND_INTERNAL uint16_t parse_loop(Compiler *compiler);

@@ -345,9 +345,9 @@ static uint16_t close_begin_frame(Compiler *compiler,const BeginFrame *frame,uin
                 fail(compiler,compiler->current.span,"too many local variables");
                 return destination;
             }
+            const bool exception_captured=loop_local_captured(compiler,compiler->local_count);
             compiler->locals[compiler->local_count++]=(Local){
-                .name=compiler->current.span,.reg=exception,
-                .captured=compiler->loop_captures_pending};
+                .name=compiler->current.span,.reg=exception,.captured=exception_captured};
             advance_token(compiler);
         }
         uint16_t rescue_types[8];size_t type_count=0;
