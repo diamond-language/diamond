@@ -10,6 +10,12 @@ Runtime revision: `e42eba00dd8e3b51d51cf99083697ba3b69062d1` (v0.26.0, deployed 
 and the owner asked for it). No cut was published: none changed after v0.23.0. The deploy's public
 verification resolved, digest-checked, loaded and reinstalled all 20 public cuts.
 
+With v0.29.0 (2026-11-08), after a verified snapshot, a 30-minute credential (37, `publish:gremlin`,
+revoked) published gremlin 0.5.4 (sha256
+`3e88dc67313f0a593e33f6041330ada731dfbea230da6ed9e4a934b6bf731bf8`; a test-only change: its multi-shutdown test
+waits for closed duplicates before slow-mode shutdown). The runtime was not upgraded.
+`tools/verify_registry_launch.d6` passed for all 20 public cuts.
+
 v0.23.0 (`8a43ef3b0aa13a329180ed154f08641afb51615b`, the first d6 release) was
 deployed 2026-11-02 with `tools/deploy_registry.sh` after a verified snapshot). The upgrade comes
 first this time because older registries predate `Cutfile`; its own public verification then failed
