@@ -400,6 +400,15 @@ static void emit_alu_rr(JitBuffer *buf, uint8_t opcode, int dst, int src) {
 }
 enum { ALU_ADD = 0x01, ALU_SUB = 0x29, ALU_XOR = 0x31, ALU_CMP = 0x39 };
 
+/* cmp reg64, [base + disp32] (base not rsp or r12) */
+static void emit_cmp_r64_mem(JitBuffer *buf, int reg, int base, int32_t disp) {
+    emit_u8(buf, emit_rex(true, reg, base));
+    emit_u8(buf, 0x3B);
+    emit_u8(buf, (uint8_t)(0x80 | ((reg & 7) << 3) | (base & 7)));
+    emit_u32_le(buf, (uint32_t)disp);
+}
+
+
 /* imul dst64, src64 (two-operand form; sets OF/CF on signed 64-bit overflow) */
 static void emit_imul_rr(JitBuffer *buf, int dst, int src) {
     emit_u8(buf, emit_rex(true, dst, src));
@@ -1516,16 +1525,27 @@ static bool simple_guard_member(DiamondTypeMember member) {
     return diamond_plain_type_match(DIAMOND_NIL, member.id) >= 0;
 }
 
+/* A user class with no type arguments: an Instance of exactly that class
+ * passes it (a subclass instance is left to the full matcher). */
+static bool class_guard_member(DiamondTypeMember member) {
+    return member.argument_set == DIAMOND_NO_TYPE_SET &&
+        member.second_argument_set == DIAMOND_NO_TYPE_SET &&
+        member.id >= DIAMOND_TYPE_CLASS_BASE && member.id < DIAMOND_TYPE_CLASS_LIMIT;
+}
+
 static void compile_check_type(JitCompiler *jc, uint16_t source, uint16_t set_index) {
     JitBuffer *buf = &jc->buf;
-    size_t accepted[DIAMOND_MAX_UNION_TYPES * 2];
+    size_t accepted[DIAMOND_MAX_UNION_TYPES * 3];
     size_t accepted_count = 0;
     const DiamondTypeSet *set = set_index < jc->function->type_set_count
         ? &jc->function->type_sets[set_index] : nullptr;
     bool simple = set != nullptr && set->count != 0;
+    bool classes = false;
     if (simple) {
-        for (size_t i = 0; i < set->count; i++)
-            if (!simple_guard_member(set->members[i])) simple = false;
+        for (size_t i = 0; i < set->count; i++) {
+            if (class_guard_member(set->members[i])) classes = true;
+            else if (!simple_guard_member(set->members[i])) simple = false;
+        }
     }
     if (simple) {
         emit_load_byte_zx(buf, REG_RAX, JIT_REGISTERS_BASE, reg_disp(source, KIND_OFF));
@@ -1559,6 +1579,27 @@ static void compile_check_type(JitCompiler *jc, uint16_t source, uint16_t set_in
                 }
                 emit_cmp_imm32_32(buf, REG_RAX, kind);
                 accepted[accepted_count++] = emit_jcc_placeholder(buf, JCC_E);
+            }
+            if (classes) {
+                /* RAX is the object kind: an Instance's class against
+                 * chunk->classes[index] for each class member. */
+                emit_cmp_imm32_32(buf, REG_RAX, DIAMOND_OBJECT_INSTANCE);
+                size_t not_instance = emit_jcc_placeholder(buf, JCC_NE);
+                emit_load_r64(buf, REG_RAX, JIT_REGISTERS_BASE, reg_disp(source, AS_OFF));
+                emit_load_r64(buf, REG_RAX, REG_RAX, (int32_t)offsetof(DiamondInstance, class));
+                emit_load_r64(buf, REG_RCX, JIT_CHUNK, (int32_t)offsetof(DiamondChunk, class_count));
+                emit_load_r64(buf, REG_RDX, JIT_CHUNK, (int32_t)offsetof(DiamondChunk, classes));
+                for (size_t i = 0; i < set->count; i++) {
+                    if (!class_guard_member(set->members[i])) continue;
+                    const uint32_t index = (uint32_t)(set->members[i].id - DIAMOND_TYPE_CLASS_BASE);
+                    emit_cmp_imm32_64(buf, REG_RCX, index);
+                    size_t out_of_range = emit_jcc_placeholder(buf, JCC_BE);
+                    emit_cmp_r64_mem(buf, REG_RAX, REG_RDX,
+                        (int32_t)((size_t)index * sizeof(DiamondClass *)));
+                    accepted[accepted_count++] = emit_jcc_placeholder(buf, JCC_E);
+                    patch_rel32_to_here(buf, out_of_range);
+                }
+                patch_rel32_to_here(buf, not_instance);
             }
             patch_rel32_to_here(buf, not_object);
         }
@@ -1786,14 +1827,6 @@ static void compile_self_call_native(JitCompiler *jc, uint16_t dest, uint16_t ba
     emit_add_rsp_imm32(buf, 16);
     emit_bail_if_al_nonzero(jc);
     patch_rel32_to_here(buf, returned_ok);
-}
-
-/* cmp reg64, [base + disp32] (base not rsp or r12) */
-static void emit_cmp_r64_mem(JitBuffer *buf, int reg, int base, int32_t disp) {
-    emit_u8(buf, emit_rex(true, reg, base));
-    emit_u8(buf, 0x3B);
-    emit_u8(buf, (uint8_t)(0x80 | ((reg & 7) << 3) | (base & 7)));
-    emit_u32_le(buf, (uint32_t)disp);
 }
 
 /* The native call shared by calls to other compiled functions and methods
