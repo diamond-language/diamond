@@ -4,7 +4,10 @@ d6 is currently pre-release. This file records user-visible capability
 milestones rather than every implementation step; the Git history remains the
 authoritative fine-grained record.
 
-## Unreleased
+## 1.0.0-rc1 — 2026-11-09
+
+The first release candidate for d6 1.0. Since 0.29.0: safe navigation (`&.`), and a faster JIT for
+array stores and Int ops with a constant operand (loop and sieve now beat YJIT).
 
 ### Added
 
@@ -23,6 +26,9 @@ authoritative fine-grained record.
   `d6-VERSION-linux-*.tar.gz` builds introduced in 0.29.0 while their limits (no JIT, baseline
   x86-64, no `d6 build`) are worked out. CI still builds and tests them, and
   `tools/build_portable.sh` still makes them.
+- **Package file names keep the upstream version.** A pre-release such as 1.0.0-rc1 is packaged
+  as version `1.0.0~rc1` (so the final 1.0.0 upgrades it), but the files are named
+  `d6-lang_1.0.0-rc1-1_amd64.deb` and `d6-lang-1.0.0-rc1-1.fc44.x86_64.rpm`.
 - **Faster `array[i] = value` in compiled code.** The JIT stores straight into a young, unfrozen,
   unconstrained Array when the index is an in-bounds Int, and only falls back to the full
   `INDEX_SET` path for promoted (write-barrier), frozen, typed or out-of-range cases.
