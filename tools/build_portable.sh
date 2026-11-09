@@ -30,6 +30,12 @@ work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 git ls-files -z | tar --null -T - -cf "$work/source.tar"
 cp tools/build_portable_inside.sh "$work/inside.sh"
+# libxcrypt comes from a GitHub release, fetched here with retries and an API fallback
+# (tools/fetch_release_asset.sh); its pinned version and checksum stay in inside.sh.
+xcrypt_version="$(sed -n "s/^xcrypt_version=//p" tools/build_portable_inside.sh)"
+xcrypt_sha256="$(sed -n "s/^xcrypt_sha256=//p" tools/build_portable_inside.sh)"
+sh tools/fetch_release_asset.sh besser82/libxcrypt "v$xcrypt_version" \
+    "libxcrypt-$xcrypt_version.tar.xz" "$work/xcrypt.tar.xz" "$xcrypt_sha256"
 
 "$engine" run --rm -v "$work":/in:Z -v "$out":/out:Z -e ARCH="$arch" \
     -e JOBS="${JOBS:-10}" "$image" sh /in/inside.sh

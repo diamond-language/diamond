@@ -13,12 +13,21 @@ the earlier one. Keep `cancel-in-progress: true` and avoid `always()` on test
 jobs, which can keep cancelled work alive.
 
 `tools/merge_when_green.sh PR BRANCH` accepts only explicit `SUCCESS` check
-states, with at least 31 checks by default (`MIN_CHECKS` overrides this when
+states, with at least 34 checks by default (`MIN_CHECKS` overrides this when
 the workflow changes). Queued or running checks wait; cancelled, skipped,
 neutral, failed or unknown states stop the merge. API errors and incomplete
 reports also stop it. The script rechecks the states and count immediately
 before merging, after verifying that the branch still contains current `main`.
 Its fake-command regression tests run as part of `make test`.
+
+Jobs that download a GitHub release file (wasi-sdk for `test-wasm`, libxcrypt for the portable
+build, the 0.22.0 packages the package tests upgrade from) go through
+`tools/fetch_release_asset.sh`. github.com sometimes answers 504 for one release file for
+minutes at a time while the same file downloads through the API, which used to fail one of these
+jobs in most full runs and pass on a lone rerun. The helper retries, falls back to the API
+(authenticated with the job's `GH_TOKEN`), and still checks each pinned sha256. `test-freebsd`
+cannot route its download that way, since `vmactions/freebsd-vm` fetches `anyvm.py` itself, so a
+step before it waits up to ten minutes for that file to answer.
 
 Cancellation is asynchronous: most jobs stop within seconds of a newer push, but a
 job on a slow runner (FreeBSD has been the usual one) can take up to the five minutes

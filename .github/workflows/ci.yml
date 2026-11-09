@@ -212,10 +212,13 @@ jobs:
           apt-get update
           DEBIAN_FRONTEND=noninteractive apt-get install -y gcc make git diffutils findutils libcrypt-dev bc curl util-linux nodejs ca-certificates openssl
       - name: Install wasi-sdk
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          curl -fsSL -o wasi-sdk.tar.gz https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-34/wasi-sdk-34.0-x86_64-linux.tar.gz
           # Pinned: the toolchain is built into the module, so a replaced release asset must not be unpacked silently.
-          echo "b761e3a0721dbae9c09a0059e5fdb2bf917d1b4a8a7b430fb3b5aafb0984b2c4  wasi-sdk.tar.gz" | sha256sum -c -
+          # The helper retries and falls back to the API when github.com answers 504 for the asset.
+          sh tools/fetch_release_asset.sh WebAssembly/wasi-sdk wasi-sdk-34 wasi-sdk-34.0-x86_64-linux.tar.gz \
+            wasi-sdk.tar.gz b761e3a0721dbae9c09a0059e5fdb2bf917d1b4a8a7b430fb3b5aafb0984b2c4
           mkdir -p /opt/wasi-sdk
           tar xzf wasi-sdk.tar.gz -C /opt/wasi-sdk --strip-components=1
       # The module embeds the compiled prelude, which the host build generates.
@@ -411,6 +414,8 @@ jobs:
         with:
           fetch-depth: 1
       - name: Build, install and smoke-test the ${{ matrix.format }}
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: bash packaging/ci.sh ${{ matrix.format }}
 
   # Builds the portable tools (static musl d6, facet, d6-lsp, d6-dap, in an
@@ -428,6 +433,8 @@ jobs:
         with:
           fetch-depth: 1
       - name: Build the portable tools
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: tools/build_portable.sh
       - name: Smoke-test them on each distribution
         run: tools/test_portable_distros.sh
@@ -511,6 +518,21 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 1
+      # The action downloads anyvm.py from a GitHub release and gives up after
+      # about 30 seconds, while github.com can answer 504 for one release asset
+      # for minutes. Wait (up to 10 minutes) until the URL the action will use
+      # answers; its pinned version is read from the action's own config. If
+      # that cannot be read, go straight on.
+      - name: Wait for the anyvm release asset
+        run: |
+          v=$(grep -h '^ANYVM_VERSION=' "$HOME"/work/_actions/vmactions/freebsd-vm/c46abacb49f09938ca4e1702d15d836285d694cc/conf/*.conf 2>/dev/null | sort -u | cut -d= -f2 | tr -d '"' || true)
+          if [ "$(printf '%s\n' "$v" | grep -c .)" != 1 ]; then echo "anyvm version not found; not waiting"; exit 0; fi
+          url="https://github.com/anyvm-org/anyvm/releases/download/v$v/anyvm.py"
+          for i in $(seq 1 40); do
+            curl -fsSL -o /dev/null --max-time 60 "$url" && { echo "anyvm $v reachable"; exit 0; }
+            echo "anyvm $v not reachable yet ($i/40)"; sleep 15
+          done
+          echo "anyvm $v still unreachable; the action will retry once more"
       - name: FreeBSD build and test
         uses: vmactions/freebsd-vm@c46abacb49f09938ca4e1702d15d836285d694cc # v1
         with:
