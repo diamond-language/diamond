@@ -400,6 +400,11 @@ static void emit_alu_rr(JitBuffer *buf, uint8_t opcode, int dst, int src) {
 }
 enum { ALU_ADD = 0x01, ALU_SUB = 0x29, ALU_XOR = 0x31, ALU_CMP = 0x39 };
 
+/* Call site ids (method calls, `new`, `==`), unique across every compiled
+ * function (compilation can run on several threads at once): each indexes
+ * vm->jit_call_sites. */
+static atomic_uint_fast32_t jit_next_call_site;
+
 /* cmp reg64, [base + disp32] (base not rsp or r12) */
 static void emit_cmp_r64_mem(JitBuffer *buf, int reg, int base, int32_t disp) {
     emit_u8(buf, emit_rex(true, reg, base));
@@ -1372,6 +1377,52 @@ static void compile_equal_op(JitCompiler *jc, size_t instruction_start, uint16_t
      * lowest address, [rsp+0], matching that layout; the caller (this
      * generated code) reclaims the 16 bytes after the call returns. */
     patch_rel32_to_here(buf, kinds_differ);
+    /* nil against an object is unequal; so is an Instance against nil when
+     * its class defines no `==`, which this site's entries list (jit.h,
+     * diamond_jit_equal_site_fill). RAX and RCX are the kinds. */
+    size_t unequal[DIAMOND_JIT_CALL_WAYS + 1];
+    size_t unequal_count = 0;
+    size_t general[6];
+    size_t general_count = 0;
+    const uint_fast32_t site_id = atomic_fetch_add_explicit(&jit_next_call_site, 1,
+        memory_order_relaxed);
+    const bool cached = site_id < (uint_fast32_t)(INT32_MAX / sizeof(DiamondJitCallSite)) - 1;
+    emit_cmp_imm32_32(buf, REG_RAX, DIAMOND_VALUE_NIL);
+    size_t left_not_nil = emit_jcc_placeholder(buf, JCC_NE);
+    emit_cmp_imm32_32(buf, REG_RCX, DIAMOND_VALUE_OBJECT);
+    unequal[unequal_count++] = emit_jcc_placeholder(buf, JCC_E);
+    general[general_count++] = emit_jmp_placeholder(buf);
+    patch_rel32_to_here(buf, left_not_nil);
+    if (cached) {
+        const int32_t site_at = (int32_t)(site_id * sizeof(DiamondJitCallSite));
+        emit_cmp_imm32_32(buf, REG_RCX, DIAMOND_VALUE_NIL);
+        general[general_count++] = emit_jcc_placeholder(buf, JCC_NE);
+        emit_object_kind_guard(buf, JIT_REGISTERS_BASE, reg_disp(left, 0),
+            DIAMOND_OBJECT_INSTANCE, general, &general_count);
+        emit_load_r64(buf, REG_RAX, REG_RDX, (int32_t)offsetof(DiamondInstance, class));
+        emit_mov_rr(buf, REG_RDX, JIT_VM);
+        emit_load_r64(buf, REG_RCX, REG_RDX, (int32_t)offsetof(DiamondVm, jit_call_site_count));
+        emit_cmp_imm32_64(buf, REG_RCX, (uint32_t)site_id);
+        size_t no_table = emit_jcc_placeholder(buf, JCC_BE);
+        emit_load_r64(buf, REG_RDX, REG_RDX, (int32_t)offsetof(DiamondVm, jit_call_sites));
+        emit_lea(buf, REG_RDX, REG_RDX, site_at);
+        for (int way = 0; way < DIAMOND_JIT_CALL_WAYS; way++) {
+            emit_cmp_r64_mem(buf, REG_RAX, REG_RDX,
+                (int32_t)((size_t)way * sizeof(DiamondJitCallEntry)));
+            unequal[unequal_count++] = emit_jcc_placeholder(buf, JCC_E);
+        }
+        /* cmp dword [rdx + failed_fills], DIAMOND_JIT_CALL_FILL_TRIES */
+        emit_u8(buf, 0x81); emit_u8(buf, 0xBA);
+        emit_u32_le(buf, (uint32_t)offsetof(DiamondJitCallSite, failed_fills));
+        emit_u32_le(buf, DIAMOND_JIT_CALL_FILL_TRIES);
+        general[general_count++] = emit_jcc_placeholder(buf, JCC_AE);
+        patch_rel32_to_here(buf, no_table);
+        emit_mov_rr(buf, REG_RDI, JIT_VM);
+        emit_mov_imm64(buf, REG_RSI, (uint64_t)site_id);
+        emit_lea(buf, REG_RDX, JIT_REGISTERS_BASE, reg_disp(left, 0));
+        emit_body_call(jc, (void *)(uintptr_t)diamond_jit_equal_site_fill);
+    }
+    for (size_t i = 0; i < general_count; i++) patch_rel32_to_here(buf, general[i]);
     emit_lea(buf, REG_RAX, JIT_REGISTERS_BASE, reg_disp(dest, 0));
     emit_push(buf, REG_RAX);
     emit_mov_imm64(buf, REG_RAX, negate ? 1 : 0);
@@ -1388,6 +1439,8 @@ static void compile_equal_op(JitCompiler *jc, size_t instruction_start, uint16_t
     emit_add_rsp_imm32(buf, 16);
     emit_bail_if_al_nonzero(jc);
     size_t general_done = emit_jmp_placeholder(buf);
+    for (size_t i = 0; i < unequal_count; i++) patch_rel32_to_here(buf, unequal[i]);
+    emit_mov_imm64(buf, REG_RAX, negate ? 1 : 0);
     patch_rel32_to_here(buf, nil_done);
     patch_rel32_to_here(buf, bool_done);
     patch_rel32_to_here(buf, int_done);
@@ -3035,10 +3088,6 @@ static bool jit_native_read_operation(uint16_t site_type,
  * compile_invoke_any, the interpreter's own dispatch, so it no longer keeps
  * the whole function interpreted. DIAMOND_OP_INVOKE_TYPED always calls
  * diamond_jit_invoke_typed (compile_body's own case). */
-/* Call site ids for compiled method calls, unique across every compiled
- * function (compilation can run on several threads at once). */
-static atomic_uint_fast32_t jit_next_call_site;
-
 /* The native half of a method call on an Instance (compile_invoke_native).
  * `done` is the jump past the slow path; `active` false when the site got
  * no native path (ids exhausted), so only the slow path was emitted. */

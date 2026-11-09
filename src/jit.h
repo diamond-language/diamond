@@ -603,6 +603,12 @@ void diamond_jit_new_site_fill(DiamondVm *vm, const DiamondChunk *chunk,
 struct DiamondInstance *diamond_jit_new_object(DiamondVm *vm,
         const struct DiamondClass *class);
 
+/* EQUAL/NOT_EQUAL sites (jit.c compile_equal_op) list, in the same table,
+ * the classes that define no `==`: an Instance of one compared with nil is
+ * unequal without diamond_jit_equal_general. Entries hold only the class. */
+void diamond_jit_equal_site_fill(DiamondVm *vm, uint32_t site_id,
+        const DiamondValue *left);
+
 /* A native method call's non-OK status: as diamond_jit_self_call_finish,
  * with the arguments the call was made with rebuilt from the caller's
  * registers (the receiver, then registers[base..base+argc)). `operands`

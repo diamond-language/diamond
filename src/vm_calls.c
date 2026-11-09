@@ -1739,6 +1739,29 @@ void diamond_jit_new_site_fill(DiamondVm *vm, const DiamondChunk *chunk,
     call_site->entries[0] = entry;
 }
 
+void diamond_jit_equal_site_fill(DiamondVm *vm, uint32_t site_id, const DiamondValue *left) {
+    DiamondJitCallSite *call_site = jit_call_site(vm, site_id);
+    if (call_site == nullptr || call_site->failed_fills >= DIAMOND_JIT_CALL_FILL_TRIES) return;
+    if (left->kind != DIAMOND_VALUE_OBJECT || left->as.object->kind != DIAMOND_OBJECT_INSTANCE) {
+        call_site->failed_fills++;
+        return;
+    }
+    const DiamondInstance *instance = (const DiamondInstance *)left->as.object;
+    const DiamondChunk *owner = instance->owner != nullptr ? instance->owner : vm->root_chunk;
+    size_t way = 0;
+    while (way < DIAMOND_JIT_CALL_WAYS &&
+           call_site->entries[way].receiver_class != nullptr &&
+           call_site->entries[way].receiver_class != instance->class)
+        way++;
+    /* invoke_operator_method's lookup: a class that answers `==` runs it. */
+    if (way == DIAMOND_JIT_CALL_WAYS ||
+        lookup_method(owner, instance->class, "==", 2) != nullptr) {
+        call_site->failed_fills++;
+        return;
+    }
+    call_site->entries[way] = (DiamondJitCallEntry){.receiver_class = instance->class};
+}
+
 DiamondInstance *diamond_jit_new_object(DiamondVm *vm, const DiamondClass *class) {
     return allocate_instance(vm, class, nullptr);
 }
