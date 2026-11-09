@@ -591,6 +591,18 @@ typedef struct DiamondJitCallSite {
 void diamond_jit_call_site_fill(DiamondVm *vm, const DiamondChunk *chunk,
         const DiamondValue *receiver, const uint8_t *site, uint32_t site_id);
 
+/* `Class.new` sites (jit.c compile_new_native) use the same table, one entry
+ * per site: the class the site constructs and its compiled `initialize`
+ * (code nullptr when the class has none and the call passes no arguments).
+ * The site allocates through diamond_jit_new_object, an allocate_instance
+ * that compiled code can call (nullptr when out of memory), and calls the
+ * code with the new instance first. diamond_jit_new_site_fill lists the
+ * class when diamond_jit_new_instance would do exactly that. */
+void diamond_jit_new_site_fill(DiamondVm *vm, const DiamondChunk *chunk,
+        uint32_t site_id, uint16_t class_index, uint8_t argc);
+struct DiamondInstance *diamond_jit_new_object(DiamondVm *vm,
+        const struct DiamondClass *class);
+
 /* A native method call's non-OK status: as diamond_jit_self_call_finish,
  * with the arguments the call was made with rebuilt from the caller's
  * registers (the receiver, then registers[base..base+argc)). `operands`
