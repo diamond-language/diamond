@@ -1257,11 +1257,84 @@ static bool range_end_absent(const Compiler *compiler) {
     }
 }
 
+/* Drops Nil from a register's type set for the duration of a safe call; false
+ * when the set has no Nil to drop (or nothing would be left). */
+static bool non_nil_view(Compiler *compiler,int32_t set,int32_t *without_nil) {
+    int32_t only_nil=-1;
+    return set>=0&&split_nil_type_set(compiler,(uint16_t)set,without_nil,&only_nil);
+}
+
+/* `receiver&.name(...)`: the current token is `&.`. Compiles as
+ * `receiver is Nil ? nil : receiver.name(...)` with the receiver evaluated
+ * once. Only nil short-circuits (`false&.to_s()` still calls), and only this
+ * one call: `a&.b().c()` still calls `c` on the nil, as in Kotlin and C#, so
+ * each link that may see nil writes its own `&.`. While the call compiles,
+ * the receiver's checked and editor type sets drop Nil, the same non-nil view
+ * a `receiver != nil &&` guard gives its right operand; the result is the
+ * call's type joined with Nil. */
+static uint16_t parse_safe_invoke(Compiler *compiler,uint16_t receiver) {
+    const uint16_t is_nil=allocate_register(compiler);
+    emit_instruction(compiler,DIAMOND_OP_IS_TYPE,is_nil,receiver,DIAMOND_TYPE_NIL,3);
+    compiler->known_types[is_nil]=DIAMOND_TYPE_BOOL;
+    const size_t nil_jump=emit_jump(compiler,DIAMOND_OP_JUMP_IF_TRUE,is_nil);
+    const uint16_t destination=allocate_register(compiler);
+    /* The non-nil view, restored afterwards unless the call reassigned the
+     * receiver (it cannot for a temporary; a local's reassignment wins). */
+    const uint16_t saved_type=compiler->known_types[receiver];
+    const int32_t saved_set=compiler->known_type_sets[receiver];
+    int32_t checked=-1;
+    const bool narrowed=non_nil_view(compiler,saved_set,&checked);
+    if(narrowed)apply_type_set_fact(compiler,receiver,checked);
+    else if(saved_type==DIAMOND_TYPE_NIL)compiler->known_types[receiver]=TYPE_UNKNOWN;
+    const uint16_t narrowed_type=compiler->known_types[receiver];
+    const int32_t narrowed_set=compiler->known_type_sets[receiver];
+    /* Editor facts: a local goes through the scoped proof records the LSP reads
+     * by position; a temporary only needs the register's own set. */
+    int32_t tooling=-1;
+    const int32_t saved_tooling=compiler->tooling_type_sets[receiver];
+    const bool tooling_narrowed=non_nil_view(compiler,saved_tooling,&tooling);
+    ScopedToolingGuard guards[1];size_t guard_count=0;
+    if(tooling_narrowed||(narrowed&&register_is_local(compiler,receiver))) {
+        const NarrowingFact fact={.reg=receiver,
+            .type_set=tooling_narrowed?tooling:checked,.tooling_only=true};
+        if(register_is_local(compiler,receiver))
+            guard_count=begin_rhs_tooling(compiler,&fact,1,guards);
+        else compiler->tooling_type_sets[receiver]=fact.type_set;
+    }
+    const uint16_t result=parse_invoke(compiler,receiver);
+    const uint16_t result_type=compiler->known_types[result];
+    const int32_t result_set=compiler->known_type_sets[result];
+    const int32_t result_tooling=compiler->tooling_type_sets[result];
+    if(guard_count>0) {
+        Narrowing unused_left={},unused_right={};
+        end_rhs_tooling(compiler,guards,guard_count,&unused_left,&unused_right);
+    } else if(tooling_narrowed&&!register_is_local(compiler,receiver)) {
+        compiler->tooling_type_sets[receiver]=saved_tooling;
+    }
+    if(compiler->known_types[receiver]==narrowed_type&&
+       compiler->known_type_sets[receiver]==narrowed_set) {
+        compiler->known_types[receiver]=saved_type;
+        compiler->known_type_sets[receiver]=saved_set;
+    }
+    emit_instruction(compiler,DIAMOND_OP_MOVE,destination,result,0,2);
+    const size_t end_jump=emit_jump(compiler,DIAMOND_OP_JUMP,0);
+    patch_jump(compiler,nil_jump,compiler->function->code_count);
+    emit_instruction(compiler,DIAMOND_OP_NIL,destination,0,0,1);
+    patch_jump(compiler,end_jump,compiler->function->code_count);
+    merge_flow_types(compiler,result_type,result_set,DIAMOND_TYPE_NIL,-1,
+        &compiler->known_types[destination],&compiler->known_type_sets[destination]);
+    if(result_tooling>=0)
+        compiler->tooling_type_sets[destination]=
+            type_set_with_nil(compiler,(uint16_t)result_tooling);
+    return destination;
+}
+
 uint16_t parse_precedence(Compiler *compiler, Precedence precedence) {
     uint16_t left = parse_prefix(compiler);
     drop_facts_after_block_break(compiler,left);
     while (!compiler->failed &&
            (compiler->current.kind == DIAMOND_TOKEN_DOT ||
+            compiler->current.kind == DIAMOND_TOKEN_AMPERSAND_DOT ||
             compiler->current.kind == DIAMOND_TOKEN_LEFT_BRACKET ||
             compiler->current.kind == DIAMOND_TOKEN_LEFT_PAREN)) {
         /* `expr(...)` directly after an already-fully-parsed expression
@@ -1281,6 +1354,8 @@ uint16_t parse_precedence(Compiler *compiler, Precedence precedence) {
          * extends where its receiver register is allowed to come from. */
         if(compiler->current.kind == DIAMOND_TOKEN_LEFT_PAREN) {
             left = parse_closure_call_arguments(compiler,left);
+        } else if(compiler->current.kind == DIAMOND_TOKEN_AMPERSAND_DOT) {
+            left = parse_safe_invoke(compiler,left);
         } else {
             left = compiler->current.kind == DIAMOND_TOKEN_DOT
                 ? parse_invoke(compiler,left) : parse_index(compiler,left);

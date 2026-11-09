@@ -29,6 +29,9 @@ typedef enum DiamondTokenKind {
     DIAMOND_TOKEN_RIGHT_BRACE,
     DIAMOND_TOKEN_COMMA,
     DIAMOND_TOKEN_DOT,
+    /* `&.`, safe navigation: `value&.name()` calls `name` unless `value` is nil,
+     * in which case the whole call is nil (see parse_safe_invoke). */
+    DIAMOND_TOKEN_AMPERSAND_DOT,
     /* Range operators -- `1..5` (inclusive), `1...5` (exclusive). Lexed
      * here, not folded into DIAMOND_TOKEN_DOT with a "how many dots"
      * count, so the parser can dispatch on token kind the same way it

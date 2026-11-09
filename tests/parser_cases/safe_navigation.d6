@@ -1,0 +1,73 @@
+# `&.` calls a method unless the receiver is nil; then the whole call is nil.
+
+class Pet
+  attr_accessor name: String
+
+  def initialize(name: String)
+    @name = name
+  end
+
+  def greet(other: String) = "#{@name} greets #{other}"
+end
+
+def counted(calls: Array[Int]) -> String
+  calls[0] += 1
+  "Ann"
+end
+
+def lookup(pets: Hash[String, Pet], lookups: Array[Int]) -> Pet | Nil
+  lookups[0] += 1
+  pets["rex"]
+end
+
+def maybe_names(present: Bool) -> Array[String] | Nil
+  present ? ["a", "b"] : nil
+end
+
+def run(pets: Hash[String, Pet])
+  # A Hash lookup is nullable: `&.` calls through a hit and gives nil for a miss.
+  puts(pets["rex"]&.name())
+  puts(pets["tom"]&.name().inspect())
+
+  # Arguments are passed as usual, and are not evaluated when the receiver is nil.
+  calls = [0]
+  puts(pets["rex"]&.greet(counted(calls)))
+  puts(pets["tom"]&.greet(counted(calls)).inspect())
+  puts(calls[0])
+
+  # The receiver is evaluated once.
+  lookups = [0]
+  puts(lookup(pets, lookups)&.name())
+  puts(lookups[0])
+
+  # Each link that may see nil writes its own `&.`.
+  missing = pets["tom"]
+  puts(missing&.name()&.upcase().inspect())
+  puts(pets["rex"]&.name()&.upcase())
+
+  # A leading `&.` line continues a chain, like a leading `.`.
+  shout = pets["rex"]
+    &.name()
+    &.upcase()
+  puts(shout)
+
+  # A call with a block works the same way.
+  puts(maybe_names(true)&.map() do |n| n.upcase() end.inspect())
+  puts(maybe_names(false)&.map() do |n| n.upcase() end.inspect())
+
+  # The result is nullable, so a nil guard narrows it like any other `T | Nil`.
+  found = pets["rex"]&.name()
+  puts(found.length()) if found != nil
+
+  # A setter through `&.` assigns on a hit and is skipped on a miss.
+  pets["rex"]&.name = "Max"
+  pets["tom"]&.name = "Tom"
+  puts(pets["rex"]&.name())
+  puts(pets.size())
+end
+
+run({"rex": Pet.new("Rex")})
+
+# Only nil short-circuits: false is an ordinary receiver.
+puts(false&.to_s())
+puts(nil&.to_s().inspect())

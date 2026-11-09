@@ -7224,10 +7224,28 @@ class Parser
   # resolved by the VM at INVOKE time against the receiver's *runtime*
   # class, so there's no arity check here -- an ordinary ArityError
   # surfaces from the VM instead, mirroring compiler.c's own parse_invoke.
+  # `receiver&.name(...)`, as compiler_expressions.c's parse_safe_invoke: nil
+  # skips the call and makes the result nil; anything else (false included)
+  # is called. The result is nullable, so it carries no single type fact.
+  def compile_safe_invoke(receiver)
+    is_nil = self.allocate_register()
+    self.emit_instruction3(Opcode::IS_TYPE, is_nil, receiver, Type::NIL)
+    nil_jump = self.emit_jump(Opcode::JUMP_IF_TRUE, is_nil)
+    destination = self.allocate_register()
+    result = self.compile_invoke(receiver)
+    self.emit_instruction2(Opcode::MOVE, destination, result)
+    end_jump = self.emit_jump(Opcode::JUMP, 0)
+    self.patch_jump(nil_jump, @code_count)
+    self.emit_instruction1(Opcode::NIL, destination)
+    self.patch_jump(end_jump, @code_count)
+    destination
+  end
+
   def compile_invoke(receiver)
+    safe = @current.kind() == :ampersand_dot
     self.advance_token()
     if @current.kind() != :identifier && @current.kind() != :class
-      self.fail("expected method name after '.'")
+      self.fail(safe ? "expected method name after '&.'" : "expected method name after '.'")
       return 0
     end
     name = self.token_text(@current)
@@ -8856,9 +8874,12 @@ class Parser
     left = self.parse_prefix()
     # `expr(...)` right after a whole expression calls the Callable it made
     # (`make()(1)`, `table[0]()`), as compiler.c's parse_precedence does.
-    while !@failed && (@current.kind() == :dot || @current.kind() == :left_bracket || @current.kind() == :left_paren)
+    while !@failed && (@current.kind() == :dot || @current.kind() == :ampersand_dot ||
+                       @current.kind() == :left_bracket || @current.kind() == :left_paren)
       left = if @current.kind() == :dot
         self.compile_invoke(left)
+      elsif @current.kind() == :ampersand_dot
+        self.compile_safe_invoke(left)
       elsif @current.kind() == :left_paren
         self.compile_callable_call(left)
       else

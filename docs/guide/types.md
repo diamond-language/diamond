@@ -109,6 +109,21 @@ d6 does not yet *force* you to check: calling `name.upcase()` on a
 annotation still documents the possibility and rejects `nil` everywhere it
 was not declared.
 
+When `nil` should simply pass through, use `&.` instead of `.`. It calls the
+method when the value is there and gives `nil` without calling it when the
+value is `nil`:
+
+```ruby
+ages = {"ada": 36}
+puts(ages["ada"]&.to_s())             # => 36
+puts(ages["bob"]&.to_s().inspect())   # => nil
+```
+
+Only `nil` is skipped (`false&.to_s()` is `"false"`), and only that one call:
+in `a&.b().c()`, `c` is still called on the `nil`, so write `a&.b()&.c()` when
+each step may be missing. The result is `T | Nil`, so a check narrows it as
+above.
+
 ## Unions and is
 
 A union accepts a value of any of its member types. `value is Type` tests

@@ -372,7 +372,30 @@ names = users
   .sort_by() do |user| user.created_at() end
   .map() do |user| user.name() end
 ```
-`..` at the start of a line is still a range, not a method call.
+`..` at the start of a line is still a range, not a method call. A line
+that starts with `&.` continues the chain the same way.
+
+## Safe navigation
+
+`receiver&.name(args)` calls `name` unless `receiver` is `nil`; then the
+arguments are not evaluated and the whole call is `nil`:
+```ruby
+pets = {"rex": "Rex"}
+pets["rex"]&.upcase()        # => "REX"
+pets["tom"]&.upcase()        # => nil
+false&.to_s()                # => "false", only nil short-circuits
+```
+
+- The receiver is evaluated once.
+- Each `&.` covers one call. In `a&.b().c()` a nil `a` makes `a&.b()` nil
+  and `c` is then called on that nil, as in Kotlin; write `a&.b()&.c()` to
+  pass nil along the chain.
+- The result type is the method's return type joined with `Nil`, so a nil
+  guard (`if name != nil`) narrows it like any other `T | Nil`. Inside the
+  call the receiver is treated as its non-nil type.
+- A writer works too: `pet&.name = "Max"` assigns only when `pet` is not
+  nil. A call with a block works the same way:
+  `names&.map() do |n| n.upcase() end`.
 
 ## Endless methods
 

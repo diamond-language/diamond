@@ -6,6 +6,14 @@ authoritative fine-grained record.
 
 ## Unreleased
 
+### Added
+
+- **Safe navigation (`&.`).** `value&.name(args)` calls `name` unless `value` is nil; then the
+  arguments are skipped and the call is nil. Only nil short-circuits, each `&.` covers one call,
+  writers (`pet&.name = "Max"`) and block calls work, and a line starting with `&.` continues a
+  chain. The result is the method's return type joined with `Nil`, and the receiver is treated as
+  non-nil inside the call ([core syntax](docs/core-syntax.md#safe-navigation)).
+
 ### Changed
 
 - **Portable tarballs withdrawn from releases.** Releases no longer attach the static

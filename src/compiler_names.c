@@ -2454,7 +2454,10 @@ uint16_t parse_invoke(Compiler *compiler, uint16_t receiver) {
      * "undefined method" way if nothing real answers to it). */
     if (compiler->current.kind != DIAMOND_TOKEN_IDENTIFIER &&
         compiler->current.kind != DIAMOND_TOKEN_CLASS) {
-        fail(compiler, compiler->current.span, "expected method name after '.'"); return 0;
+        fail(compiler, compiler->current.span,
+             compiler->previous.kind==DIAMOND_TOKEN_AMPERSAND_DOT
+                 ? "expected method name after '&.'" : "expected method name after '.'");
+        return 0;
     }
     const DiamondSpan name = compiler->current.span;
     advance_token(compiler);
