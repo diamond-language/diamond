@@ -1,0 +1,75 @@
+# Getters and setters answered at a compiled call site (threshold 1, stress
+# GC): the site reads or writes the field itself when the method is a plain
+# accessor, and calls the method for everything that is not plain -- a value
+# the declared type rejects, a frozen receiver, a field never set, a class
+# that redefines the accessor.
+
+class Point
+  attr_accessor x: Float
+  attr_accessor label
+  attr_reader count: Int
+
+  def initialize(x: Float)
+    @x = x
+    @count = 0
+  end
+
+  def tag() = @tag
+end
+
+class Labeled < Point
+  def label() -> String = "labeled"
+end
+
+def move(p, by: Float) -> Float
+  p.x = p.x() + by
+  p.x()
+end
+
+def relabel(p, name) = p.label = name
+
+def read_all(p) -> Array[String]
+  ["#{p.x()}", "#{p.label()}", "#{p.count()}", "#{p.tag()}"]
+end
+
+def bad_set(p, value) -> String
+  begin
+    p.x = value
+    "set #{p.x()}"
+  rescue e: Exception
+    "error #{e.message()}"
+  end
+end
+
+points = [Point.new(1.0), Labeled.new(2.0)]
+i = 0
+while i < 3
+  points.each() do |p|
+    puts(move(p, 0.5))
+    relabel(p, "p#{i}")
+    puts(read_all(p))
+  end
+  i += 1
+end
+
+# A setter's type check still raises from the method.
+puts(bad_set(points[0], 7))
+puts(bad_set(points[0], 8.5))
+
+# A frozen receiver is called, and refuses.
+frozen = Point.new(3.0)
+frozen.freeze()
+puts(bad_set(frozen, 4.0))
+
+# Old objects need the write barrier: survive collections, then write a young value.
+keep = []
+n = 0
+while n < 2000
+  keep.push(Point.new(1.0 * n))
+  n += 1
+end
+keep.each() do |p|
+  relabel(p, "young #{p.x()}")
+end
+puts(keep[1999].label())
+puts(keep[0].label())

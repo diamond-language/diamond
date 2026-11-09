@@ -1562,6 +1562,9 @@ static_assert(sizeof(DiamondJitCallEntry) == 32, "jit.c indexes call entries by 
 static_assert(offsetof(DiamondJitCallEntry, code) == 8, "jit.c reads code at 8");
 static_assert(offsetof(DiamondJitCallEntry, chunk) == 16, "jit.c reads chunk at 16");
 static_assert(offsetof(DiamondJitCallEntry, frame_bytes) == 24, "jit.c reads frame_bytes at 24");
+static_assert(offsetof(DiamondJitCallEntry, accessor) == 28, "jit.c reads accessor at 28");
+static_assert(offsetof(DiamondJitCallEntry, accessor_field) == 29, "jit.c reads the field at 29");
+static_assert(offsetof(DiamondJitCallEntry, accessor_value_kind) == 30, "jit.c reads the kind at 30");
 static_assert(sizeof(DiamondJitCallSite) == 136, "jit.c indexes call sites by 136");
 #endif
 
@@ -1596,6 +1599,31 @@ static bool jit_compile_shortcut_target(DiamondVm *vm, const DiamondFunction *fn
     if (fn->jit_code != nullptr) return true;
     *later = false;
     return false;
+}
+
+/* Marks a call entry whose method is a trivial accessor the call site can
+ * answer itself (DiamondJitCallEntry): one invoke_resolved_method_dispatch
+ * would hand to trivial_getter_result or trivial_setter_result, with no
+ * declared type or one naming only Int or Float, which the site checks by
+ * the value's kind as shortcut_type_matches does. */
+static void jit_call_entry_accessor(const DiamondVm *vm, const DiamondFunction *fn,
+        uint8_t argc, DiamondJitCallEntry *entry) {
+    if (vm->debug_fd >= 0 || (fn->code_count != 10 && fn->code_count != 15)) return;
+    const DiamondAccessor accessor = function_accessor(fn);
+    if (accessor.kind != (argc == 0 ? DIAMOND_ACCESSOR_GETTER : DIAMOND_ACCESSOR_SETTER)) return;
+    uint8_t value_kind = DIAMOND_JIT_ANY_VALUE_KIND;
+    if (accessor.set != DIAMOND_NO_TYPE_SET) {
+        const DiamondTypeSet *set = &fn->type_sets[accessor.set];
+        if (set->count != 1 || set->members[0].argument_set != DIAMOND_NO_TYPE_SET ||
+            set->members[0].second_argument_set != DIAMOND_NO_TYPE_SET)
+            return;
+        if (set->members[0].id == DIAMOND_TYPE_INT) value_kind = DIAMOND_VALUE_INT;
+        else if (set->members[0].id == DIAMOND_TYPE_FLOAT) value_kind = DIAMOND_VALUE_FLOAT;
+        else return;
+    }
+    entry->accessor = accessor.kind;
+    entry->accessor_field = accessor.field;
+    entry->accessor_value_kind = value_kind;
 }
 
 /* Whether diamond_jit_invoke_instance, given an Instance of `class` and this
@@ -1642,8 +1670,10 @@ static bool jit_call_entry_for(DiamondVm *vm, const DiamondChunk *owner,
         .receiver_class = class,
         .code = fn->jit_code,
         .chunk = &fn->call_chunk,
-        .frame_bytes = (uint64_t)fn->register_count * sizeof(DiamondValue),
+        .frame_bytes = (uint32_t)(fn->register_count * sizeof(DiamondValue)),
+        .accessor = DIAMOND_ACCESSOR_NONE,
     };
+    jit_call_entry_accessor(vm, fn, argc, entry);
     return true;
 }
 
@@ -1720,7 +1750,7 @@ static bool jit_new_entry_for(DiamondVm *vm, const DiamondChunk *chunk,
         .receiver_class = class,
         .code = fn->jit_code,
         .chunk = &fn->call_chunk,
-        .frame_bytes = (uint64_t)fn->register_count * sizeof(DiamondValue),
+        .frame_bytes = (uint32_t)(fn->register_count * sizeof(DiamondValue)),
     };
     return true;
 }

@@ -571,12 +571,25 @@ DiamondVmStatus diamond_jit_self_call_finish(DiamondVm *vm, const DiamondChunk *
  * fill (receivers that are not Instances, methods that are private,
  * variadic or answered without running their body, more classes than
  * ways) stops trying after DIAMOND_JIT_CALL_FILL_TRIES. The layout is read
- * by generated code: keep the static_asserts in vm_calls.c in step. */
+ * by generated code: keep the static_asserts in vm_calls.c in step.
+ *
+ * When the method is a trivial accessor (DiamondAccessor) the entry also
+ * says so: `accessor` is its kind, `accessor_field` the field, and
+ * `accessor_value_kind` the DiamondValueKind its declared type allows
+ * (DIAMOND_JIT_ANY_VALUE_KIND when it has none). The site then reads or
+ * writes the field itself when nothing is unusual, as
+ * trivial_getter_result and trivial_setter_result would; a type it cannot
+ * check that way leaves `accessor` NONE and the method is called. */
+enum { DIAMOND_JIT_ANY_VALUE_KIND = 0xFF };
 typedef struct DiamondJitCallEntry {
     const struct DiamondClass *receiver_class;
     void *code;
     const DiamondChunk *chunk;
-    uint64_t frame_bytes;
+    uint32_t frame_bytes;
+    uint8_t accessor;
+    uint8_t accessor_field;
+    uint8_t accessor_value_kind;
+    uint8_t reserved;
 } DiamondJitCallEntry;
 enum { DIAMOND_JIT_CALL_WAYS = 4, DIAMOND_JIT_CALL_FILL_TRIES = 16 };
 typedef struct DiamondJitCallSite {

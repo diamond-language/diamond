@@ -2734,4 +2734,45 @@ stale entry.
 Instruction counts against main (PGO=0 release builds, JIT on, threshold 1): poly −49%,
 objects −38%, nbody −28%, structs −20%, trees −7% in the `fistfight` suite. In `bench/`,
 dispatch_monomorphic −73%, the `jit_invoke_*` benchmarks −53% to −67%, dispatch_polymorphic
-−59% and dispatch_megamorphic −44%. `Class.new` still goes through `diamond_jit_new_instance`.
+−59% and dispatch_megamorphic −44%.
+
+## Objects in native code
+
+After native calls, the costs left on object-heavy code were the C helpers for constructing
+objects, checking their types, comparing them with nil and touching their fields. Each now has
+an inline path in front of its helper; the helper still handles everything unusual.
+
+- **`Class.new`** (`compile_new_native`). A NEW site uses one entry of the call-site table:
+  the class and its compiled `initialize` (code nullptr when the class has none and the call
+  passes no arguments). When `chunk->classes[index]` is that class, the site allocates through
+  `diamond_jit_new_object`, stores the instance in the destination and calls `initialize`
+  natively, its result discarded. `diamond_jit_new_site_fill` lists the class only when
+  `diamond_jit_new_instance` would do exactly that: not generic, and without `initialize` only
+  for zero arguments outside the Exception hierarchy.
+- **CHECK_TYPE** (`compile_check_type`). Besides the plain kinds, a type set naming one class
+  accepts an Instance of exactly that class inline, read from `chunk->classes` with a bounds
+  check. Subclasses and interfaces take the helper.
+- **`== nil` and `!= nil`** (`compile_equal_op`). When the kinds differ, nil against an object
+  is unequal without a call when the object's class has no `==`: the EQUAL site's table entry
+  lists the classes `diamond_jit_equal_site_fill` found without one. A class that defines `==`,
+  even later through `define_method`, is called (the table is cleared on every method change).
+- **GET_IVAR and SET_IVAR** (`compile_get_ivar_inline`, `compile_set_ivar_inline`). An
+  Instance with the field reads it directly (nil when its shape stops short of it). A write to
+  an unfrozen Instance stores directly, moving to the next shape on the field's first write,
+  and takes the helper only when the write barrier is needed (an old object not yet
+  remembered); the helper stores again.
+- **Accessor call sites** (`emit_invoke_accessor_inline`). When the method a call entry names
+  is a trivial getter or setter (`DiamondAccessor`), the fill records its kind, field and the
+  value kind its declared type allows (any, Int or Float; other types leave the entry a plain
+  call). On a hit the site reads or writes the field itself, as `trivial_getter_result` and
+  `trivial_setter_result` would: the shape must already cover the field, and a setter's
+  receiver must be unfrozen and need no barrier. Anything else calls the compiled accessor,
+  which raises the type error or handles the rest.
+
+The compiler helps too: a `do` block boxes only the enclosing locals it reads (the discovery
+pass's `BlockCaptureUse` records), so a function holding a block no longer reads every local
+through a cell. Previously nbody's `bodies.each() do ... end` boxed eleven locals per call.
+
+Instruction counts against main 3c23c589 (PGO=0 release builds, JIT on, threshold 1), native
+calls included: nbody −63%, objects −61%, poly −54%, trees −49%, structs −41%, closures and
+exceptions −9%. Without the JIT, nbody runs 11% fewer from the capture change alone.

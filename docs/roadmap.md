@@ -137,17 +137,17 @@ The local `fistfight` suite pairs d6 and Ruby programs (21 pairs). On 0.29.0-dev
 interpreter beats the Ruby interpreter on 20 of them and ties on fib (1.03x). The gaps left
 are against YJIT, on call-heavy and floating-point object code: fib 2.7x, poly 2.0x, nbody
 2.0x, trees 1.9x, sieve 1.25x, loop 1.2x, iterate 1.1x (best d6 over best Ruby), measured
-before d6's JIT (opt-in) called other compiled functions and methods natively. That change
-cut poly's instructions 49%, objects' 38%, nbody's 28% and trees' 7% with the JIT on; rerun the
-suite for new ratios.
+before d6's JIT (opt-in) called other compiled functions and methods natively and handled
+objects inline. With the JIT on those changes cut nbody's instructions 63%, objects' 61%,
+poly's 54%, trees' 49% and structs' 41%; rerun the suite for new ratios.
 
 - **JIT coverage** -- calls between compiled functions and methods are native now, with a
   four-way class cache per method call site. Traced on 0.29.0-dev:
   - Block bodies run as native code now, but every block call still goes through C
     (`block_call_run` and a register copy) rather than a native call from the loop.
-  - `Class.new` still goes through `diamond_jit_new_instance` (trees' `Node.new`), and a
-    compiled getter or setter is a whole native call where an inline field read or write
-    would do.
+  - Array indexing (`bodies[i]`) still calls `diamond_jit_index_get`, and creating a closure
+    or a capture cell costs a few hundred instructions of allocation each (nbody makes one
+    of each per `advance` call).
   - Compiled bodies keep every value in memory and re-check types the caller already proved
     (fib's `n < 2` reloads and re-tests the tag of a parameter the entry check just
     confirmed). Most of fib's remaining gap to YJIT is register allocation and type

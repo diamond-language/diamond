@@ -108,7 +108,13 @@ authoritative fine-grained record.
   local visible at that point into a heap cell, and every later read of those locals went
   through the cell. Now only the ones the block's body names are, so the rest stay plain
   registers: an n-body step that runs one `bodies.each() do ... end` per call does 11% fewer
-  instructions in the interpreter and, with the JIT, 45% fewer than before these JIT changes.
+  instructions in the interpreter.
+- **Compiled code handles objects inline.** With the JIT on, `Class.new` allocates and calls a
+  compiled `initialize` directly, a type check against a single class, `x == nil` on an object
+  whose class has no `==`, instance variable reads and writes, and calls to plain getters and
+  setters (`attr_accessor`, `def x() = @x`) no longer go through C. Together with the native
+  calls above, instruction counts fell 63% on an n-body simulation, 61% on small objects, 54%
+  on polymorphic calls, 49% on binary trees and 41% on structs.
 - **The interpreter is faster.** 64 builtin opcode bodies moved out of its main loop, which
   leaves the compiler more registers for the hot path: 2 to 10% fewer instructions on every
   benchmark (fibonacci and tail calls about 10%), and with the JIT on `fiber_switch` and
