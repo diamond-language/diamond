@@ -215,11 +215,12 @@ make aot-kit-cross TARGET_TRIPLE=x86_64-alpine-linux-musl SYSROOT=/opt/sysroots/
 
 ### The portable d6
 
-Each GitHub release attaches `d6-VERSION-linux-x86_64.tar.gz` and
-`d6-VERSION-linux-aarch64.tar.gz`. Each holds `d6`, `facet`, `d6-lsp` and `d6-dap` as fully
+An experimental build, not attached to releases, while its limits (below) are worked out.
+`tools/build_portable.sh` produces `d6-VERSION-linux-x86_64.tar.gz` or
+`d6-VERSION-linux-aarch64.tar.gz`, holding `d6`, `facet`, `d6-lsp` and `d6-dap` as fully
 static musl executables that run on any Linux distribution of that architecture, with or
-without a native package. Unpack the tarball and put its directory on `PATH`. Before each
-release, CI runs them in clean Ubuntu 26.04 and 22.04, Debian 12, Fedora 44, Arch, Alpine
+without a native package. Unpack the tarball and put its directory on `PATH`. On every pull
+request, CI runs them in clean Ubuntu 26.04 and 22.04, Debian 12, Fedora 44, Arch, Alpine
 and openSUSE Leap containers: the smoke script, and a `facet new` project installing its
 test cut from the registry and passing its tests.
 

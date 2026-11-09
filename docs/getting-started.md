@@ -35,23 +35,6 @@ only `d6 build` needs. apt and dnf install recommendations by default, but
 skip any that would need an installed package upgraded, so upgrade first. If you
 didn't, `d6 build` prints the commands that install what it's missing.
 
-### On any other Linux
-
-Each release also has `d6-VERSION-linux-x86_64.tar.gz` and
-`d6-VERSION-linux-aarch64.tar.gz`. They hold the same four tools as static
-executables that run on any Linux distribution, on any CPU of that architecture:
-
-```sh
-tar -xzf ~/Downloads/d6-0.29.0-linux-x86_64.tar.gz -C ~/.local
-export PATH="$HOME/.local/d6-linux-x86_64:$PATH"    # add to your shell profile
-d6 --version
-```
-
-`facet` needs `curl`, and HTTPS needs the distribution's CA certificates
-(`ca-certificates`), which most systems already have. Everything in this guide
-works with the tarball except `d6 build` in section 9, which needs a package or a
-source build. The details are in [deployment](deployment.md#the-portable-d6).
-
 ### From source
 
 On other systems, or for an unreleased version, build from source. You need GCC 15+ or Clang 19+ (d6 is C23),
