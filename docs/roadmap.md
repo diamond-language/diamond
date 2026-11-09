@@ -143,8 +143,10 @@ poly's 54%, trees' 49% and structs' 41%; rerun the suite for new ratios.
 
 - **JIT coverage** -- calls between compiled functions and methods are native now, with a
   four-way class cache per method call site. Traced on 0.29.0-dev:
-  - Block bodies run as native code now, but every block call still goes through C
-    (`block_call_run` and a register copy) rather than a native call from the loop.
+  - Array `each` and `map` call their blocks natively from compiled code; `select`,
+    `each_with_index`, `reduce` and `times` still call each block through C (`block_call_run`).
+    Setting up a native loop is still a C call per loop (`diamond_jit_loop_begin`: extension
+    lookup, block prepare), 2% of nbody, which runs `each` over five bodies.
   - Compiled bodies keep every value in memory and re-check types the caller already proved
     (fib's `n < 2` reloads and re-tests the tag of a parameter the entry check just
     confirmed). Most of fib's remaining gap to YJIT is register allocation and type

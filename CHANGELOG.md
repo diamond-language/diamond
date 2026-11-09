@@ -122,6 +122,10 @@ authoritative fine-grained record.
   and capture cells are kept for reuse, like small objects, strings and arrays already were.
   A closure-heavy benchmark runs 31% fewer instructions in the interpreter and 47% fewer with
   the JIT.
+- **Compiled code runs Array `each` and `map` loops itself.** With the JIT on, a block passed
+  to `each` or `map` on an Array is called natively from the loop instead of through C for
+  every element. A map-heavy benchmark runs 8% fewer instructions and an `each`-heavy one 10%
+  fewer; other iterators still use the C loop.
 - **The interpreter is faster.** 64 builtin opcode bodies moved out of its main loop, which
   leaves the compiler more registers for the hot path: 2 to 10% fewer instructions on every
   benchmark (fibonacci and tail calls about 10%), and with the JIT on `fiber_switch` and

@@ -2785,3 +2785,34 @@ call, now come from pools like instances, Strings and Array headers (`DiamondVm.
 `closure_pool` by capture count up to 16, both off under ASan), filled by the sweep within the
 same `pool_bytes` budget. With both: nbody −67%, poly −63%, closures −47%, sieve −15% against
 main with the JIT; closures −31% and nbody −12% without it.
+
+## Native block loops
+
+`values.each() do |x| ... end` and `values.map() do |x| ... end` used to leave compiled code for
+the whole loop: `diamond_jit_invoke_any` found the prelude bridge (`array_each`, `array_map`),
+`native_array_map_select` ran the loop in C, and every element went through `block_call_run`
+and a register copy before reaching the block's compiled body. Now an INVOKE named `each` or
+`map` with one argument, at a site not typed as some other builtin (`site_may_be_block_loop`),
+emits `compile_block_loop` in front of the usual call:
+
+- **`diamond_jit_loop_begin`** decides once per call and fills a `DiamondJitLoop` (jit.h) on the
+  stack. It says yes only when the C path would run the same loop: an Array receiver, the
+  bridge target found through the same extension cache with its two leading CHECK_TYPEs, a
+  block `native_loop_block` accepts, a `block_call_prepare` for one argument that needs no
+  per-call chunk, compiled code for the block, and no debugger, budgets or depth problem. A
+  self slot is allowed only for a block written in a method (`DIAMOND_OWNER_CAPTURED_SELF`).
+  map's result array is allocated and protected here.
+- **The loop** runs in compiled code. It re-reads the count each time (a block may push), copies
+  the element into `loop.current` (keeping it alive), lays out the header and register file as
+  `emit_native_entry_call` does, with the closure as the seventh argument, and calls the
+  block's entry with the result going to `loop.result`.
+- **`diamond_jit_loop_step`** takes any status other than OK, and every map result: TAIL runs
+  the tail loop, RETRY interprets the block for that element, map pushes the result, and any
+  other status (break, return, an exception) is counted as a hard propagation, releases map's
+  protection and goes back through the bailout as the C loop's status would.
+  **`diamond_jit_loop_end`** writes the array (each) or the collected one (map).
+
+The loop state is 96 bytes reserved for the whole loop, so `rsp_delta` is adjusted by hand
+on the two exits that leave early. Other iterators (`select`, `each_with_index`, `reduce`,
+`times`) still go through the C loop. nbody does 4% fewer instructions than with C-driven block
+calls; blocks (map) −8% and iterate (each) −10% against main, with the JIT.

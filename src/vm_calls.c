@@ -1814,6 +1814,38 @@ DiamondVmStatus diamond_jit_method_call_finish(DiamondVm *vm, const DiamondChunk
     return (DiamondVmStatus)status;
 }
 
+DiamondVmStatus diamond_jit_loop_step(DiamondVm *vm, DiamondJitLoop *loop, uint8_t status,
+        size_t depth) {
+    DiamondVmStatus finished = (DiamondVmStatus)status;
+    if (status == DIAMOND_JIT_TAIL) {
+        finished = jit_tail_loop(vm, loop->child, depth, &loop->result);
+    } else if (status == DIAMOND_JIT_RETRY) {
+        vm->jit_bailouts++;
+        const DiamondValue arguments[2] = {
+            loop->self_slot ? DIAMOND_NIL : loop->current, loop->current};
+        finished = run_chunk(loop->child, vm, arguments, loop->self_slot ? 2 : 1, depth + 1,
+            loop->closure, &loop->result);
+    } else if (status != DIAMOND_VM_OK) {
+        vm->jit_hard_propagations++;
+    }
+    if (finished == DIAMOND_VM_OK && loop->map && !array_push(vm, loop->collected, loop->result))
+        finished = DIAMOND_VM_OUT_OF_MEMORY;
+    if (finished != DIAMOND_VM_OK) {
+        if (loop->map) gc_unprotect(vm, loop->gc_mark);
+        return finished;
+    }
+    return DIAMOND_VM_OK;
+}
+
+void diamond_jit_loop_end(DiamondVm *vm, DiamondJitLoop *loop, DiamondValue *out) {
+    if (loop->map) {
+        gc_unprotect(vm, loop->gc_mark);
+        *out = DIAMOND_OBJECT(loop->collected);
+    } else {
+        *out = DIAMOND_OBJECT((DiamondArray *)loop->array);
+    }
+}
+
 DiamondVmStatus diamond_jit_native_call(DiamondVm *vm,
         const DiamondValue *receiver,const DiamondValue *argument,
         DiamondJitNativeReadOp operation,DiamondValue *out) {
