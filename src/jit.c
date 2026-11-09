@@ -443,6 +443,41 @@ static void emit_idiv(JitBuffer *buf, int reg) {
     emit_u8(buf, (uint8_t)(0xC0 | (7 << 3) | (reg & 7))); /* /7 = IDIV */
 }
 
+/* add/sub/and/cmp reg64, imm32 (sign-extended); `ext` is the ModRM
+ * opcode extension of the 0x81 group. */
+enum { ALU_IMM_ADD = 0, ALU_IMM_AND = 4, ALU_IMM_SUB = 5, ALU_IMM_CMP = 7 };
+static void emit_alu_imm32(JitBuffer *buf, int ext, int reg, int32_t imm) {
+    emit_u8(buf, emit_rex(true, 0, reg));
+    emit_u8(buf, 0x81);
+    emit_u8(buf, (uint8_t)(0xC0 | (ext << 3) | (reg & 7)));
+    emit_u32_le(buf, (uint32_t)imm);
+}
+
+/* imul dst64, src64, imm32 (sets OF on signed 64-bit overflow) */
+static void emit_imul_imm32(JitBuffer *buf, int dst, int src, int32_t imm) {
+    emit_u8(buf, emit_rex(true, dst, src));
+    emit_u8(buf, 0x69);
+    emit_u8(buf, (uint8_t)(0xC0 | ((dst & 7) << 3) | (src & 7)));
+    emit_u32_le(buf, (uint32_t)imm);
+}
+
+/* imul src64, one-operand form: RDX:RAX = RAX * src, signed */
+static void emit_imul_wide(JitBuffer *buf, int src) {
+    emit_u8(buf, emit_rex(true, 0, src));
+    emit_u8(buf, 0xF7);
+    emit_u8(buf, (uint8_t)(0xC0 | (5 << 3) | (src & 7)));
+}
+
+/* shl/shr/sar reg64, imm8 */
+enum { SHIFT_SHL = 4, SHIFT_SHR = 5, SHIFT_SAR = 7 };
+static void emit_shift_imm(JitBuffer *buf, int ext, int reg, uint8_t count) {
+    emit_u8(buf, emit_rex(true, 0, reg));
+    emit_u8(buf, 0xC1);
+    emit_u8(buf, (uint8_t)(0xC0 | (ext << 3) | (reg & 7)));
+    emit_u8(buf, count);
+}
+
+
 /* Phase 5: setcc al, condition byte generic -- mirrors emit_jcc_
  * placeholder's own generic-condition convention. Replaces the
  * originally-separate, LESS_INT-only emit_setl_al now that compile_
@@ -1321,6 +1356,130 @@ static void compile_binary_int_op(JitCompiler *jc, size_t instruction_start, uin
     size_t done = emit_jmp_placeholder(buf);
     finish_binary_op(jc, instruction_start, dest, left, right, op, done, kind_jumps,
                      slow_jumps, slow_jump_count, true);
+}
+
+/* The magic multiplier and shift that turn signed 64-bit division by a
+ * constant `divisor` (at least 3, not a power of two) into a multiply
+ * (Hacker's Delight, figure 10-1): q = (mulhi(x, M) [+ x if M < 0]) >> s,
+ * plus one when x is negative. */
+static void signed_division_magic(uint64_t divisor, int64_t *multiplier, int *shift) {
+    const uint64_t two63 = UINT64_C(1) << 63;
+    const uint64_t anc = two63 - 1 - two63 % divisor;
+    int p = 63;
+    uint64_t q1 = two63 / anc, r1 = two63 - q1 * anc;
+    uint64_t q2 = two63 / divisor, r2 = two63 - q2 * divisor;
+    uint64_t delta = 0;
+    do {
+        p++;
+        q1 *= 2; r1 *= 2;
+        if (r1 >= anc) { q1++; r1 -= anc; }
+        q2 *= 2; r2 *= 2;
+        if (r2 >= divisor) { q2++; r2 -= divisor; }
+        delta = divisor - r2;
+    } while (q1 < delta || (q1 == delta && r1 == 0));
+    *multiplier = (int64_t)(q2 + 1);
+    *shift = p - 64;
+}
+
+/* The constant-operand forms (ADD_INT_K and friends but EQUAL/NOT_EQUAL):
+ * `right` is a known Int, so only `left`'s kind is checked, the constant is
+ * an immediate, and `% constant` for a positive constant up to INT32_MAX is
+ * a mask (powers of two) or a multiply by the magic reciprocal instead of
+ * idiv, whose latency bounded `x = (x + y) % k` loops. The scratch register
+ * the interpreter never reads is filled only on the slow path, which calls
+ * the generic opcode's slow helper with it as the right operand. */
+static void compile_int_k_op(JitCompiler *jc, size_t instruction_start, uint16_t dest,
+                             uint16_t left, uint16_t scratch, int64_t constant,
+                             DiamondOpCode generic) {
+    JitBuffer *buf = &jc->buf;
+    jc->has_called = true;
+    size_t slow[4];
+    size_t slow_count = 0;
+    const bool fits = constant >= INT32_MIN && constant <= INT32_MAX;
+    slow[slow_count++] = emit_check_kind_int_or_jump(jc, left, REG_RAX);
+    emit_load_r64(buf, REG_RAX, JIT_REGISTERS_BASE, reg_disp(left, AS_OFF));
+    if (!fits) emit_mov_imm64(buf, REG_RCX, (uint64_t)constant);
+    if (binary_op_is_comparison(generic)) {
+        const uint8_t condition =
+            generic == DIAMOND_OP_LESS ? SETCC_L :
+            generic == DIAMOND_OP_LESS_EQUAL ? SETCC_LE :
+            generic == DIAMOND_OP_GREATER ? SETCC_G : SETCC_GE;
+        if (fits) emit_alu_imm32(buf, ALU_IMM_CMP, REG_RAX, (int32_t)constant);
+        else emit_alu_rr(buf, ALU_CMP, REG_RAX, REG_RCX);
+        emit_setcc_al(buf, condition);
+        emit_store_kind_imm(buf, JIT_REGISTERS_BASE, reg_disp(dest, KIND_OFF), DIAMOND_VALUE_BOOL);
+        emit_store_byte_reg(buf, JIT_REGISTERS_BASE, reg_disp(dest, AS_OFF), REG_RAX);
+    } else if (generic == DIAMOND_OP_MODULO && constant > 0 && constant <= INT32_MAX) {
+        if ((constant & (constant - 1)) == 0) {
+            /* Floored modulo by a positive power of two is the low bits,
+             * negative dividends included (-7 % 8 == 1). */
+            emit_alu_imm32(buf, ALU_IMM_AND, REG_RAX, (int32_t)(constant - 1));
+        } else {
+            int64_t multiplier = 0;
+            int shift = 0;
+            signed_division_magic((uint64_t)constant, &multiplier, &shift);
+            emit_mov_rr(buf, REG_RCX, REG_RAX);                  /* rcx = x */
+            emit_mov_imm64(buf, REG_RAX, (uint64_t)multiplier);
+            emit_imul_wide(buf, REG_RCX);                        /* rdx = mulhi(x, M) */
+            if (multiplier < 0) emit_alu_rr(buf, ALU_ADD, REG_RDX, REG_RCX);
+            if (shift > 0) emit_shift_imm(buf, SHIFT_SAR, REG_RDX, (uint8_t)shift);
+            emit_mov_rr(buf, REG_RAX, REG_RCX);
+            emit_shift_imm(buf, SHIFT_SHR, REG_RAX, 63);
+            emit_alu_rr(buf, ALU_ADD, REG_RDX, REG_RAX);         /* rdx = x / k, truncated */
+            emit_imul_imm32(buf, REG_RDX, REG_RDX, (int32_t)constant);
+            emit_mov_rr(buf, REG_RAX, REG_RCX);
+            emit_alu_rr(buf, ALU_SUB, REG_RAX, REG_RDX);         /* rax = truncated remainder */
+            /* Floored: a negative remainder gets the (positive) divisor added. */
+            emit_mov_rr(buf, REG_RDX, REG_RAX);
+            emit_shift_imm(buf, SHIFT_SAR, REG_RDX, 63);
+            emit_alu_imm32(buf, ALU_IMM_AND, REG_RDX, (int32_t)constant);
+            emit_alu_rr(buf, ALU_ADD, REG_RAX, REG_RDX);
+        }
+        emit_store_kind_imm(buf, JIT_REGISTERS_BASE, reg_disp(dest, KIND_OFF), DIAMOND_VALUE_INT);
+        emit_store_r64(buf, JIT_REGISTERS_BASE, reg_disp(dest, AS_OFF), REG_RAX);
+    } else if (generic == DIAMOND_OP_MODULO) {
+        /* Zero, negative or wide divisors: idiv, floored as in
+         * compile_binary_int_op. 0 and -1 always take the slow path. */
+        if (constant == 0 || constant == -1) {
+            slow[slow_count++] = emit_jmp_placeholder(buf);
+        } else {
+            if (fits) emit_mov_imm64(buf, REG_RCX, (uint64_t)constant);
+            emit_cqo(buf);
+            emit_idiv(buf, REG_RCX);
+            emit_test_r64(buf, REG_RDX, REG_RDX);
+            size_t exact = emit_jcc_placeholder(buf, JCC_E);
+            emit_mov_rr(buf, REG_RAX, REG_RDX);
+            emit_alu_rr(buf, ALU_XOR, REG_RAX, REG_RCX);
+            size_t same_sign = emit_jcc_placeholder(buf, JCC_NS);
+            emit_alu_rr(buf, ALU_ADD, REG_RDX, REG_RCX);
+            patch_rel32_to_here(buf, exact);
+            patch_rel32_to_here(buf, same_sign);
+            emit_store_kind_imm(buf, JIT_REGISTERS_BASE, reg_disp(dest, KIND_OFF), DIAMOND_VALUE_INT);
+            emit_store_r64(buf, JIT_REGISTERS_BASE, reg_disp(dest, AS_OFF), REG_RDX);
+        }
+    } else {
+        if (generic == DIAMOND_OP_MULTIPLY) {
+            if (fits) emit_imul_imm32(buf, REG_RAX, REG_RAX, (int32_t)constant);
+            else emit_imul_rr(buf, REG_RAX, REG_RCX);
+        } else {
+            const bool add = generic == DIAMOND_OP_ADD;
+            if (fits) emit_alu_imm32(buf, add ? ALU_IMM_ADD : ALU_IMM_SUB, REG_RAX, (int32_t)constant);
+            else emit_alu_rr(buf, add ? ALU_ADD : ALU_SUB, REG_RAX, REG_RCX);
+        }
+        slow[slow_count++] = emit_jcc_placeholder(buf, JCC_O);
+        emit_store_kind_imm(buf, JIT_REGISTERS_BASE, reg_disp(dest, KIND_OFF), DIAMOND_VALUE_INT);
+        emit_store_r64(buf, JIT_REGISTERS_BASE, reg_disp(dest, AS_OFF), REG_RAX);
+    }
+    const size_t done = emit_jmp_placeholder(buf);
+    for (size_t i = 0; i < slow_count; i++) patch_rel32_to_here(buf, slow[i]);
+    emit_store_kind_imm(buf, JIT_REGISTERS_BASE, reg_disp(scratch, KIND_OFF), DIAMOND_VALUE_INT);
+    emit_mov_imm64(buf, REG_RAX, (uint64_t)constant);
+    emit_store_r64(buf, JIT_REGISTERS_BASE, reg_disp(scratch, AS_OFF), REG_RAX);
+    if (binary_op_is_comparison(generic))
+        emit_compare_slow_call(jc, instruction_start, dest, left, scratch, generic);
+    else
+        emit_arith_slow_call(jc, instruction_start, dest, left, scratch, generic);
+    patch_rel32_to_here(buf, done);
 }
 
 /* EQUAL/NOT_EQUAL. A fast CPU-comparison path handles both operands NIL,
@@ -4025,13 +4184,32 @@ static bool compile_value_instruction(JitCompiler *jc, DiamondOpCode opcode, siz
             if (index >= fn->constant_count || fn->constants[index].kind != DIAMOND_VALUE_INT) {
                 jc->bailed = true; return true;
             }
-            emit_store_kind_imm(&jc->buf, JIT_REGISTERS_BASE, reg_disp(scratch, KIND_OFF),
-                DIAMOND_VALUE_INT);
-            emit_mov_imm64(&jc->buf, REG_RAX, (uint64_t)fn->constants[index].as.integer);
-            emit_store_r64(&jc->buf, JIT_REGISTERS_BASE, reg_disp(scratch, AS_OFF), REG_RAX);
             if (opcode == DIAMOND_OP_EQUAL_INT_K || opcode == DIAMOND_OP_NOT_EQUAL_INT_K) {
-                compile_equal_op(jc, instruction_start, dest, left, scratch,
-                    opcode == DIAMOND_OP_NOT_EQUAL_INT_K);
+                /* An Int `left` compares against the immediate; any other
+                 * kind fills the scratch register and runs the full ==. */
+                JitBuffer *buf = &jc->buf;
+                const int64_t constant = fn->constants[index].as.integer;
+                const bool negate = opcode == DIAMOND_OP_NOT_EQUAL_INT_K;
+                const size_t other = emit_check_kind_int_or_jump(jc, left, REG_RAX);
+                emit_load_r64(buf, REG_RAX, JIT_REGISTERS_BASE, reg_disp(left, AS_OFF));
+                if (constant >= INT32_MIN && constant <= INT32_MAX) {
+                    emit_alu_imm32(buf, ALU_IMM_CMP, REG_RAX, (int32_t)constant);
+                } else {
+                    emit_mov_imm64(buf, REG_RCX, (uint64_t)constant);
+                    emit_alu_rr(buf, ALU_CMP, REG_RAX, REG_RCX);
+                }
+                emit_sete_al(buf);
+                if (negate) emit_xor_al_1(buf);
+                emit_store_kind_imm(buf, JIT_REGISTERS_BASE, reg_disp(dest, KIND_OFF), DIAMOND_VALUE_BOOL);
+                emit_store_byte_reg(buf, JIT_REGISTERS_BASE, reg_disp(dest, AS_OFF), REG_RAX);
+                const size_t done = emit_jmp_placeholder(buf);
+                patch_rel32_to_here(buf, other);
+                emit_store_kind_imm(buf, JIT_REGISTERS_BASE, reg_disp(scratch, KIND_OFF),
+                    DIAMOND_VALUE_INT);
+                emit_mov_imm64(buf, REG_RAX, (uint64_t)constant);
+                emit_store_r64(buf, JIT_REGISTERS_BASE, reg_disp(scratch, AS_OFF), REG_RAX);
+                compile_equal_op(jc, instruction_start, dest, left, scratch, negate);
+                patch_rel32_to_here(buf, done);
                 break;
             }
             const DiamondOpCode generic =
@@ -4043,7 +4221,8 @@ static bool compile_value_instruction(JitCompiler *jc, DiamondOpCode opcode, siz
                 opcode == DIAMOND_OP_LESS_EQUAL_INT_K ? DIAMOND_OP_LESS_EQUAL :
                 opcode == DIAMOND_OP_GREATER_INT_K ? DIAMOND_OP_GREATER :
                 DIAMOND_OP_GREATER_EQUAL;
-            compile_binary_int_op(jc, instruction_start, dest, left, scratch, generic);
+            compile_int_k_op(jc, instruction_start, dest, left, scratch,
+                fn->constants[index].as.integer, generic);
             break;
         }
         case DIAMOND_OP_SET_IVAR: {
