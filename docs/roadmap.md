@@ -290,8 +290,12 @@ Current coverage and the full inventory of checked platform assumptions:
 
 Current packages: [packaging](../packaging/) builds one `.deb` on Ubuntu 26.04 and one `.rpm`
 on Fedora 44, for x86-64 and arm64. Each runs only on the distro release it was built on, or
-newer. Every other Linux can use the portable static tarball attached to each release
-([deployment](deployment.md#the-portable-d6)).
+newer. The portable static build ([deployment](deployment.md#the-portable-d6)) is
+built and tested in CI but no longer attached to releases.
+
+- **Shipping the portable build again** -- it was attached to v0.29.0 and then withdrawn
+  until its caveats are worked out: no JIT, baseline x86-64 ISA, no `d6 build`. The two
+  items below are the main ones.
 
 - **More distros and releases** -- Debian stable, Ubuntu LTS, older Fedora, openSUSE, Arch and
   Alpine. The obstacle is the compiler, not the package format. GCC 15 is needed only for

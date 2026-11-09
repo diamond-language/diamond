@@ -67,8 +67,7 @@ package ecosystem are its own.
 New to d6? The [getting-started guide](docs/getting-started.md) goes from
 installing it to a tested project built into a standalone executable. Each
 [release](https://github.com/diamond-language/diamond/releases) has `.deb`
-(Ubuntu 26.04) and `.rpm` (Fedora 44) packages, plus a static tarball for any
-other Linux, each for x86-64 and arm64.
+(Ubuntu 26.04) and `.rpm` (Fedora 44) packages, each for x86-64 and arm64.
 
 `.d6` is the default and preferred extension for d6 source files; compiled bytecode
 caches use `.d6c`. Backward compatibility with `.di` source files is retained

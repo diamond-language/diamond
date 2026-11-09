@@ -6,6 +6,13 @@ authoritative fine-grained record.
 
 ## Unreleased
 
+### Changed
+
+- **Portable tarballs withdrawn from releases.** Releases no longer attach the static
+  `d6-VERSION-linux-*.tar.gz` builds introduced in 0.29.0 while their limits (no JIT, baseline
+  x86-64, no `d6 build`) are worked out. CI still builds and tests them, and
+  `tools/build_portable.sh` still makes them.
+
 ## 0.29.0 — 2026-11-08
 
 ### Added
