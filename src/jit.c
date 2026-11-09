@@ -1590,6 +1590,26 @@ static void compile_index_get(JitCompiler *jc, size_t instruction_start, uint16_
     jc->needs_frame = true;
     jc->has_called = true;
     JitBuffer *buf = &jc->buf;
+    /* An Array read at a non-negative Int index inside it is copied
+     * inline; anything else (a negative index, a Range, out of bounds, any
+     * other receiver) takes diamond_jit_index_get. */
+    size_t slow[4];
+    size_t slow_count = 0;
+    emit_load_byte_zx(buf, REG_RAX, JIT_REGISTERS_BASE, reg_disp(index, KIND_OFF));
+    emit_cmp_imm32_32(buf, REG_RAX, DIAMOND_VALUE_INT);
+    slow[slow_count++] = emit_jcc_placeholder(buf, JCC_NE);
+    emit_object_kind_guard(buf, JIT_REGISTERS_BASE, reg_disp(recv, 0), DIAMOND_OBJECT_ARRAY,
+        slow, &slow_count);
+    emit_load_r64(buf, REG_RAX, JIT_REGISTERS_BASE, reg_disp(index, AS_OFF));
+    /* Unsigned: a negative index compares above any count. */
+    emit_cmp_r64_mem(buf, REG_RAX, REG_RDX, (int32_t)offsetof(DiamondArray, count));
+    slow[slow_count++] = emit_jcc_placeholder(buf, JCC_AE);
+    emit_load_r64(buf, REG_RCX, REG_RDX, (int32_t)offsetof(DiamondArray, values));
+    emit_u8(buf, 0x48); emit_u8(buf, 0xC1); emit_u8(buf, 0xE0); emit_u8(buf, 0x04);  /* shl rax, 4 */
+    emit_u8(buf, 0x48); emit_u8(buf, 0x01); emit_u8(buf, 0xC1);                      /* add rcx, rax */
+    emit_copy_value(buf, JIT_REGISTERS_BASE, reg_disp(dest, 0), REG_RCX, 0);
+    const size_t done = emit_jmp_placeholder(buf);
+    for (size_t i = 0; i < slow_count; i++) patch_rel32_to_here(buf, slow[i]);
     emit_mov_imm64(buf, REG_RAX, 0);
     emit_push(buf, REG_RAX);
     emit_lea(buf, REG_RAX, JIT_REGISTERS_BASE, reg_disp(dest, 0));
@@ -1603,6 +1623,7 @@ static void compile_index_get(JitCompiler *jc, size_t instruction_start, uint16_
     emit_body_call(jc, (void *)(uintptr_t)diamond_jit_index_get);
     emit_add_rsp_imm32(buf, 16);
     emit_bail_if_al_nonzero(jc);
+    patch_rel32_to_here(buf, done);
 }
 
 /* INDEX_GET_STRING: compile_index_get with the key given as a string constant index (passed
