@@ -29,9 +29,10 @@ authoritative fine-grained record.
   `Array.new(n, value)` and `[value] * n` fill without a per-element modulo. sieve: −50%
   instructions, −16% cycles.
 - **Cheaper Int ops with a constant operand in compiled code.** `i + 1`, `x * 7`, `i < 1000`
-  and friends check only the variable operand's kind and use the constant as an immediate;
+  and `x == 0` check only the variable operand's kind and use the constant as an immediate;
   `x % k` for a positive constant is a mask (powers of two) or a multiply by the reciprocal
-  instead of a hardware divide. loop: −26% cycles, fib −5%.
+  instead of a hardware divide. With the JIT on, loop and sieve now beat YJIT in the local
+  benchmark suite (loop −24% cycles, fib −5%).
 
 ## 0.29.0 — 2026-11-08
 

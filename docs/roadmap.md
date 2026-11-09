@@ -126,13 +126,10 @@ Collections are stop-the-world within each isolated VM.
 
 ### Close the benchmark gaps to Ruby
 
-The local `fistfight` suite pairs d6 and Ruby programs (21 pairs). On 0.29.0 the d6
-interpreter beats the Ruby interpreter on 20 of them and ties on fib (1.03x). The gaps left
-are against YJIT, on call-heavy and floating-point object code: fib 2.7x, poly 2.0x, nbody
-2.0x, trees 1.9x, sieve 1.25x, loop 1.2x, iterate 1.1x (best d6 over best Ruby), measured
-before d6's JIT (opt-in) called other compiled functions and methods natively and handled
-objects inline. With the JIT on those changes cut nbody's instructions 63%, objects' 61%,
-poly's 54%, trees' 49% and structs' 41%; rerun the suite for new ratios.
+The local `fistfight` suite pairs d6 and Ruby programs (21 pairs). The d6 interpreter beats
+the Ruby interpreter on all 21, and d6 with its JIT (opt-in) beats YJIT on 18. The gaps left
+are on call-heavy and object code: fib 1.83x, trees 1.19x and poly 1.05x (best d6 over best
+Ruby, 0.30.0-dev with native JIT calls, inline array stores and constant-operand Int ops).
 
 - **JIT coverage** -- calls between compiled functions and methods are native now, with a
   four-way class cache per method call site. Traced on 0.29.0:
@@ -143,7 +140,10 @@ poly's 54%, trees' 49% and structs' 41%; rerun the suite for new ratios.
   - Compiled bodies keep every value in memory and re-check types the caller already proved
     (fib's `n < 2` reloads and re-tests the tag of a parameter the entry check just
     confirmed). Most of fib's remaining gap to YJIT is register allocation and type
-    propagation inside a body.
+    propagation inside a body. Reloads alone are not the cost: handing one op's result to the
+    next in RAX instead of through the register file made loop 6% slower on Zen 3, which
+    forwards those stack reloads for free, so the gain has to come from dropping tag checks
+    and stores.
 - **Call machinery** -- about 300 of a fib call's ~450 instructions are call setup (prologue,
   register zeroing, CALL and RETURN), spread thinly, and frame size is not the cost. A
   VM-stack frame design is the remaining large lever; inline frames were tried and lost cycles
