@@ -11,6 +11,23 @@
 #include <stdlib.h>
 #include <string.h>
 
+/* Safe navigation (`receiver&.name`): the receiver may be nil, so the editor
+ * resolves its non-nil view. Set just before resolving a receiver that sits
+ * left of `&.`; the next resolve_expression/builtin_type_of takes it, so only
+ * that expression's outermost result may drop Nil and nested `.` links stay
+ * strict. The server is single-threaded. */
+static bool receiver_nil_ok=false;
+
+static bool take_receiver_nil_ok(void) {
+    const bool nil_ok=receiver_nil_ok;
+    receiver_nil_ok=false;
+    return nil_ok;
+}
+
+static bool is_member_access(DiamondTokenKind kind) {
+    return kind==DIAMOND_TOKEN_DOT||kind==DIAMOND_TOKEN_AMPERSAND_DOT;
+}
+
 /* True iff `function` is one of `class`'s own singleton methods (as
  * opposed to one of its ordinary instance methods, or a function
  * belonging to some other class entirely). Matched by pointer identity
@@ -370,7 +387,7 @@ static bool binding_from_set(const DiamondChunk *chunk,const DiamondTypeSet *set
 
 static size_t function_return_classes_bound(const DiamondChunk *chunk,
         const DiamondFunction *function,const ReceiverTypeBinding *bindings,
-        size_t binding_count,size_t *classes,size_t capacity) {
+        size_t binding_count,size_t *classes,size_t capacity,bool nil_ok) {
     /* return_type_set (an explicit `-> Type` annotation) wins when
      * present; inferred_return_type_set (compile_definition's own
      * best-effort inference from an unannotated body's last expression)
@@ -384,6 +401,7 @@ static size_t function_return_classes_bound(const DiamondChunk *chunk,
     for(size_t index=0;index<set->count;index++) {
         size_t class_index;
         const uint16_t type=set->members[index].id;
+        if(nil_ok&&type==DIAMOND_TYPE_NIL)continue;
         if(type>=DIAMOND_TYPE_VARIABLE_BASE&&type<DIAMOND_TYPE_INTERFACE_BASE) {
             const size_t variable=(size_t)(type-DIAMOND_TYPE_VARIABLE_BASE);
             if(variable>=binding_count||bindings==nullptr||
@@ -641,7 +659,8 @@ static bool resolve_call_targets(const DiamondProgram *program,
         return false;
     }
     if(call->callee_index<2||
-       tokens[call->callee_index-1].kind!=DIAMOND_TOKEN_DOT)return false;
+       !is_member_access(tokens[call->callee_index-1].kind))return false;
+    receiver_nil_ok=tokens[call->callee_index-1].kind==DIAMOND_TOKEN_AMPERSAND_DOT;
     targets->receiver_count=resolve_expression(program,chunk,source,tokens,
         start,call->callee_index-2,targets->receiver_classes,
         DIAMOND_MAX_UNION_TYPES,&targets->receiver_singleton,depth+1);
@@ -884,7 +903,7 @@ static bool resolve_array_base_graph(const DiamondProgram *program,
 static bool resolve_indexed_binding(const DiamondProgram *program,
         const DiamondChunk *chunk,const char *source,const DiamondToken *tokens,
         size_t start,size_t end,size_t first_index,size_t candidate,
-        size_t *candidate_count,ReceiverTypeBinding *result,unsigned depth) {
+        size_t *candidate_count,ReceiverTypeBinding *result,unsigned depth,bool nil_ok) {
     const DiamondTypeSet *sets=nullptr;size_t set_count=0;
     int32_t set_index=-1;
     ReceiverTypeBinding bindings[8]={};size_t binding_count=0;
@@ -895,8 +914,7 @@ static bool resolve_indexed_binding(const DiamondProgram *program,
            binding_count,result,depth+1))return false;
     size_t token=first_index;
     while(token<=end) {
-        if(tokens[token].kind!=DIAMOND_TOKEN_LEFT_BRACKET||result->array_depth==0)
-            return false;
+        if(tokens[token].kind!=DIAMOND_TOKEN_LEFT_BRACKET)return false;
         size_t nesting=0,close=token;
         for(size_t index=token;index<=end;index++) {
             if(tokens[index].kind==DIAMOND_TOKEN_LEFT_BRACKET)nesting++;
@@ -904,6 +922,19 @@ static bool resolve_indexed_binding(const DiamondProgram *program,
                     --nesting==0) {close=index;break;}
         }
         if(close==token)return false;
+        if(result->array_depth==0) {
+            /* A Hash lookup is `V | Nil`. Left of `&.` (nil_ok) the final one
+             * may read V, since a missing key never reaches the method. */
+            const DiamondBoundTypeNode *leaf=&result->graph.nodes[0];
+            if(!nil_ok||close!=end||!result->has_builtin||
+               result->builtin_type!=DIAMOND_TYPE_HASH||result->graph.node_count==0||
+               leaf->count!=1||leaf->members[0].second_argument_node==UINT8_MAX)
+                return false;
+            const DiamondTypeBinding graph=result->graph;
+            return binding_from_graph(chunk,&graph,
+                    graph.nodes[0].members[0].second_argument_node,result,depth+1)&&
+                result->array_depth==0;
+        }
         result->array_depth--;token=close+1;
     }
     return result->array_depth==0;
@@ -912,10 +943,10 @@ static bool resolve_indexed_binding(const DiamondProgram *program,
 static size_t resolve_indexed_candidate(const DiamondProgram *program,
         const DiamondChunk *chunk,const char *source,const DiamondToken *tokens,
         size_t start,size_t end,size_t first_index,size_t candidate,
-        size_t *candidate_count,size_t *classes,size_t capacity,unsigned depth) {
+        size_t *candidate_count,size_t *classes,size_t capacity,unsigned depth,bool nil_ok) {
     ReceiverTypeBinding binding;
     if(!resolve_indexed_binding(program,chunk,source,tokens,start,end,first_index,
-            candidate,candidate_count,&binding,depth))return 0;
+            candidate,candidate_count,&binding,depth,nil_ok))return 0;
     size_t count=0;
     for(size_t index=0;index<binding.class_count;index++)
         count=append_class(classes,count,capacity,binding.classes[index]);
@@ -953,7 +984,7 @@ static size_t first_receiver_index(const DiamondChunk *chunk,const char *source,
 static size_t resolve_indexed_expression(const DiamondProgram *program,
         const DiamondChunk *chunk,const char *source,const DiamondToken *tokens,
         size_t start,size_t end,size_t *classes,size_t capacity,
-        bool *is_singleton,unsigned depth) {
+        bool *is_singleton,unsigned depth,bool nil_ok) {
     if(tokens[start].kind!=DIAMOND_TOKEN_IDENTIFIER)return 0;
     const size_t first_index=first_receiver_index(chunk,source,tokens,start,end);
     if(tokens[first_index].kind!=DIAMOND_TOKEN_LEFT_BRACKET)return 0;
@@ -963,7 +994,7 @@ static size_t resolve_indexed_expression(const DiamondProgram *program,
         size_t returned[DIAMOND_MAX_UNION_TYPES];
         const size_t returned_count=resolve_indexed_candidate(program,chunk,
             source,tokens,start,end,first_index,candidate,&candidate_count,
-            returned,DIAMOND_MAX_UNION_TYPES,depth);
+            returned,DIAMOND_MAX_UNION_TYPES,depth,nil_ok);
         if(returned_count==0)return 0;
         for(size_t index=0;index<returned_count;index++) {
             bool found=false;
@@ -1205,7 +1236,7 @@ static bool resolve_expression_binding(const DiamondProgram *program,const Diamo
         const size_t first=first_receiver_index(chunk,source,tokens,start,end);
         size_t candidates=0;
         return first>start&&resolve_indexed_binding(program,chunk,source,tokens,start,end,
-            first,0,&candidates,binding,depth+1)&&candidates==1;
+            first,0,&candidates,binding,depth+1,false)&&candidates==1;
     }
     if(start==end&&tokens[start].kind==DIAMOND_TOKEN_IDENTIFIER) {
         const DiamondFunction *owner=nullptr;
@@ -1282,7 +1313,7 @@ static bool resolve_expression_binding(const DiamondProgram *program,const Diamo
 
 static size_t resolve_name(const DiamondProgram *program,const DiamondChunk *chunk,
         const char *source,DiamondToken token,size_t *classes,size_t capacity,
-        bool *is_singleton) {
+        bool *is_singleton,bool nil_ok) {
     char name[DIAMOND_MAX_FUNCTION_NAME];
     size_t length=token.span.length;
     if(length>=sizeof name)length=sizeof name-1;
@@ -1310,6 +1341,8 @@ static size_t resolve_name(const DiamondProgram *program,const DiamondChunk *chu
     const DiamondTypeSet *set=&owner->type_sets[(size_t)known_type_set];
     size_t count=0;
     for(size_t index=0;index<set->count;index++) {
+        /* Left of `&.` a nil never reaches the method, so Nil drops out. */
+        if(nil_ok&&set->members[index].id==DIAMOND_TYPE_NIL)continue;
         if(!decode_class_type(chunk,set->members[index].id,&class_index))return 0;
         count=append_class(classes,count,capacity,class_index);
     }
@@ -1323,9 +1356,12 @@ static size_t resolve_name(const DiamondProgram *program,const DiamondChunk *chu
  * source annotation says it is. */
 static size_t resolve_call(const DiamondProgram *program,const DiamondChunk *chunk,
         const char *source,const DiamondToken *tokens,size_t start,size_t end,
-        size_t *classes,size_t capacity,bool *is_singleton,unsigned depth) {
+        size_t *classes,size_t capacity,bool *is_singleton,unsigned depth,bool nil_ok) {
     ReceiverCallSyntax call;
     if(!parse_receiver_call_syntax(chunk,source,tokens,start,end,&call))return 0;
+    /* `a&.b()` is nil when `a` is: a plain `.` after it stays unresolved. */
+    if(!nil_ok&&call.callee_index>start&&
+       tokens[call.callee_index-1].kind==DIAMOND_TOKEN_AMPERSAND_DOT)return 0;
     ReceiverCallTargets targets;
     if(!resolve_call_targets(program,chunk,source,tokens,start,&call,depth,
             &targets))return 0;
@@ -1355,7 +1391,7 @@ static size_t resolve_call(const DiamondProgram *program,const DiamondChunk *chu
             returned[0]=(size_t)returned_class;returned_count=1;
         } else returned_count=function_return_classes_bound(chunk,function,
             candidate_bindings,candidate_binding_count,returned,
-            DIAMOND_MAX_UNION_TYPES);
+            DIAMOND_MAX_UNION_TYPES,nil_ok);
         if(returned_count==0)return 0;
         for(size_t member=0;member<returned_count;member++)
             count=append_class(classes,count,capacity,returned[member]);
@@ -1366,6 +1402,7 @@ static size_t resolve_call(const DiamondProgram *program,const DiamondChunk *chu
 static size_t resolve_expression(const DiamondProgram *program,const DiamondChunk *chunk,
         const char *source,const DiamondToken *tokens,size_t start,size_t end,
         size_t *classes,size_t capacity,bool *is_singleton,unsigned depth) {
+    const bool nil_ok=take_receiver_nil_ok();
     if(start>end||capacity==0||depth>32)return 0;
     size_t specialized=0;
     if(specialized_class_receiver(chunk,source,tokens,start,end,&specialized,nullptr)) {
@@ -1382,8 +1419,11 @@ static size_t resolve_expression(const DiamondProgram *program,const DiamondChun
             else if(tokens[index].kind==DIAMOND_TOKEN_RIGHT_PAREN&&
                     --nesting==0) {
                 if(index==end)
-                    return resolve_expression(program,chunk,source,tokens,
+                {
+                    receiver_nil_ok=nil_ok;
+                        return resolve_expression(program,chunk,source,tokens,
                         start+1,end-1,classes,capacity,is_singleton,depth+1);
+                }
                 break;
             }
         }
@@ -1391,7 +1431,7 @@ static size_t resolve_expression(const DiamondProgram *program,const DiamondChun
     if(start==end) {
         const DiamondToken token=tokens[start];
         if(token.kind==DIAMOND_TOKEN_IDENTIFIER)
-            return resolve_name(program,chunk,source,token,classes,capacity,is_singleton);
+            return resolve_name(program,chunk,source,token,classes,capacity,is_singleton,nil_ok);
         if(token.kind==DIAMOND_TOKEN_SELF) {
             const DiamondFunction *function=find_enclosing_function(program,chunk,token.span.start);
             if(function==nullptr||function->owner_class>=chunk->class_count)return 0;
@@ -1425,9 +1465,9 @@ static size_t resolve_expression(const DiamondProgram *program,const DiamondChun
     }
     if(tokens[end].kind==DIAMOND_TOKEN_RIGHT_BRACKET)
         return resolve_indexed_expression(program,chunk,source,tokens,start,end,
-            classes,capacity,is_singleton,depth);
+            classes,capacity,is_singleton,depth,nil_ok);
     if(tokens[end].kind==DIAMOND_TOKEN_RIGHT_PAREN)
-        return resolve_call(program,chunk,source,tokens,start,end,classes,capacity,is_singleton,depth);
+        return resolve_call(program,chunk,source,tokens,start,end,classes,capacity,is_singleton,depth,nil_ok);
     return 0;
 }
 
@@ -1454,9 +1494,9 @@ static bool locate_receiver(const char *source,size_t stop_offset,
         tokens[count++]=token;
     }
     size_t dot=count;
-    if(count>0&&tokens[count-1].kind==DIAMOND_TOKEN_DOT)dot=count-1;
+    if(count>0&&is_member_access(tokens[count-1].kind))dot=count-1;
     else if(count>1&&tokens[count-1].kind==DIAMOND_TOKEN_IDENTIFIER&&
-            tokens[count-2].kind==DIAMOND_TOKEN_DOT)dot=count-2;
+            is_member_access(tokens[count-2].kind))dot=count-2;
     if(dot==0||dot==count) {free(tokens);return false;}
     /* Walk backward to the start of the receiver's current expression. A
      * newline was discarded above, so the last statement boundary is the
@@ -1502,12 +1542,12 @@ static bool locate_receiver(const char *source,size_t stop_offset,
         }
         start=index-1;
         if(nesting==0&&bracket_nesting==0&&brace_nesting==0&&index>1&&
-           tokens[index-2].kind!=DIAMOND_TOKEN_DOT&&
+           !is_member_access(tokens[index-2].kind)&&
            tokens[index-2].kind!=DIAMOND_TOKEN_DOUBLE_COLON&&
            kind!=DIAMOND_TOKEN_DOUBLE_COLON&&
            kind!=DIAMOND_TOKEN_RIGHT_PAREN&&kind!=DIAMOND_TOKEN_LEFT_PAREN&&
            kind!=DIAMOND_TOKEN_RIGHT_BRACKET&&kind!=DIAMOND_TOKEN_LEFT_BRACKET&&
-           kind!=DIAMOND_TOKEN_DOT)break;
+           !is_member_access(kind))break;
     }
     *tokens_out=tokens;*start_out=start;*end_out=dot-1;
     return true;
@@ -1521,7 +1561,7 @@ bool receiver_has_explicit_receiver(const char *source,size_t stop_offset) {
         if(token.kind==DIAMOND_TOKEN_EOF||token.span.start>=stop_offset)break;
         if(token.kind!=DIAMOND_TOKEN_NEWLINE)previous=token.kind;
     }
-    return previous==DIAMOND_TOKEN_DOT;
+    return is_member_access(previous);
 }
 
 size_t receiver_resolve_classes(const DiamondProgram *program,
@@ -1530,6 +1570,7 @@ size_t receiver_resolve_classes(const DiamondProgram *program,
     if(max_candidates==0)return 0;
     DiamondToken *tokens;size_t start,end;
     if(!locate_receiver(source,stop_offset,&tokens,&start,&end))return 0;
+    receiver_nil_ok=tokens[end+1].kind==DIAMOND_TOKEN_AMPERSAND_DOT;
     const size_t result=resolve_expression(program,chunk,source,tokens,start,end,
         class_indices,max_candidates,is_singleton,0);
     free(tokens);return result;
@@ -1571,16 +1612,28 @@ bool receiver_builtin_member_hidden(uint16_t builtin_type,const char *member) {
     return false;
 }
 
+/* The one built-in type `set` names, if it names exactly one; left of `&.`
+ * (nil_ok) a Nil member is ignored, so `String | Nil` names String. */
+static bool single_builtin_in_set(const DiamondTypeSet *set,bool nil_ok,uint16_t *type) {
+    uint16_t found=DIAMOND_TYPE_NONE;
+    for(size_t index=0;index<set->count;index++) {
+        const uint16_t id=set->members[index].id;
+        if(nil_ok&&id==DIAMOND_TYPE_NIL)continue;
+        if(found!=DIAMOND_TYPE_NONE||!is_builtin_value_type(id))return false;
+        found=id;
+    }
+    if(found==DIAMOND_TYPE_NONE)return false;
+    *type=found;return true;
+}
+
 /* The one built-in type a function's declared (or, failing that, inferred)
  * return type names, if it names exactly one. */
-static bool function_builtin_return(const DiamondFunction *function,uint16_t *type) {
+static bool function_builtin_return(const DiamondFunction *function,bool nil_ok,
+        uint16_t *type) {
     const uint16_t sets[2]={function->return_type_set,function->inferred_return_type_set};
     for(size_t index=0;index<2;index++) {
         if(sets[index]==DIAMOND_NO_TYPE_SET||sets[index]>=function->type_set_count)continue;
-        const DiamondTypeSet *set=&function->type_sets[sets[index]];
-        if(set->count==1&&is_builtin_value_type(set->members[0].id)) {
-            *type=set->members[0].id;return true;
-        }
+        if(single_builtin_in_set(&function->type_sets[sets[index]],nil_ok,type))return true;
     }
     return false;
 }
@@ -1625,7 +1678,7 @@ static bool builtin_method_result(const DiamondChunk *chunk,uint16_t receiver,
                 if(written<=0||(size_t)written>=sizeof bridge)continue;
                 const DiamondFunction *function=find_plain_function(chunk,bridge,(size_t)written);
                 if(function!=nullptr)
-                    return function_builtin_return(function,result);
+                    return function_builtin_return(function,false,result);
             }
     }
     return false;
@@ -1647,12 +1700,15 @@ static size_t matching_open(const DiamondToken *tokens,size_t start,size_t close
 static bool builtin_type_of(const DiamondProgram *program,const DiamondChunk *chunk,
         const char *source,const DiamondToken *tokens,size_t start,size_t end,
         unsigned depth,uint16_t *type) {
+    const bool nil_ok=take_receiver_nil_ok();
     if(start>end||depth>32)return false;
     if(tokens[start].kind==DIAMOND_TOKEN_LEFT_PAREN&&
        tokens[end].kind==DIAMOND_TOKEN_RIGHT_PAREN&&
        matching_open(tokens,start,end,DIAMOND_TOKEN_LEFT_PAREN,
-           DIAMOND_TOKEN_RIGHT_PAREN)==start&&end>start)
+           DIAMOND_TOKEN_RIGHT_PAREN)==start&&end>start) {
+        receiver_nil_ok=nil_ok;
         return builtin_type_of(program,chunk,source,tokens,start+1,end-1,depth+1,type);
+    }
     if(start==end) {
         const DiamondToken token=tokens[start];
         uint16_t found=DIAMOND_TYPE_NIL;
@@ -1671,6 +1727,13 @@ static bool builtin_type_of(const DiamondProgram *program,const DiamondChunk *ch
                 int32_t known_type_set,tooling_type_set;
                 local_type_at_offset(owner,local,token.span.start,&found,
                     &known_type_set,&tooling_type_set);
+                /* Left of `&.`, a `String | Nil` local is a String. */
+                const int32_t set=known_type_set>=0?known_type_set:tooling_type_set;
+                uint16_t non_nil;
+                if(nil_ok&&!is_builtin_value_type(found)&&set>=0&&
+                   (size_t)set<owner->type_set_count&&
+                   single_builtin_in_set(&owner->type_sets[(size_t)set],true,&non_nil))
+                    found=non_nil;
             }
         }
         if(!is_builtin_value_type(found))return false;
@@ -1691,13 +1754,20 @@ static bool builtin_type_of(const DiamondProgram *program,const DiamondChunk *ch
             ReceiverTypeBinding result;
             if(first==start||tokens[first].kind!=DIAMOND_TOKEN_LEFT_BRACKET||
                !resolve_indexed_binding(program,chunk,source,tokens,start,end,first,
-                   candidate,&candidates,&result,depth+1)||!result.has_builtin||
+                   candidate,&candidates,&result,depth+1,nil_ok)||!result.has_builtin||
                (candidate>0&&shared!=result.builtin_type))return false;
             shared=result.builtin_type;
         }
         *type=shared;return true;
     }
     if(tokens[end].kind!=DIAMOND_TOKEN_RIGHT_PAREN)return false;
+    {
+        /* `a&.b()` is nil when `a` is: a plain `.` after it stays unresolved. */
+        const size_t call_open=matching_open(tokens,start,end,DIAMOND_TOKEN_LEFT_PAREN,
+            DIAMOND_TOKEN_RIGHT_PAREN);
+        if(!nil_ok&&call_open>start+1&&
+           tokens[call_open-2].kind==DIAMOND_TOKEN_AMPERSAND_DOT)return false;
+    }
     ReceiverCallSyntax generic_call;ReceiverCallTargets generic_targets;
     if(parse_receiver_call_syntax(chunk,source,tokens,start,end,&generic_call)&&
        resolve_call_targets(program,chunk,source,tokens,start,&generic_call,
@@ -1726,10 +1796,11 @@ static bool builtin_type_of(const DiamondProgram *program,const DiamondChunk *ch
     const size_t length=tokens[callee].span.length;
     if(callee==start) {
         const DiamondFunction *function=find_plain_function(chunk,name,length);
-        return function!=nullptr&&function_builtin_return(function,type);
+        return function!=nullptr&&function_builtin_return(function,nil_ok,type);
     }
-    if(callee<2||tokens[callee-1].kind!=DIAMOND_TOKEN_DOT)return false;
+    if(callee<2||!is_member_access(tokens[callee-1].kind))return false;
     uint16_t receiver;
+    receiver_nil_ok=tokens[callee-1].kind==DIAMOND_TOKEN_AMPERSAND_DOT;
     if(!builtin_type_of(program,chunk,source,tokens,start,callee-2,depth+1,&receiver))
         return false;
     return builtin_method_result(chunk,receiver,name,length,type);
@@ -1740,6 +1811,7 @@ bool receiver_resolve_builtin_type(const DiamondProgram *program,
         uint16_t *builtin_type) {
     DiamondToken *tokens;size_t start,end;
     if(!locate_receiver(source,stop_offset,&tokens,&start,&end))return false;
+    receiver_nil_ok=tokens[end+1].kind==DIAMOND_TOKEN_AMPERSAND_DOT;
     const bool found=builtin_type_of(program,chunk,source,tokens,start,end,0,builtin_type);
     free(tokens);return found;
 }

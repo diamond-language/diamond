@@ -208,11 +208,13 @@ static bool scan_text_for_references(const DocumentTable *documents,DiamondProgr
         if(token.span.length!=name_length||
            memcmp(combined+token.span.start,name,name_length)!=0)
             continue;
-        if(index>0&&tokens[index-1].kind==DIAMOND_TOKEN_DOT)continue;
+        if(index>0&&(tokens[index-1].kind==DIAMOND_TOKEN_DOT||
+                    tokens[index-1].kind==DIAMOND_TOKEN_AMPERSAND_DOT))continue;
         if(name_is_non_global_declaration(&chunk,name,name_length,token.span.start))continue;
         const bool call_or_access=index+1<token_count&&
             (tokens[index+1].kind==DIAMOND_TOKEN_LEFT_PAREN||
-             tokens[index+1].kind==DIAMOND_TOKEN_DOT);
+             tokens[index+1].kind==DIAMOND_TOKEN_DOT||
+             tokens[index+1].kind==DIAMOND_TOKEN_AMPERSAND_DOT);
         const bool type_position=index>0&&
             (tokens[index-1].kind==DIAMOND_TOKEN_COLON||
              tokens[index-1].kind==DIAMOND_TOKEN_PIPE||

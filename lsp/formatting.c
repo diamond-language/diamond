@@ -293,6 +293,11 @@ typedef struct FormatLineState {
     bool pending_loop_do;
 } FormatLineState;
 
+/* `.` or `&.` (safe navigation): both link a method call to its receiver. */
+static bool is_chain_link(DiamondTokenKind kind) {
+    return kind==DIAMOND_TOKEN_DOT||kind==DIAMOND_TOKEN_AMPERSAND_DOT;
+}
+
 /* The start of a line with tokens: ends an endless-def body or a
  * leading-dot chain the line no longer continues, then consumes its
  * leading dedent keywords, advancing *k past them. Returns false when
@@ -301,13 +306,13 @@ static bool begin_token_line(FormatDepthState *state,const DiamondToken *tokens,
         size_t token_count,size_t line,size_t *k) {
     if(state->body_base>=0&&state->depth==state->body_base+1) {
         if(state->body_first)state->body_first=false;
-        else if(tokens[*k].kind!=DIAMOND_TOKEN_DOT&&state->chain_base<0) {
+        else if(!is_chain_link(tokens[*k].kind)&&state->chain_base<0) {
             state->depth--;
             state->body_base=-1;
         }
     }
     if(state->chain_base>=0&&state->depth==state->chain_base+1&&
-       tokens[*k].kind!=DIAMOND_TOKEN_DOT) {
+       !is_chain_link(tokens[*k].kind)) {
         state->depth--;
         state->chain_base=-1;
     }
@@ -329,6 +334,7 @@ static bool apply_token_depth(FormatDepthState *state,FormatLineState *line,
     const DiamondTokenKind kind=tokens[k].kind;
     switch(kind) {
         case DIAMOND_TOKEN_DOT:
+        case DIAMOND_TOKEN_AMPERSAND_DOT:
             if(line->chain_line&&line->first_in_rest_of_line) {
                 state->chain_base=state->depth;
                 if(!push_level(&state->depth,false,state->interface_level))return false;
@@ -360,7 +366,7 @@ static bool apply_token_depth(FormatDepthState *state,FormatLineState *line,
              * something this pass needs to special-case too.
              * Found against this repo's own real corpus
              * (packages/logger's own `error.class()` call). */
-            if(state->prev_kind!=DIAMOND_TOKEN_DOT&&
+            if(!is_chain_link(state->prev_kind)&&
                !push_level(&state->depth,false,state->interface_level))
                 return false;
             break;
@@ -484,7 +490,7 @@ static bool compute_line_depths(const DiamondToken *tokens,size_t token_count,
             is_branch_kind(tokens[k].kind);
         FormatLineState line_state={
             .chain_line=k<token_count&&(size_t)tokens[k].span.line==line&&
-                tokens[k].kind==DIAMOND_TOKEN_DOT&&state.chain_base<0,
+                is_chain_link(tokens[k].kind)&&state.chain_base<0,
             .first_in_rest_of_line=true};
         const int print_depth=state.depth-(branch_line?1:0)+(line_state.chain_line?1:0);
         if(print_depth<0)return false;
@@ -588,7 +594,7 @@ static bool is_closing_bracket(DiamondTokenKind kind) {
 static bool operator_is_method_name(const DiamondToken *tokens,size_t index) {
     if(index==0)return false;
     const DiamondTokenKind before=tokens[index-1].kind;
-    if(before==DIAMOND_TOKEN_DEF||before==DIAMOND_TOKEN_DOT||
+    if(before==DIAMOND_TOKEN_DEF||is_chain_link(before)||
        before==DIAMOND_TOKEN_DOUBLE_COLON)return true;
     if(tokens[index].kind!=DIAMOND_TOKEN_EQUAL)return false;
     for(size_t back=index;back>0;back--) {
@@ -599,6 +605,7 @@ static bool operator_is_method_name(const DiamondToken *tokens,size_t index) {
             case DIAMOND_TOKEN_IDENTIFIER:
             case DIAMOND_TOKEN_SELF:
             case DIAMOND_TOKEN_DOT:
+            case DIAMOND_TOKEN_AMPERSAND_DOT:
             case DIAMOND_TOKEN_LEFT_BRACKET:
             case DIAMOND_TOKEN_RIGHT_BRACKET:
             case DIAMOND_TOKEN_DOUBLE_COLON:

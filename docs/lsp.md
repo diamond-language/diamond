@@ -164,7 +164,9 @@ search over a real (if scoped) lexical symbol table:
     retain child-only parameters, including with fixed parents. An inherited
     constructor missing a child binding stays unresolved unless explicit type
     arguments supply it. Direct `Hash[K, V]`
-    indexing remains unresolved because its real result is `V | Nil`. Saving a
+    indexing with `.` remains unresolved because its real result is `V | Nil`;
+    with safe navigation (`pets["rex"]&.`) the final lookup resolves to `V`,
+    since a missing key never reaches the method (see "Safe navigation" below). Saving a
     declared or structurally inferred Hash lookup in a local preserves that
     nullable type. Existing nil
     comparisons now expose the compiler's branch-local proof to the editor:
@@ -202,6 +204,13 @@ search over a real (if scoped) lexical symbol table:
     repeated indexing through nested Arrays. These facts stay editor-only;
     unknown element graphs and directly chained nullable Hash indexing remain
     unresolved.
+    Safe navigation: left of `&.` the receiver resolves through its non-nil
+    view, for completion, hover and definition alike. A `T | Nil` local or
+    parameter, a call declared `-> T | Nil`, and a final Hash lookup all
+    resolve as T. Only that outermost receiver drops Nil: `a&.b()` is itself
+    nullable, so `a&.b().` stays unresolved while `a&.b()&.` resolves, and an
+    inner plain `.` link stays as strict as before. The formatter indents a
+    leading `&.` line as a chain link, like a leading `.`.
     Array literals also carry inferred factory element graphs, including nested
     literals and mixtures of known and inferred class results. Locals and
     unannotated returns retain the richer editor graph alongside the compiler's

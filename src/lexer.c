@@ -161,7 +161,9 @@ static bool newline_continues_chain(const DiamondLexer *lexer) {
             while (lexer->source[index] != '\0' && lexer->source[index] != '\n') index++;
             continue;
         }
-        if (next != '.') return false;
+        /* A leading `&.` (safe navigation) continues the chain the same way. */
+        if (next == '&' && lexer->source[index + 1] == '.') index++;
+        else if (next != '.') return false;
         const char after = lexer->source[index + 1];
         return after != '.' && !(after >= '0' && after <= '9');
     }
@@ -178,6 +180,7 @@ static bool regex_allowed(const DiamondLexer *lexer) {
         case DIAMOND_TOKEN_RIGHT_BRACE: case DIAMOND_TOKEN_END: case DIAMOND_TOKEN_TRUE:
         case DIAMOND_TOKEN_FALSE: case DIAMOND_TOKEN_NIL: case DIAMOND_TOKEN_SELF:
         case DIAMOND_TOKEN_DEF: case DIAMOND_TOKEN_DOT: /* def /(other), a./(b) */
+        case DIAMOND_TOKEN_AMPERSAND_DOT:
         case DIAMOND_TOKEN_REGEX:
             return false;
         default:
@@ -458,6 +461,12 @@ static DiamondToken lexer_scan(DiamondLexer *lexer) {
             if(match(lexer,'&'))
                 return token(lexer,match(lexer,'=')?DIAMOND_TOKEN_AND_AND_EQUAL
                                                     :DIAMOND_TOKEN_AND_AND);
+            /* `&.` is safe navigation, but `&..` stays `&` then a range operator. */
+            if(lexer->source[lexer->current]=='.'&&
+               lexer->source[lexer->current+1]!='.') {
+                advance(lexer);
+                return token(lexer, DIAMOND_TOKEN_AMPERSAND_DOT);
+            }
             return token(lexer, DIAMOND_TOKEN_AMPERSAND);
         case '+':
             return token(lexer, match(lexer,'=') ? DIAMOND_TOKEN_PLUS_EQUAL

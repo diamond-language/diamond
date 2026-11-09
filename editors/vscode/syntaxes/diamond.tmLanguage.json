@@ -157,7 +157,7 @@
         },
         {
           "name": "punctuation.accessor.diamond",
-          "match": "\\."
+          "match": "&?\\."
         },
         {
           "name": "punctuation.separator.colon.diamond",

@@ -158,7 +158,7 @@ class Lexer
   def regex_allowed?()
     [:identifier, :integer, :float, :string, :symbol, :instance_variable, :class_variable,
      :right_paren, :right_bracket, :right_brace, :end, :true, :false, :nil, :self,
-     :regex, :def, :dot].include?(@previous) == false
+     :regex, :def, :dot, :ampersand_dot].include?(@previous) == false
   end
 
   def scan_regex_literal()
@@ -225,6 +225,11 @@ class Lexer
       if self.match?("&".ord())
         return self.make_token(:and_and_equal) if self.match?("=".ord())
         return self.make_token(:and_and)
+      end
+      # `&.` is safe navigation, but `&..` stays `&` then a range operator.
+      if self.code_at(@current) == ".".ord() && self.code_at(@current + 1) != ".".ord()
+        self.advance()
+        return self.make_token(:ampersand_dot)
       end
       return self.make_token(:ampersand)
     end
@@ -304,7 +309,12 @@ class Lexer
           index = index + 1
         end
       else
-        return false if code != ".".ord()
+        # A leading `&.` (safe navigation) continues the chain the same way.
+        if code == "&".ord() && self.code_at(index + 1) == ".".ord()
+          index = index + 1
+        elsif code != ".".ord()
+          return false
+        end
         after = self.code_at(index + 1)
         return after != ".".ord() && !(after >= "0".ord() && after <= "9".ord())
       end
