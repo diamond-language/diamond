@@ -49,18 +49,24 @@ mkdir -p "$out"
 # Until 0.22.0 the package was called diamond-lang. Installing d6-lang over the
 # last release under that name must replace it, not sit beside it. Only the
 # default images on x86-64 match those release files: 0.22.0 had no arm64 build.
-former="https://github.com/diamond-language/diamond/releases/download/v0.22.0"
+# The release file is fetched here, with retries and an API fallback
+# (tools/fetch_release_asset.sh), and mounted read-only at /former.
+former="$repo/build/packages/former"
 if [[ "$(uname -m)" != x86_64 ]]; then
     exit 0
 elif [[ "$format" == deb && "$image" == ubuntu:26.04 ]]; then
-    install_former="apt-get update && apt-get install -y curl && curl -fsSLo /tmp/former.deb $former/diamond-lang_0.22.0-1_amd64.deb && DEBIAN_FRONTEND=noninteractive apt-get upgrade -y && DEBIAN_FRONTEND=noninteractive apt-get install -y --install-recommends /tmp/former.deb"
+    former_file=diamond-lang_0.22.0-1_amd64.deb
+    install_former="apt-get update && cp /former/$former_file /tmp/former.deb && DEBIAN_FRONTEND=noninteractive apt-get upgrade -y && DEBIAN_FRONTEND=noninteractive apt-get install -y --install-recommends /tmp/former.deb"
     former_gone='! dpkg-query -W -f="\${Status}" diamond-lang 2>/dev/null | grep -q "ok installed"'
 elif [[ "$format" == rpm && "$image" == fedora:44 ]]; then
-    install_former="dnf upgrade -y && dnf install -y --setopt=install_weak_deps=True $former/diamond-lang-0.22.0-1.fc44.x86_64.rpm"
+    former_file=diamond-lang-0.22.0-1.fc44.x86_64.rpm
+    install_former="dnf upgrade -y && dnf install -y --setopt=install_weak_deps=True /former/$former_file"
     former_gone='! rpm -q diamond-lang'
 else
     exit 0
 fi
-"$runtime" run --rm --security-opt label=disable -v "$out:/packages:ro" -v "$repo/packaging:/packaging:ro" "$image" \
+mkdir -p "$former"
+sh "$repo/tools/fetch_release_asset.sh" diamond-language/diamond v0.22.0 "$former_file" "$former/$former_file"
+"$runtime" run --rm --security-opt label=disable -v "$out:/packages:ro" -v "$repo/packaging:/packaging:ro" -v "$former:/former:ro" "$image" \
     bash -c "set -e; $install_former >/dev/null; $install_package >/dev/null; $former_gone
         bash /packaging/smoke_test.sh $version; echo 'replaced diamond-lang 0.22.0'"

@@ -41,6 +41,8 @@ jobs:
           ref: refs/tags/${{ inputs.tag || github.ref_name }}
           fetch-depth: 1
       - name: Build, install and smoke-test the ${{ matrix.format }}
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: bash packaging/ci.sh ${{ matrix.format }}
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
@@ -62,6 +64,8 @@ jobs:
           ref: refs/tags/${{ inputs.tag || github.ref_name }}
           fetch-depth: 1
       - name: Build the portable tools
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: tools/build_portable.sh
       - name: Smoke-test them on each distribution
         run: tools/test_portable_distros.sh

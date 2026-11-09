@@ -12,8 +12,8 @@ apk add --no-cache bash make gcc musl-dev linux-headers git \
 xcrypt_version=4.5.2
 xcrypt_sha256=71513a31c01a428bccd5367a32fd95f115d6dac50fb5b60c779d5c7942aec071
 apk add --no-cache perl xz >/dev/null
-wget -q -O /tmp/xcrypt.tar.xz \
-    "https://github.com/besser82/libxcrypt/releases/download/v$xcrypt_version/libxcrypt-$xcrypt_version.tar.xz"
+# Fetched by build_portable.sh (GitHub release downloads need retries).
+cp /in/xcrypt.tar.xz /tmp/xcrypt.tar.xz
 echo "$xcrypt_sha256  /tmp/xcrypt.tar.xz" | sha256sum -c - >/dev/null
 mkdir /tmp/xcrypt
 tar -xJf /tmp/xcrypt.tar.xz -C /tmp/xcrypt --strip-components=1
