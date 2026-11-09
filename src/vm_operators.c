@@ -278,8 +278,16 @@ bool operator_prelude_fallback(DiamondVm *vm,const DiamondChunk *chunk,
            total<=(UINT64_C(1)<<26)) {
             DiamondArray *repeated=allocate_array_uninitialized(vm,(size_t)total);
             if(repeated==nullptr) {*status=DIAMOND_VM_OUT_OF_MEMORY;return true;}
-            for(size_t index=0;index<(size_t)total;index++)
-                repeated->values[index]=pattern->values[index%pattern->count];
+            /* Array.new(n, fill) is the one-element case: a plain fill,
+             * without a division per element. */
+            if(pattern->count==1) {
+                const DiamondValue fill=pattern->values[0];
+                for(size_t index=0;index<(size_t)total;index++)
+                    repeated->values[index]=fill;
+            } else {
+                for(size_t index=0;index<(size_t)total;index++)
+                    repeated->values[index]=pattern->values[index%pattern->count];
+            }
             *out=DIAMOND_OBJECT(repeated);
             *status=DIAMOND_VM_OK;
             return true;

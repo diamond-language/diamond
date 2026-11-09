@@ -1,0 +1,8 @@
+334
+1999000
+[10, 20, 30]
+{"a": 1, "b": 2}
+out of bounds: index 5 out of bounds for Array of length 3
+frozen: frozen object cannot be modified
+typed: array element violates its type annotation
+nil

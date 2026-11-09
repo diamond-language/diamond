@@ -23,6 +23,11 @@ authoritative fine-grained record.
   `d6-VERSION-linux-*.tar.gz` builds introduced in 0.29.0 while their limits (no JIT, baseline
   x86-64, no `d6 build`) are worked out. CI still builds and tests them, and
   `tools/build_portable.sh` still makes them.
+- **Faster `array[i] = value` in compiled code.** The JIT stores straight into a young, unfrozen,
+  unconstrained Array when the index is an in-bounds Int, and only falls back to the full
+  `INDEX_SET` path for promoted (write-barrier), frozen, typed or out-of-range cases.
+  `Array.new(n, value)` and `[value] * n` fill without a per-element modulo. sieve: −50%
+  instructions, −16% cycles.
 
 ## 0.29.0 — 2026-11-08
 

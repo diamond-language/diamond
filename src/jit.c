@@ -1663,6 +1663,38 @@ static void compile_index_set(JitCompiler *jc, size_t instruction_start,
     jc->needs_frame = true;
     jc->has_called = true;
     JitBuffer *buf = &jc->buf;
+    /* An Array write at a non-negative Int index inside it is stored inline
+     * when the Array is young, unfrozen and has no element-type constraints:
+     * a young owner needs no write barrier (gc_write_barrier_index returns at
+     * once). Anything else -- an old Array, a negative index, a Range, out of
+     * bounds, another receiver -- takes diamond_jit_index_set, errors and all.
+     * This is the interpreter's INDEX_SET fast path, minus its inline barrier. */
+    size_t slow[7];
+    size_t slow_count = 0;
+    emit_load_byte_zx(buf, REG_RAX, JIT_REGISTERS_BASE, reg_disp(index, KIND_OFF));
+    emit_cmp_imm32_32(buf, REG_RAX, DIAMOND_VALUE_INT);
+    slow[slow_count++] = emit_jcc_placeholder(buf, JCC_NE);
+    emit_object_kind_guard(buf, JIT_REGISTERS_BASE, reg_disp(recv, 0), DIAMOND_OBJECT_ARRAY,
+        slow, &slow_count);
+    emit_load_byte_zx(buf, REG_RCX, REG_RDX, (int32_t)offsetof(DiamondObject, old));
+    emit_cmp_imm32_32(buf, REG_RCX, 0);
+    slow[slow_count++] = emit_jcc_placeholder(buf, JCC_NE);
+    emit_load_byte_zx(buf, REG_RCX, REG_RDX, (int32_t)offsetof(DiamondObject, frozen));
+    emit_cmp_imm32_32(buf, REG_RCX, 0);
+    slow[slow_count++] = emit_jcc_placeholder(buf, JCC_NE);
+    emit_load_byte_zx(buf, REG_RCX, REG_RDX, (int32_t)offsetof(DiamondArray, constraint_count));
+    emit_cmp_imm32_32(buf, REG_RCX, 0);
+    slow[slow_count++] = emit_jcc_placeholder(buf, JCC_NE);
+    emit_load_r64(buf, REG_RAX, JIT_REGISTERS_BASE, reg_disp(index, AS_OFF));
+    /* Unsigned: a negative index compares above any count. */
+    emit_cmp_r64_mem(buf, REG_RAX, REG_RDX, (int32_t)offsetof(DiamondArray, count));
+    slow[slow_count++] = emit_jcc_placeholder(buf, JCC_AE);
+    emit_load_r64(buf, REG_RCX, REG_RDX, (int32_t)offsetof(DiamondArray, values));
+    emit_u8(buf, 0x48); emit_u8(buf, 0xC1); emit_u8(buf, 0xE0); emit_u8(buf, 0x04);  /* shl rax, 4 */
+    emit_u8(buf, 0x48); emit_u8(buf, 0x01); emit_u8(buf, 0xC1);                      /* add rcx, rax */
+    emit_copy_value(buf, REG_RCX, 0, JIT_REGISTERS_BASE, reg_disp(source, 0));
+    const size_t done = emit_jmp_placeholder(buf);
+    for (size_t i = 0; i < slow_count; i++) patch_rel32_to_here(buf, slow[i]);
     emit_mov_imm64(buf, REG_RAX, 0);
     emit_push(buf, REG_RAX);
     emit_lea(buf, REG_RAX, JIT_REGISTERS_BASE, reg_disp(source, 0));
@@ -1676,6 +1708,7 @@ static void compile_index_set(JitCompiler *jc, size_t instruction_start,
     emit_body_call(jc, (void *)(uintptr_t)diamond_jit_index_set);
     emit_add_rsp_imm32(buf, 16);
     emit_bail_if_al_nonzero(jc);
+    patch_rel32_to_here(buf, done);
 }
 
 /* Only wholly unconstrained built-in unions can skip the matcher. A generic
