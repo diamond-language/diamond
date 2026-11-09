@@ -133,7 +133,7 @@ Collections are stop-the-world within each isolated VM.
 
 ### Close the benchmark gaps to Ruby
 
-The local `fistfight` suite pairs d6 and Ruby programs (21 pairs). On 0.29.0-dev the d6
+The local `fistfight` suite pairs d6 and Ruby programs (21 pairs). On 0.29.0 the d6
 interpreter beats the Ruby interpreter on 20 of them and ties on fib (1.03x). The gaps left
 are against YJIT, on call-heavy and floating-point object code: fib 2.7x, poly 2.0x, nbody
 2.0x, trees 1.9x, sieve 1.25x, loop 1.2x, iterate 1.1x (best d6 over best Ruby), measured
@@ -142,7 +142,7 @@ objects inline. With the JIT on those changes cut nbody's instructions 63%, obje
 poly's 54%, trees' 49% and structs' 41%; rerun the suite for new ratios.
 
 - **JIT coverage** -- calls between compiled functions and methods are native now, with a
-  four-way class cache per method call site. Traced on 0.29.0-dev:
+  four-way class cache per method call site. Traced on 0.29.0:
   - Array `each` and `map` call their blocks natively from compiled code; `select`,
     `each_with_index`, `reduce` and `times` still call each block through C (`block_call_run`).
     Setting up a native loop is still a C call per loop (`diamond_jit_loop_begin`: extension
