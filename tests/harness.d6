@@ -179,6 +179,8 @@ module Harness
         return yield(Harness.reserve_port())
       rescue error: PortTaken
         raise error if attempt >= attempts
+        # Logged so CI shows how often the reserved port is lost before the child binds it.
+        warn("harness: reserved port taken before the program bound it; retrying (#{attempt}/#{attempts})")
       end
     end
   end
