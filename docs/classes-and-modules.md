@@ -556,8 +556,7 @@ freezes what `x` holds. Nested instances are frozen directly -- a nested
 instance's own `freeze` override is not called -- while a class that
 defines its own `deep_freeze` always wins for the receiver, like `dup`.
 Immutable values and primitives are left alone (no-op), and native
-resource-backed types are skipped rather than traversed. A call to
-`deep_freeze` makes the enclosing function ineligible for the opt-in JIT.
+resource-backed types are skipped rather than traversed.
 
 `respond_to?(name)` takes a `Symbol` and checks whether the receiver's
 class defines a method by that name — `false` for a private method, same
