@@ -1,0 +1,72 @@
+# Compiled constant-operand Int ops: `% k` by a positive constant is a mask
+# (powers of two) or a multiply by the magic reciprocal, not idiv; it must
+# floor exactly like the interpreter for every sign and at the Int limits.
+# Wide, negative, zero and -1 divisors keep the idiv or slow paths.
+
+def mods(x: Int) -> String
+  [x % 3, x % 7, x % 10, x % 1000003, x % 641, x % 2147483647,
+   x % 1, x % 2, x % 8, x % 1024, x % 1073741824,
+   x % 2147483648, x % 9223372036854775807,
+   x % -3, x % -8, x % -2147483648].inspect()
+end
+
+def arithmetic(x: Int) -> String
+  [x + 5, x - 5, x * 7, x * -3, x + 4294967296, x * 4294967296,
+   x < 10, x <= -10, x > 2147483647, x >= -2147483648, x < 4294967296].inspect()
+end
+
+def equalities(x: Int) -> String
+  [x == 0, x != 0, x == -1, x == 2147483647, x != 9223372036854775807,
+   x == 4294967296, x % 15 == 0].inspect()
+end
+
+# A non-Int left operand takes the full `==`.
+def loose_equal(value) -> String
+  [value == 3, value != 3].inspect()
+end
+
+def failing(label: String, &block)
+  begin
+    yield()
+    puts("#{label}: no error")
+  rescue error
+    puts("#{label}: #{error.message()}")
+  end
+end
+
+def zero(x: Int) -> Int = x % 0
+
+def run()
+  values = [0, 1, -1, 2, -2, 6, -6, 7, -7, 8, -8, 1000002, 1000003, -1000003,
+            123456789012345, -123456789012345, 2147483647, -2147483648,
+            9223372036854775807, -9223372036854775807 - 1]
+  values.each() do |x|
+    puts("#{x}: #{mods(x)}")
+    puts("#{x}: #{arithmetic(x)}")
+    puts("#{x}: #{equalities(x)}")
+  end
+  # Brute-force agreement with the generic `%` (register operands) for a
+  # spread of dividends and divisors.
+  mismatches = 0
+  x = -100000
+  while x < 100000
+    mismatches += 1 if x % 3 != x % [3][0]
+    mismatches += 1 if x % 7 != x % [7][0]
+    mismatches += 1 if x % 13 != x % [13][0]
+    mismatches += 1 if x % 125 != x % [125][0]
+    mismatches += 1 if x % 641 != x % [641][0]
+    x += 7
+  end
+  puts("mismatches: #{mismatches}")
+  # Overflow and non-Int operands still reach the slow path.
+  puts(9223372036854775807 + 5)
+  puts(-9223372036854775807 * 7)
+  puts(2.5 % 2)
+  puts(2.5 + 1)
+  puts(2.5 < 3)
+  [3, 3.0, "3", nil, [3]].each() do |value| puts(loose_equal(value)) end
+  failing("zero") do zero(5) end
+  failing("string") do "a" * 3 % 2 end
+end
+
+run()

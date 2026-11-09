@@ -1,0 +1,64 @@
+# Compiled `array[i] = value`: young, unfrozen, unconstrained Arrays are written
+# inline; everything else must still go through the full INDEX_SET path.
+
+class Box
+  attr_reader value: Int
+
+  def initialize(value: Int)
+    @value = value
+  end
+end
+
+def fill(items: Array[Bool], step: Int) -> Int
+  i = 0
+  while i < items.length()
+    items[i] = false
+    i += step
+  end
+  count = 0
+  items.each() do |item| count += 1 unless item end
+  count
+end
+
+def store_objects(count: Int) -> Int
+  boxes = Array.new(count, nil)
+  i = 0
+  while i < count
+    # Fresh objects stored into an Array that may have been promoted: the
+    # write barrier must still record them (stress GC runs this variant).
+    boxes[i] = Box.new(i)
+    i += 1
+  end
+  total = 0
+  boxes.each() do |box| total += box.value() if box != nil end
+  total
+end
+
+def failing(label: String, &block)
+  begin
+    yield()
+    puts("#{label}: no error")
+  rescue error
+    puts("#{label}: #{error.message()}")
+  end
+end
+
+def run(typed: Array[Int])
+  puts(fill(Array.new(1000, true), 3))
+  puts(store_objects(2000))
+
+  items = [1, 2, 3]
+  items[-1] = 30
+  items[0..1] = [10, 20]
+  puts(items.inspect())
+
+  table = {"a": 1}
+  table["b"] = 2
+  puts(table.inspect())
+
+  failing("out of bounds") do items[5] = 1 end
+  failing("frozen") do [1, 2].freeze()[0] = 9 end
+  failing("typed") do typed[0] = "x" end
+end
+
+run([1, 2])
