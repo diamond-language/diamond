@@ -90,6 +90,9 @@ enum {
      * to 16 bytes) is at most this many 16-byte units are pooled the same
      * way (DiamondVm.string_pool). */
     DIAMOND_STRING_POOL_CLASSES = 8,
+    /* Closures with at most this many captures are pooled the same way, one
+     * list per capture count (DiamondVm.closure_pool). */
+    DIAMOND_CLOSURE_POOL_CAPTURES = 16,
     /* The real ceiling: every wire-format argument/parameter count
      * (DIAMOND_OP_CALL's call_argument_count, INVOKE/NEW/SUPER's argc,
      * DiamondFunction/DiamondMethod's arity/required_arity, DiamondMethod's
@@ -2365,7 +2368,11 @@ struct DiamondVm {
      * Array headers, which are all one size (their values live apart). */
     DiamondObject *string_pool[DIAMOND_STRING_POOL_CLASSES];
     DiamondObject *array_pool;
-    /* Bytes held by all three pools together, kept within
+    /* Swept capture cells (all one size) and closures, one list per capture
+     * count (closure_pool_index, vm_internal.h). */
+    DiamondObject *cell_pool;
+    DiamondObject *closure_pool[DIAMOND_CLOSURE_POOL_CAPTURES+1];
+    /* Bytes held by all the pools together, kept within
      * minor_gc_threshold_bytes. */
     size_t pool_bytes;
     /* Keep the site tables after VM control state, so their size does not

@@ -1,0 +1,7 @@
+[1, 3, 3, error index 3 out of bounds for Array of length 3, [2, 3], error Array#[] index must be an Int or Range, got String]
+[5, e, 60, error undefined method '[]' for Nil]
+15
+[1, 3, 3, error index 3 out of bounds for Array of length 3, [2, 3], error Array#[] index must be an Int or Range, got String]
+[5, e, 60, error undefined method '[]' for Nil]
+15
+nil

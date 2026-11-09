@@ -571,12 +571,25 @@ DiamondVmStatus diamond_jit_self_call_finish(DiamondVm *vm, const DiamondChunk *
  * fill (receivers that are not Instances, methods that are private,
  * variadic or answered without running their body, more classes than
  * ways) stops trying after DIAMOND_JIT_CALL_FILL_TRIES. The layout is read
- * by generated code: keep the static_asserts in vm_calls.c in step. */
+ * by generated code: keep the static_asserts in vm_calls.c in step.
+ *
+ * When the method is a trivial accessor (DiamondAccessor) the entry also
+ * says so: `accessor` is its kind, `accessor_field` the field, and
+ * `accessor_value_kind` the DiamondValueKind its declared type allows
+ * (DIAMOND_JIT_ANY_VALUE_KIND when it has none). The site then reads or
+ * writes the field itself when nothing is unusual, as
+ * trivial_getter_result and trivial_setter_result would; a type it cannot
+ * check that way leaves `accessor` NONE and the method is called. */
+enum { DIAMOND_JIT_ANY_VALUE_KIND = 0xFF };
 typedef struct DiamondJitCallEntry {
     const struct DiamondClass *receiver_class;
     void *code;
     const DiamondChunk *chunk;
-    uint64_t frame_bytes;
+    uint32_t frame_bytes;
+    uint8_t accessor;
+    uint8_t accessor_field;
+    uint8_t accessor_value_kind;
+    uint8_t reserved;
 } DiamondJitCallEntry;
 enum { DIAMOND_JIT_CALL_WAYS = 4, DIAMOND_JIT_CALL_FILL_TRIES = 16 };
 typedef struct DiamondJitCallSite {
@@ -591,6 +604,24 @@ typedef struct DiamondJitCallSite {
 void diamond_jit_call_site_fill(DiamondVm *vm, const DiamondChunk *chunk,
         const DiamondValue *receiver, const uint8_t *site, uint32_t site_id);
 
+/* `Class.new` sites (jit.c compile_new_native) use the same table, one entry
+ * per site: the class the site constructs and its compiled `initialize`
+ * (code nullptr when the class has none and the call passes no arguments).
+ * The site allocates through diamond_jit_new_object, an allocate_instance
+ * that compiled code can call (nullptr when out of memory), and calls the
+ * code with the new instance first. diamond_jit_new_site_fill lists the
+ * class when diamond_jit_new_instance would do exactly that. */
+void diamond_jit_new_site_fill(DiamondVm *vm, const DiamondChunk *chunk,
+        uint32_t site_id, uint16_t class_index, uint8_t argc);
+struct DiamondInstance *diamond_jit_new_object(DiamondVm *vm,
+        const struct DiamondClass *class);
+
+/* EQUAL/NOT_EQUAL sites (jit.c compile_equal_op) list, in the same table,
+ * the classes that define no `==`: an Instance of one compared with nil is
+ * unequal without diamond_jit_equal_general. Entries hold only the class. */
+void diamond_jit_equal_site_fill(DiamondVm *vm, uint32_t site_id,
+        const DiamondValue *left);
+
 /* A native method call's non-OK status: as diamond_jit_self_call_finish,
  * with the arguments the call was made with rebuilt from the caller's
  * registers (the receiver, then registers[base..base+argc)). `operands`
@@ -598,6 +629,48 @@ void diamond_jit_call_site_fill(DiamondVm *vm, const DiamondChunk *chunk,
 DiamondVmStatus diamond_jit_method_call_finish(DiamondVm *vm, const DiamondChunk *chunk,
         const DiamondValue *registers, uint64_t operands, size_t depth, DiamondValue *out,
         uint8_t status);
+
+/* Native block loops (jit.c compile_block_loop): `array.each() do |x| ... end`
+ * and `array.map() do |x| ... end` at a compiled INVOKE site run their loop in
+ * the caller's own code, calling the block's compiled body directly, when
+ * the C path would end in native_array_map_select's loop calling that body
+ * through block_call_run. The loop state lives on the caller's native stack;
+ * generated code reads the fields up to `index` and `result`, so keep the
+ * static_asserts in vm_collections.c in step. */
+typedef struct DiamondJitLoop {
+    const struct DiamondArray *array;   /*  0 the receiver */
+    void *code;                         /*  8 the block's compiled entry */
+    const DiamondChunk *child;          /* 16 the chunk it runs in */
+    const struct DiamondClosure *closure; /* 24 the block */
+    uint32_t frame_bytes;               /* 32 its register file */
+    uint8_t self_slot;                  /* 36 the element goes in register 1 */
+    uint8_t map;                        /* 37 collect the results */
+    uint8_t reserved[2];
+    uint64_t index;                     /* 40 the next element */
+    DiamondValue result;                /* 48 the block's result */
+    DiamondValue current;               /* 64 the element being passed */
+    struct DiamondArray *collected;     /* 80 map's result, gc-protected */
+    size_t gc_mark;                     /* 88 vm->gc_protected_count before it */
+} DiamondJitLoop;
+enum { DIAMOND_JIT_LOOP_BYTES = 96 };
+
+/* Fills *loop and returns true when the call at `site` (INVOKE or
+ * INVOKE_MONO, one argument) is an Array each or map whose block is compiled
+ * and takes the element as its one argument, and nothing native code does
+ * not handle is in play (a debugger, a resource budget, the depth limit).
+ * map's result array is allocated and protected here. False leaves nothing
+ * to undo, and the caller makes its usual call. */
+bool diamond_jit_loop_begin(DiamondVm *vm, const DiamondChunk *chunk,
+        const DiamondValue *registers, const uint8_t *site, size_t depth,
+        DiamondJitLoop *loop);
+/* After one block call: a staged tail call or a retry is finished as
+ * block_call_native would, then map pushes loop->result. Any other status
+ * other than OK ends the loop (map's protection released) and is returned. */
+DiamondVmStatus diamond_jit_loop_step(DiamondVm *vm, DiamondJitLoop *loop, uint8_t status,
+        size_t depth);
+/* The loop ran to the end: the call's result (each: the array; map: the
+ * collected array) into *out, map's protection released. */
+void diamond_jit_loop_end(DiamondVm *vm, DiamondJitLoop *loop, DiamondValue *out);
 
 /* Closures created by compiled code (src/vm_calls.c). diamond_jit_closure
  * is DIAMOND_OP_CLOSURE, read from the instruction at `site` (the same

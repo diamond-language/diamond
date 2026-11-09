@@ -2734,4 +2734,85 @@ stale entry.
 Instruction counts against main (PGO=0 release builds, JIT on, threshold 1): poly −49%,
 objects −38%, nbody −28%, structs −20%, trees −7% in the `fistfight` suite. In `bench/`,
 dispatch_monomorphic −73%, the `jit_invoke_*` benchmarks −53% to −67%, dispatch_polymorphic
-−59% and dispatch_megamorphic −44%. `Class.new` still goes through `diamond_jit_new_instance`.
+−59% and dispatch_megamorphic −44%.
+
+## Objects in native code
+
+After native calls, the costs left on object-heavy code were the C helpers for constructing
+objects, checking their types, comparing them with nil and touching their fields. Each now has
+an inline path in front of its helper; the helper still handles everything unusual.
+
+- **`Class.new`** (`compile_new_native`). A NEW site uses one entry of the call-site table:
+  the class and its compiled `initialize` (code nullptr when the class has none and the call
+  passes no arguments). When `chunk->classes[index]` is that class, the site allocates through
+  `diamond_jit_new_object`, stores the instance in the destination and calls `initialize`
+  natively, its result discarded. `diamond_jit_new_site_fill` lists the class only when
+  `diamond_jit_new_instance` would do exactly that: not generic, and without `initialize` only
+  for zero arguments outside the Exception hierarchy.
+- **CHECK_TYPE** (`compile_check_type`). Besides the plain kinds, a type set naming one class
+  accepts an Instance of exactly that class inline, read from `chunk->classes` with a bounds
+  check. Subclasses and interfaces take the helper.
+- **`== nil` and `!= nil`** (`compile_equal_op`). When the kinds differ, nil against an object
+  is unequal without a call when the object's class has no `==`: the EQUAL site's table entry
+  lists the classes `diamond_jit_equal_site_fill` found without one. A class that defines `==`,
+  even later through `define_method`, is called (the table is cleared on every method change).
+- **GET_IVAR and SET_IVAR** (`compile_get_ivar_inline`, `compile_set_ivar_inline`). An
+  Instance with the field reads it directly (nil when its shape stops short of it). A write to
+  an unfrozen Instance stores directly, moving to the next shape on the field's first write,
+  and takes the helper only when the write barrier is needed (an old object not yet
+  remembered); the helper stores again.
+- **Accessor call sites** (`emit_invoke_accessor_inline`). When the method a call entry names
+  is a trivial getter or setter (`DiamondAccessor`), the fill records its kind, field and the
+  value kind its declared type allows (any, Int or Float; other types leave the entry a plain
+  call). On a hit the site reads or writes the field itself, as `trivial_getter_result` and
+  `trivial_setter_result` would: the shape must already cover the field, and a setter's
+  receiver must be unfrozen and need no barrier. Anything else calls the compiled accessor,
+  which raises the type error or handles the rest.
+
+The compiler helps too: a `do` block boxes only the enclosing locals it reads (the discovery
+pass's `BlockCaptureUse` records), so a function holding a block no longer reads every local
+through a cell. Previously nbody's `bodies.each() do ... end` boxed eleven locals per call.
+
+Instruction counts against main 3c23c589 (PGO=0 release builds, JIT on, threshold 1), native
+calls included: nbody −63%, objects −61%, poly −54%, trees −49%, structs −41%, closures and
+exceptions −9%. Without the JIT, nbody runs 11% fewer from the capture change alone.
+
+Two smaller costs went the same way. INDEX_GET (`compile_index_get`) copies an Array element
+inline when the index is an Int in `[0, count)` (one unsigned compare covers negatives); a
+negative index, a Range, an out-of-bounds index and every other receiver call
+`diamond_jit_index_get`. And closures and capture cells, which nbody makes once per `advance`
+call, now come from pools like instances, Strings and Array headers (`DiamondVm.cell_pool`,
+`closure_pool` by capture count up to 16, both off under ASan), filled by the sweep within the
+same `pool_bytes` budget. With both: nbody −67%, poly −63%, closures −47%, sieve −15% against
+main with the JIT; closures −31% and nbody −12% without it.
+
+## Native block loops
+
+`values.each() do |x| ... end` and `values.map() do |x| ... end` used to leave compiled code for
+the whole loop: `diamond_jit_invoke_any` found the prelude bridge (`array_each`, `array_map`),
+`native_array_map_select` ran the loop in C, and every element went through `block_call_run`
+and a register copy before reaching the block's compiled body. Now an INVOKE named `each` or
+`map` with one argument, at a site not typed as some other builtin (`site_may_be_block_loop`),
+emits `compile_block_loop` in front of the usual call:
+
+- **`diamond_jit_loop_begin`** decides once per call and fills a `DiamondJitLoop` (jit.h) on the
+  stack. It says yes only when the C path would run the same loop: an Array receiver, the
+  bridge target found through the same extension cache with its two leading CHECK_TYPEs, a
+  block `native_loop_block` accepts, a `block_call_prepare` for one argument that needs no
+  per-call chunk, compiled code for the block, and no debugger, budgets or depth problem. A
+  self slot is allowed only for a block written in a method (`DIAMOND_OWNER_CAPTURED_SELF`).
+  map's result array is allocated and protected here.
+- **The loop** runs in compiled code. It re-reads the count each time (a block may push), copies
+  the element into `loop.current` (keeping it alive), lays out the header and register file as
+  `emit_native_entry_call` does, with the closure as the seventh argument, and calls the
+  block's entry with the result going to `loop.result`.
+- **`diamond_jit_loop_step`** takes any status other than OK, and every map result: TAIL runs
+  the tail loop, RETRY interprets the block for that element, map pushes the result, and any
+  other status (break, return, an exception) is counted as a hard propagation, releases map's
+  protection and goes back through the bailout as the C loop's status would.
+  **`diamond_jit_loop_end`** writes the array (each) or the collected one (map).
+
+The loop state is 96 bytes reserved for the whole loop, so `rsp_delta` is adjusted by hand
+on the two exits that leave early. Other iterators (`select`, `each_with_index`, `reduce`,
+`times`) still go through the C loop. nbody does 4% fewer instructions than with C-driven block
+calls; blocks (map) −8% and iterate (each) −10% against main, with the JIT.

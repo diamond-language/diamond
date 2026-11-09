@@ -54,6 +54,9 @@ typedef struct EnclosingScope {
     size_t enclosing_local_count;
     uint16_t capture_registers[DIAMOND_MAX_CAPTURES];
     size_t capture_count;
+    uint64_t capture_needed[4];
+    bool loop_captures_pending;
+    uint64_t loop_capture_mask[4];
     uint16_t inline_known_types[256];
     int32_t inline_known_type_sets[256];
     int32_t inline_tooling_type_sets[256];
@@ -103,6 +106,15 @@ static bool enclosing_scope_save(Compiler *compiler,EnclosingScope *scope) {
     scope->capture_count=compiler->capture_count;
     for(size_t i=0;i<scope->capture_count;i++)
         scope->capture_registers[i]=compiler->capture_registers[i];
+    for(size_t word=0;word<4;word++) {
+        scope->capture_needed[word]=compiler->capture_needed[word];
+        compiler->capture_needed[word]=0;
+    }
+    /* A loop around the nested def or block says nothing about its own
+     * locals: its loops scan for themselves. */
+    scope->loop_captures_pending=compiler->loop_captures_pending;
+    for(size_t word=0;word<4;word++)scope->loop_capture_mask[word]=compiler->loop_capture_mask[word];
+    compiler->loop_captures_pending=false;
     scope->known_types=scope->inline_known_types;
     scope->known_type_sets=scope->inline_known_type_sets;
     scope->tooling_type_sets=scope->inline_tooling_type_sets;
@@ -184,6 +196,9 @@ static void enclosing_scope_restore(Compiler *compiler,EnclosingScope *scope,
     compiler->capture_count=scope->capture_count;
     for(size_t i=0;i<scope->capture_count;i++)
         compiler->capture_registers[i]=scope->capture_registers[i];
+    for(size_t word=0;word<4;word++)compiler->capture_needed[word]=scope->capture_needed[word];
+    compiler->loop_captures_pending=scope->loop_captures_pending;
+    for(size_t word=0;word<4;word++)compiler->loop_capture_mask[word]=scope->loop_capture_mask[word];
     for(size_t index=0;index<scope->next_register;index++)
         {compiler->known_types[index]=scope->known_types[index];
          compiler->known_type_sets[index]=scope->known_type_sets[index];
@@ -235,6 +250,7 @@ static void bind_captured_cells(Compiler *compiler,const EnclosingScope *scope,
         }
         const uint16_t cell=allocate_register(compiler);
         emit_instruction(compiler,DIAMOND_OP_GET_CAPTURE_CELL,cell,(uint8_t)i,0,2);
+        mark_capture_needed(compiler,i);
         compiler->locals[compiler->local_count++]=(Local){
             .name=compiler->enclosing_locals[i].name,.reg=cell,.captured=true,.bound_cell=true,
             .capture_index=(uint8_t)i,
@@ -536,15 +552,18 @@ static uint16_t enter_block_body(Compiler *compiler,DiamondFunction *function,co
 }
 
 /* Emits a finished block's BOX_LOCAL + CLOSURE into the enclosing function and returns the
- * closure's register. Part of compile_block. */
+ * closure's register. Part of compile_block. Only the locals the block reads (`needed`, its
+ * capture_needed) are boxed, plus any already captured; the rest go into the CLOSURE as plain
+ * values the block never loads, so the enclosing function keeps them in registers. */
 static uint16_t emit_block_closure(Compiler *compiler,size_t function_index,const uint16_t *captures,
-        size_t capture_count) {
+        size_t capture_count,const uint64_t *needed) {
     /* BOX_LOCAL + CLOSURE, emitted into the *outer* (caller's) bytecode
      * now that compiler->function/locals have been restored -- same
      * shape compile_definition ends with. */
     for(size_t i=0;i<capture_count;i++) {
         for(size_t local=0;local<compiler->local_count;local++) {
             if(compiler->locals[local].reg!=captures[i])continue;
+            if(!compiler->locals[local].captured&&(needed[i/64]>>(i%64)&1u)==0)break;
             emit_instruction(compiler,DIAMOND_OP_BOX_LOCAL,captures[i],0,0,1);
             compiler->locals[local].captured=true;
             break;
@@ -701,6 +720,8 @@ uint16_t compile_block(Compiler *compiler) {
     uint16_t captures[DIAMOND_MAX_CAPTURES];
     for(size_t i=0;i<compiler->capture_count;i++)captures[i]=compiler->capture_registers[i];
     const size_t capture_count=compiler->capture_count;
+    uint64_t capture_needed[4];
+    for(size_t word=0;word<4;word++)capture_needed[word]=compiler->capture_needed[word];
     if(!compiler->failed) {
         const size_t body_end=compiler->previous.span.start+compiler->previous.span.length;
         record_scope_locals(compiler,0,compiler->local_count,body_end);
@@ -717,7 +738,7 @@ uint16_t compile_block(Compiler *compiler) {
     }
     compiler->block_has_break=outer_block_has_break;
 
-    const uint16_t result=emit_block_closure(compiler,function_index,captures,capture_count);
+    const uint16_t result=emit_block_closure(compiler,function_index,captures,capture_count,capture_needed);
     compiler->known_types[result]=TYPE_UNKNOWN;
     if(block_tooling_return>=0&&!compiler->failed&&
        (size_t)block_tooling_return<function->type_set_count)

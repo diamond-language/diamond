@@ -1,0 +1,119 @@
+# each/map with a block on an Array run as a native loop under the JIT
+# (compile_block_loop); everything here must match the interpreter.
+
+# Plain each and map, at the top level and inside a method.
+def sum_all(xs) -> Int
+  total = 0
+  xs.each() do |x|
+    total = total + x
+  end
+  total
+end
+
+def tens(xs)
+  xs.map() do |x|
+    x * 10
+  end
+end
+
+xs = [1, 2, 3, 4]
+puts(sum_all(xs))
+puts(tens(xs))
+puts(xs.map() do |x| "s#{x}" end)
+
+# A block written in a method reads self (the self slot).
+class Box
+  def initialize(n)
+    @n = n
+  end
+
+  def scaled(xs)
+    xs.map() do |x|
+      x * @n
+    end
+  end
+end
+
+puts(Box.new(3).scaled(xs))
+
+# return from the enclosing method, and break out of each.
+def find(xs)
+  xs.each() do |x|
+    return x if x > 2
+  end
+  nil
+end
+
+def stop_at_two(xs)
+  xs.each() do |x|
+    break if x == 2
+  end
+end
+
+puts(find(xs))
+puts(stop_at_two(xs))
+
+# The loop re-reads the length, so elements pushed by the block are visited.
+def grow_list()
+  grow = [1, 2]
+  grow.each() do |x|
+    grow.push(x + 10) if grow.length() < 6
+  end
+  grow
+end
+
+puts(grow_list())
+
+# An exception raised in the block reaches the caller's rescue.
+def boom(xs)
+  begin
+    xs.each() do |x|
+      raise "boom #{x}" if x == 3
+    end
+  rescue e
+    return e
+  end
+  "none"
+end
+
+puts(boom(xs))
+
+# Blocks that take no argument, non-Array receivers and an empty array.
+def others()
+  count = 0
+  [5, 6].each() do
+    count += 1
+  end
+  h = {"a" => 1}
+  h.each() do |k, v|
+    count += v
+  end
+  out = []
+  (1..3).each() do |i|
+    out.push(i)
+  end
+  empty = [].map() do |x| x end
+  "#{count} #{out} #{empty}"
+end
+
+puts(others())
+
+# Many objects allocated in map while the collector runs often.
+class Point
+  def initialize(x)
+    @x = x
+  end
+
+  def x()
+    @x
+  end
+end
+
+def points()
+  made = (0...300).to_a().map() do |i|
+    Point.new(i)
+  end
+  made.map() do |p| p.x() end.sum()
+end
+
+puts(points())

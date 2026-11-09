@@ -110,6 +110,14 @@ static inline bool array_pool_enabled(void) {
 #endif
 }
 
+/* DiamondVm.closure_pool's list for a closure with `count` captures and no
+ * type bindings, or -1 when it is not pooled (more captures, or ASan). */
+static inline int closure_pool_index(size_t count,size_t type_binding_count) {
+    if(!array_pool_enabled()||type_binding_count!=0||count>DIAMOND_CLOSURE_POOL_CAPTURES)
+        return -1;
+    return (int)count;
+}
+
 /* Types shared by the files split out of vm.c. */
 /* Native backing struct for DiamondChannelHandle (object.h) -- see docs/
  * threads.md's Channels section. Unlike DiamondThread (owned one-to-one
@@ -1012,7 +1020,18 @@ static inline DiamondClosure *allocate_closure(DiamondVm *vm,uint16_t function_i
                                         const DiamondValue *captures,size_t count) {
     if (!maybe_collect(vm)) return nullptr;
     const size_t size=sizeof(DiamondClosure)+count*sizeof(DiamondValue);
-    DiamondClosure *closure=calloc(1,size);if(closure==nullptr)return nullptr;
+    /* A swept closure of the same capture count (DiamondVm.closure_pool),
+     * cleared as calloc would have. */
+    const int pool=closure_pool_index(count,0);
+    DiamondClosure *closure;
+    if(pool>=0&&vm->closure_pool[pool]!=nullptr) {
+        closure=(DiamondClosure *)vm->closure_pool[pool];
+        vm->closure_pool[pool]=closure->object.next;
+        vm->pool_bytes-=size;
+        memset(closure,0,sizeof(DiamondClosure));
+    } else {
+        closure=calloc(1,size);if(closure==nullptr)return nullptr;
+    }
     closure->object.next=vm->young_objects;closure->object.kind=DIAMOND_OBJECT_CLOSURE;
     closure->function_index=function_index;closure->capture_count=(uint8_t)count;
     for(size_t i=0;i<count;i++)closure->captures[i]=captures==nullptr?DIAMOND_NIL:captures[i];
@@ -1021,7 +1040,14 @@ static inline DiamondClosure *allocate_closure(DiamondVm *vm,uint16_t function_i
 
 static inline DiamondCell *allocate_cell(DiamondVm *vm,DiamondValue value) {
     if (!maybe_collect(vm)) return nullptr;
-    DiamondCell *cell=malloc(sizeof(DiamondCell));if(cell==nullptr)return nullptr;
+    DiamondCell *cell;
+    if(vm->cell_pool!=nullptr) {
+        cell=(DiamondCell *)vm->cell_pool;
+        vm->cell_pool=cell->object.next;
+        vm->pool_bytes-=sizeof(DiamondCell);
+    } else {
+        cell=malloc(sizeof(DiamondCell));if(cell==nullptr)return nullptr;
+    }
     *cell=(DiamondCell){.object={.next=vm->young_objects,.kind=DIAMOND_OBJECT_CELL},.value=value};
     vm->young_objects=&cell->object;vm->bytes_allocated+=sizeof(DiamondCell);return cell;
 }

@@ -481,6 +481,15 @@ void diamond_vm_free(DiamondVm *vm) {
         DiamondObject *next=object->next;free(object);object=next;
     }
     vm->array_pool=nullptr;
+    for(DiamondObject *object=vm->cell_pool;object!=nullptr;) {
+        DiamondObject *next=object->next;free(object);object=next;
+    }
+    vm->cell_pool=nullptr;
+    for(size_t pool=0;pool<=DIAMOND_CLOSURE_POOL_CAPTURES;pool++) {
+        DiamondObject *object=vm->closure_pool[pool];
+        while(object!=nullptr) {DiamondObject *next=object->next;free(object);object=next;}
+        vm->closure_pool[pool]=nullptr;
+    }
     vm->pool_bytes=0;
     free_adopted_programs(vm->adopted_programs);
     free(vm->class_variables);

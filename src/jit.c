@@ -244,6 +244,14 @@ static void emit_load_r64(JitBuffer *buf, int reg, int base, int32_t disp) {
     emit_u32_le(buf, (uint32_t)disp);
 }
 
+/* mov reg32, [base + disp32], zero-extending into reg64 */
+static void emit_load_r32(JitBuffer *buf, int reg, int base, int32_t disp) {
+    emit_u8(buf, emit_rex(false, reg, base));
+    emit_u8(buf, 0x8B);
+    emit_u8(buf, (uint8_t)(0x80 | ((reg & 7) << 3) | (base & 7)));
+    emit_u32_le(buf, (uint32_t)disp);
+}
+
 /* mov [base + disp32], reg64 */
 static void emit_store_r64(JitBuffer *buf, int base, int32_t disp, int reg) {
     emit_u8(buf, emit_rex(true, reg, base));
@@ -399,6 +407,20 @@ static void emit_alu_rr(JitBuffer *buf, uint8_t opcode, int dst, int src) {
     emit_u8(buf, (uint8_t)(0xC0 | ((src & 7) << 3) | (dst & 7)));
 }
 enum { ALU_ADD = 0x01, ALU_SUB = 0x29, ALU_XOR = 0x31, ALU_CMP = 0x39 };
+
+/* Call site ids (method calls, `new`, `==`), unique across every compiled
+ * function (compilation can run on several threads at once): each indexes
+ * vm->jit_call_sites. */
+static atomic_uint_fast32_t jit_next_call_site;
+
+/* cmp reg64, [base + disp32] (base not rsp or r12) */
+static void emit_cmp_r64_mem(JitBuffer *buf, int reg, int base, int32_t disp) {
+    emit_u8(buf, emit_rex(true, reg, base));
+    emit_u8(buf, 0x3B);
+    emit_u8(buf, (uint8_t)(0x80 | ((reg & 7) << 3) | (base & 7)));
+    emit_u32_le(buf, (uint32_t)disp);
+}
+
 
 /* imul dst64, src64 (two-operand form; sets OF/CF on signed 64-bit overflow) */
 static void emit_imul_rr(JitBuffer *buf, int dst, int src) {
@@ -1363,6 +1385,52 @@ static void compile_equal_op(JitCompiler *jc, size_t instruction_start, uint16_t
      * lowest address, [rsp+0], matching that layout; the caller (this
      * generated code) reclaims the 16 bytes after the call returns. */
     patch_rel32_to_here(buf, kinds_differ);
+    /* nil against an object is unequal; so is an Instance against nil when
+     * its class defines no `==`, which this site's entries list (jit.h,
+     * diamond_jit_equal_site_fill). RAX and RCX are the kinds. */
+    size_t unequal[DIAMOND_JIT_CALL_WAYS + 1];
+    size_t unequal_count = 0;
+    size_t general[6];
+    size_t general_count = 0;
+    const uint_fast32_t site_id = atomic_fetch_add_explicit(&jit_next_call_site, 1,
+        memory_order_relaxed);
+    const bool cached = site_id < (uint_fast32_t)(INT32_MAX / sizeof(DiamondJitCallSite)) - 1;
+    emit_cmp_imm32_32(buf, REG_RAX, DIAMOND_VALUE_NIL);
+    size_t left_not_nil = emit_jcc_placeholder(buf, JCC_NE);
+    emit_cmp_imm32_32(buf, REG_RCX, DIAMOND_VALUE_OBJECT);
+    unequal[unequal_count++] = emit_jcc_placeholder(buf, JCC_E);
+    general[general_count++] = emit_jmp_placeholder(buf);
+    patch_rel32_to_here(buf, left_not_nil);
+    if (cached) {
+        const int32_t site_at = (int32_t)(site_id * sizeof(DiamondJitCallSite));
+        emit_cmp_imm32_32(buf, REG_RCX, DIAMOND_VALUE_NIL);
+        general[general_count++] = emit_jcc_placeholder(buf, JCC_NE);
+        emit_object_kind_guard(buf, JIT_REGISTERS_BASE, reg_disp(left, 0),
+            DIAMOND_OBJECT_INSTANCE, general, &general_count);
+        emit_load_r64(buf, REG_RAX, REG_RDX, (int32_t)offsetof(DiamondInstance, class));
+        emit_mov_rr(buf, REG_RDX, JIT_VM);
+        emit_load_r64(buf, REG_RCX, REG_RDX, (int32_t)offsetof(DiamondVm, jit_call_site_count));
+        emit_cmp_imm32_64(buf, REG_RCX, (uint32_t)site_id);
+        size_t no_table = emit_jcc_placeholder(buf, JCC_BE);
+        emit_load_r64(buf, REG_RDX, REG_RDX, (int32_t)offsetof(DiamondVm, jit_call_sites));
+        emit_lea(buf, REG_RDX, REG_RDX, site_at);
+        for (int way = 0; way < DIAMOND_JIT_CALL_WAYS; way++) {
+            emit_cmp_r64_mem(buf, REG_RAX, REG_RDX,
+                (int32_t)((size_t)way * sizeof(DiamondJitCallEntry)));
+            unequal[unequal_count++] = emit_jcc_placeholder(buf, JCC_E);
+        }
+        /* cmp dword [rdx + failed_fills], DIAMOND_JIT_CALL_FILL_TRIES */
+        emit_u8(buf, 0x81); emit_u8(buf, 0xBA);
+        emit_u32_le(buf, (uint32_t)offsetof(DiamondJitCallSite, failed_fills));
+        emit_u32_le(buf, DIAMOND_JIT_CALL_FILL_TRIES);
+        general[general_count++] = emit_jcc_placeholder(buf, JCC_AE);
+        patch_rel32_to_here(buf, no_table);
+        emit_mov_rr(buf, REG_RDI, JIT_VM);
+        emit_mov_imm64(buf, REG_RSI, (uint64_t)site_id);
+        emit_lea(buf, REG_RDX, JIT_REGISTERS_BASE, reg_disp(left, 0));
+        emit_body_call(jc, (void *)(uintptr_t)diamond_jit_equal_site_fill);
+    }
+    for (size_t i = 0; i < general_count; i++) patch_rel32_to_here(buf, general[i]);
     emit_lea(buf, REG_RAX, JIT_REGISTERS_BASE, reg_disp(dest, 0));
     emit_push(buf, REG_RAX);
     emit_mov_imm64(buf, REG_RAX, negate ? 1 : 0);
@@ -1379,6 +1447,8 @@ static void compile_equal_op(JitCompiler *jc, size_t instruction_start, uint16_t
     emit_add_rsp_imm32(buf, 16);
     emit_bail_if_al_nonzero(jc);
     size_t general_done = emit_jmp_placeholder(buf);
+    for (size_t i = 0; i < unequal_count; i++) patch_rel32_to_here(buf, unequal[i]);
+    emit_mov_imm64(buf, REG_RAX, negate ? 1 : 0);
     patch_rel32_to_here(buf, nil_done);
     patch_rel32_to_here(buf, bool_done);
     patch_rel32_to_here(buf, int_done);
@@ -1424,6 +1494,88 @@ static void compile_get_ivar(JitCompiler *jc, size_t instruction_start, uint16_t
     emit_bail_if_al_nonzero(jc);
 }
 
+/* GET_IVAR read inline: an Instance whose shape covers the field gives the
+ * field, one whose shape stops short of it gives nil (instance_field_value).
+ * Anything else, an error included, takes diamond_jit_get_ivar. */
+static void compile_get_ivar_inline(JitCompiler *jc, size_t instruction_start, uint16_t dest,
+        uint16_t recv, uint16_t field) {
+    JitBuffer *buf = &jc->buf;
+    size_t slow[4];
+    size_t slow_count = 0;
+    const int32_t field_at = (int32_t)(offsetof(DiamondInstance, fields) +
+        (size_t)field * sizeof(DiamondValue));
+    emit_object_kind_guard(buf, JIT_REGISTERS_BASE, reg_disp(recv, 0),
+        DIAMOND_OBJECT_INSTANCE, slow, &slow_count);
+    emit_load_r64(buf, REG_RCX, REG_RDX, (int32_t)offsetof(DiamondInstance, shape));
+    emit_load_byte_zx(buf, REG_RAX, REG_RCX, (int32_t)offsetof(DiamondShape, field_count));
+    emit_cmp_imm32_32(buf, REG_RAX, field);
+    const size_t past_shape = emit_jcc_placeholder(buf, JCC_BE);
+    emit_copy_value(buf, JIT_REGISTERS_BASE, reg_disp(dest, 0), REG_RDX, field_at);
+    const size_t read = emit_jmp_placeholder(buf);
+    patch_rel32_to_here(buf, past_shape);
+    emit_load_r64(buf, REG_RCX, REG_RDX, (int32_t)offsetof(DiamondInstance, field_count));
+    emit_cmp_imm32_64(buf, REG_RCX, field);
+    slow[slow_count++] = emit_jcc_placeholder(buf, JCC_BE);
+    emit_mov_imm64(buf, REG_RCX, DIAMOND_VALUE_NIL);
+    emit_store_r64(buf, JIT_REGISTERS_BASE, reg_disp(dest, 0), REG_RCX);
+    emit_u8(buf, 0x31); emit_u8(buf, 0xC9);                       /* xor ecx, ecx */
+    emit_store_r64(buf, JIT_REGISTERS_BASE, reg_disp(dest, AS_OFF), REG_RCX);
+    const size_t niled = emit_jmp_placeholder(buf);
+    for (size_t i = 0; i < slow_count; i++) patch_rel32_to_here(buf, slow[i]);
+    compile_get_ivar(jc, instruction_start, dest, recv, field);
+    patch_rel32_to_here(buf, read);
+    patch_rel32_to_here(buf, niled);
+}
+
+/* SET_IVAR written inline when nothing about it is unusual: an unfrozen
+ * Instance with the field, moved to the next shape if this is the field's
+ * first write (instance_materialize_field), and no write barrier needed
+ * (a young object, or an old one already remembered). Anything else takes
+ * diamond_jit_set_ivar, which repeats the store, so a value already written
+ * before the barrier check is simply written again. */
+static void compile_set_ivar_inline(JitCompiler *jc, size_t instruction_start, uint16_t recv,
+        uint16_t field, uint16_t source) {
+    JitBuffer *buf = &jc->buf;
+    size_t slow[8];
+    size_t slow_count = 0;
+    const int32_t field_at = (int32_t)(offsetof(DiamondInstance, fields) +
+        (size_t)field * sizeof(DiamondValue));
+    emit_object_kind_guard(buf, JIT_REGISTERS_BASE, reg_disp(recv, 0),
+        DIAMOND_OBJECT_INSTANCE, slow, &slow_count);
+    emit_load_byte_zx(buf, REG_RAX, REG_RDX, (int32_t)offsetof(DiamondObject, frozen));
+    emit_test_r8(buf, REG_RAX);
+    slow[slow_count++] = emit_jcc_placeholder(buf, JCC_NE);
+    emit_load_r64(buf, REG_RCX, REG_RDX, (int32_t)offsetof(DiamondInstance, field_count));
+    emit_cmp_imm32_64(buf, REG_RCX, field);
+    slow[slow_count++] = emit_jcc_placeholder(buf, JCC_BE);
+    emit_load_r64(buf, REG_RCX, REG_RDX, (int32_t)offsetof(DiamondInstance, shape));
+    emit_load_byte_zx(buf, REG_RAX, REG_RCX, (int32_t)offsetof(DiamondShape, field_count));
+    emit_cmp_imm32_32(buf, REG_RAX, field);
+    const size_t shaped = emit_jcc_placeholder(buf, JCC_A);
+    emit_load_r64(buf, REG_RAX, REG_RDX, (int32_t)offsetof(DiamondInstance, class));
+    emit_lea(buf, REG_RAX, REG_RAX, (int32_t)(offsetof(DiamondClass, shapes) +
+        ((size_t)field + 1) * sizeof(DiamondShape)));
+    emit_store_r64(buf, REG_RDX, (int32_t)offsetof(DiamondInstance, shape), REG_RAX);
+    emit_mov_rr(buf, REG_RCX, JIT_VM);
+    /* add qword [rcx + shape_transitions], 1 */
+    emit_u8(buf, 0x48); emit_u8(buf, 0x83); emit_u8(buf, 0x81);
+    emit_u32_le(buf, (uint32_t)offsetof(DiamondVm, shape_transitions));
+    emit_u8(buf, 1);
+    patch_rel32_to_here(buf, shaped);
+    emit_copy_value(buf, REG_RDX, field_at, JIT_REGISTERS_BASE, reg_disp(source, 0));
+    emit_load_byte_zx(buf, REG_RAX, REG_RDX, (int32_t)offsetof(DiamondObject, old));
+    emit_test_r8(buf, REG_RAX);
+    const size_t young = emit_jcc_placeholder(buf, JCC_E);
+    emit_load_byte_zx(buf, REG_RAX, REG_RDX, (int32_t)offsetof(DiamondObject, remembered));
+    emit_test_r8(buf, REG_RAX);
+    const size_t remembered = emit_jcc_placeholder(buf, JCC_NE);
+    slow[slow_count++] = emit_jmp_placeholder(buf);
+    for (size_t i = 0; i < slow_count; i++) patch_rel32_to_here(buf, slow[i]);
+    compile_set_ivar(jc, instruction_start, recv, field, source);
+    patch_rel32_to_here(buf, young);
+    patch_rel32_to_here(buf, remembered);
+}
+
 /* INDEX_GET (Phase 2e: full Hash/String/Array/Instance-overload support,
  * replacing Phase 2b's Hash-only version -- see diamond_jit_index_get's
  * own comment in jit.h for why). Can allocate (String/Array paths) and
@@ -1438,6 +1590,26 @@ static void compile_index_get(JitCompiler *jc, size_t instruction_start, uint16_
     jc->needs_frame = true;
     jc->has_called = true;
     JitBuffer *buf = &jc->buf;
+    /* An Array read at a non-negative Int index inside it is copied
+     * inline; anything else (a negative index, a Range, out of bounds, any
+     * other receiver) takes diamond_jit_index_get. */
+    size_t slow[4];
+    size_t slow_count = 0;
+    emit_load_byte_zx(buf, REG_RAX, JIT_REGISTERS_BASE, reg_disp(index, KIND_OFF));
+    emit_cmp_imm32_32(buf, REG_RAX, DIAMOND_VALUE_INT);
+    slow[slow_count++] = emit_jcc_placeholder(buf, JCC_NE);
+    emit_object_kind_guard(buf, JIT_REGISTERS_BASE, reg_disp(recv, 0), DIAMOND_OBJECT_ARRAY,
+        slow, &slow_count);
+    emit_load_r64(buf, REG_RAX, JIT_REGISTERS_BASE, reg_disp(index, AS_OFF));
+    /* Unsigned: a negative index compares above any count. */
+    emit_cmp_r64_mem(buf, REG_RAX, REG_RDX, (int32_t)offsetof(DiamondArray, count));
+    slow[slow_count++] = emit_jcc_placeholder(buf, JCC_AE);
+    emit_load_r64(buf, REG_RCX, REG_RDX, (int32_t)offsetof(DiamondArray, values));
+    emit_u8(buf, 0x48); emit_u8(buf, 0xC1); emit_u8(buf, 0xE0); emit_u8(buf, 0x04);  /* shl rax, 4 */
+    emit_u8(buf, 0x48); emit_u8(buf, 0x01); emit_u8(buf, 0xC1);                      /* add rcx, rax */
+    emit_copy_value(buf, JIT_REGISTERS_BASE, reg_disp(dest, 0), REG_RCX, 0);
+    const size_t done = emit_jmp_placeholder(buf);
+    for (size_t i = 0; i < slow_count; i++) patch_rel32_to_here(buf, slow[i]);
     emit_mov_imm64(buf, REG_RAX, 0);
     emit_push(buf, REG_RAX);
     emit_lea(buf, REG_RAX, JIT_REGISTERS_BASE, reg_disp(dest, 0));
@@ -1451,6 +1623,7 @@ static void compile_index_get(JitCompiler *jc, size_t instruction_start, uint16_
     emit_body_call(jc, (void *)(uintptr_t)diamond_jit_index_get);
     emit_add_rsp_imm32(buf, 16);
     emit_bail_if_al_nonzero(jc);
+    patch_rel32_to_here(buf, done);
 }
 
 /* INDEX_GET_STRING: compile_index_get with the key given as a string constant index (passed
@@ -1516,16 +1689,27 @@ static bool simple_guard_member(DiamondTypeMember member) {
     return diamond_plain_type_match(DIAMOND_NIL, member.id) >= 0;
 }
 
+/* A user class with no type arguments: an Instance of exactly that class
+ * passes it (a subclass instance is left to the full matcher). */
+static bool class_guard_member(DiamondTypeMember member) {
+    return member.argument_set == DIAMOND_NO_TYPE_SET &&
+        member.second_argument_set == DIAMOND_NO_TYPE_SET &&
+        member.id >= DIAMOND_TYPE_CLASS_BASE && member.id < DIAMOND_TYPE_CLASS_LIMIT;
+}
+
 static void compile_check_type(JitCompiler *jc, uint16_t source, uint16_t set_index) {
     JitBuffer *buf = &jc->buf;
-    size_t accepted[DIAMOND_MAX_UNION_TYPES * 2];
+    size_t accepted[DIAMOND_MAX_UNION_TYPES * 3];
     size_t accepted_count = 0;
     const DiamondTypeSet *set = set_index < jc->function->type_set_count
         ? &jc->function->type_sets[set_index] : nullptr;
     bool simple = set != nullptr && set->count != 0;
+    bool classes = false;
     if (simple) {
-        for (size_t i = 0; i < set->count; i++)
-            if (!simple_guard_member(set->members[i])) simple = false;
+        for (size_t i = 0; i < set->count; i++) {
+            if (class_guard_member(set->members[i])) classes = true;
+            else if (!simple_guard_member(set->members[i])) simple = false;
+        }
     }
     if (simple) {
         emit_load_byte_zx(buf, REG_RAX, JIT_REGISTERS_BASE, reg_disp(source, KIND_OFF));
@@ -1559,6 +1743,27 @@ static void compile_check_type(JitCompiler *jc, uint16_t source, uint16_t set_in
                 }
                 emit_cmp_imm32_32(buf, REG_RAX, kind);
                 accepted[accepted_count++] = emit_jcc_placeholder(buf, JCC_E);
+            }
+            if (classes) {
+                /* RAX is the object kind: an Instance's class against
+                 * chunk->classes[index] for each class member. */
+                emit_cmp_imm32_32(buf, REG_RAX, DIAMOND_OBJECT_INSTANCE);
+                size_t not_instance = emit_jcc_placeholder(buf, JCC_NE);
+                emit_load_r64(buf, REG_RAX, JIT_REGISTERS_BASE, reg_disp(source, AS_OFF));
+                emit_load_r64(buf, REG_RAX, REG_RAX, (int32_t)offsetof(DiamondInstance, class));
+                emit_load_r64(buf, REG_RCX, JIT_CHUNK, (int32_t)offsetof(DiamondChunk, class_count));
+                emit_load_r64(buf, REG_RDX, JIT_CHUNK, (int32_t)offsetof(DiamondChunk, classes));
+                for (size_t i = 0; i < set->count; i++) {
+                    if (!class_guard_member(set->members[i])) continue;
+                    const uint32_t index = (uint32_t)(set->members[i].id - DIAMOND_TYPE_CLASS_BASE);
+                    emit_cmp_imm32_64(buf, REG_RCX, index);
+                    size_t out_of_range = emit_jcc_placeholder(buf, JCC_BE);
+                    emit_cmp_r64_mem(buf, REG_RAX, REG_RDX,
+                        (int32_t)((size_t)index * sizeof(DiamondClass *)));
+                    accepted[accepted_count++] = emit_jcc_placeholder(buf, JCC_E);
+                    patch_rel32_to_here(buf, out_of_range);
+                }
+                patch_rel32_to_here(buf, not_instance);
             }
             patch_rel32_to_here(buf, not_object);
         }
@@ -1788,36 +1993,32 @@ static void compile_self_call_native(JitCompiler *jc, uint16_t dest, uint16_t ba
     patch_rel32_to_here(buf, returned_ok);
 }
 
-/* cmp reg64, [base + disp32] (base not rsp or r12) */
-static void emit_cmp_r64_mem(JitBuffer *buf, int reg, int base, int32_t disp) {
-    emit_u8(buf, emit_rex(true, reg, base));
-    emit_u8(buf, 0x3B);
-    emit_u8(buf, (uint8_t)(0x80 | ((reg & 7) << 3) | (base & 7)));
-    emit_u32_le(buf, (uint32_t)disp);
-}
-
 /* The native call shared by calls to other compiled functions and methods
- * (compile_call_native, compile_invoke_native): what jit_run_native does,
- * without the C round trip. On entry R10 holds the callee's entry, R11 the
- * chunk it runs in and, when frame_bytes is 0, RAX the size of its register
- * file in bytes (a multiple of 16; otherwise frame_bytes is that size). The
- * register file goes on the native stack above a 32-byte header: the
- * entry's seventh argument (the closure, nullptr as for any plain call), the
- * header and file size to release afterwards, and the chunk, kept for
- * the status path because the callee may change the call site's cache entry
- * it came from. The arguments are registers[self_reg] when self_reg >= 0,
- * then registers[base..base+argc); the rest of the file is zeroed. The
- * callee writes its result straight into registers[dest]. Leaves the status
- * in AL, the chunk in RDX and RSP where it was. */
+ * (compile_call_native, emit_invoke_native_begin, compile_new_native): what
+ * jit_run_native does, without the C round trip. On entry R10 holds the
+ * callee's entry, R11 the chunk it runs in and, when frame_bytes is 0, RAX the
+ * size of its register file in bytes (a multiple of 16; otherwise frame_bytes
+ * is that size). The register file goes on the native stack above a
+ * NATIVE_CALL_HEADER-byte header: the entry's seventh argument (the closure,
+ * nullptr as for any plain call), the header and file size to release
+ * afterwards, the chunk (kept for the status path because the callee may
+ * change the call site's cache entry it came from) and a 16-byte slot for a
+ * result the caller discards. The arguments are registers[self_reg] when
+ * self_reg >= 0, then registers[base..base+argc); the rest of the file is
+ * zeroed. The callee writes its result straight into registers[dest], or into
+ * the header's slot when discard_result (`initialize`, whose value `new`
+ * ignores). Leaves the status in AL, the chunk in RDX and RSP where it was. */
+enum { NATIVE_CALL_HEADER = 48, NATIVE_CALL_DISCARD = 32 };
+
 static void emit_native_entry_call(JitCompiler *jc, uint16_t dest, int self_reg,
-        uint16_t base, uint8_t argc, uint32_t frame_bytes) {
+        uint16_t base, uint8_t argc, uint32_t frame_bytes, bool discard_result) {
     JitBuffer *buf = &jc->buf;
     const uint32_t count = (uint32_t)argc + (self_reg >= 0 ? 1u : 0u);
     emit_store_instruction_offset(jc);
     if (frame_bytes != 0) emit_mov_imm64(buf, REG_RAX, frame_bytes);
     /* The header and file are reserved by an amount only known at run time,
      * so RSP moves here without rsp_delta: nothing in between reads it. */
-    emit_lea(buf, REG_RCX, REG_RAX, 32);
+    emit_lea(buf, REG_RCX, REG_RAX, NATIVE_CALL_HEADER);
     emit_u8(buf, 0x48); emit_u8(buf, 0x29); emit_u8(buf, 0xCC);   /* sub rsp, rcx */
     emit_store_r64_sib(buf, REG_RSP, 8, REG_RCX);
     emit_store_r64_sib(buf, REG_RSP, 16, REG_R11);
@@ -1826,21 +2027,21 @@ static void emit_native_entry_call(JitCompiler *jc, uint16_t dest, int self_reg,
     uint32_t slot = 0;
     if (self_reg >= 0) {
         emit_movups_load(buf, 1, JIT_REGISTERS_BASE, reg_disp((uint16_t)self_reg, 0));
-        emit_movups_store_rsp(buf, (int32_t)(32 + 16 * slot++), 1);
+        emit_movups_store_rsp(buf, (int32_t)(NATIVE_CALL_HEADER + 16 * slot++), 1);
     }
     for (uint8_t i = 0; i < argc; i++) {
         emit_movups_load(buf, 1, JIT_REGISTERS_BASE, reg_disp((uint16_t)(base + i), 0));
-        emit_movups_store_rsp(buf, (int32_t)(32 + 16 * slot++), 1);
+        emit_movups_store_rsp(buf, (int32_t)(NATIVE_CALL_HEADER + 16 * slot++), 1);
     }
     emit_zero_xmm0(buf);
     if (frame_bytes != 0 && frame_bytes / 16 - count <= 16) {
         for (uint32_t i = count; i < frame_bytes / 16; i++)
-            emit_movups_store_rsp(buf, (int32_t)(32 + 16 * i), 0);
+            emit_movups_store_rsp(buf, (int32_t)(NATIVE_CALL_HEADER + 16 * i), 0);
     } else {
-        emit_lea_rsp(buf, REG_RDI, (int32_t)(32 + 16 * count));
-        /* lea rcx, [rsp + rax + 32] */
+        emit_lea_rsp(buf, REG_RDI, (int32_t)(NATIVE_CALL_HEADER + 16 * count));
+        /* lea rcx, [rsp + rax + NATIVE_CALL_HEADER] */
         emit_u8(buf, 0x48); emit_u8(buf, 0x8D); emit_u8(buf, 0x4C);
-        emit_u8(buf, 0x04); emit_u8(buf, 0x20);
+        emit_u8(buf, 0x04); emit_u8(buf, NATIVE_CALL_HEADER);
         emit_u8(buf, 0x48); emit_u8(buf, 0x39); emit_u8(buf, 0xCF); /* cmp rdi, rcx */
         emit_u8(buf, 0x73); emit_u8(buf, 12);                       /* jae past the loop */
         emit_u8(buf, 0x0F); emit_u8(buf, 0x11); emit_u8(buf, 0x07); /* movups [rdi], xmm0 */
@@ -1852,8 +2053,9 @@ static void emit_native_entry_call(JitCompiler *jc, uint16_t dest, int self_reg,
     /* (vm, registers, result, argument_count, chunk, depth), as jit_run_native
      * passes them; the closure is at [rsp]. */
     emit_mov_rr(buf, REG_RDI, JIT_VM);
-    emit_lea_rsp(buf, REG_RSI, 32);
-    emit_lea(buf, REG_RDX, JIT_REGISTERS_BASE, reg_disp(dest, 0));
+    emit_lea_rsp(buf, REG_RSI, NATIVE_CALL_HEADER);
+    if (discard_result) emit_lea_rsp(buf, REG_RDX, NATIVE_CALL_DISCARD);
+    else emit_lea(buf, REG_RDX, JIT_REGISTERS_BASE, reg_disp(dest, 0));
     emit_mov_imm64(buf, REG_RCX, count);
     emit_mov_rr(buf, REG_R8, REG_R11);
     emit_lea(buf, REG_R9, JIT_DEPTH, 1);
@@ -1907,7 +2109,7 @@ static void compile_call_native(JitCompiler *jc, uint16_t dest, uint16_t functio
     emit_native_depth_check(jc, slow, slow_count);
     emit_lea(buf, REG_R11, REG_R11, (int32_t)offsetof(DiamondFunction, call_chunk));
     emit_native_entry_call(jc, dest, -1, base, argc,
-        (uint32_t)(target->register_count * sizeof(DiamondValue)));
+        (uint32_t)(target->register_count * sizeof(DiamondValue)), false);
     emit_test_r8(buf, REG_RAX);
     const size_t returned_ok = emit_jcc_placeholder(buf, JCC_E);
     emit_movzx_r64_al(buf, REG_RAX);
@@ -2997,17 +3199,74 @@ static bool jit_native_read_operation(uint16_t site_type,
  * compile_invoke_any, the interpreter's own dispatch, so it no longer keeps
  * the whole function interpreted. DIAMOND_OP_INVOKE_TYPED always calls
  * diamond_jit_invoke_typed (compile_body's own case). */
-/* Call site ids for compiled method calls, unique across every compiled
- * function (compilation can run on several threads at once). */
-static atomic_uint_fast32_t jit_next_call_site;
-
 /* The native half of a method call on an Instance (compile_invoke_native).
  * `done` is the jump past the slow path; `active` false when the site got
  * no native path (ids exhausted), so only the slow path was emitted. */
 typedef struct {
     size_t done;
+    size_t accessor_done;
     bool active;
+    bool has_accessor;
 } NativeInvoke;
+
+/* A listed class whose method is a trivial accessor (DiamondJitCallEntry's
+ * accessor fields, entry in RDX): the getter's field is copied to dest, or
+ * the setter's argument stored and copied to dest, here and without a call,
+ * when trivial_getter_result or trivial_setter_result would answer it. Its
+ * shape must already cover the field, and a setter's receiver must be
+ * unfrozen and need no write barrier. Anything else jumps to `call` and
+ * the method runs. Returns the jump past the call. Keeps RDX; clobbers RAX,
+ * RCX, RSI, R8 and R9. */
+static size_t emit_invoke_accessor_inline(JitCompiler *jc, uint16_t dest, uint16_t recv,
+        uint16_t base, uint8_t argc, size_t *call, size_t *call_count) {
+    JitBuffer *buf = &jc->buf;
+    emit_load_byte_zx(buf, REG_RAX, REG_RDX, (int32_t)offsetof(DiamondJitCallEntry, accessor));
+    emit_cmp_imm32_32(buf, REG_RAX, argc == 0 ? DIAMOND_ACCESSOR_GETTER : DIAMOND_ACCESSOR_SETTER);
+    call[(*call_count)++] = emit_jcc_placeholder(buf, JCC_NE);
+    emit_load_byte_zx(buf, REG_RCX, REG_RDX, (int32_t)offsetof(DiamondJitCallEntry, accessor_field));
+    emit_load_r64(buf, REG_R8, JIT_REGISTERS_BASE, reg_disp(recv, AS_OFF));
+    emit_cmp_r64_mem(buf, REG_RCX, REG_R8, (int32_t)offsetof(DiamondInstance, field_count));
+    call[(*call_count)++] = emit_jcc_placeholder(buf, JCC_AE);
+    emit_load_r64(buf, REG_R9, REG_R8, (int32_t)offsetof(DiamondInstance, shape));
+    emit_load_byte_zx(buf, REG_RAX, REG_R9, (int32_t)offsetof(DiamondShape, field_count));
+    emit_u8(buf, 0x39); emit_u8(buf, 0xC8);                       /* cmp eax, ecx */
+    call[(*call_count)++] = emit_jcc_placeholder(buf, JCC_BE);
+    if (argc == 1) {
+        emit_load_byte_zx(buf, REG_RAX, REG_R8, (int32_t)offsetof(DiamondObject, frozen));
+        emit_test_r8(buf, REG_RAX);
+        call[(*call_count)++] = emit_jcc_placeholder(buf, JCC_NE);
+        emit_load_byte_zx(buf, REG_RAX, REG_R8, (int32_t)offsetof(DiamondObject, old));
+        emit_test_r8(buf, REG_RAX);
+        const size_t young = emit_jcc_placeholder(buf, JCC_E);
+        emit_load_byte_zx(buf, REG_RAX, REG_R8, (int32_t)offsetof(DiamondObject, remembered));
+        emit_test_r8(buf, REG_RAX);
+        call[(*call_count)++] = emit_jcc_placeholder(buf, JCC_E);
+        patch_rel32_to_here(buf, young);
+    }
+    /* r9 = &instance->fields[field] */
+    emit_u8(buf, 0x48); emit_u8(buf, 0xC1); emit_u8(buf, 0xE1); emit_u8(buf, 0x04);  /* shl rcx, 4 */
+    emit_u8(buf, 0x4D); emit_u8(buf, 0x8D); emit_u8(buf, 0x8C); emit_u8(buf, 0x08);  /* lea r9, [r8+rcx+d32] */
+    emit_u32_le(buf, (uint32_t)offsetof(DiamondInstance, fields));
+    /* The value the declared type checks: the field read, or the argument. */
+    emit_load_byte_zx(buf, REG_RAX, REG_RDX,
+        (int32_t)offsetof(DiamondJitCallEntry, accessor_value_kind));
+    emit_cmp_imm32_32(buf, REG_RAX, DIAMOND_JIT_ANY_VALUE_KIND);
+    const size_t untyped = emit_jcc_placeholder(buf, JCC_E);
+    if (argc == 0) emit_load_byte_zx(buf, REG_RCX, REG_R9, KIND_OFF);
+    else emit_load_byte_zx(buf, REG_RCX, JIT_REGISTERS_BASE, reg_disp(base, KIND_OFF));
+    emit_u8(buf, 0x39); emit_u8(buf, 0xC8);                       /* cmp eax, ecx */
+    call[(*call_count)++] = emit_jcc_placeholder(buf, JCC_NE);
+    patch_rel32_to_here(buf, untyped);
+    if (argc == 0) {
+        emit_copy_value(buf, JIT_REGISTERS_BASE, reg_disp(dest, 0), REG_R9, 0);
+    } else {
+        emit_copy_value(buf, REG_R9, 0, JIT_REGISTERS_BASE, reg_disp(base, 0));
+        if (dest != base)
+            emit_copy_value(buf, JIT_REGISTERS_BASE, reg_disp(dest, 0),
+                JIT_REGISTERS_BASE, reg_disp(base, 0));
+    }
+    return emit_jmp_placeholder(buf);
+}
 
 /* Emits the fast path of an INVOKE/INVOKE_MONO whose receiver is
  * registers[recv]: an Instance whose class this site's DiamondJitCallSite
@@ -3062,11 +3321,19 @@ static NativeInvoke emit_invoke_native_begin(JitCompiler *jc, size_t instruction
     }
     for (int way = 1; way < DIAMOND_JIT_CALL_WAYS; way++) patch_rel32_to_here(buf, joins[way]);
     /* RDX is the entry. */
+    size_t accessor_done = 0;
+    const bool has_accessor = argc <= 1;
+    if (has_accessor) {
+        size_t call[8];
+        size_t call_count = 0;
+        accessor_done = emit_invoke_accessor_inline(jc, dest, recv, base, argc, call, &call_count);
+        for (size_t i = 0; i < call_count; i++) patch_rel32_to_here(buf, call[i]);
+    }
     emit_native_depth_check(jc, slow, &slow_count);
     emit_load_r64(buf, REG_R10, REG_RDX, (int32_t)offsetof(DiamondJitCallEntry, code));
     emit_load_r64(buf, REG_R11, REG_RDX, (int32_t)offsetof(DiamondJitCallEntry, chunk));
-    emit_load_r64(buf, REG_RAX, REG_RDX, (int32_t)offsetof(DiamondJitCallEntry, frame_bytes));
-    emit_native_entry_call(jc, dest, recv, base, argc, 0);
+    emit_load_r32(buf, REG_RAX, REG_RDX, (int32_t)offsetof(DiamondJitCallEntry, frame_bytes));
+    emit_native_entry_call(jc, dest, recv, base, argc, 0, false);
     emit_test_r8(buf, REG_RAX);
     const size_t returned_ok = emit_jcc_placeholder(buf, JCC_E);
     emit_movzx_r64_al(buf, REG_RAX);
@@ -3092,11 +3359,102 @@ static NativeInvoke emit_invoke_native_begin(JitCompiler *jc, size_t instruction
     emit_mov_imm64(buf, REG_R8, (uint64_t)site_id);
     emit_body_call(jc, (void *)(uintptr_t)diamond_jit_call_site_fill);
     for (size_t i = 0; i < skip_count; i++) patch_rel32_to_here(buf, skip[i]);
-    return (NativeInvoke){.done = done, .active = true};
+    return (NativeInvoke){.done = done, .accessor_done = accessor_done, .active = true,
+        .has_accessor = has_accessor};
 }
 
 static void emit_invoke_native_end(JitCompiler *jc, NativeInvoke native) {
     if (native.active) patch_rel32_to_here(&jc->buf, native.done);
+    if (native.has_accessor) patch_rel32_to_here(&jc->buf, native.accessor_done);
+}
+
+/* `Class.new(...)` in front of compile_new: when this site's entry (jit.h,
+ * DiamondJitCallSite) names chunk->classes[class_index], the instance is
+ * allocated through diamond_jit_new_object, stored in registers[dest] and
+ * handed to the compiled `initialize` with emit_native_entry_call, its
+ * result discarded. A status other than OK goes to
+ * diamond_jit_method_call_finish with the new instance as the receiver.
+ * Anything else, a failed allocation included, takes
+ * diamond_jit_new_site_fill and then compile_new's C path from the start. */
+static void compile_new_native(JitCompiler *jc, uint16_t dest, uint16_t class_index,
+        uint16_t base, uint8_t argc) {
+    const uint_fast32_t site_id = atomic_fetch_add_explicit(&jit_next_call_site, 1,
+        memory_order_relaxed);
+    if (site_id >= (uint_fast32_t)(INT32_MAX / sizeof(DiamondJitCallSite)) - 1) {
+        compile_new(jc, dest, class_index, base, argc);
+        return;
+    }
+    jc->needs_frame = true;
+    jc->has_called = true;
+    JitBuffer *buf = &jc->buf;
+    const int32_t site_at = (int32_t)(site_id * sizeof(DiamondJitCallSite));
+    size_t slow[8];
+    size_t slow_count = 0;
+    emit_mov_rr(buf, REG_RDX, JIT_VM);
+    emit_load_r64(buf, REG_RCX, REG_RDX, (int32_t)offsetof(DiamondVm, jit_call_site_count));
+    emit_cmp_imm32_64(buf, REG_RCX, (uint32_t)site_id);
+    slow[slow_count++] = emit_jcc_placeholder(buf, JCC_BE);
+    emit_load_r64(buf, REG_RDX, REG_RDX, (int32_t)offsetof(DiamondVm, jit_call_sites));
+    emit_lea(buf, REG_RDX, REG_RDX, site_at);
+    emit_load_r64(buf, REG_RCX, JIT_CHUNK, (int32_t)offsetof(DiamondChunk, class_count));
+    emit_cmp_imm32_64(buf, REG_RCX, class_index);
+    slow[slow_count++] = emit_jcc_placeholder(buf, JCC_BE);
+    emit_load_r64(buf, REG_RSI, JIT_CHUNK, (int32_t)offsetof(DiamondChunk, classes));
+    emit_load_r64(buf, REG_RSI, REG_RSI, (int32_t)((size_t)class_index * sizeof(DiamondClass *)));
+    emit_test_r64(buf, REG_RSI, REG_RSI);
+    slow[slow_count++] = emit_jcc_placeholder(buf, JCC_E);
+    emit_cmp_r64_mem(buf, REG_RSI, REG_RDX,
+        (int32_t)offsetof(DiamondJitCallEntry, receiver_class));
+    slow[slow_count++] = emit_jcc_placeholder(buf, JCC_NE);
+    emit_native_depth_check(jc, slow, &slow_count);
+    /* (vm, class) */
+    emit_mov_rr(buf, REG_RDI, JIT_VM);
+    emit_body_call(jc, (void *)(uintptr_t)diamond_jit_new_object);
+    emit_test_r64(buf, REG_RAX, REG_RAX);
+    slow[slow_count++] = emit_jcc_placeholder(buf, JCC_E);
+    emit_mov_imm64(buf, REG_RCX, DIAMOND_VALUE_OBJECT);
+    emit_store_r64(buf, JIT_REGISTERS_BASE, reg_disp(dest, 0), REG_RCX);
+    emit_store_r64(buf, JIT_REGISTERS_BASE, reg_disp(dest, AS_OFF), REG_RAX);
+    /* The entry again: the allocation ran C. */
+    emit_mov_rr(buf, REG_RDX, JIT_VM);
+    emit_load_r64(buf, REG_RDX, REG_RDX, (int32_t)offsetof(DiamondVm, jit_call_sites));
+    emit_lea(buf, REG_RDX, REG_RDX, site_at);
+    emit_load_r64(buf, REG_R10, REG_RDX, (int32_t)offsetof(DiamondJitCallEntry, code));
+    emit_test_r64(buf, REG_R10, REG_R10);
+    const size_t no_initialize = emit_jcc_placeholder(buf, JCC_E);
+    emit_load_r64(buf, REG_R11, REG_RDX, (int32_t)offsetof(DiamondJitCallEntry, chunk));
+    emit_load_r32(buf, REG_RAX, REG_RDX, (int32_t)offsetof(DiamondJitCallEntry, frame_bytes));
+    emit_native_entry_call(jc, dest, dest, base, argc, 0, true);
+    emit_test_r8(buf, REG_RAX);
+    const size_t returned_ok = emit_jcc_placeholder(buf, JCC_E);
+    /* status at [rsp], a pad, then 16 bytes for the discarded result */
+    emit_movzx_r64_al(buf, REG_RAX);
+    emit_push(buf, REG_RAX);
+    emit_push(buf, REG_RAX);
+    emit_push(buf, REG_RAX);
+    emit_push(buf, REG_RAX);
+    emit_mov_rr(buf, REG_RDI, JIT_VM);
+    emit_mov_rr(buf, REG_RSI, REG_RDX);
+    emit_mov_rr(buf, REG_RDX, JIT_REGISTERS_BASE);
+    emit_mov_imm64(buf, REG_RCX,
+        (uint64_t)dest | ((uint64_t)base << 16) | ((uint64_t)argc << 32));
+    emit_mov_rr(buf, REG_R8, JIT_DEPTH);
+    emit_lea_rsp(buf, REG_R9, 16);
+    emit_body_call(jc, (void *)(uintptr_t)diamond_jit_method_call_finish);
+    emit_add_rsp_imm32(buf, 32);
+    emit_bail_if_al_nonzero(jc);
+    patch_rel32_to_here(buf, returned_ok);
+    patch_rel32_to_here(buf, no_initialize);
+    const size_t done = emit_jmp_placeholder(buf);
+    for (size_t i = 0; i < slow_count; i++) patch_rel32_to_here(buf, slow[i]);
+    emit_mov_rr(buf, REG_RDI, JIT_VM);
+    emit_mov_rr(buf, REG_RSI, JIT_CHUNK);
+    emit_mov_imm64(buf, REG_RDX, (uint64_t)site_id);
+    emit_mov_imm64(buf, REG_RCX, class_index);
+    emit_mov_imm64(buf, REG_R8, argc);
+    emit_body_call(jc, (void *)(uintptr_t)diamond_jit_new_site_fill);
+    compile_new(jc, dest, class_index, base, argc);
+    patch_rel32_to_here(buf, done);
 }
 
 static void compile_invoke_dispatch_native(JitCompiler *jc, size_t instruction_start,
@@ -3131,6 +3489,147 @@ static void compile_invoke_any_native(JitCompiler *jc, size_t instruction_start,
         base, argc);
     compile_invoke_any(jc, instruction_start);
     emit_invoke_native_end(jc, native);
+}
+
+/* `array.each() do |x| ... end` and `array.map() do |x| ... end` (see jit.h,
+ * DiamondJitLoop): diamond_jit_loop_begin decides, then the loop runs here,
+ * calling the block's compiled entry for each element as
+ * emit_native_entry_call would, with the closure as the seventh argument and
+ * the element as its one argument (after a nil self slot for a block written
+ * in a method). The count is re-read every time round, as the C loop does.
+ * A status other than OK, and every map result, goes through
+ * diamond_jit_loop_step; the end through diamond_jit_loop_end. When begin
+ * says no, `fallback` emits the usual call. */
+static void compile_block_loop(JitCompiler *jc, size_t instruction_start, uint16_t dest,
+        uint16_t recv, uint16_t base, uint8_t argc, uint16_t site_type) {
+    jc->needs_frame = true;
+    jc->has_called = true;
+    JitBuffer *buf = &jc->buf;
+    const int32_t L = 0;   /* the loop state sits at [rsp] while the loop runs */
+    emit_sub_rsp_imm32(buf, DIAMOND_JIT_LOOP_BYTES);
+    emit_mov_rr(buf, REG_RDI, JIT_VM);
+    emit_mov_rr(buf, REG_RSI, JIT_CHUNK);
+    emit_mov_rr(buf, REG_RDX, JIT_REGISTERS_BASE);
+    emit_mov_imm64(buf, REG_RCX, (uint64_t)(uintptr_t)(jc->function->code + instruction_start));
+    emit_mov_rr(buf, REG_R8, JIT_DEPTH);
+    emit_lea_rsp(buf, REG_R9, L);
+    emit_body_call(jc, (void *)(uintptr_t)diamond_jit_loop_begin);
+    emit_test_r8(buf, REG_RAX);
+    const size_t declined = emit_jcc_placeholder(buf, JCC_E);
+
+    const size_t loop_top = buf->length;
+    emit_load_r64_sib(buf, REG_RDX, REG_RSP, L + (int32_t)offsetof(DiamondJitLoop, array));
+    emit_load_r64_sib(buf, REG_RAX, REG_RSP, L + (int32_t)offsetof(DiamondJitLoop, index));
+    emit_cmp_r64_mem(buf, REG_RAX, REG_RDX, (int32_t)offsetof(DiamondArray, count));
+    const size_t finished = emit_jcc_placeholder(buf, JCC_AE);
+    emit_load_r64(buf, REG_RCX, REG_RDX, (int32_t)offsetof(DiamondArray, values));
+    emit_u8(buf, 0x48); emit_u8(buf, 0xC1); emit_u8(buf, 0xE0); emit_u8(buf, 0x04);  /* shl rax, 4 */
+    emit_u8(buf, 0x0F); emit_u8(buf, 0x10); emit_u8(buf, 0x14); emit_u8(buf, 0x01);  /* movups xmm2, [rcx+rax] */
+    emit_movups_store_rsp(buf, L + (int32_t)offsetof(DiamondJitLoop, current), 2);
+    /* Everything the call needs, read before RSP moves. */
+    emit_load_r64_sib(buf, REG_R10, REG_RSP, L + (int32_t)offsetof(DiamondJitLoop, code));
+    emit_load_r64_sib(buf, REG_R11, REG_RSP, L + (int32_t)offsetof(DiamondJitLoop, child));
+    emit_load_r64_sib(buf, REG_R8, REG_RSP, L + (int32_t)offsetof(DiamondJitLoop, closure));
+    /* mov eax, [rsp + frame_bytes] */
+    emit_u8(buf, 0x8B); emit_u8(buf, 0x84); emit_u8(buf, 0x24);
+    emit_u32_le(buf, (uint32_t)(L + (int32_t)offsetof(DiamondJitLoop, frame_bytes)));
+    /* movzx r9d, byte [rsp + self_slot] */
+    emit_u8(buf, 0x44); emit_u8(buf, 0x0F); emit_u8(buf, 0xB6); emit_u8(buf, 0x8C); emit_u8(buf, 0x24);
+    emit_u32_le(buf, (uint32_t)(L + (int32_t)offsetof(DiamondJitLoop, self_slot)));
+    /* The header and register file, as emit_native_entry_call lays them out. */
+    emit_lea(buf, REG_RCX, REG_RAX, NATIVE_CALL_HEADER);
+    emit_u8(buf, 0x48); emit_u8(buf, 0x29); emit_u8(buf, 0xCC);   /* sub rsp, rcx */
+    emit_store_r64_sib(buf, REG_RSP, 8, REG_RCX);
+    emit_store_r64_sib(buf, REG_RSP, 16, REG_R11);
+    emit_store_r64_sib(buf, REG_RSP, 0, REG_R8);
+    emit_zero_xmm0(buf);
+    emit_lea_rsp(buf, REG_RDI, NATIVE_CALL_HEADER);
+    /* lea rcx, [rsp + rax + NATIVE_CALL_HEADER] */
+    emit_u8(buf, 0x48); emit_u8(buf, 0x8D); emit_u8(buf, 0x4C);
+    emit_u8(buf, 0x04); emit_u8(buf, NATIVE_CALL_HEADER);
+    emit_u8(buf, 0x0F); emit_u8(buf, 0x11); emit_u8(buf, 0x07);   /* movups [rdi], xmm0 */
+    emit_u8(buf, 0x48); emit_u8(buf, 0x83); emit_u8(buf, 0xC7);   /* add rdi, 16 */
+    emit_u8(buf, 0x10);
+    emit_u8(buf, 0x48); emit_u8(buf, 0x39); emit_u8(buf, 0xCF);   /* cmp rdi, rcx */
+    emit_u8(buf, 0x72); emit_u8(buf, (uint8_t)-12);               /* jb the loop */
+    /* The element: register 0, or register 1 behind a nil self slot. */
+    emit_u8(buf, 0x45); emit_u8(buf, 0x84); emit_u8(buf, 0xC9);   /* test r9b, r9b */
+    const size_t with_self = emit_jcc_placeholder(buf, JCC_NE);
+    emit_movups_store_rsp(buf, NATIVE_CALL_HEADER, 2);
+    emit_mov_imm64(buf, REG_RCX, 1);
+    const size_t placed = emit_jmp_placeholder(buf);
+    patch_rel32_to_here(buf, with_self);
+    emit_movups_store_rsp(buf, NATIVE_CALL_HEADER + 16, 2);
+    emit_mov_imm64(buf, REG_RCX, 2);
+    patch_rel32_to_here(buf, placed);
+    /* (vm, registers, &loop.result, count, chunk, depth + 1): the loop state
+     * is now [rsp + header-and-file size]. */
+    emit_mov_rr(buf, REG_RDI, JIT_VM);
+    emit_lea_rsp(buf, REG_RSI, NATIVE_CALL_HEADER);
+    emit_load_r64_sib(buf, REG_RDX, REG_RSP, 8);
+    emit_u8(buf, 0x48); emit_u8(buf, 0x01); emit_u8(buf, 0xE2);   /* add rdx, rsp */
+    emit_u8(buf, 0x48); emit_u8(buf, 0x83); emit_u8(buf, 0xC2);   /* add rdx, result */
+    emit_u8(buf, (uint8_t)(L + (int32_t)offsetof(DiamondJitLoop, result)));
+    emit_mov_rr(buf, REG_R8, REG_R11);
+    emit_lea(buf, REG_R9, JIT_DEPTH, 1);
+    emit_call_reg(buf, REG_R10);
+    emit_load_r64_sib(buf, REG_RCX, REG_RSP, 8);
+    emit_u8(buf, 0x48); emit_u8(buf, 0x01); emit_u8(buf, 0xCC);   /* add rsp, rcx */
+    /* Status in AL. each skips the step when it is OK; map always takes it. */
+    emit_movzx_r64_al(buf, REG_RAX);
+    /* movzx ecx, byte [rsp + map] */
+    emit_u8(buf, 0x0F); emit_u8(buf, 0xB6); emit_u8(buf, 0x8C); emit_u8(buf, 0x24);
+    emit_u32_le(buf, (uint32_t)(L + (int32_t)offsetof(DiamondJitLoop, map)));
+    emit_u8(buf, 0x08); emit_u8(buf, 0xC1);                       /* or cl, al */
+    const size_t no_step = emit_jcc_placeholder(buf, JCC_E);
+    emit_mov_rr(buf, REG_RDI, JIT_VM);
+    emit_lea_rsp(buf, REG_RSI, L);
+    emit_mov_rr(buf, REG_RDX, REG_RAX);
+    emit_mov_rr(buf, REG_RCX, JIT_DEPTH);
+    emit_body_call(jc, (void *)(uintptr_t)diamond_jit_loop_step);
+    emit_test_r8(buf, REG_RAX);
+    const size_t failed = emit_jcc_placeholder(buf, JCC_NE);
+    patch_rel32_to_here(buf, no_step);
+    /* add qword [rsp + index], 1 */
+    emit_u8(buf, 0x48); emit_u8(buf, 0x83); emit_u8(buf, 0x84); emit_u8(buf, 0x24);
+    emit_u32_le(buf, (uint32_t)(L + (int32_t)offsetof(DiamondJitLoop, index)));
+    emit_u8(buf, 1);
+    /* jmp loop_top */
+    emit_u8(buf, 0xE9);
+    emit_u32_le(buf, (uint32_t)((int32_t)loop_top - (int32_t)(buf->length + 4)));
+
+    patch_rel32_to_here(buf, finished);
+    emit_mov_rr(buf, REG_RDI, JIT_VM);
+    emit_lea_rsp(buf, REG_RSI, L);
+    emit_lea(buf, REG_RDX, JIT_REGISTERS_BASE, reg_disp(dest, 0));
+    emit_body_call(jc, (void *)(uintptr_t)diamond_jit_loop_end);
+    emit_add_rsp_imm32(buf, DIAMOND_JIT_LOOP_BYTES);
+    const size_t done = emit_jmp_placeholder(buf);
+
+    /* The two other ways out release the loop state too; rsp_delta is put
+     * back by hand, since the code above already counted the release once. */
+    patch_rel32_to_here(buf, failed);
+    buf->rsp_delta += DIAMOND_JIT_LOOP_BYTES;
+    emit_add_rsp_imm32(buf, DIAMOND_JIT_LOOP_BYTES);
+    emit_bail_if_al_nonzero(jc);
+
+    patch_rel32_to_here(buf, declined);
+    buf->rsp_delta += DIAMOND_JIT_LOOP_BYTES;
+    emit_add_rsp_imm32(buf, DIAMOND_JIT_LOOP_BYTES);
+    compile_invoke_any_native(jc, instruction_start, dest, recv, base, argc, site_type);
+    patch_rel32_to_here(buf, done);
+}
+
+/* Whether an INVOKE could be an Array each/map with a block (compile_block_loop). */
+static bool site_may_be_block_loop(const DiamondFunction *fn, DiamondOpCode opcode, uint16_t name,
+        uint8_t argc, uint16_t site_type) {
+    if ((opcode != DIAMOND_OP_INVOKE && opcode != DIAMOND_OP_INVOKE_MONO) || argc != 1 ||
+        name >= fn->string_count)
+        return false;
+    if (site_type != DIAMOND_TYPE_NONE && site_type != DIAMOND_TYPE_ARRAY) return false;
+    const DiamondStringConstant *text = &fn->strings[name];
+    return (text->length == 4 && memcmp(text->chars, "each", 4) == 0) ||
+           (text->length == 3 && memcmp(text->chars, "map", 3) == 0);
 }
 
 static void compile_invoke(JitCompiler *jc, size_t instruction_start, DiamondOpCode opcode,
@@ -3213,7 +3712,10 @@ static void compile_invoke(JitCompiler *jc, size_t instruction_start, DiamondOpC
         }
     }
     if (name >= fn->string_count) { jc->bailed = true; return; }
-    compile_invoke_any_native(jc, instruction_start, dest, recv, base, argc, site_type);
+    if (site_may_be_block_loop(jc->function, opcode, name, argc, site_type))
+        compile_block_loop(jc, instruction_start, dest, recv, base, argc, site_type);
+    else
+        compile_invoke_any_native(jc, instruction_start, dest, recv, base, argc, site_type);
 }
 
 /* JUMP_IF_TRUE: jump to target unless the condition is nil or false. */
@@ -3516,7 +4018,7 @@ static bool compile_value_instruction(JitCompiler *jc, DiamondOpCode opcode, siz
             if (!decode_u16(fn, &pc, &recv) || !decode_u16(fn, &pc, &field) ||
                 !decode_u16(fn, &pc, &source)) { jc->bailed = true; return true; }
             if (field > UINT8_MAX) { jc->bailed = true; return true; }
-            compile_set_ivar(jc, instruction_start, recv, field, source);
+            compile_set_ivar_inline(jc, instruction_start, recv, field, source);
             break;
         }
         case DIAMOND_OP_GET_IVAR: {
@@ -3524,7 +4026,7 @@ static bool compile_value_instruction(JitCompiler *jc, DiamondOpCode opcode, siz
             if (!decode_u16(fn, &pc, &dest) || !decode_u16(fn, &pc, &recv) ||
                 !decode_u16(fn, &pc, &field)) { jc->bailed = true; return true; }
             if (field > UINT8_MAX) { jc->bailed = true; return true; }
-            compile_get_ivar(jc, instruction_start, dest, recv, field);
+            compile_get_ivar_inline(jc, instruction_start, dest, recv, field);
             break;
         }
         case DIAMOND_OP_COLLECT_VARIADIC: {
@@ -4107,7 +4609,7 @@ static bool compile_control_instruction(JitCompiler *jc, DiamondOpCode opcode, s
                 !decode_u16(fn, &pc, &base) || !decode_u8(fn, &pc, &argc)) {
                 jc->bailed = true; return true;
             }
-            compile_new(jc, dest, class_index, base, argc);
+            compile_new_native(jc, dest, class_index, base, argc);
             break;
         }
         case DIAMOND_OP_JUMP: {

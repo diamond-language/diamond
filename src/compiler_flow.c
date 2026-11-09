@@ -347,43 +347,130 @@ uint16_t parse_if(Compiler *compiler,bool inverted) {
  * real `do` block here is the actual bug this function exists to avoid
  * (a pre-existing outer local read by the loop's own condition, then
  * captured by a `do` block later in the body, needs that condition read
- * to already be box-aware -- see mark_locals_captured's own comment;
+ * to already be box-aware -- see mark_locals_captured_in's own comment;
  * confirmed via a real spurious runtime "type error" a growing-Array
  * BFS loop hit, `ids.length()` reading a stale un-boxed register after
  * `ids` was boxed for a `children.each() do |child| ids.push(...) end`
  * block later in the same loop body). */
-static bool loop_body_may_capture(const Compiler *compiler) {
+/* Whether a string token's `#{...}` might hold a `do` block, which the
+ * token scans below cannot see into: any interpolation with the word `do`. */
+static bool string_may_hold_block(const Compiler *compiler,DiamondToken token) {
+    if(token.kind!=DIAMOND_TOKEN_STRING)return false;
+    const char *text=compiler->source+token.span.start;
+    bool interpolated=false;
+    for(size_t index=0;index+1<token.span.length;index++) {
+        if(text[index]=='#'&&text[index+1]=='{')interpolated=true;
+        if(!interpolated||text[index]!='d'||text[index+1]!='o')continue;
+        const bool word_start=index==0||!(isalnum((unsigned char)text[index-1])||text[index-1]=='_');
+        const bool word_end=index+2>=token.span.length||
+            !(isalnum((unsigned char)text[index+2])||text[index+2]=='_'||text[index+2]=='?'||
+              text[index+2]=='!');
+        if(word_start&&word_end)return true;
+    }
+    return false;
+}
+
+static void capture_mask_all(uint64_t *mask) {
+    for(size_t word=0;word<4;word++)mask[word]=UINT64_MAX;
+}
+
+/* ORs into mask the enclosing locals the block whose `do` starts at
+ * `start` reads, as the discovery pass recorded them (BlockCaptureUse).
+ * False, with every local marked, when that is not known: in the
+ * discovery pass itself, in debug mode, or for a `do` with no record (a
+ * loop's own `while cond do`, say). A nested block's record indexes its
+ * own block's locals, so ORing it in can only mark extra locals, which is
+ * always safe: a local marked captured is boxed before every read, and a
+ * captured local is boxed at every CLOSURE that lists it. */
+static bool add_block_capture_mask(const Compiler *compiler,size_t start,uint64_t *mask) {
+    if(compiler->discovery_pass||compiler->capture_uses==nullptr||compiler->debug_mode) {
+        capture_mask_all(mask);return false;
+    }
+    const BlockCaptureUse *use=find_block_capture_use(compiler->capture_uses,start);
+    if(use==nullptr){capture_mask_all(mask);return false;}
+    for(size_t word=0;word<4;word++)mask[word]|=use->used[word];
+    return true;
+}
+
+/* Whether a local declared now, at locals[index], starts out captured:
+ * inside a capturing loop, when a block in it reads that slot. */
+bool loop_local_captured(const Compiler *compiler,size_t index) {
+    if(!compiler->loop_captures_pending)return false;
+    if(index>=256)return true;
+    return (compiler->loop_capture_mask[index/64]>>(index%64)&1u)!=0;
+}
+
+/* mask collects which locals the loop's blocks read (add_block_capture_mask);
+ * a def or closure in the loop marks them all. */
+static bool loop_body_may_capture(const Compiler *compiler,uint64_t *mask) {
     DiamondLexer lookahead=compiler->lexer;
     DiamondToken token=compiler->current;
     size_t depth=0;
+    bool found=false;
+    for(size_t word=0;word<4;word++)mask[word]=0;
     while(token.kind!=DIAMOND_TOKEN_EOF) {
+        /* A def or closure captures every local; a struct body ends with an
+         * `end` this scan does not pair up. */
         if(token.kind==DIAMOND_TOKEN_DEF||token.kind==DIAMOND_TOKEN_CLOSURE||
-           token.kind==DIAMOND_TOKEN_DO)return true;
-        if(token.kind==DIAMOND_TOKEN_IF||token.kind==DIAMOND_TOKEN_UNLESS||
+           token.kind==DIAMOND_TOKEN_STRUCT||
+           string_may_hold_block(compiler,token)) {
+            capture_mask_all(mask);return true;
+        }
+        if(token.kind==DIAMOND_TOKEN_DO) {
+            /* A recorded block: its own `end` closes it, so keep going
+             * to find the loop's other blocks. */
+            found=true;
+            if(!add_block_capture_mask(compiler,token.span.start,mask))return true;
+            depth++;
+        } else if(token.kind==DIAMOND_TOKEN_IF||token.kind==DIAMOND_TOKEN_UNLESS||
            token.kind==DIAMOND_TOKEN_WHILE||token.kind==DIAMOND_TOKEN_UNTIL||
            token.kind==DIAMOND_TOKEN_LOOP||token.kind==DIAMOND_TOKEN_CASE||
            token.kind==DIAMOND_TOKEN_BEGIN||token.kind==DIAMOND_TOKEN_CLASS||
            token.kind==DIAMOND_TOKEN_MODULE||token.kind==DIAMOND_TOKEN_INTERFACE) {
             depth++;
         } else if(token.kind==DIAMOND_TOKEN_END) {
-            if(depth==0)return false;
+            if(depth==0)return found;
             depth--;
         }
         token=diamond_lexer_next(&lookahead);
     }
-    return false;
+    if(found)capture_mask_all(mask);
+    return found;
 }
 
-/* Marks every currently-visible local in the enclosing function
- * captured, so its subsequent reads/writes -- including ones textually
+/* Marks currently-visible locals of the enclosing function captured, so its subsequent reads/writes -- including ones textually
  * before wherever the def/closure that triggered this actually sits --
  * go through the existing box-aware codegen from here on. Called once,
  * at a capturing loop's own entry; see loop_captures_pending's own
  * comment for why this needs to happen before the condition/body
- * compiles rather than lazily at the real capture site. */
-void mark_locals_captured(Compiler *compiler) {
+ * compiles rather than lazily at the real capture site. Only the locals
+ * mask names (the ones the blocks ahead read) are marked, and any past 256. */
+void mark_locals_captured_in(Compiler *compiler,const uint64_t *mask) {
     for(size_t index=0;index<compiler->local_count;index++)
-        compiler->locals[index].captured=true;
+        if(index>=256||(mask[index/64]>>(index%64)&1u)!=0)
+            compiler->locals[index].captured=true;
+}
+
+/* Steps the lookahead past a recorded block's body to its matching `end`
+ * (statement_may_capture). False at end of input. */
+static bool skip_block_body(DiamondLexer *lookahead) {
+    size_t depth=0;
+    for(DiamondToken token=diamond_lexer_next(lookahead);token.kind!=DIAMOND_TOKEN_EOF;
+        token=diamond_lexer_next(lookahead)) {
+        if(token.kind==DIAMOND_TOKEN_IF||token.kind==DIAMOND_TOKEN_UNLESS||
+           token.kind==DIAMOND_TOKEN_WHILE||token.kind==DIAMOND_TOKEN_UNTIL||
+           token.kind==DIAMOND_TOKEN_LOOP||token.kind==DIAMOND_TOKEN_CASE||
+           token.kind==DIAMOND_TOKEN_BEGIN||token.kind==DIAMOND_TOKEN_CLASS||
+           token.kind==DIAMOND_TOKEN_MODULE||token.kind==DIAMOND_TOKEN_INTERFACE||
+           token.kind==DIAMOND_TOKEN_DO||token.kind==DIAMOND_TOKEN_DEF||
+           token.kind==DIAMOND_TOKEN_CLOSURE||token.kind==DIAMOND_TOKEN_STRUCT) {
+            depth++;
+        } else if(token.kind==DIAMOND_TOKEN_END) {
+            if(depth==0)return true;
+            depth--;
+        }
+    }
+    return false;
 }
 
 /* The statement-level twin of loop_body_may_capture: does the statement
@@ -398,18 +485,30 @@ void mark_locals_captured(Compiler *compiler) {
  * consumer would find the Cell instead of the value -- `[x, list.map() do
  * |v| v end]` built [#<Cell>, ...]. Marking the locals captured before the
  * statement compiles makes every read in it go through GET_CELL instead.
- * It costs nothing extra in practice: the block captures every visible
- * local anyway, so they would all be boxed moments later. */
-bool statement_may_capture(const Compiler *compiler) {
+ * mask names the locals the statement's blocks read (add_block_capture_mask),
+ * the ones those blocks box anyway; only they need marking. */
+bool statement_may_capture(const Compiler *compiler,uint64_t *mask) {
     DiamondLexer lookahead=compiler->lexer;
     DiamondToken token=compiler->current;
     size_t depth=0;
+    bool found=false;
+    for(size_t word=0;word<4;word++)mask[word]=0;
     while(token.kind!=DIAMOND_TOKEN_EOF) {
         switch(token.kind) {
         case DIAMOND_TOKEN_DO:
+            /* Every block in the statement counts, not just the first, so
+             * step over this one's body (it may span lines) to its `end`. */
+            found=true;
+            if(!add_block_capture_mask(compiler,token.span.start,mask))return true;
+            if(!skip_block_body(&lookahead)){capture_mask_all(mask);return true;}
+            break;
         case DIAMOND_TOKEN_DEF:
         case DIAMOND_TOKEN_CLOSURE:
+            capture_mask_all(mask);
             return true;
+        case DIAMOND_TOKEN_STRING:
+            if(string_may_hold_block(compiler,token)){capture_mask_all(mask);return true;}
+            break;
         case DIAMOND_TOKEN_LEFT_PAREN:
         case DIAMOND_TOKEN_LEFT_BRACKET:
         case DIAMOND_TOKEN_LEFT_BRACE:
@@ -417,17 +516,17 @@ bool statement_may_capture(const Compiler *compiler) {
         case DIAMOND_TOKEN_RIGHT_PAREN:
         case DIAMOND_TOKEN_RIGHT_BRACKET:
         case DIAMOND_TOKEN_RIGHT_BRACE:
-            if(depth==0)return false;
+            if(depth==0)return found;
             depth--;break;
         case DIAMOND_TOKEN_NEWLINE:
-            if(depth==0)return false;
+            if(depth==0)return found;
             break;
         default:
             break;
         }
         token=diamond_lexer_next(&lookahead);
     }
-    return false;
+    return found;
 }
 
 static uint16_t parse_while_core(Compiler *compiler,bool inverted,const PostfixLoop *postfix) {
@@ -436,9 +535,10 @@ static uint16_t parse_while_core(Compiler *compiler,bool inverted,const PostfixL
     const size_t loop_start = compiler->function->code_count;
     const bool outer_loop_captures_pending=compiler->loop_captures_pending;
     /* A postfix loop's statement was already checked for blocks by compile_sequence. */
-    if(postfix==nullptr&&!compiler->loop_captures_pending&&loop_body_may_capture(compiler)) {
+    if(postfix==nullptr&&!compiler->loop_captures_pending&&
+       loop_body_may_capture(compiler,compiler->loop_capture_mask)) {
         compiler->loop_captures_pending=true;
-        mark_locals_captured(compiler);
+        mark_locals_captured_in(compiler,compiler->loop_capture_mask);
     }
     DiamondLexer body_lexer={},end_lexer={};
     DiamondToken body_current={},body_previous={},end_current={},end_previous={};
@@ -546,9 +646,10 @@ uint16_t parse_loop(Compiler *compiler) {
     emit_instruction(compiler,DIAMOND_OP_NIL,destination,0,0,1);
     if(!consume_loop_start(compiler))return destination;
     const bool outer_loop_captures_pending=compiler->loop_captures_pending;
-    if(!compiler->loop_captures_pending&&loop_body_may_capture(compiler)) {
+    if(!compiler->loop_captures_pending&&
+       loop_body_may_capture(compiler,compiler->loop_capture_mask)) {
         compiler->loop_captures_pending=true;
-        mark_locals_captured(compiler);
+        mark_locals_captured_in(compiler,compiler->loop_capture_mask);
     }
     const size_t body_start=compiler->function->code_count;
     const size_t flow_reg_count=compiler->next_register;

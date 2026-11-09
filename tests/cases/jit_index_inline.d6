@@ -1,0 +1,40 @@
+# Array reads compiled inline (threshold 1, stress GC): a non-negative Int
+# index inside the array is copied directly; a negative index, a Range, an
+# index past the end, a Hash, a String and a class with its own `[]` still
+# take the full INDEX_GET path, errors included.
+
+class Grid
+  def initialize()
+    @cells = [10, 20, 30]
+  end
+
+  def [](i) = @cells[i] * 2
+end
+
+def read(values, index) -> String
+  begin
+    "#{values[index]}"
+  rescue e: Exception
+    "error #{e.message()}"
+  end
+end
+
+def total(values: Array[Int]) -> Int
+  sum = 0
+  i = 0
+  while i < values.length()
+    sum += values[i]
+    values.push(0) if i == 0
+    i += 1
+  end
+  sum
+end
+
+xs = [1, 2, 3]
+n = 0
+while n < 2
+  puts([read(xs, 0), read(xs, 2), read(xs, -1), read(xs, 3), read(xs, 1..2), read(xs, "a")])
+  puts([read({"a": 5}, "a"), read("hey", 1), read(Grid.new(), 2), read(nil, 0)])
+  puts(total([4, 5, 6]))
+  n += 1
+end

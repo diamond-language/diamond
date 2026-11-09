@@ -104,6 +104,28 @@ authoritative fine-grained record.
   counts fell 49% on a polymorphic `shapes[i].area()` loop, 38% on small objects, 28% on an
   n-body simulation and 20% on structs; method dispatch benchmarks run 44 to 73% fewer.
   Redefining a method with `redefine_method` or `define_method` still takes effect at once.
+- **A block boxes only the locals it reads.** Creating a `do ... end` block used to move every
+  local visible at that point into a heap cell, and every later read of those locals went
+  through the cell. Now only the ones the block's body names are, so the rest stay plain
+  registers: an n-body step that runs one `bodies.each() do ... end` per call does 11% fewer
+  instructions in the interpreter.
+- **Compiled code handles objects inline.** With the JIT on, `Class.new` allocates and calls a
+  compiled `initialize` directly, a type check against a single class, `x == nil` on an object
+  whose class has no `==`, instance variable reads and writes, and calls to plain getters and
+  setters (`attr_accessor`, `def x() = @x`) no longer go through C. Together with the native
+  calls above, instruction counts fell 63% on an n-body simulation, 61% on small objects, 54%
+  on polymorphic calls, 49% on binary trees and 41% on structs.
+- **Compiled code reads Array elements inline.** With the JIT on, `values[i]` for a
+  non-negative Int index inside the array is a direct load; everything else takes the usual
+  path. The sieve benchmark runs 15% fewer instructions.
+- **Closures and captured variables are cheaper to create.** Swept closures (up to 16 captures)
+  and capture cells are kept for reuse, like small objects, strings and arrays already were.
+  A closure-heavy benchmark runs 31% fewer instructions in the interpreter and 47% fewer with
+  the JIT.
+- **Compiled code runs Array `each` and `map` loops itself.** With the JIT on, a block passed
+  to `each` or `map` on an Array is called natively from the loop instead of through C for
+  every element. A map-heavy benchmark runs 8% fewer instructions and an `each`-heavy one 10%
+  fewer; other iterators still use the C loop.
 - **The interpreter is faster.** 64 builtin opcode bodies moved out of its main loop, which
   leaves the compiler more registers for the hot path: 2 to 10% fewer instructions on every
   benchmark (fibonacci and tail calls about 10%), and with the JIT on `fiber_switch` and
@@ -111,6 +133,9 @@ authoritative fine-grained record.
 
 ### Fixed
 
+- **A block inside a string interpolation no longer turns a local into a Cell.** In
+  `out.push("#{list.map() do |v| out.length() + v end}")`, `out` was read before the block boxed
+  it, so the call failed with `undefined method 'push' for Cell`.
 - **A rest parameter no longer holds a placeholder when only a block is passed.**
   `f() do ... end` for `def f(*rest, &block)` gave `rest` one invalid element, and reading it
   (printing `rest`, say) crashed. It is now empty.

@@ -2,6 +2,7 @@
 
 #include "vm_internal.h"
 #include "bignum.h"
+#include "jit.h"
 
 #include <inttypes.h>
 #include <math.h>
@@ -259,6 +260,85 @@ static bool native_array_each_reduce(DiamondVm *vm,const DiamondChunk *chunk,
     }
     gc_unprotect(vm,mark);
     if(*status==DIAMOND_VM_OK)*result=reduce?accumulator:DIAMOND_OBJECT(values);
+    return true;
+}
+
+#if defined(__x86_64__)
+static_assert(offsetof(DiamondJitLoop, array) == 0, "jit.c reads the array at 0");
+static_assert(offsetof(DiamondJitLoop, code) == 8, "jit.c reads the code at 8");
+static_assert(offsetof(DiamondJitLoop, child) == 16, "jit.c reads the chunk at 16");
+static_assert(offsetof(DiamondJitLoop, closure) == 24, "jit.c reads the closure at 24");
+static_assert(offsetof(DiamondJitLoop, frame_bytes) == 32, "jit.c reads frame_bytes at 32");
+static_assert(offsetof(DiamondJitLoop, self_slot) == 36, "jit.c reads self_slot at 36");
+static_assert(offsetof(DiamondJitLoop, map) == 37, "jit.c reads map at 37");
+static_assert(offsetof(DiamondJitLoop, index) == 40, "jit.c reads the index at 40");
+static_assert(offsetof(DiamondJitLoop, result) == 48, "jit.c writes the result at 48");
+static_assert(offsetof(DiamondJitLoop, current) == 64, "jit.c writes the element at 64");
+static_assert(sizeof(DiamondJitLoop) == DIAMOND_JIT_LOOP_BYTES, "jit.c reserves the loop");
+#endif
+
+/* See jit.h. Mirrors the route diamond_invoke_general takes for an Array
+ * receiver and these names: the bridge (only a cached one; the first call
+ * goes the long way and caches it), the prelude function's two CHECK_TYPEs
+ * through native_loop_block, and block_call_prepare, then what
+ * block_call_run checks before calling a compiled block natively. */
+bool diamond_jit_loop_begin(DiamondVm *vm, const DiamondChunk *chunk,
+        const DiamondValue *registers, const uint8_t *site, size_t depth,
+        DiamondJitLoop *loop) {
+    const uint16_t recv=bridge_operand(site+3);
+    const uint16_t name=bridge_operand(site+5);
+    const uint16_t base=bridge_operand(site+7);
+    if(site[9]!=1||!vm->jit||vm->debug_fd>=0||vm->max_instructions!=0||
+       vm->max_wall_nanoseconds!=0||vm->max_memory_bytes!=0||vm->resource_grace_active||
+       vm->jit_depth_limit==0||depth+1>=vm->jit_depth_limit||
+       (size_t)name>=chunk->string_count||
+       registers[recv].kind!=DIAMOND_VALUE_OBJECT||
+       registers[recv].as.object->kind!=DIAMOND_OBJECT_ARRAY)
+        return false;
+    const DiamondStringConstant *method_name=&chunk->strings[name];
+    bool map;
+    if(method_name->length==4&&memcmp(method_name->chars,"each",4)==0)map=false;
+    else if(method_name->length==3&&memcmp(method_name->chars,"map",3)==0)map=true;
+    else return false;
+    const DiamondFunction *target=nullptr;
+    if(!cached_extension_lookup(vm,(const uint8_t *)(const void *)method_name,
+           (uint8_t)DIAMOND_OBJECT_ARRAY,&target)||target==nullptr||
+       strcmp(target->name,map?"array_map":"array_each")!=0||target->code_count<10)
+        return false;
+    const uint8_t *code=target->code;
+    if(code[0]!=DIAMOND_OP_CHECK_TYPE||bridge_operand(code+1)!=0||
+       code[5]!=DIAMOND_OP_CHECK_TYPE||bridge_operand(code+6)!=1)
+        return false;
+    const DiamondClosure *called=native_loop_block(chunk,target,registers[recv],registers[base]);
+    if(called==nullptr)return false;
+    const DiamondFunction *fn=chunk->functions[called->function_index];
+    DiamondBlockCall call;
+    if(block_call_prepare(chunk,fn,called,1,&call)!=DIAMOND_VM_OK||call.argc!=1||
+       call.child==&call.child_storage||fn->jit_code==nullptr||
+       (call.self_slot&&fn->owner_class!=DIAMOND_OWNER_CAPTURED_SELF)||
+       fn->register_count<(call.self_slot?2u:1u)||
+       fn->register_count>DIAMOND_JIT_MAX_REGISTERS)
+        return false;
+    *loop=(DiamondJitLoop){
+        .array=(const DiamondArray *)registers[recv].as.object,
+        .code=fn->jit_code,
+        .child=call.child,
+        .closure=called,
+        .frame_bytes=(uint32_t)(fn->register_count*sizeof(DiamondValue)),
+        .self_slot=call.self_slot,
+        .map=map,
+        .result=DIAMOND_NIL,
+        .current=DIAMOND_NIL,
+        .gc_mark=vm->gc_protected_count,
+    };
+    if(map) {
+        loop->collected=allocate_array(vm,nullptr,0);
+        if(loop->collected==nullptr)return false;
+        if(!gc_protect(vm,DIAMOND_OBJECT(loop->collected))) {
+            gc_unprotect(vm,loop->gc_mark);
+            return false;
+        }
+    }
     return true;
 }
 

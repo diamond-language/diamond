@@ -7,4 +7,4 @@
 sym Registry Registry 10
 0123
 \[destructuring assignment expected 2 element(s), got 1, undefined method 'negate' for String\]
-jit: 12 compiled function(s), 0 bailout(s), 0 hard propagation(s)
+jit: 13 compiled function(s), 0 bailout(s), 0 hard propagation(s)

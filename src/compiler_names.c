@@ -2766,8 +2766,7 @@ static uint16_t parse_invoke_named_impl(Compiler *compiler, uint16_t receiver,
          * parse_identifier handed back their bare register directly
          * (compiler.c:807-808), aliasing whatever local they came from.
          * If the block below happens to eagerly capture that same local
-         * (unconditional -- every enclosing local, whether the block's
-         * body actually references it or not), compile_block's own
+         * (when its body reads it, or the discovery pass could not tell), compile_block's own
          * BOX_LOCAL turns that register into a Cell in place *after*
          * this point, and this call would silently read the Cell instead
          * of the value it already resolved. Snapshot the receiver and

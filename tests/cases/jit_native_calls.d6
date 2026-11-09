@@ -184,3 +184,26 @@ puts(deep(100000))
 Square.redefine_method("area", Square.compile_method("area", [], "@size + 1000", {}))
 puts(areas(shapes))
 puts(described([shapes[1]]))
+
+# Comparing with nil: answered in compiled code for a class without `==`,
+# by the class's own `==` otherwise, and by one defined at run time.
+class Always
+  def ==(other) -> Bool = true
+end
+
+class Late
+end
+
+def nil_checks(values) -> Array[Bool]
+  values.map() do |v|
+    v == nil
+  end
+end
+
+def not_nil(v) -> Bool = v != nil
+
+late = Late.new()
+puts([nil_checks([Node.new(1, nil), Always.new(), late, nil]), not_nil(late), not_nil(nil)])
+puts([nil_checks([late]), not_nil(late)])
+Late.define_method("==", Late.compile_method("same", ["other"], "true", {}))
+puts([nil_checks([late, Node.new(2, nil)]), not_nil(late)])

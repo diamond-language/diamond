@@ -179,9 +179,10 @@ all for a zero-arity block. A block with no parameters ignores whatever the
 method passes it, so `3.times() do ... end` runs three times. Otherwise a block
 takes exactly as many parameters as the method passes: `{"a": 1}.each() do |key|`
 fails with `expected Callable[2], got Callable[1]` rather than silently dropping
-the value. Named closures and function references always need an exact match. A block captures every local visible at the
-point it's written, the same eager, unconditional capture nested `def`s
-use — not just the ones its body actually references.
+the value. Named closures and function references always need an exact match. A block can see every local visible at the
+point it's written and shares each one it reads with the enclosing code (an assignment on
+either side is seen by the other). Locals its body never names are left out, so they cost
+nothing; nested `def`s capture every visible local.
 
 `self` is one of those captured locals too. Inside a `do ... end` block
 written in an instance or singleton method, `self` refers to that

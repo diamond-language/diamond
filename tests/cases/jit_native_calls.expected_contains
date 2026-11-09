@@ -5,6 +5,8 @@
 ^\[5, 14, 0\]$
 ^6$
 ^61$
+^\[\[false\], true\]$
+^\[\[false, true, false, true\], true, false\]$
 ^ghost vanish/2$
 ^\[ok 1, 0 10\]$
 ^\[ok 2, 0 10\]$
@@ -13,4 +15,5 @@
 ^\[shape 3, square 9, shape 6, shape 1, shape 18, shape 24\]$
 ^\[size 3, error undefined method 'size' for Nil\]$
 ^\[square 1003\]$
-jit: 36 compiled function(s), 0 bailout(s), [0-9]* hard propagation(s)
+^\[\[true, false\], false\]$
+jit: 39 compiled function(s), 0 bailout(s), [0-9]* hard propagation(s)

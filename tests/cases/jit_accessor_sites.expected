@@ -1,0 +1,18 @@
+1.5
+[1.5, p0, 0, nil]
+2.5
+[2.5, labeled, 0, nil]
+2.0
+[2.0, p1, 0, nil]
+3.0
+[3.0, labeled, 0, nil]
+2.5
+[2.5, p2, 0, nil]
+3.5
+[3.5, labeled, 0, nil]
+error expected Float, got Int
+set 8.5
+error frozen object cannot be modified
+young 1999.0
+young 0.0
+nil
