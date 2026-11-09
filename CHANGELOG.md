@@ -115,6 +115,13 @@ authoritative fine-grained record.
   setters (`attr_accessor`, `def x() = @x`) no longer go through C. Together with the native
   calls above, instruction counts fell 63% on an n-body simulation, 61% on small objects, 54%
   on polymorphic calls, 49% on binary trees and 41% on structs.
+- **Compiled code reads Array elements inline.** With the JIT on, `values[i]` for a
+  non-negative Int index inside the array is a direct load; everything else takes the usual
+  path. The sieve benchmark runs 15% fewer instructions.
+- **Closures and captured variables are cheaper to create.** Swept closures (up to 16 captures)
+  and capture cells are kept for reuse, like small objects, strings and arrays already were.
+  A closure-heavy benchmark runs 31% fewer instructions in the interpreter and 47% fewer with
+  the JIT.
 - **The interpreter is faster.** 64 builtin opcode bodies moved out of its main loop, which
   leaves the compiler more registers for the hot path: 2 to 10% fewer instructions on every
   benchmark (fibonacci and tail calls about 10%), and with the JIT on `fiber_switch` and

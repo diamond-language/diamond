@@ -2776,3 +2776,12 @@ through a cell. Previously nbody's `bodies.each() do ... end` boxed eleven local
 Instruction counts against main 3c23c589 (PGO=0 release builds, JIT on, threshold 1), native
 calls included: nbody −63%, objects −61%, poly −54%, trees −49%, structs −41%, closures and
 exceptions −9%. Without the JIT, nbody runs 11% fewer from the capture change alone.
+
+Two smaller costs went the same way. INDEX_GET (`compile_index_get`) copies an Array element
+inline when the index is an Int in `[0, count)` (one unsigned compare covers negatives); a
+negative index, a Range, an out-of-bounds index and every other receiver call
+`diamond_jit_index_get`. And closures and capture cells, which nbody makes once per `advance`
+call, now come from pools like instances, Strings and Array headers (`DiamondVm.cell_pool`,
+`closure_pool` by capture count up to 16, both off under ASan), filled by the sweep within the
+same `pool_bytes` budget. With both: nbody −67%, poly −63%, closures −47%, sieve −15% against
+main with the JIT; closures −31% and nbody −12% without it.

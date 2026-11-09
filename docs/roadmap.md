@@ -145,9 +145,6 @@ poly's 54%, trees' 49% and structs' 41%; rerun the suite for new ratios.
   four-way class cache per method call site. Traced on 0.29.0-dev:
   - Block bodies run as native code now, but every block call still goes through C
     (`block_call_run` and a register copy) rather than a native call from the loop.
-  - Array indexing (`bodies[i]`) still calls `diamond_jit_index_get`, and creating a closure
-    or a capture cell costs a few hundred instructions of allocation each (nbody makes one
-    of each per `advance` call).
   - Compiled bodies keep every value in memory and re-check types the caller already proved
     (fib's `n < 2` reloads and re-tests the tag of a parameter the entry check just
     confirmed). Most of fib's remaining gap to YJIT is register allocation and type

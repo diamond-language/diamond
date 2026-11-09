@@ -436,11 +436,30 @@ static void sweep_list(DiamondVm *vm, DiamondObject **list_head,
             for(size_t index=0;index<hash->constraint_count;index++)
                 free(hash->constraints[index].type_variable_bindings);
             free(hash->entries);free(hash->buckets);free(hash->dirty_cards);
+        } else if(unreached->kind==DIAMOND_OBJECT_CELL) {
+            size=sizeof(DiamondCell);
+            /* Kept for allocate_cell to reuse (DiamondVm.cell_pool). */
+            if(array_pool_enabled()&&vm->pool_bytes+size<=vm->minor_gc_threshold_bytes) {
+                vm->bytes_allocated-=size;
+                vm->pool_bytes+=size;
+                unreached->next=vm->cell_pool;
+                vm->cell_pool=unreached;
+                continue;
+            }
         } else if(unreached->kind==DIAMOND_OBJECT_CLOSURE) {
-            free(((DiamondClosure *)unreached)->type_bindings);
-            size=sizeof(DiamondClosure)+
-                ((DiamondClosure *)unreached)->capture_count*sizeof(DiamondValue)+
-                ((DiamondClosure *)unreached)->type_binding_count*sizeof(DiamondTypeBinding);
+            DiamondClosure *closure=(DiamondClosure *)unreached;
+            free(closure->type_bindings);
+            size=sizeof(DiamondClosure)+closure->capture_count*sizeof(DiamondValue)+
+                closure->type_binding_count*sizeof(DiamondTypeBinding);
+            /* Kept for allocate_closure to reuse (DiamondVm.closure_pool). */
+            const int pool=closure_pool_index(closure->capture_count,closure->type_binding_count);
+            if(pool>=0&&vm->pool_bytes+size<=vm->minor_gc_threshold_bytes) {
+                vm->bytes_allocated-=size;
+                vm->pool_bytes+=size;
+                unreached->next=vm->closure_pool[pool];
+                vm->closure_pool[pool]=unreached;
+                continue;
+            }
         } else if(unreached->kind==DIAMOND_OBJECT_FIBER) {
             size=sizeof(DiamondFiberHandle);
             diamond_fiber_free(((DiamondFiberHandle *)unreached)->fiber);
