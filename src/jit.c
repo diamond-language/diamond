@@ -1486,6 +1486,88 @@ static void compile_get_ivar(JitCompiler *jc, size_t instruction_start, uint16_t
     emit_bail_if_al_nonzero(jc);
 }
 
+/* GET_IVAR read inline: an Instance whose shape covers the field gives the
+ * field, one whose shape stops short of it gives nil (instance_field_value).
+ * Anything else, an error included, takes diamond_jit_get_ivar. */
+static void compile_get_ivar_inline(JitCompiler *jc, size_t instruction_start, uint16_t dest,
+        uint16_t recv, uint16_t field) {
+    JitBuffer *buf = &jc->buf;
+    size_t slow[4];
+    size_t slow_count = 0;
+    const int32_t field_at = (int32_t)(offsetof(DiamondInstance, fields) +
+        (size_t)field * sizeof(DiamondValue));
+    emit_object_kind_guard(buf, JIT_REGISTERS_BASE, reg_disp(recv, 0),
+        DIAMOND_OBJECT_INSTANCE, slow, &slow_count);
+    emit_load_r64(buf, REG_RCX, REG_RDX, (int32_t)offsetof(DiamondInstance, shape));
+    emit_load_byte_zx(buf, REG_RAX, REG_RCX, (int32_t)offsetof(DiamondShape, field_count));
+    emit_cmp_imm32_32(buf, REG_RAX, field);
+    const size_t past_shape = emit_jcc_placeholder(buf, JCC_BE);
+    emit_copy_value(buf, JIT_REGISTERS_BASE, reg_disp(dest, 0), REG_RDX, field_at);
+    const size_t read = emit_jmp_placeholder(buf);
+    patch_rel32_to_here(buf, past_shape);
+    emit_load_r64(buf, REG_RCX, REG_RDX, (int32_t)offsetof(DiamondInstance, field_count));
+    emit_cmp_imm32_64(buf, REG_RCX, field);
+    slow[slow_count++] = emit_jcc_placeholder(buf, JCC_BE);
+    emit_mov_imm64(buf, REG_RCX, DIAMOND_VALUE_NIL);
+    emit_store_r64(buf, JIT_REGISTERS_BASE, reg_disp(dest, 0), REG_RCX);
+    emit_u8(buf, 0x31); emit_u8(buf, 0xC9);                       /* xor ecx, ecx */
+    emit_store_r64(buf, JIT_REGISTERS_BASE, reg_disp(dest, AS_OFF), REG_RCX);
+    const size_t niled = emit_jmp_placeholder(buf);
+    for (size_t i = 0; i < slow_count; i++) patch_rel32_to_here(buf, slow[i]);
+    compile_get_ivar(jc, instruction_start, dest, recv, field);
+    patch_rel32_to_here(buf, read);
+    patch_rel32_to_here(buf, niled);
+}
+
+/* SET_IVAR written inline when nothing about it is unusual: an unfrozen
+ * Instance with the field, moved to the next shape if this is the field's
+ * first write (instance_materialize_field), and no write barrier needed
+ * (a young object, or an old one already remembered). Anything else takes
+ * diamond_jit_set_ivar, which repeats the store, so a value already written
+ * before the barrier check is simply written again. */
+static void compile_set_ivar_inline(JitCompiler *jc, size_t instruction_start, uint16_t recv,
+        uint16_t field, uint16_t source) {
+    JitBuffer *buf = &jc->buf;
+    size_t slow[8];
+    size_t slow_count = 0;
+    const int32_t field_at = (int32_t)(offsetof(DiamondInstance, fields) +
+        (size_t)field * sizeof(DiamondValue));
+    emit_object_kind_guard(buf, JIT_REGISTERS_BASE, reg_disp(recv, 0),
+        DIAMOND_OBJECT_INSTANCE, slow, &slow_count);
+    emit_load_byte_zx(buf, REG_RAX, REG_RDX, (int32_t)offsetof(DiamondObject, frozen));
+    emit_test_r8(buf, REG_RAX);
+    slow[slow_count++] = emit_jcc_placeholder(buf, JCC_NE);
+    emit_load_r64(buf, REG_RCX, REG_RDX, (int32_t)offsetof(DiamondInstance, field_count));
+    emit_cmp_imm32_64(buf, REG_RCX, field);
+    slow[slow_count++] = emit_jcc_placeholder(buf, JCC_BE);
+    emit_load_r64(buf, REG_RCX, REG_RDX, (int32_t)offsetof(DiamondInstance, shape));
+    emit_load_byte_zx(buf, REG_RAX, REG_RCX, (int32_t)offsetof(DiamondShape, field_count));
+    emit_cmp_imm32_32(buf, REG_RAX, field);
+    const size_t shaped = emit_jcc_placeholder(buf, JCC_A);
+    emit_load_r64(buf, REG_RAX, REG_RDX, (int32_t)offsetof(DiamondInstance, class));
+    emit_lea(buf, REG_RAX, REG_RAX, (int32_t)(offsetof(DiamondClass, shapes) +
+        ((size_t)field + 1) * sizeof(DiamondShape)));
+    emit_store_r64(buf, REG_RDX, (int32_t)offsetof(DiamondInstance, shape), REG_RAX);
+    emit_mov_rr(buf, REG_RCX, JIT_VM);
+    /* add qword [rcx + shape_transitions], 1 */
+    emit_u8(buf, 0x48); emit_u8(buf, 0x83); emit_u8(buf, 0x81);
+    emit_u32_le(buf, (uint32_t)offsetof(DiamondVm, shape_transitions));
+    emit_u8(buf, 1);
+    patch_rel32_to_here(buf, shaped);
+    emit_copy_value(buf, REG_RDX, field_at, JIT_REGISTERS_BASE, reg_disp(source, 0));
+    emit_load_byte_zx(buf, REG_RAX, REG_RDX, (int32_t)offsetof(DiamondObject, old));
+    emit_test_r8(buf, REG_RAX);
+    const size_t young = emit_jcc_placeholder(buf, JCC_E);
+    emit_load_byte_zx(buf, REG_RAX, REG_RDX, (int32_t)offsetof(DiamondObject, remembered));
+    emit_test_r8(buf, REG_RAX);
+    const size_t remembered = emit_jcc_placeholder(buf, JCC_NE);
+    slow[slow_count++] = emit_jmp_placeholder(buf);
+    for (size_t i = 0; i < slow_count; i++) patch_rel32_to_here(buf, slow[i]);
+    compile_set_ivar(jc, instruction_start, recv, field, source);
+    patch_rel32_to_here(buf, young);
+    patch_rel32_to_here(buf, remembered);
+}
+
 /* INDEX_GET (Phase 2e: full Hash/String/Array/Instance-overload support,
  * replacing Phase 2b's Hash-only version -- see diamond_jit_index_get's
  * own comment in jit.h for why). Can allocate (String/Array paths) and
@@ -3692,7 +3774,7 @@ static bool compile_value_instruction(JitCompiler *jc, DiamondOpCode opcode, siz
             if (!decode_u16(fn, &pc, &recv) || !decode_u16(fn, &pc, &field) ||
                 !decode_u16(fn, &pc, &source)) { jc->bailed = true; return true; }
             if (field > UINT8_MAX) { jc->bailed = true; return true; }
-            compile_set_ivar(jc, instruction_start, recv, field, source);
+            compile_set_ivar_inline(jc, instruction_start, recv, field, source);
             break;
         }
         case DIAMOND_OP_GET_IVAR: {
@@ -3700,7 +3782,7 @@ static bool compile_value_instruction(JitCompiler *jc, DiamondOpCode opcode, siz
             if (!decode_u16(fn, &pc, &dest) || !decode_u16(fn, &pc, &recv) ||
                 !decode_u16(fn, &pc, &field)) { jc->bailed = true; return true; }
             if (field > UINT8_MAX) { jc->bailed = true; return true; }
-            compile_get_ivar(jc, instruction_start, dest, recv, field);
+            compile_get_ivar_inline(jc, instruction_start, dest, recv, field);
             break;
         }
         case DIAMOND_OP_COLLECT_VARIADIC: {
