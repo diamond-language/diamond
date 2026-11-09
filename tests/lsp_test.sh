@@ -3377,6 +3377,57 @@ count=$((count + 1))
 send '{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"'"$inferred_records_uri"'"}}}'
 read_message >/dev/null
 
+
+# --- safe navigation: `&.` resolves the receiver's non-nil view ---
+# Left of `&.` a nil never reaches the method, so a nullable Hash lookup,
+# `T | Nil` local or nullable call result completes as T. A plain `.` after
+# a nullable value (including a `&.` call's result) stays unresolved.
+safe_uri="file://$work/safe_navigation.d6"
+safe_text='class Pet\n  def bark() = \"woof\"\nend\nclass Owner\n  def pet() -> Pet | Nil\n    Pet.new()\n  end\nend\ndef lookup(pets: Hash[String, Pet], pet: Pet | Nil, owner: Owner | Nil, name: String | Nil)\n  pets[\"rex\"]&.bark()\n  pets[\"rex\"].bark()\n  pet&.bark()\n  owner&.pet()&.bark()\n  owner&.pet().bark()\n  name&.upcase()\nend'
+send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$safe_uri"'","languageId":"d6","version":1,"text":"'"$safe_text"'"}}}'
+read_message >/dev/null
+for request in '3001 9 15 has' '3002 10 14 lacks' '3003 11 7 has' '3004 12 16 has' '3005 13 15 lacks'; do
+    set -- $request
+    send '{"jsonrpc":"2.0","id":'"$1"',"method":"textDocument/completion","params":{"textDocument":{"uri":"'"$safe_uri"'"},"position":{"line":'"$2"',"character":'"$3"'}}}'
+    response="$(read_message)"
+    if [[ "$4" == has ]]; then
+        [[ "$response" == *'"label":"bark","kind":3'* ]]
+    else
+        [[ "$response" != *'"label":"bark","kind":3'* ]]
+    fi
+    count=$((count + 1))
+done
+send '{"jsonrpc":"2.0","id":3006,"method":"textDocument/completion","params":{"textDocument":{"uri":"'"$safe_uri"'"},"position":{"line":14,"character":8}}}'
+response="$(read_message)"
+[[ "$response" == *'"label":"upcase"'* ]]
+count=$((count + 1))
+send '{"jsonrpc":"2.0","id":3007,"method":"textDocument/definition","params":{"textDocument":{"uri":"'"$safe_uri"'"},"position":{"line":11,"character":8}}}'
+response="$(read_message)"
+[[ "$response" == *'"start":{"line":1,"character":6}'* ]]
+count=$((count + 1))
+send '{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"'"$safe_uri"'"}}}'
+read_message >/dev/null
+
+# A leading `&.` line indents as a chain link, like a leading `.`.
+fmt_safe_uri="file:///fmt_safe.d6"
+send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$fmt_safe_uri"'","text":"def f(pets)\n  name = pets[\"rex\"]\n    &.name()\n    &.upcase()\n  name\nend"}}}'
+read_message >/dev/null
+send '{"jsonrpc":"2.0","id":3008,"method":"textDocument/formatting","params":{"textDocument":{"uri":"'"$fmt_safe_uri"'"},"options":{"tabSize":2,"insertSpaces":true}}}'
+response="$(read_message)"
+[[ "$response" == '{"jsonrpc":"2.0","id":3008,"result":[]}' ]]
+count=$((count + 1))
+send '{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"'"$fmt_safe_uri"'"}}}'
+read_message >/dev/null
+fmt_safe_broken_uri="file:///fmt_safe_broken.d6"
+send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$fmt_safe_broken_uri"'","text":"def f(pets)\n  name = pets[\"rex\"]\n    &.name()\n  &.upcase()\n  name\nend"}}}'
+read_message >/dev/null
+send '{"jsonrpc":"2.0","id":3009,"method":"textDocument/formatting","params":{"textDocument":{"uri":"'"$fmt_safe_broken_uri"'"},"options":{"tabSize":2,"insertSpaces":true}}}'
+response="$(read_message)"
+[[ "$response" == '{"jsonrpc":"2.0","id":3009,"result":[{"range":{"start":{"line":3,"character":0},"end":{"line":3,"character":2}},"newText":"    "}]}' ]]
+count=$((count + 1))
+send '{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"'"$fmt_safe_broken_uri"'"}}}'
+read_message >/dev/null
+
 # --- shutdown then exit: clean exit code 0 ---
 
 send '{"jsonrpc":"2.0","id":3,"method":"shutdown"}'

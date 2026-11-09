@@ -86,13 +86,6 @@ Current behavior: [sandbox](sandbox.md).
 Current behavior: [language server](lsp.md). The language server recompiles complete
 documents and loses precision across some dependency and dynamic-flow boundaries.
 
-- Improve receiver facts across imported files where they still lose precision:
-  union methods now retain differing representable Array element graphs through
-  direct indexing and copying transforms. Declared Hash lookup locals now retain
-  compiler-proven nil guards for editor queries. Representable inferred Hash
-  results now carry nullable value graphs through wrappers and explicit guards
-  as editor-only facts. Direct nullable
-  indexing and unrepresentable dynamic results remain unresolved.
 - Explore incremental compilation only after the compiler has a reusable unit boundary
   that makes incremental synchronization worthwhile.
 - Keep editor results conservative when a receiver cannot be proven.
