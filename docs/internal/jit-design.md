@@ -2669,3 +2669,69 @@ reservation, and `RETURN` goes through `diamond_jit_return`. Either is cheap nex
 call it comes with. A tail call in such a function still keeps it interpreted. Rejected functions
 fell from 434 to 363 over the test cases, benchmarks and examples (a recount that includes this
 change's test). What remains is a tail of opcodes.
+
+## Native calls
+
+A compiled function's own recursion was the only call made in native code (see "Native
+self-calls" above). Calls to other functions and methods went through C: `diamond_jit_call_function`
+and `diamond_jit_invoke_instance` find the callee, build its chunk and arguments and enter it
+through `jit_run_native`. Now both kinds of call enter the callee's compiled code directly once
+it has some, through `emit_native_entry_call`, which does what `jit_run_native` does:
+
+- It reserves a 32-byte header and the callee's register file on the native stack. The header
+  holds the entry's seventh argument (the closure, nullptr as for any plain or method call),
+  the amount to release afterwards and the callee's chunk. The size is known at compile time
+  for a plain call and read from the cache entry for a method, so RSP moves by an amount
+  only known at run time and `rsp_delta` does not follow it; nothing in between reads it.
+- It copies the arguments in (a method's receiver first), zeroes the rest of the file and
+  calls the entry with the usual six arguments, the caller's destination register as `result`.
+- A status other than OK goes to `diamond_jit_self_call_finish` (plain calls) or
+  `diamond_jit_method_call_finish` (methods, which rebuilds the receiver-first arguments from
+  the caller's registers). A staged tail call runs through `jit_tail_loop`, a retry reruns the
+  call in `run_chunk` and anything else propagates.
+
+Both check `depth + 1` against `vm->jit_depth_limit` first. The slow paths fill the limit in
+when it is still 0.
+
+**Plain calls** (`compile_call_native`). The callee is known when the caller compiles: it is
+the entry at the CALL's index in the function table `try_compile` receives. Only a callee the
+native path handles exactly as the C path would qualifies: no rest parameter, argument count
+within its arity, a register file that holds the arguments and fits on the stack
+(`DIAMOND_JIT_MAX_REGISTERS`). At run time the code checks what `diamond_jit_call_function` and
+`plain_call_chunk_for` would find: the same function at that index in this chunk's table, its
+cached `call_chunk` valid for that table, and compiled code. Anything else takes
+`diamond_jit_call_function`, which also warms the callee up and compiles it.
+
+**Method calls** (`emit_invoke_native_begin`). The callee depends on the receiver's class, so
+each compiled INVOKE site gets an id and, per VM, a `DiamondJitCallSite` in
+`vm->jit_call_sites` (`jit.h`): four ways of (class, compiled code, call chunk, register file
+size). The site checks that the receiver is an Instance, then compares its class with the four
+ways. A hit calls the code. A miss runs `diamond_jit_call_site_fill`, then the site's usual C
+dispatch. The fill lists the class only when `diamond_jit_invoke_instance` would end in
+`jit_call_or_interpret(fn, &fn->call_chunk, [receiver, arguments...])` for it:
+
+- the class itself answers the name (`lookup_method`), so no universal method (`dup`, `to_s`,
+  ...) or `method_missing` is involved;
+- the method is public, not variadic, has no compile_method bound values and takes this
+  argument count;
+- the name is not `message`, `cause` or `backtrace`, which an exception answers from its
+  fields whatever its class defines;
+- it is not `Range#to_a`, which is answered natively.
+
+A getter or setter is answered by the accessor shortcuts without a call, so it never warms up
+through `jit_call_core`. The fill counts its calls and compiles it at the threshold, so accessor
+calls are native too. A site stops trying after 16 failed fills: receivers that are not
+Instances, classes that do not qualify, more classes than ways. Generated code checks that
+count before calling the fill, so a site that has given up pays one compare, and a receiver that
+is not an Instance skips the fill. A site whose receiver the compiler knows is a built-in value
+(String, Array, Hash, ...) gets no native path at all.
+
+The table is per VM because method caches are per VM: supervised children share compiled code
+but not caches, and `diamond_vm_invalidate_method_caches` (each run, `define_method`,
+`redefine_method`) clears this table too. A redefined method is never called from a
+stale entry.
+
+Instruction counts against main (PGO=0 release builds, JIT on, threshold 1): poly −49%,
+objects −38%, nbody −28%, structs −20%, trees −7% in the `fistfight` suite. In `bench/`,
+dispatch_monomorphic −73%, the `jit_invoke_*` benchmarks −53% to −67%, dispatch_polymorphic
+−59% and dispatch_megamorphic −44%. `Class.new` still goes through `diamond_jit_new_instance`.

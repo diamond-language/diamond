@@ -560,6 +560,45 @@ DiamondVmStatus diamond_jit_self_call_finish(DiamondVm *vm, const DiamondChunk *
         const DiamondValue *arguments, uint8_t argc, size_t depth, DiamondValue *out,
         uint8_t status);
 
+/* Native method calls (jit.c compile_invoke_native). Each compiled method
+ * call site has an id and, per VM, a DiamondJitCallSite (vm->jit_call_sites):
+ * up to DIAMOND_JIT_CALL_WAYS receiver classes, each with the compiled code
+ * of the method that class answers, the chunk it runs in and the size of its
+ * register file. A receiver whose class is listed is called straight into
+ * that code; anything else takes the C dispatch, which first lets
+ * diamond_jit_call_site_fill list the class when the call is one the
+ * interpreter would make exactly that way. A site that keeps failing to
+ * fill (receivers that are not Instances, methods that are private,
+ * variadic or answered without running their body, more classes than
+ * ways) stops trying after DIAMOND_JIT_CALL_FILL_TRIES. The layout is read
+ * by generated code: keep the static_asserts in vm_calls.c in step. */
+typedef struct DiamondJitCallEntry {
+    const struct DiamondClass *receiver_class;
+    void *code;
+    const DiamondChunk *chunk;
+    uint64_t frame_bytes;
+} DiamondJitCallEntry;
+enum { DIAMOND_JIT_CALL_WAYS = 4, DIAMOND_JIT_CALL_FILL_TRIES = 16 };
+typedef struct DiamondJitCallSite {
+    DiamondJitCallEntry entries[DIAMOND_JIT_CALL_WAYS];
+    uint32_t failed_fills;
+    uint32_t reserved;
+} DiamondJitCallSite;
+
+/* Lists the receiver's class at call site `site_id` (the INVOKE or
+ * INVOKE_MONO instruction at `site`) when its method can be called natively.
+ * Also fills in vm->jit_depth_limit, which the native call checks. */
+void diamond_jit_call_site_fill(DiamondVm *vm, const DiamondChunk *chunk,
+        const DiamondValue *receiver, const uint8_t *site, uint32_t site_id);
+
+/* A native method call's non-OK status: as diamond_jit_self_call_finish,
+ * with the arguments the call was made with rebuilt from the caller's
+ * registers (the receiver, then registers[base..base+argc)). `operands`
+ * packs recv | base << 16 | argc << 32. */
+DiamondVmStatus diamond_jit_method_call_finish(DiamondVm *vm, const DiamondChunk *chunk,
+        const DiamondValue *registers, uint64_t operands, size_t depth, DiamondValue *out,
+        uint8_t status);
+
 /* Closures created by compiled code (src/vm_calls.c). diamond_jit_closure
  * is DIAMOND_OP_CLOSURE, read from the instruction at `site` (the same
  * diamond_make_closure run_chunk uses), with the compiled function's own

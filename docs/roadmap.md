@@ -136,19 +136,18 @@ Collections are stop-the-world within each isolated VM.
 The local `fistfight` suite pairs d6 and Ruby programs (21 pairs). On 0.29.0-dev the d6
 interpreter beats the Ruby interpreter on 20 of them and ties on fib (1.03x). The gaps left
 are against YJIT, on call-heavy and floating-point object code: fib 2.7x, poly 2.0x, nbody
-2.0x, trees 1.9x, sieve 1.25x, loop 1.2x, iterate 1.1x (best d6 over best Ruby). d6's own JIT
-(opt-in) barely moves those: fib 195 to 161 ms, and trees, nbody, poly and objects not at all.
+2.0x, trees 1.9x, sieve 1.25x, loop 1.2x, iterate 1.1x (best d6 over best Ruby), measured
+before d6's JIT (opt-in) called other compiled functions and methods natively. That change
+cut poly's instructions 49%, objects' 38%, nbody's 28% and trees' 7% with the JIT on; rerun the
+suite for new ratios.
 
-- **JIT coverage** -- the JIT speeds up `loop`, `mandelbrot` and `sieve` (simple numeric
-  loops) but not calls, field access or Float objects. Traced on 0.29.0-dev:
+- **JIT coverage** -- calls between compiled functions and methods are native now, with a
+  four-way class cache per method call site. Traced on 0.29.0-dev:
   - Block bodies run as native code now, but every block call still goes through C
     (`block_call_run` and a register copy) rather than a native call from the loop.
-  - Polymorphic and untyped call sites pay the full dispatch per call (poly's
-    `shapes[i].area()`); a per-site inline cache checked in native code would cut that.
-  - A compiled function's call to itself is native now (fib 121 ms against YJIT's 60), but
-    calls to other functions and methods still go through C trampolines: in trees,
-    `diamond_jit_invoke_instance` and `diamond_jit_new_instance` lead. Gains need native
-    calls between compiled functions, and inline field reads and writes.
+  - `Class.new` still goes through `diamond_jit_new_instance` (trees' `Node.new`), and a
+    compiled getter or setter is a whole native call where an inline field read or write
+    would do.
   - Compiled bodies keep every value in memory and re-check types the caller already proved
     (fib's `n < 2` reloads and re-tests the tag of a parameter the entry check just
     confirmed). Most of fib's remaining gap to YJIT is register allocation and type

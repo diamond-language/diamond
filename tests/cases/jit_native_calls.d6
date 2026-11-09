@@ -1,0 +1,186 @@
+# Compiled code calls other compiled functions and methods natively (threshold
+# 1, stress GC): a plain call to another function, and a method call whose
+# receiver's class the call site has cached (up to four classes per site).
+# Everything the cache cannot answer exactly as the interpreter would still
+# goes through C: more classes than the site holds, private methods,
+# method_missing, a redefined method, a receiver that is not an object.
+
+def add(a: Int, b: Int = 10) -> Int = a + b
+
+def boom(n: Int) -> Int
+  raise "boom #{n}" if n > 2
+  n
+end
+
+def countdown(n: Int) -> Int
+  return 0 if n == 0
+  hop(n - 1)
+end
+
+def hop(n: Int) -> Int = countdown(n)
+
+# Not tail calls: each level is a native call, so depth is checked there.
+def climb(n: Int) -> Int
+  return 0 if n == 0
+  1 + step(n - 1)
+end
+
+def step(n: Int) -> Int
+  1 + climb(n)
+end
+
+def calls(n: Int) -> Array[Int]
+  [add(n, 1), add(n), countdown(n)]
+end
+
+def guarded(n: Int) -> String
+  begin
+    "ok #{boom(n)}"
+  rescue e
+    "rescued #{e}"
+  end
+end
+
+def deep(n: Int) -> String
+  begin
+    "#{countdown(n)} #{climb(n)}"
+  rescue e: Exception
+    "overflow #{e.message().slice(0, 20)}"
+  end
+end
+
+class Shape
+  def initialize(size: Int)
+    @size = size
+  end
+
+  attr_reader size: Int
+
+  def area() -> Int = @size
+  def describe() -> String = "#{label()} #{area()}"
+  def label() -> String = "shape"
+end
+
+class Square < Shape
+  def area() -> Int = @size * @size
+  def label() -> String = "square"
+end
+
+class Rect < Shape
+  def area() -> Int = @size * 2
+end
+
+class Tri < Shape
+  def area() -> Int = @size / 2
+end
+
+class Hex < Shape
+  def area() -> Int = @size * 6
+end
+
+class Oct < Shape
+  def area() -> Int = @size * 8
+end
+
+class Counter
+  def initialize()
+    @count = 0
+  end
+
+  attr_accessor count: Int
+
+  def bump(by: Int) -> Counter
+    @count = @count + by
+    self
+  end
+
+  def total() -> Int = secret() + @count
+
+  private
+
+  def secret() -> Int = 1000
+end
+
+class Ghost
+  def method_missing(name, args)
+    "ghost #{name}/#{args.length()}"
+  end
+end
+
+class Node
+  def initialize(value: Int, rest: Node | Nil)
+    @value = value
+    @rest = rest
+  end
+
+  attr_reader value: Int
+  attr_reader rest: Node | Nil
+end
+
+# Six classes at one site: four are cached, the rest take C.
+def areas(shapes) -> Int
+  total = 0
+  shapes.each() do |shape|
+    total += shape.area()
+  end
+  total
+end
+
+def described(shapes) -> Array[String]
+  shapes.map() do |shape|
+    shape.describe()
+  end
+end
+
+def counted(n: Int) -> Array[Int]
+  c = Counter.new()
+  i = 0
+  while i < n
+    c = c.bump(i)
+    c.count = c.count() + 1
+    i += 1
+  end
+  [c.count(), c.total()]
+end
+
+# The receiver's register is the destination too.
+def walk(node: Node) -> Int
+  total = 0
+  current = node
+  while current != nil
+    total += current.value()
+    current = current.rest()
+  end
+  total
+end
+
+def ghostly(g) -> String = g.vanish(1, 2)
+
+def size_of(shape) -> String
+  begin
+    "size #{shape.size()}"
+  rescue e: Exception
+    "error #{e.message()}"
+  end
+end
+
+shapes = [Shape.new(3), Square.new(3), Rect.new(3), Tri.new(3), Hex.new(3), Oct.new(3)]
+list = Node.new(1, Node.new(2, Node.new(3, nil)))
+i = 0
+while i < 3
+  puts(calls(i + 2))
+  puts([guarded(i + 1), deep(5)])
+  puts(areas(shapes))
+  puts(described(shapes))
+  puts(counted(4))
+  puts(walk(list))
+  puts(ghostly(Ghost.new()))
+  puts([size_of(shapes[1]), size_of(nil)])
+  i += 1
+end
+puts(deep(100000))
+
+# A redefined method is called afresh, not from the cached entry.
+Square.redefine_method("area", Square.compile_method("area", [], "@size + 1000", {}))
+puts(areas(shapes))
+puts(described([shapes[1]]))

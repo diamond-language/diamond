@@ -290,6 +290,30 @@ const DiamondChunk *diamond_jit_bind_generic(DiamondVm *vm, const DiamondChunk *
  * quickened opcode's own `chunk->code` is -- this is the same "logically
  * mutable cache metadata behind a const pointer" pattern already used
  * throughout this file for self-modifying bytecode, not a new one. */
+/* Compiles `function` (to run in `chunk_to_interpret`), or marks it
+ * ineligible when the JIT turns it down. */
+__attribute__((noinline, cold))
+static void jit_compile_function(DiamondVm *vm, DiamondFunction *function,
+        const DiamondChunk *chunk_to_interpret) {
+    size_t jit_code_size = 0;
+    size_t self_index = SIZE_MAX;
+    for (size_t index = 0; index < chunk_to_interpret->function_count; index++)
+        if (chunk_to_interpret->functions[index] == function) {
+            self_index = index;
+            break;
+        }
+    void *compiled = diamond_jit_try_compile(function,
+        chunk_to_interpret->functions, chunk_to_interpret->function_count,
+        self_index, &jit_code_size);
+    if (compiled != nullptr) {
+        function->jit_code = compiled;
+        function->jit_code_size = jit_code_size;
+        vm->jit_compiled_functions++;
+    } else {
+        function->jit_ineligible = true;
+    }
+}
+
 /* Clang's UBSan `function` check assumes every indirect-call target was
  * emitted by Clang and probes its private 8-byte type signature immediately
  * before the target address. A Diamond JIT target is the first byte of an
@@ -343,25 +367,8 @@ static uint8_t jit_call_core(DiamondVm *vm, const DiamondFunction *function,
                 mutable_function->jit_call_count == 1 &&
                 diamond_jit_function_has_loop(function);
             if (loop_on_first_call ||
-                mutable_function->jit_call_count >= vm->jit_threshold) {
-                size_t jit_code_size = 0;
-                size_t self_index = SIZE_MAX;
-                for (size_t index = 0; index < chunk_to_interpret->function_count; index++)
-                    if (chunk_to_interpret->functions[index] == function) {
-                        self_index = index;
-                        break;
-                    }
-                void *compiled = diamond_jit_try_compile(function,
-                    chunk_to_interpret->functions, chunk_to_interpret->function_count,
-                    self_index, &jit_code_size);
-                if (compiled != nullptr) {
-                    mutable_function->jit_code = compiled;
-                    mutable_function->jit_code_size = jit_code_size;
-                    vm->jit_compiled_functions++;
-                } else {
-                    mutable_function->jit_ineligible = true;
-                }
-            }
+                mutable_function->jit_call_count >= vm->jit_threshold)
+                jit_compile_function(vm, mutable_function, chunk_to_interpret);
         }
         if (mutable_function->jit_code != nullptr) {
             const uint8_t jit_status = jit_run_native(vm, function, chunk_to_interpret,
@@ -1105,6 +1112,9 @@ DiamondVmStatus diamond_jit_call_function(DiamondVm *vm, const DiamondChunk *chu
     if (argc < function->required_arity ||
         (argc > function->arity && !function->has_variadic))
         return DIAMOND_VM_ARITY_ERROR;
+    /* A native call to another function (compile_call_native) checks the
+     * depth against this, 0 until a call comes through here. */
+    if (vm->jit_depth_limit == 0) vm->jit_depth_limit = diamond_call_depth_limit(vm);
     DiamondChunk called_storage;
     const DiamondChunk *called_chunk = plain_call_chunk_for(function, chunk, &called_storage);
     return jit_call_or_interpret(vm, function, called_chunk, &registers[base],
@@ -1545,6 +1555,140 @@ resolved:
         method,registers[recv],registers,base,argc,
         instruction==DIAMOND_OP_INVOKE_TYPED,
         type_argument_count,type_arguments,chunk,depth,out);
+}
+
+#if defined(__x86_64__)
+static_assert(sizeof(DiamondJitCallEntry) == 32, "jit.c indexes call entries by 32");
+static_assert(offsetof(DiamondJitCallEntry, code) == 8, "jit.c reads code at 8");
+static_assert(offsetof(DiamondJitCallEntry, chunk) == 16, "jit.c reads chunk at 16");
+static_assert(offsetof(DiamondJitCallEntry, frame_bytes) == 24, "jit.c reads frame_bytes at 24");
+static_assert(sizeof(DiamondJitCallSite) == 136, "jit.c indexes call sites by 136");
+#endif
+
+/* The site's table entry, growing vm->jit_call_sites to hold it (new sites
+ * zeroed: no classes, no failed fills). nullptr when out of memory. */
+static DiamondJitCallSite *jit_call_site(DiamondVm *vm, uint32_t site_id) {
+    if (site_id < vm->jit_call_site_count) return &vm->jit_call_sites[site_id];
+    size_t count = vm->jit_call_site_count < 64 ? 64 : vm->jit_call_site_count * 2;
+    while (count <= site_id) count *= 2;
+    DiamondJitCallSite *grown = realloc(vm->jit_call_sites, count * sizeof *grown);
+    if (grown == nullptr) return nullptr;
+    memset(grown + vm->jit_call_site_count, 0,
+        (count - vm->jit_call_site_count) * sizeof *grown);
+    vm->jit_call_sites = grown;
+    vm->jit_call_site_count = count;
+    return &grown[site_id];
+}
+
+/* Whether diamond_jit_invoke_instance, given an Instance of `class` and this
+ * site's name and argument count, ends in jit_call_or_interpret(fn,
+ * &fn->call_chunk, [receiver, arguments...]) with fn compiled: then the
+ * compiled code can make that call itself. Writes the entry on success.
+ * Returns false for a reason that will not go away (the caller counts it),
+ * and sets *later when the method could qualify once it is compiled. */
+static bool jit_call_entry_for(DiamondVm *vm, const DiamondChunk *owner,
+        const DiamondClass *class, const DiamondStringConstant *name, uint8_t argc,
+        DiamondJitCallEntry *entry, bool *later) {
+    *later = false;
+    /* An exception's message, cause and backtrace are answered from its
+     * fields even when its class defines them. */
+    if ((name->length == 7 && memcmp(name->chars, "message", 7) == 0) ||
+        (name->length == 5 && memcmp(name->chars, "cause", 5) == 0) ||
+        (name->length == 9 && memcmp(name->chars, "backtrace", 9) == 0))
+        return false;
+    /* A class that does not define the method gets the universal ones
+     * (dup, to_s, ...) or method_missing: C answers those. */
+    const DiamondMethod *method = lookup_method(owner, class, name->chars, name->length);
+    if (method == nullptr || method->is_private || method->is_protected ||
+        method->has_variadic || method->bound_value_count != 0 ||
+        argc < method->required_arity || argc > method->arity ||
+        argc > DIAMOND_PLAIN_METHOD_ARGUMENTS)
+        return false;
+    const DiamondChunk *function_chunk =
+        method->source_chunk != nullptr ? method->source_chunk : owner;
+    if (method->function_index >= function_chunk->function_count) return false;
+    const DiamondFunction *fn = function_chunk->functions[method->function_index];
+    if (fn == nullptr || fn->call_chunk.functions != function_chunk->functions ||
+        fn->call_chunk.entry_check != &fn->entry_check ||
+        fn->register_count == 0 || fn->register_count > DIAMOND_JIT_MAX_REGISTERS ||
+        fn->register_count < (size_t)argc + 1 || fn->jit_ineligible)
+        return false;
+    /* Range#to_a is answered natively for Int bounds. */
+    if (argc == 0 && method->source_chunk == nullptr &&
+        vm->range_class_index != DIAMOND_NO_CLASS &&
+        (size_t)vm->range_class_index < owner->class_count &&
+        class == owner->classes[vm->range_class_index])
+        return false;
+    if (fn->jit_code == nullptr) {
+        /* An accessor is answered by the getter/setter shortcuts without
+         * a call, so it never warms up through jit_call_core: it is counted
+         * and compiled here instead. Anything else warms up as it runs. */
+        *later = true;
+        if (fn->code_count != 10 && fn->code_count != 15) return false;
+        DiamondFunction *mutable_fn = (DiamondFunction *)fn;
+        if (++mutable_fn->jit_call_count < vm->jit_threshold) return false;
+        jit_compile_function(vm, mutable_fn, &fn->call_chunk);
+        if (fn->jit_code == nullptr) {
+            *later = false;
+            return false;
+        }
+    }
+    *entry = (DiamondJitCallEntry){
+        .receiver_class = class,
+        .code = fn->jit_code,
+        .chunk = &fn->call_chunk,
+        .frame_bytes = (uint64_t)fn->register_count * sizeof(DiamondValue),
+    };
+    return true;
+}
+
+void diamond_jit_call_site_fill(DiamondVm *vm, const DiamondChunk *chunk,
+        const DiamondValue *receiver, const uint8_t *site, uint32_t site_id) {
+    if (vm->jit_depth_limit == 0) vm->jit_depth_limit = diamond_call_depth_limit(vm);
+    DiamondJitCallSite *call_site = jit_call_site(vm, site_id);
+    if (call_site == nullptr || call_site->failed_fills >= DIAMOND_JIT_CALL_FILL_TRIES) return;
+    const uint16_t name = (uint16_t)(((unsigned)site[5] << 8) | site[6]);
+    const uint8_t argc = site[9];
+    if (receiver->kind != DIAMOND_VALUE_OBJECT ||
+        receiver->as.object->kind != DIAMOND_OBJECT_INSTANCE ||
+        (size_t)name >= chunk->string_count) {
+        call_site->failed_fills++;
+        return;
+    }
+    const DiamondInstance *instance = (const DiamondInstance *)receiver->as.object;
+    const DiamondChunk *owner = instance->owner != nullptr ? instance->owner : vm->root_chunk;
+    size_t way = 0;
+    while (way < DIAMOND_JIT_CALL_WAYS &&
+           call_site->entries[way].receiver_class != nullptr &&
+           call_site->entries[way].receiver_class != instance->class)
+        way++;
+    DiamondJitCallEntry entry;
+    bool later = false;
+    if (way == DIAMOND_JIT_CALL_WAYS ||
+        !jit_call_entry_for(vm, owner, instance->class, &chunk->strings[name], argc,
+            &entry, &later)) {
+        if (!later) call_site->failed_fills++;
+        return;
+    }
+    call_site->entries[way] = entry;
+}
+
+DiamondVmStatus diamond_jit_method_call_finish(DiamondVm *vm, const DiamondChunk *chunk,
+        const DiamondValue *registers, uint64_t operands, size_t depth, DiamondValue *out,
+        uint8_t status) {
+    if (status == DIAMOND_JIT_TAIL) return jit_tail_loop(vm, chunk, depth, out);
+    if (status == DIAMOND_JIT_RETRY) {
+        vm->jit_bailouts++;
+        const uint16_t recv = (uint16_t)operands;
+        const uint16_t base = (uint16_t)(operands >> 16);
+        const uint8_t argc = (uint8_t)(operands >> 32);
+        DiamondValue args[DIAMOND_PLAIN_METHOD_ARGUMENTS + 1];
+        args[0] = registers[recv];
+        for (size_t i = 0; i < argc; i++) args[i + 1] = registers[(size_t)base + i];
+        return run_chunk(chunk, vm, args, (size_t)argc + 1, depth + 1, nullptr, out);
+    }
+    vm->jit_hard_propagations++;
+    return (DiamondVmStatus)status;
 }
 
 DiamondVmStatus diamond_jit_native_call(DiamondVm *vm,

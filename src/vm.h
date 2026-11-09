@@ -2307,6 +2307,14 @@ struct DiamondVm {
      * every fiber switch (diamond_fiber_run), the only place running_fiber
      * changes. Refreshing it on every native entry instead cost poly 0.9%. */
     size_t jit_depth_limit;
+    /* Compiled code's method call sites (jit.c compile_invoke_native): one
+     * DiamondJitCallSite per site id, grown by diamond_jit_call_site_fill
+     * and cleared with the method caches (diamond_vm_invalidate_method_caches),
+     * so a redefined method is never called from a stale entry. Per VM, like
+     * the method caches: supervised children share compiled code but not
+     * this table. */
+    struct DiamondJitCallSite *jit_call_sites;
+    size_t jit_call_site_count;
     /* The native database call this VM is blocked in, so the thread that sets
      * interrupt_flag can cancel it (sqlite3_interrupt, PQcancel). Only
      * touched when interrupt_flag is set; see vm_blocking_call_begin. */

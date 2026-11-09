@@ -488,12 +488,16 @@ void diamond_vm_free(DiamondVm *vm) {
     free(vm->namespace_constant_initialized);
     free(vm->gc_protected);
     free(vm->rewritten_sites);
+    free(vm->jit_call_sites);
     free(vm->remembered_set);
     *vm = (DiamondVm){};
 }
 
 void diamond_vm_invalidate_method_caches(DiamondVm *vm) {
     memset(vm->method_caches,0,sizeof vm->method_caches);
+    /* Compiled call sites name methods too (diamond_jit_call_site_fill). */
+    if(vm->jit_call_sites!=nullptr)
+        memset(vm->jit_call_sites,0,vm->jit_call_site_count*sizeof *vm->jit_call_sites);
     vm->inline_cache_hits=0;
     vm->inline_cache_misses=0;
     vm->monomorphic_dispatches=0;
