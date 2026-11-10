@@ -1,0 +1,48 @@
+# A failed check after a captured-local permutation must not replay the
+# function against the already-mutated cells.
+def plain_swap()
+  left = 1
+  right = 2
+  def swap(value) -> Int
+    previous = left
+    left = right
+    right = previous
+    value
+  end
+  begin
+    swap("bad")
+  rescue error: TypeError
+    puts("return check caught")
+  end
+  [left, right]
+end
+
+# A failed explicit return must run the callee's ensure before reaching
+# the caller's rescue, without replaying either captured permutation.
+def ensured_swap()
+  left = "left"
+  right = "right"
+  first = "first"
+  second = "second"
+  def swap_checked(value) -> Int
+    begin
+      previous = left
+      left = right
+      right = previous
+      return value
+    ensure
+      previous = first
+      first = second
+      second = previous
+    end
+  end
+  begin
+    swap_checked("bad")
+  rescue error: TypeError
+    puts("ensured check caught")
+  end
+  [left, right, first, second]
+end
+
+puts(plain_swap())
+puts(ensured_swap())

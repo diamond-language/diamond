@@ -137,17 +137,10 @@ typedef struct JitCompiler {
      * links the frame just around each slow call (emit_slow_frame_link),
      * so the fast path pays two instructions, not the frame write. */
     bool slow_frame;
-    /* Phase 2d: set the moment SUPER is compiled, in both the dry-run and
-     * real passes alike (mirroring needs_frame). Once true: (a) every
-     * later status-bearing bail site (a trampoline call's own non-OK
-     * check) targets the "propagate" stub instead of "retry" -- see
-     * bailout_target() -- since a real call with real side effects has
-     * already run and re-running the whole function from scratch is no
-     * longer safe; (b) ADD_INT/SUBTRACT_INT/MULTIPLY_INT/DIVIDE_INT/
-     * LESS_INT are rejected outright at compile time (jc->bailed = true),
-     * since their own overflow/div-by-zero/kind-mismatch bails have no
-     * DiamondVmStatus to propagate and genuinely need the interpreter's
-     * own bignum/raise logic, not just a status to hand back. */
+    /* The activation can have externally visible effects: a call or a
+     * shared-cell store. Set in the dry run too, so every status-bearing
+     * bailout uses the catch/propagate path rather than replaying the
+     * function against state it may already have changed. */
     bool has_called;
     /* Bytecode offset of the instruction compile_body is emitting, so a
      * trampoline call can record where it is (see emit_body_call). */
@@ -906,14 +899,9 @@ static void record_global_patch(JitCompiler *jc, size_t rel32_offset, size_t byt
 #define BAILOUT_CATCH_SENTINEL (SIZE_MAX - 2)
 #define BAILOUT_RESUME_SENTINEL (SIZE_MAX - 3)
 
-/* Which stub a status-bearing bail site (one that already holds a real
- * DiamondVmStatus in AL, from a trampoline's own return value) should
- * target: "retry" before any call has run this attempt, "propagate" from
- * the first call onward. Never used by a bail site that has no real
- * status to hand back (arithmetic overflow/div-by-zero/kind-mismatch) --
- * those always use BAILOUT_RETRY_SENTINEL directly and are rejected
- * outright at compile time once jc->has_called is true (see compile_
- * body's ADD_INT/SUBTRACT_INT/MULTIPLY_INT/DIVIDE_INT/LESS_INT case). */
+/* A trampoline's failing DiamondVmStatus in AL: retry only when the
+ * activation cannot have made visible changes. Otherwise offer the error
+ * to this activation's handlers, or propagate it if there are none. */
 static size_t bailout_target(const JitCompiler *jc) {
     if (!jc->has_called) return BAILOUT_RETRY_SENTINEL;
     return jc->has_handlers ? BAILOUT_CATCH_SENTINEL : BAILOUT_PROPAGATE_SENTINEL;
@@ -4341,6 +4329,9 @@ static bool compile_value_instruction(JitCompiler *jc, DiamondOpCode opcode, siz
             if (!decode_u16(fn, &pc, &cell) || !decode_u16(fn, &pc, &source)) {
                 jc->bailed = true; return true;
             }
+            /* A shared cell is observable outside this activation. Once
+             * stored, a later failure must propagate/catch, never replay. */
+            jc->has_called = true;
             JitBuffer *buf = &jc->buf;
             size_t fail[3]; size_t fail_count = 0;
             emit_cell_guard(buf, JIT_REGISTERS_BASE, reg_disp(cell, 0), fail, &fail_count);
@@ -4410,6 +4401,7 @@ static bool compile_value_instruction(JitCompiler *jc, DiamondOpCode opcode, siz
                 jc->bailed = true; return true;
             }
             jc->reads_closure = true;
+            jc->has_called = true; /* Captured state cannot be replayed. */
             JitBuffer *buf = &jc->buf;
             size_t fail[5]; size_t fail_count = 0;
             emit_capture_guard(jc, index, fail, &fail_count);

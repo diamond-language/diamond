@@ -1,0 +1,5 @@
+return check caught
+[2, 1]
+ensured check caught
+[right, left, second, first]
+nil
