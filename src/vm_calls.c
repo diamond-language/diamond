@@ -444,6 +444,9 @@ static DiamondVmStatus block_call_native(DiamondVm *vm,const DiamondBlockCall *c
  * instruction, wall-clock or memory budget. */
 DiamondVmStatus block_call_run(DiamondVm *vm,const DiamondBlockCall *call,
         const DiamondValue *arguments,size_t depth,DiamondValue *result) {
+    /* Native each/map/times loops may call a compiled block forever without
+     * returning to run_chunk, whose entry normally observes cancellation. */
+    if(vm_interrupt_requested(vm))return DIAMOND_VM_INTERRUPTED;
     if(call->self_slot) return block_call_run_self_slot(vm,call,arguments,depth,result);
     if(vm->jit && call->function->jit_code!=nullptr && depth+1<vm->jit_depth_limit &&
        vm->max_instructions==0 && vm->max_wall_nanoseconds==0 && vm->max_memory_bytes==0 &&

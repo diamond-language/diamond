@@ -6,6 +6,10 @@ authoritative fine-grained record.
 
 ## Unreleased
 
+### Fixed
+
+- Supervised workers stop promptly inside JIT Array block loops and native loops calling compiled blocks.
+
 ## 1.0.0-rc1 — 2026-11-09
 
 The first release candidate for d6 1.0. Since 0.29.0: safe navigation (`&.`), and a faster JIT for

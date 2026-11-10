@@ -3710,6 +3710,19 @@ static void compile_block_loop(JitCompiler *jc, size_t instruction_start, uint16
     const size_t declined = emit_jcc_placeholder(buf, JCC_E);
 
     const size_t loop_top = buf->length;
+    /* This loop bypasses block_call_run. Send cancellation through step's
+     * failure path so map releases its protected result before unwinding. */
+    emit_mov_rr(buf, REG_RAX, JIT_VM);
+    emit_load_r64(buf, REG_RAX, REG_RAX, (int32_t)offsetof(DiamondVm, interrupt_flag));
+    emit_test_r64(buf, REG_RAX, REG_RAX);
+    const size_t no_interrupt_flag = emit_jcc_placeholder(buf, JCC_E);
+    emit_load_byte_zx(buf, REG_RAX, REG_RAX, 0);
+    emit_test_r8(buf, REG_RAX);
+    const size_t not_interrupted = emit_jcc_placeholder(buf, JCC_E);
+    emit_mov_imm64(buf, REG_RAX, DIAMOND_VM_INTERRUPTED);
+    const size_t interrupted = emit_jmp_placeholder(buf);
+    patch_rel32_to_here(buf, no_interrupt_flag);
+    patch_rel32_to_here(buf, not_interrupted);
     emit_load_r64_sib(buf, REG_RDX, REG_RSP, L + (int32_t)offsetof(DiamondJitLoop, array));
     emit_load_r64_sib(buf, REG_RAX, REG_RSP, L + (int32_t)offsetof(DiamondJitLoop, index));
     emit_cmp_r64_mem(buf, REG_RAX, REG_RDX, (int32_t)offsetof(DiamondArray, count));
@@ -3774,6 +3787,7 @@ static void compile_block_loop(JitCompiler *jc, size_t instruction_start, uint16
     emit_u32_le(buf, (uint32_t)(L + (int32_t)offsetof(DiamondJitLoop, map)));
     emit_u8(buf, 0x08); emit_u8(buf, 0xC1);                       /* or cl, al */
     const size_t no_step = emit_jcc_placeholder(buf, JCC_E);
+    patch_rel32_to_here(buf, interrupted);
     emit_mov_rr(buf, REG_RDI, JIT_VM);
     emit_lea_rsp(buf, REG_RSI, L);
     emit_mov_rr(buf, REG_RDX, REG_RAX);
