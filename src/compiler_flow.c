@@ -451,6 +451,17 @@ void mark_locals_captured_in(Compiler *compiler,const uint64_t *mask) {
             compiler->locals[index].captured=true;
 }
 
+/* Loops and retryable begin bodies can revisit code compiled before a block
+ * boxes its captures. Prepare both existing and newly declared locals so every
+ * visit uses cell-aware accesses. An enclosing prepared body already covers us. */
+void prepare_reentered_body_captures(Compiler *compiler) {
+    if(!compiler->loop_captures_pending&&
+       loop_body_may_capture(compiler,compiler->loop_capture_mask)) {
+        compiler->loop_captures_pending=true;
+        mark_locals_captured_in(compiler,compiler->loop_capture_mask);
+    }
+}
+
 /* Steps the lookahead past a recorded block's body to its matching `end`
  * (statement_may_capture). False at end of input. */
 static bool skip_block_body(DiamondLexer *lookahead) {
@@ -535,11 +546,7 @@ static uint16_t parse_while_core(Compiler *compiler,bool inverted,const PostfixL
     const size_t loop_start = compiler->function->code_count;
     const bool outer_loop_captures_pending=compiler->loop_captures_pending;
     /* A postfix loop's statement was already checked for blocks by compile_sequence. */
-    if(postfix==nullptr&&!compiler->loop_captures_pending&&
-       loop_body_may_capture(compiler,compiler->loop_capture_mask)) {
-        compiler->loop_captures_pending=true;
-        mark_locals_captured_in(compiler,compiler->loop_capture_mask);
-    }
+    if(postfix==nullptr)prepare_reentered_body_captures(compiler);
     DiamondLexer body_lexer={},end_lexer={};
     DiamondToken body_current={},body_previous={},end_current={},end_previous={};
     if(postfix!=nullptr) {
@@ -646,11 +653,7 @@ uint16_t parse_loop(Compiler *compiler) {
     emit_instruction(compiler,DIAMOND_OP_NIL,destination,0,0,1);
     if(!consume_loop_start(compiler))return destination;
     const bool outer_loop_captures_pending=compiler->loop_captures_pending;
-    if(!compiler->loop_captures_pending&&
-       loop_body_may_capture(compiler,compiler->loop_capture_mask)) {
-        compiler->loop_captures_pending=true;
-        mark_locals_captured_in(compiler,compiler->loop_capture_mask);
-    }
+    prepare_reentered_body_captures(compiler);
     const size_t body_start=compiler->function->code_count;
     const size_t flow_reg_count=compiler->next_register;
     const size_t flow_local_count=compiler->local_count;

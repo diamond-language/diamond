@@ -1,0 +1,89 @@
+# Retry revisits accesses compiled before the block boxes the local.
+# Catch only our String to make a regression terminate instead of retrying
+# the TypeError caused by an exposed Cell forever.
+def explicit_retry()
+  attempts = 0
+  begin
+    attempts += 1
+    current = attempts
+    [0].each() do |value|
+      [attempts, current]
+    end
+    raise "again" if attempts == 1
+  rescue error
+    retry if error is String
+    puts("unexpected explicit error")
+  end
+  [attempts, current]
+end
+
+# Implicit method handlers start before the first body statement too.
+def implicit_retry(attempts: Int = 0)
+  attempts += 1
+  current = attempts
+  [0].each() do |value|
+    [attempts, current]
+  end
+  raise "again" if attempts == 1
+  [attempts, current]
+rescue error
+  retry if error is String
+  "unexpected implicit error"
+end
+
+# A do-block can have implicit handlers and locals of its own.
+def block_retry()
+  [0].map() do |attempts|
+    attempts += 1
+    [0].each() do |value|
+      attempts
+    end
+    raise "again" if attempts == 1
+    attempts
+  rescue error
+    retry if error is String
+    "unexpected block error"
+  end
+end
+
+# A capture in rescue also affects the earlier body on the next attempt.
+def rescue_capture()
+  attempts = 0
+  begin
+    attempts += 1
+    raise "again" if attempts == 1
+  rescue error
+    [0].each() do |value|
+      attempts
+    end
+    retry if error is String
+    puts("unexpected rescue error")
+  end
+  attempts
+end
+
+# An inner ensure can box a local before an outer rescue retries it.
+def ensure_capture()
+  attempts = 0
+  trail = []
+  begin
+    attempts += 1
+    begin
+      raise "again" if attempts == 1
+    ensure
+      [0].each() do |value|
+        trail.push(attempts)
+      end
+    end
+  rescue error
+    retry if error is String
+    puts("unexpected ensure error")
+  end
+  [attempts, trail]
+end
+
+puts(explicit_retry())
+puts(implicit_retry())
+puts(block_retry())
+puts(rescue_capture())
+puts(ensure_capture())
