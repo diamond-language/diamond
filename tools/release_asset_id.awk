@@ -11,7 +11,7 @@ END {
             names[depth] = urls[depth] = keys[depth] = ""
         } else if (c == "}") {
             if (names[depth] == ENVIRON["ASSET_NAME"] &&
-                urls[depth] ~ /^https:\/\/api.github.com\/repos\/[^/]+\/[^/]+\/releases\/assets\/[0-9]+$/) {
+                urls[depth] ~ /^https:\/\/api[.]github[.]com\/repos\/[^\/]+\/[^\/]+\/releases\/assets\/[0-9]+$/) {
                 sub(/^.*\//, "", urls[depth])
                 print urls[depth]
                 exit
