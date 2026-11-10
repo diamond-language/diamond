@@ -126,9 +126,13 @@ reported the resulting use-after-free as a runtime bug until it was traced.)
 `fuzz/differential_fuzzer.c` (`make build/differential_fuzzer`) compiles and runs each
 source input twice in one process, once plain and once with `DIAMOND_JIT=1`,
 `DIAMOND_JIT_THRESHOLD=1` and `DIAMOND_STRESS_MINOR_GC=1`, and aborts when exit status,
-stdout or stderr differ. It runs sandboxed with instruction and wall-clock budgets, skips
-inputs that name nondeterministic or I/O features, and skips an input that hits a budget in
-either run. Seed it from small deterministic files in `tests/cases`.
+stdout or stderr differ. It runs sandboxed and skips inputs that name nondeterministic or
+I/O features. The interpreter preflight has instruction and wall-clock budgets; inputs
+that exhaust them are skipped before native execution. The native run clears VM budgets,
+which otherwise disable the JIT, and uses libFuzzer's terminating timeout instead. The
+harness defaults to `-timeout=10`; supply a larger positive value for a slower campaign.
+A native hang terminates the fuzzer and records a timeout artifact rather than resuming
+an interrupted VM. Seed it from small deterministic files in `tests/cases`.
 
 It is not part of `make test-fuzz`. Each input costs two ASan-instrumented runs, so run it
 with few workers at low priority (`nice -n 19 build/differential_fuzzer -jobs=2 -workers=2

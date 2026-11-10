@@ -8,12 +8,11 @@
  * combinations someone thought of.
  *
  * The source is compiled and run through diamond_run_source_with_program, the
- * same path the CLI uses. The process runs sandboxed with instruction and
- * wall-clock budgets so no input touches the machine or hangs; an input that
- * hits a budget in either run is not compared (the JIT does not count
- * instructions the way the interpreter does). Inputs naming something
- * nondeterministic are skipped, because they would differ between any two
- * runs.
+ * same path the CLI uses. The interpreter preflight runs sandboxed with VM
+ * budgets and skips inputs that exhaust them. Native execution uses libFuzzer's
+ * terminating timeout instead: VM budgets deliberately disable the JIT.
+ * Inputs naming something nondeterministic are skipped, because they would
+ * differ between any two runs.
  *
  * Seed it with small programs from tests/cases (see docs/internal/fuzzing.md). */
 #define _POSIX_C_SOURCE 200809L
@@ -33,6 +32,20 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+
+/* libFuzzer terminates the process on timeout; it never resumes an interrupted
+ * VM/GC. Keep its timer enabled by default while allowing campaign overrides. */
+int LLVMFuzzerInitialize(int *argc, char ***argv) {
+    for (int index = 1; index < *argc; index++)
+        if (strncmp((*argv)[index], "-timeout=", 9) == 0) return 0;
+    static char **timed_argv;
+    timed_argv = calloc((size_t)*argc + 2, sizeof *timed_argv);
+    if (timed_argv == nullptr) abort();
+    memcpy(timed_argv, *argv, (size_t)*argc * sizeof *timed_argv);
+    timed_argv[(*argc)++] = "-timeout=10";
+    *argv = timed_argv;
+    return 0;
+}
 
 static const char *const NONDETERMINISTIC[] = {
     "now", "rand", "Random", "Thread", "Process", "ENV", "gets", "sleep", "object_id",
@@ -108,12 +121,17 @@ static void set_plain(void) {
     unsetenv("DIAMOND_JIT");
     unsetenv("DIAMOND_JIT_THRESHOLD");
     unsetenv("DIAMOND_STRESS_MINOR_GC");
+    setenv("DIAMOND_MAX_INSTRUCTIONS", "3000000", 1);
+    setenv("DIAMOND_MAX_WALL_MILLISECONDS", "3000", 1);
+    unsetenv("DIAMOND_MAX_MEMORY_BYTES");
 }
 
 static void set_stressed(void) {
     setenv("DIAMOND_JIT", "1", 1);
     setenv("DIAMOND_JIT_THRESHOLD", "1", 1);
     setenv("DIAMOND_STRESS_MINOR_GC", "1", 1);
+    unsetenv("DIAMOND_MAX_INSTRUCTIONS");
+    unsetenv("DIAMOND_MAX_WALL_MILLISECONDS");
 }
 
 static bool hit_budget(const Capture *capture) {
@@ -138,8 +156,6 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
         configured = true;
         setenv("DIAMOND_SANDBOX", "1", 1);
         setenv("DIAMOND_NO_CACHE", "1", 1);
-        setenv("DIAMOND_MAX_INSTRUCTIONS", "3000000", 1);
-        setenv("DIAMOND_MAX_WALL_MILLISECONDS", "3000", 1);
     }
     static DiamondProgram *program;
     if (program == nullptr) {
@@ -165,6 +181,11 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     Capture plain = {}, stressed = {};
     set_plain();
     const bool plain_ok = run_captured(source, program, prelude_template, &plain);
+    if (!plain_ok || plain.status == 65 || hit_budget(&plain)) {
+        free(plain.stdout_text); free(plain.stderr_text);
+        free(source);
+        return 0;
+    }
     set_stressed();
     const bool stressed_ok = run_captured(source, program, prelude_template, &stressed);
     set_plain();

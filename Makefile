@@ -538,11 +538,15 @@ $(BUILD_DIR)/regexp_api_test: $(REGINOLD_DIR)/test_reginold.c $(REGINOLD_DIR)/re
 	@mkdir -p $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS_COMMON) $(CFLAGS_DEBUG) $< $(LDLIBS) -o $@
 
-test-api: $(BUILD_DIR)/api_invalidation $(BUILD_DIR)/buffer_growth_test $(BUILD_DIR)/aot_write_test $(BUILD_DIR)/regexp_api_test
+$(BUILD_DIR)/differential_fuzzer_test: tests/differential_fuzzer_test.c fuzz/differential_fuzzer.c $(API_DBG_OBJECTS) $(REGINOLD_LIB) | $(PRELUDE_BIN)
+	$(CC) $(CPPFLAGS) $(CFLAGS_COMMON) $(CFLAGS_DEBUG) $(API_DBG_OBJECTS) $< $(LDLIBS) -o $@
+
+test-api: $(BUILD_DIR)/api_invalidation $(BUILD_DIR)/buffer_growth_test $(BUILD_DIR)/aot_write_test $(BUILD_DIR)/regexp_api_test $(BUILD_DIR)/differential_fuzzer_test
 	$(BUILD_DIR)/api_invalidation
 	$(BUILD_DIR)/buffer_growth_test
 	$(BUILD_DIR)/aot_write_test
 	$(BUILD_DIR)/regexp_api_test
+	$(BUILD_DIR)/differential_fuzzer_test
 
 # src/semver.c has no compiler or VM dependency, so this test links only it.
 $(BUILD_DIR)/semver_test: tests/semver_test.c src/semver.c src/semver.h
