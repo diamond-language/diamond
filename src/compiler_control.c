@@ -289,9 +289,15 @@ typedef struct BeginFrame {
     size_t handler_operand;
     size_t retry_target;
     uint16_t exception;
+    bool outer_captures_pending;
+    uint64_t outer_capture_mask[4];
 } BeginFrame;
 
 static void open_begin_frame(Compiler *compiler,BeginFrame *frame) {
+    frame->outer_captures_pending=compiler->loop_captures_pending;
+    memcpy(frame->outer_capture_mask,compiler->loop_capture_mask,
+        sizeof frame->outer_capture_mask);
+    prepare_reentered_body_captures(compiler);
     compiler->begin_depth++;
     frame->ensure_operand=compiler->function->code_count+1;
     emit_opcode(compiler,DIAMOND_OP_PUSH_ENSURE);
@@ -309,6 +315,12 @@ static void open_begin_frame(Compiler *compiler,BeginFrame *frame) {
     emit_register(compiler,frame->exception);emit_byte(compiler,0x80);
     for(size_t i=0;i<8;i++)emit_byte(compiler,0);
     emit_byte(compiler,0);emit_byte(compiler,0);
+}
+
+static void restore_begin_captures(Compiler *compiler,const BeginFrame *frame) {
+    compiler->loop_captures_pending=frame->outer_captures_pending;
+    memcpy(compiler->loop_capture_mask,frame->outer_capture_mask,
+        sizeof frame->outer_capture_mask);
 }
 
 /* Compiles the rescue/else/ensure clauses after `body`, up to but not
@@ -463,6 +475,7 @@ uint16_t compile_begin(Compiler *compiler) {
     open_begin_frame(compiler,&frame);
     const uint16_t body=compile_sequence(compiler);
     const uint16_t destination=close_begin_frame(compiler,&frame,body);
+    restore_begin_captures(compiler,&frame);
     if(compiler->failed)return destination;
     if(compiler->current.kind!=DIAMOND_TOKEN_END) {
         fail(compiler,compiler->current.span,"expected 'end' after begin body");
@@ -506,7 +519,10 @@ uint16_t compile_body(Compiler *compiler,bool *wrapped) {
     uint16_t body=compile_sequence(compiler);
     const bool has_handlers=compiler->current.kind==DIAMOND_TOKEN_RESCUE||
         compiler->current.kind==DIAMOND_TOKEN_ENSURE;
-    if(compiler->failed||(!*wrapped&&!has_handlers))return body;
+    if(compiler->failed||(!*wrapped&&!has_handlers)) {
+        if(*wrapped)restore_begin_captures(compiler,&frame);
+        return body;
+    }
     if(!*wrapped) {
         if(!compiler->discovery_pass) {
             fail(compiler,compiler->current.span,
@@ -520,7 +536,9 @@ uint16_t compile_body(Compiler *compiler,bool *wrapped) {
         open_begin_frame(compiler,&frame);
         *wrapped=true;
     }
-    return close_begin_frame(compiler,&frame,body);
+    const uint16_t result=close_begin_frame(compiler,&frame,body);
+    restore_begin_captures(compiler,&frame);
+    return result;
 }
 
 uint16_t compile_retry(Compiler *compiler) {

@@ -12,6 +12,7 @@ authoritative fine-grained record.
 
 ### Fixed
 
+- Retrying a rescued body preserves access to locals captured by blocks, including captures in rescue and ensure clauses.
 - Differential fuzzing actually executes the JIT, with a terminating timeout and a bounded interpreter preflight.
 - JIT failures after captured-local writes preserve those writes instead of replaying the closure.
 - Supervised workers stop promptly inside JIT Array block loops and native loops calling compiled blocks.
