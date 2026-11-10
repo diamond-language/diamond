@@ -72,7 +72,9 @@ own main thread runs on a 512 MiB pthread stack (`DIAMOND_MAIN_STACK_MB`), with
 the call-depth limit scaled to match; if that allocation fails it halves the
 request and finally falls back to the process's own stack.
 
-### Builds for another target (checked by hand, not in CI)
+### Cross-target builds and validation
+
+The entries below distinguish continuous CI checks from manual validation.
 
 - **aarch64-linux-gnu cross build** -- `make aot-kit-cross` with clang and a
   Fedora aarch64 sysroot, then `d6 build --target=...`; the resulting binaries
@@ -86,7 +88,9 @@ request and finally falls back to the process's own stack.
 - **wasm32-wasip1** -- `wasm/build.sh` with wasi-sdk; the module runs the
   interpreter and the REPL under Node's WASI and in Firefox. Fibers, threads, sockets, TLS,
   subprocesses and every database driver are unavailable. See
-  [WebAssembly build](internal/wasm.md).
+  [WebAssembly build](internal/wasm.md). The `test-wasm` CI job builds the module
+  with wasi-sdk 34 and tests it under Node through the site's JavaScript runner;
+  Firefox validation is manual.
 
 OpenBSD remains unvalidated (blocked on a real gap, not just an unwritten CI
 job -- see below). Portability claims
