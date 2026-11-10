@@ -1282,6 +1282,19 @@ static uint16_t parse_safe_invoke(Compiler *compiler,uint16_t receiver) {
      * receiver (it cannot for a temporary; a local's reassignment wins). */
     const uint16_t saved_type=compiler->known_types[receiver];
     const int32_t saved_set=compiler->known_type_sets[receiver];
+    /* The nil branch skips argument evaluation, including assignments.
+     * Only locals survive the expression; new locals start nil on that path. */
+    const size_t before_count=compiler->local_count;
+    uint16_t before_types[DIAMOND_MAX_LOCALS];
+    int32_t before_sets[DIAMOND_MAX_LOCALS],before_tooling[DIAMOND_MAX_LOCALS];
+    uint32_t before_alias[DIAMOND_MAX_LOCALS];
+    for(size_t index=0;index<before_count;index++) {
+        const uint16_t reg=compiler->locals[index].reg;
+        before_types[index]=compiler->known_types[reg];
+        before_sets[index]=compiler->known_type_sets[reg];
+        before_tooling[index]=compiler->tooling_type_sets[reg];
+        before_alias[index]=compiler->locals[index].alias_identity;
+    }
     int32_t checked=-1;
     const bool narrowed=non_nil_view(compiler,saved_set,&checked);
     if(narrowed)apply_type_set_fact(compiler,receiver,checked);
@@ -1311,7 +1324,8 @@ static uint16_t parse_safe_invoke(Compiler *compiler,uint16_t receiver) {
     } else if(tooling_narrowed&&!register_is_local(compiler,receiver)) {
         compiler->tooling_type_sets[receiver]=saved_tooling;
     }
-    if(compiler->known_types[receiver]==narrowed_type&&
+    if(!register_is_local(compiler,receiver)&&
+       compiler->known_types[receiver]==narrowed_type&&
        compiler->known_type_sets[receiver]==narrowed_set) {
         compiler->known_types[receiver]=saved_type;
         compiler->known_type_sets[receiver]=saved_set;
@@ -1321,6 +1335,28 @@ static uint16_t parse_safe_invoke(Compiler *compiler,uint16_t receiver) {
     patch_jump(compiler,nil_jump,compiler->function->code_count);
     emit_instruction(compiler,DIAMOND_OP_NIL,destination,0,0,1);
     patch_jump(compiler,end_jump,compiler->function->code_count);
+    for(size_t index=0;index<compiler->local_count;index++) {
+        const uint16_t reg=compiler->locals[index].reg;
+        const uint16_t skipped_type=index<before_count?before_types[index]:DIAMOND_TYPE_NIL;
+        const int32_t skipped_set=index<before_count?before_sets[index]:-1;
+        const int32_t skipped_tooling=index<before_count?before_tooling[index]:-1;
+        const uint32_t skipped_alias=index<before_count?before_alias[index]:0;
+        if(saved_type==DIAMOND_TYPE_NIL) {
+            compiler->known_types[reg]=skipped_type;
+            compiler->known_type_sets[reg]=skipped_set;
+            compiler->tooling_type_sets[reg]=skipped_tooling;
+            compiler->locals[index].alias_identity=skipped_alias;
+        } else if(saved_type==TYPE_UNKNOWN) {
+            merge_flow_types(compiler,skipped_type,skipped_set,
+                compiler->known_types[reg],compiler->known_type_sets[reg],
+                &compiler->known_types[reg],&compiler->known_type_sets[reg]);
+            compiler->tooling_type_sets[reg]=merge_tooling_type_sets(compiler,
+                skipped_tooling,compiler->tooling_type_sets[reg]);
+            compiler->locals[index].alias_identity=merge_alias_identity(
+                skipped_alias,compiler->locals[index].alias_identity);
+        }
+        record_scope_type_fact(compiler,reg,compiler->current.span.start);
+    }
     merge_flow_types(compiler,result_type,result_set,DIAMOND_TYPE_NIL,-1,
         &compiler->known_types[destination],&compiler->known_type_sets[destination]);
     if(result_tooling>=0)

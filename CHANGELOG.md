@@ -9,6 +9,7 @@ authoritative fine-grained record.
 ### Fixed
 
 - Supervised workers stop promptly inside JIT Array block loops and native loops calling compiled blocks.
+- Safe calls preserve local type facts when nil skips their arguments, and join conditional assignments.
 
 ## 1.0.0-rc1 — 2026-11-09
 
