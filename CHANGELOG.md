@@ -6,6 +6,10 @@ authoritative fine-grained record.
 
 ## Unreleased
 
+### Changed
+
+- Ubuntu 22.04 is no longer a supported deployment target and has been removed from portable CI validation.
+
 ### Fixed
 
 - Supervised workers stop promptly inside JIT Array block loops and native loops calling compiled blocks.
