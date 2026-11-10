@@ -387,6 +387,9 @@ false&.to_s()                # => "false", only nil short-circuits
 ```
 
 - The receiver is evaluated once.
+- Skipped arguments leave existing locals unchanged, including assignments in
+  those arguments. When the receiver may be nil, local type facts after the
+  expression account for both the skipped and executed paths.
 - Each `&.` covers one call. In `a&.b().c()` a nil `a` makes `a&.b()` nil
   and `c` is then called on that nil, as in Kotlin; write `a&.b()&.c()` to
   pass nil along the chain.

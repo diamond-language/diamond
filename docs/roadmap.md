@@ -275,7 +275,8 @@ Current coverage and the full inventory of checked platform assumptions:
 
 - **OpenBSD** -- blocked on a real gap: no `<ucontext.h>`, a Fiber-implementation
   limitation, not an unwritten CI job.
-- **Debian** -- untested; Ubuntu is the glibc target CI runs.
+- **Debian** -- the full source-build suite is not run there; Ubuntu is the
+  glibc source-build target. Portable binary smoke tests cover Debian 12.
 - **Widening the narrower jobs** (musl, FreeBSD, macOS, arm64) to sanitizers, other
   compilers or package suites needs that coverage checked first, not just enabled.
 

@@ -374,8 +374,10 @@ descriptor's flags. If an interrupted reader consumed part of a line, the next
 `gets()` finishes that line. A worker waiting behind another stdin reader can
 also be interrupted. No input helper is left running after the worker stops.
 Code running in the opt-in JIT is
-interrupted at the next loop iteration (a backward jump or a function's own tail call), so a
-compiled function with no loop and no blocking call runs to its end. Use [cancellation](cancellation.md)
+interrupted at the next loop iteration (a backward jump or a function's own tail
+call). Native Array block loops and C-driven iterators also check before entering
+each compiled block, even if the block itself has no loop. A compiled function
+with no such polling point and no blocking call runs to its end. Use [cancellation](cancellation.md)
 tokens for those waits.
 
 ### Restart policy

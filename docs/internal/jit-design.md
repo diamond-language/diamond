@@ -6,6 +6,15 @@ contract predates code generation; later sections document the implemented
 phases. See [the roadmap](../roadmap.md#native-code-execution) for open work
 and [benchmark results](../../bench/RESULTS.md) for measurements.
 
+**Current status (2026-11-10):** the opt-in glibc x86-64 JIT supports native
+calls, closures and captured locals, exception handlers, non-local block exits,
+and Array `each`/`map` loops. Calls and shared-cell stores are non-replayable
+effects: a later error is handled or propagated without rerunning those effects.
+Supervised cancellation is checked at native loop back edges and block entries.
+VM instruction, wall-clock and memory budgets keep execution interpreted.
+The dated phase notes below describe how this implementation developed;
+their earlier limitations are historical, not the current feature set.
+
 **Status (2026-09-12): a first, deliberately narrow implementation now
 exists** (`src/jit.c`/`src/jit.h`, opt-in via `DIAMOND_JIT=1`) -- everything
 below was written before that code and describes the *general* contract a
@@ -2234,7 +2243,13 @@ line), load `vm->interrupt_flag`, and if it is non-null and set, return
 while compiled code is per function, so the check is unconditional: one load, one test and a
 not-taken branch per iteration for a VM with no flag. The loop-on-first-call rule no longer
 excludes supervised attempts. A budget-limited VM (instruction or wall-clock) still stays on
-the interpreter, where those budgets are counted.
+the interpreter, where those budgets are counted. Memory budgets and resource-limit
+grace execution also stay interpreted.
+
+The Array `each`/`map` native loop emits the same interrupt poll before each
+block entry. C-driven loops reach `block_call_run`, which checks interruption
+before directly entering a compiled block. A block without its own backward
+jump therefore still cooperates with cancellation when called repeatedly.
 
 `JIT_VM` is `r12`, whose ModRM base encoding needs a SIB byte; `emit_load_r64` does not emit
 one, so the poll copies it to `rax` first (the same trap as RSP in `emit_lea`).
@@ -2366,6 +2381,10 @@ pushed registers and the frame reservation).
   that fails a check (a missing closure, a non-cell register) takes the trampoline too, which
   raises `run_chunk`'s error. A missing closure (a plain call into the function) is malformed
   bytecode in both tiers.
+- **Errors after stores:** `SET_CELL` and `SET_CAPTURE` mark the function as
+  having a non-replayable effect (`has_called`, despite the field's historical
+  name). A later failed type check enters a handler or propagates the error;
+  it never re-executes the closure and repeats captured-local assignments.
 - **Self-calls:** a function that reads its closure keeps the self-call trampoline. That
   trampoline enters with no closure, as `run_chunk`'s `CALL` does, whereas the native self-call
   would pass no seventh argument at all.
@@ -2454,6 +2473,13 @@ Both set `needs_frame` and `has_called`. With `DIAMOND_JIT=1`, closures runs 5.6
 (77 to 73 ms) and regex 6% fewer (213 to 202 ms). json is 2% lower, and the rest are within noise.
 
 ## Exception handlers
+
+The source compiler prepares captured-local accesses before compiling a body
+that `retry` can revisit. Existing locals and locals declared within that body
+use cell-aware accesses even before the first block capture runs. This applies
+to explicit `begin` and implicit method/block handlers, including captures in
+rescue or nested ensure clauses. It prevents a retry from reading the internal
+cell through an earlier ordinary-register access.
 
 A function with `begin`/`rescue`/`else`/`ensure`/`retry` used to stay interpreted, and the compiler
 wraps every `begin` in `PUSH_ENSURE`/`RUN_ENSURE`/`END_ENSURE` even without an `ensure` clause, so
@@ -2806,6 +2832,7 @@ emits `compile_block_loop` in front of the usual call:
   the element into `loop.current` (keeping it alive), lays out the header and register file as
   `emit_native_entry_call` does, with the closure as the seventh argument, and calls the
   block's entry with the result going to `loop.result`.
+  Each iteration polls supervised interruption before entering the block.
 - **`diamond_jit_loop_step`** takes any status other than OK, and every map result: TAIL runs
   the tail loop, RETRY interprets the block for that element, map pushes the result, and any
   other status (break, return, an exception) is counted as a hard propagation, releases map's
