@@ -10,6 +10,7 @@ authoritative fine-grained record.
 
 - Supervised workers stop promptly inside JIT Array block loops and native loops calling compiled blocks.
 - Safe calls preserve local type facts when nil skips their arguments, and join conditional assignments.
+- Release downloads select the exact requested asset when falling back to formatted GitHub API responses.
 
 ## 1.0.0-rc1 — 2026-11-09
 

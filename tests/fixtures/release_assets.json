@@ -1,0 +1,16 @@
+{
+  "name": "wanted+[1].tar.gz",
+  "assets": [
+    {
+      "url": "https://api.github.com/repos/example/project/releases/assets/111",
+      "name": "first.tar.gz",
+      "uploader": {"url": "https://api.github.com/users/example", "name": "a },{ string"}
+    },
+    {
+      "name": "wanted+[1].tar.gz",
+      "uploader": {"url": "https://api.github.com/users/example"},
+      "url": "https://api.github.com/repos/example/project/releases/assets/222"
+    }
+  ],
+  "body": "Quoted \"names\" and braces }{ are not object boundaries."
+}
