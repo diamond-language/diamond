@@ -61,17 +61,17 @@ jobs:
       # Docker's default seccomp profile blocks that process-local ASLR change.
       options: ${{ matrix.suite == 'test-builds' && '--init --security-opt seccomp=unconfined' || '--init' }}
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 1
       - name: Install dependencies (Fedora)
         if: matrix.os.name == 'fedora'
         run: dnf install -y gcc clang make git diffutils findutils ripgrep compiler-rt libasan libubsan libtsan openssl-devel sqlite-devel libpq-devel mariadb-connector-c-devel libxcrypt-devel bc nmap-ncat openssl nodejs redis
       - name: Install dependencies (Ubuntu)
         if: matrix.os.name == 'ubuntu'
         run: |
-          apt-get update
-          DEBIAN_FRONTEND=noninteractive apt-get install -y gcc clang make git diffutils findutils ripgrep libssl-dev libsqlite3-dev libpq-dev zlib1g-dev libmariadb-dev libcrypt-dev bc netcat-openbsd openssl curl nodejs redis-server
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          fetch-depth: 1
+          sh tools/test_ci_apt.sh
+          sh tools/ci_apt.sh gcc clang make git diffutils findutils ripgrep libssl-dev libsqlite3-dev libpq-dev zlib1g-dev libmariadb-dev libcrypt-dev bc netcat-openbsd openssl curl nodejs redis-server
       - name: Run ${{ matrix.suite }}
         run: make CC=${{ matrix.cc }} ${{ matrix.suite }}
 
@@ -92,8 +92,7 @@ jobs:
           fetch-depth: 1
       - name: Install dependencies (Ubuntu arm64)
         run: |
-          apt-get update
-          DEBIAN_FRONTEND=noninteractive apt-get install -y gcc clang make git diffutils findutils ripgrep libssl-dev libsqlite3-dev libpq-dev zlib1g-dev libmariadb-dev libcrypt-dev bc netcat-openbsd openssl curl
+          sh tools/ci_apt.sh gcc clang make git diffutils findutils ripgrep libssl-dev libsqlite3-dev libpq-dev zlib1g-dev libmariadb-dev libcrypt-dev bc netcat-openbsd openssl curl
       # The shipped JIT is intentionally x86-64-only. Its environment-driven
       # cases are kept in the main matrix; arm64 validates the portable
       # interpreter and does not pretend to exercise unavailable machine code.
@@ -127,8 +126,7 @@ jobs:
           fetch-depth: 1
       - name: Install dependencies (Ubuntu arm64)
         run: |
-          apt-get update
-          DEBIAN_FRONTEND=noninteractive apt-get install -y gcc clang make git diffutils findutils ripgrep libssl-dev libsqlite3-dev libpq-dev zlib1g-dev libmariadb-dev libcrypt-dev bc netcat-openbsd openssl curl nodejs redis-server
+          sh tools/ci_apt.sh gcc clang make git diffutils findutils ripgrep libssl-dev libsqlite3-dev libpq-dev zlib1g-dev libmariadb-dev libcrypt-dev bc netcat-openbsd openssl curl nodejs redis-server
       - name: make test-integration (Ubuntu arm64)
         run: make CC=gcc test-integration
 
@@ -147,8 +145,7 @@ jobs:
           fetch-depth: 1
       - name: Install dependencies (Ubuntu arm64)
         run: |
-          apt-get update
-          DEBIAN_FRONTEND=noninteractive apt-get install -y gcc clang make git diffutils findutils ripgrep libssl-dev libsqlite3-dev libpq-dev zlib1g-dev libmariadb-dev libcrypt-dev bc netcat-openbsd openssl curl
+          sh tools/ci_apt.sh gcc clang make git diffutils findutils ripgrep libssl-dev libsqlite3-dev libpq-dev zlib1g-dev libmariadb-dev libcrypt-dev bc netcat-openbsd openssl curl
       - name: Exclude x86-64 JIT cases
         run: |
           mkdir -p /tmp/excluded-cases
@@ -175,8 +172,7 @@ jobs:
           fetch-depth: 1
       - name: Install dependencies (Ubuntu arm64)
         run: |
-          apt-get update
-          DEBIAN_FRONTEND=noninteractive apt-get install -y gcc clang make git diffutils findutils ripgrep libssl-dev libsqlite3-dev libpq-dev zlib1g-dev libmariadb-dev libcrypt-dev bc netcat-openbsd openssl curl
+          sh tools/ci_apt.sh gcc clang make git diffutils findutils ripgrep libssl-dev libsqlite3-dev libpq-dev zlib1g-dev libmariadb-dev libcrypt-dev bc netcat-openbsd openssl curl
       - name: Exclude x86-64 JIT cases
         run: |
           mkdir -p /tmp/excluded-cases
@@ -209,8 +205,7 @@ jobs:
           fetch-depth: 1
       - name: Install dependencies
         run: |
-          apt-get update
-          DEBIAN_FRONTEND=noninteractive apt-get install -y gcc make git diffutils findutils libcrypt-dev bc curl util-linux nodejs ca-certificates openssl
+          sh tools/ci_apt.sh gcc make git diffutils findutils libcrypt-dev bc curl util-linux nodejs ca-certificates openssl
       - name: Install wasi-sdk
         env:
           GH_TOKEN: ${{ github.token }}
@@ -244,8 +239,7 @@ jobs:
           fetch-depth: 1
       - name: Install dependencies (Ubuntu, no database, zlib or OpenSSL development packages)
         run: |
-          apt-get update
-          DEBIAN_FRONTEND=noninteractive apt-get install -y gcc make git diffutils findutils libcrypt-dev bc curl util-linux
+          sh tools/ci_apt.sh gcc make git diffutils findutils libcrypt-dev bc curl util-linux
       - name: Build and check the minimal configuration
         run: make MINIMAL=1 test-minimal
 
@@ -281,8 +275,7 @@ jobs:
           fetch-depth: 1
       - name: Install dependencies
         run: |
-          apt-get update
-          DEBIAN_FRONTEND=noninteractive apt-get install -y gcc make git diffutils findutils ripgrep libssl-dev libsqlite3-dev libpq-dev zlib1g-dev libmariadb-dev libcrypt-dev bc curl openssl util-linux nginx
+          sh tools/ci_apt.sh gcc make git diffutils findutils ripgrep libssl-dev libsqlite3-dev libpq-dev zlib1g-dev libmariadb-dev libcrypt-dev bc curl openssl util-linux nginx
       - name: Registry seed and nginx drill
         run: |
           make test-registry-seed
@@ -300,8 +293,7 @@ jobs:
           fetch-depth: 1
       - name: Install dependencies (Ubuntu)
         run: |
-          apt-get update
-          DEBIAN_FRONTEND=noninteractive apt-get install -y gcc make git diffutils findutils ripgrep libssl-dev libsqlite3-dev libpq-dev zlib1g-dev libmariadb-dev libcrypt-dev bc netcat-openbsd openssl curl util-linux
+          sh tools/ci_apt.sh gcc make git diffutils findutils ripgrep libssl-dev libsqlite3-dev libpq-dev zlib1g-dev libmariadb-dev libcrypt-dev bc netcat-openbsd openssl curl util-linux
       - name: Stress the threaded cases on two CPUs
         run: make test-stress-threads
 
@@ -320,8 +312,7 @@ jobs:
           fetch-depth: 1
       - name: Install dependencies (Ubuntu)
         run: |
-          apt-get update
-          DEBIAN_FRONTEND=noninteractive apt-get install -y gcc make git diffutils findutils ripgrep libssl-dev libsqlite3-dev libpq-dev zlib1g-dev libmariadb-dev libcrypt-dev bc netcat-openbsd openssl curl util-linux
+          sh tools/ci_apt.sh gcc make git diffutils findutils ripgrep libssl-dev libsqlite3-dev libpq-dev zlib1g-dev libmariadb-dev libcrypt-dev bc netcat-openbsd openssl curl util-linux
       - name: Stress the threaded cases on two CPUs under TSan
         run: make test-stress-threads-tsan
 
@@ -337,8 +328,7 @@ jobs:
           fetch-depth: 1
       - name: Install dependencies (Ubuntu)
         run: |
-          apt-get update
-          DEBIAN_FRONTEND=noninteractive apt-get install -y gcc make git diffutils findutils ripgrep libssl-dev libsqlite3-dev libpq-dev zlib1g-dev libmariadb-dev libcrypt-dev bc netcat-openbsd openssl curl util-linux
+          sh tools/ci_apt.sh gcc make git diffutils findutils ripgrep libssl-dev libsqlite3-dev libpq-dev zlib1g-dev libmariadb-dev libcrypt-dev bc netcat-openbsd openssl curl util-linux
       - name: Stress the threaded cases on two CPUs
         run: make test-stress-threads
 
