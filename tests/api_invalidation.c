@@ -66,8 +66,74 @@ static bool check_dispatch_ends(void) {
     return true;
 }
 
+/* Exercise both captured-store bytecodes. The source compiler materializes
+ * capture cells and emits SET_CELL; an equivalent body using SET_CAPTURE
+ * covers the direct form used by bytecode producers. Neither may replay its
+ * swap when the subsequent return-type check fails. */
+static bool check_captured_store_error(bool direct_capture) {
+    static const char source[]=
+        "def run()\n"
+        " a = 1\n b = 2\n"
+        " def swap(value) -> Int\n"
+        "  previous = a\n  a = b\n  b = previous\n  value\n end\n"
+        " begin\n  swap(nil)\n rescue error: TypeError\n  nil\n end\n"
+        " [a, b]\nend\nrun()\n";
+    static DiamondProgram program;
+    DiamondDiagnostic diagnostic;
+    if(!diamond_compile(source,&program,&diagnostic)) {
+        fprintf(stderr,"captured-store compile failed: %s\n",diagnostic.message);
+        diamond_program_free(&program);
+        return false;
+    }
+    DiamondFunction *swap=nullptr;
+    for(size_t index=0;index<program.function_count;index++)
+        if(strcmp(program.functions[index]->name,"swap")==0)swap=program.functions[index];
+    if(swap==nullptr) {diamond_program_free(&program);return false;}
+    if(direct_capture) {
+        const uint16_t set=swap->return_type_set;
+        const uint8_t code[]={
+            DIAMOND_OP_GET_CAPTURE,0,1,0,0,
+            DIAMOND_OP_GET_CAPTURE,0,2,0,1,
+            DIAMOND_OP_SET_CAPTURE,0,0,0,2,
+            DIAMOND_OP_SET_CAPTURE,0,1,0,1,
+            DIAMOND_OP_CHECK_TYPE,0,0,(uint8_t)(set>>8),(uint8_t)set,
+            DIAMOND_OP_RETURN,0,0,
+        };
+        if(sizeof code>swap->code_count) {diamond_program_free(&program);return false;}
+        memcpy(swap->code,code,sizeof code);
+        swap->code_count=sizeof code;
+    }
+    DiamondChunk chunk=diamond_program_chunk(&program);
+    DiamondVm vm;
+    diamond_vm_init(&vm);
+#if (defined(__x86_64__) || defined(_M_X64)) && defined(__GLIBC__)
+    vm.jit=true;
+#endif
+    vm.jit_threshold=1;
+    vm.stress_gc=true;
+    DiamondValue result=DIAMOND_NIL;
+    const DiamondVmStatus status=diamond_vm_run(&vm,&chunk,&result);
+    bool ok=status==DIAMOND_VM_OK&&result.kind==DIAMOND_VALUE_OBJECT&&
+        result.as.object->kind==DIAMOND_OBJECT_ARRAY;
+    if(ok) {
+        const DiamondArray *array=(const DiamondArray *)result.as.object;
+        ok=array->count==2&&array->values[0].kind==DIAMOND_VALUE_INT&&
+            array->values[0].as.integer==2&&array->values[1].kind==DIAMOND_VALUE_INT&&
+            array->values[1].as.integer==1;
+    }
+    if(vm.jit)ok=ok&&swap->jit_code!=nullptr&&vm.jit_bailouts==0;
+    if(!ok)fprintf(stderr,"captured-store error test (%s) failed: %s %s\n",
+        direct_capture?"SET_CAPTURE":"SET_CELL",diamond_vm_status_name(status),vm.error);
+    diamond_vm_free(&vm);
+    diamond_program_free(&program);
+    return ok;
+}
+
 int main(void) {
     if(!check_dispatch_ends())return 20;
+    const bool cell_ok=check_captured_store_error(false);
+    const bool capture_ok=check_captured_store_error(true);
+    if(!cell_ok||!capture_ok)return 21;
     static const char source[] =
         "class Parent\n"
         "  def value()\n"

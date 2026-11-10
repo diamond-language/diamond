@@ -12,6 +12,7 @@ authoritative fine-grained record.
 
 ### Fixed
 
+- JIT failures after captured-local writes preserve those writes instead of replaying the closure.
 - Supervised workers stop promptly inside JIT Array block loops and native loops calling compiled blocks.
 - Safe calls preserve local type facts when nil skips their arguments, and join conditional assignments.
 - Release downloads select the exact requested asset when falling back to formatted GitHub API responses.
