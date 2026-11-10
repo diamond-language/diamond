@@ -396,6 +396,7 @@ $(BUILD_DIR)/lsp-%.o: lsp/%.c
 
 test: debug
 	bash tests/merge_when_green_test.sh
+	sh tests/fetch_release_asset_test.sh
 	bash tests/run.sh
 
 test-release: release

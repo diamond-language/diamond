@@ -6,6 +6,16 @@ authoritative fine-grained record.
 
 ## Unreleased
 
+### Changed
+
+- Ubuntu 22.04 is no longer a supported deployment target and has been removed from portable CI validation.
+
+### Fixed
+
+- Supervised workers stop promptly inside JIT Array block loops and native loops calling compiled blocks.
+- Safe calls preserve local type facts when nil skips their arguments, and join conditional assignments.
+- Release downloads select the exact requested asset when falling back to formatted GitHub API responses.
+
 ## 1.0.0-rc1 — 2026-11-09
 
 The first release candidate for d6 1.0. Since 0.29.0: safe navigation (`&.`), and a faster JIT for

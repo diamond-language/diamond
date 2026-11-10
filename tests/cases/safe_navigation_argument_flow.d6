@@ -1,0 +1,48 @@
+def string_only(x: String) = x
+def int_only(x: Int) = x
+
+# A known nil skips the write, so the original type remains precise.
+x = "ok"
+nil&.foo(if true
+  x = 1
+else
+  x = 2
+end)
+puts(string_only(x))
+
+class Sink
+  def take(value) = value
+end
+
+# A known non-nil receiver always evaluates the argument.
+Sink.new()&.take(if true
+  x = 3
+else
+  x = 4
+end)
+puts(int_only(x))
+
+def maybe(present: Bool) -> Sink | Nil
+  present ? Sink.new() : nil
+end
+
+# Nullable receivers join both paths, including assignments to the receiver
+# and locals first introduced inside the skipped argument.
+def run(present: Bool)
+  value = "original"
+  receiver = maybe(present)
+  receiver&.take(if true
+    value = 7
+    receiver = Sink.new()
+    fresh = 9
+  else
+    value = 8
+    receiver = Sink.new()
+    fresh = 10
+  end)
+  puts(value)
+  puts(fresh)
+  puts(receiver == nil)
+end
+run(false)
+run(true)

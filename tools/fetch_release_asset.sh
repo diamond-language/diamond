@@ -9,7 +9,7 @@
 # time. This tries the normal URL a few times, then the API's asset endpoint
 # (authenticated with GH_TOKEN or GITHUB_TOKEN when set, for its rate limit),
 # with a pause between rounds. With SHA256 the file is checked, and a mismatch
-# fails at once rather than being retried. POSIX sh and curl only, so it runs
+# fails at once rather than being retried. Uses POSIX sh, awk and curl, so it runs
 # in the minimal containers CI builds in.
 set -eu
 [ $# -ge 4 ] || { echo "usage: $0 OWNER/REPO TAG NAME OUTPUT [SHA256]" >&2; exit 2; }
@@ -26,13 +26,12 @@ api_get() {
 }
 
 # The asset's API id, from the release's JSON (no jq in the build images).
+# Keep object boundaries and quoted strings intact, including nested uploader
+# objects. Whitespace, property order and regex characters in names do not matter.
 asset_id() {
     api_get -H "Accept: application/vnd.github+json" \
         "https://api.github.com/repos/$repo/releases/tags/$tag" |
-        tr -d '\n' | sed 's/},{/}\n{/g' |
-        grep "\"name\": *\"$name\"" |
-        grep -o '"url": *"https://api.github.com/repos/[^"]*/releases/assets/[0-9]*"' |
-        head -n 1 | grep -o '[0-9]*"$' | tr -d '"'
+        ASSET_NAME="$name" awk -f "$(dirname "$0")/release_asset_id.awk"
 }
 
 fetch() {

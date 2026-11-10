@@ -220,9 +220,11 @@ An experimental build, not attached to releases, while its limits (below) are wo
 `d6-VERSION-linux-aarch64.tar.gz`, holding `d6`, `facet`, `d6-lsp` and `d6-dap` as fully
 static musl executables that run on any Linux distribution of that architecture, with or
 without a native package. Unpack the tarball and put its directory on `PATH`. On every pull
-request, CI runs them in clean Ubuntu 26.04 and 22.04, Debian 12, Fedora 44, Arch, Alpine
+request, CI runs them in clean Ubuntu 26.04, Debian 12, Fedora 44, Arch, Alpine
 and openSUSE Leap containers: the smoke script, and a `facet new` project installing its
 test cut from the registry and passing its tests.
+
+Ubuntu 22.04 is no longer a supported deployment target or part of the CI matrix.
 
 ```sh
 tools/build_portable.sh           # build/portable/d6-linux-$(uname -m)/ and the tarball

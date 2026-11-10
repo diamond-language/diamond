@@ -18,7 +18,7 @@ if [[ -z "$engine" ]]; then
     echo "test_portable_distros: needs podman or docker" >&2
     exit 1
 fi
-images="${PORTABLE_DISTROS:-docker.io/library/ubuntu:26.04 docker.io/library/ubuntu:22.04 \
+images="${PORTABLE_DISTROS:-docker.io/library/ubuntu:26.04 \
 docker.io/library/debian:12 docker.io/library/fedora:44 docker.io/library/archlinux:latest \
 docker.io/library/alpine:3.23 docker.io/opensuse/leap:15.6}"
 log="$(mktemp)"

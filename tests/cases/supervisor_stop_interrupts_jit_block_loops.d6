@@ -1,0 +1,28 @@
+# The supervisor entry is interpreted: its each loop uses the C native loop
+# with a compiled callback. Helpers called by it use generated block loops.
+def c_loop_child()
+  xs = [0]
+  xs.each() do |x| xs.push(0) end
+end
+
+def native_each()
+  xs = [0]
+  xs.each() do |x| xs.push(0) end
+end
+
+def native_map()
+  xs = [0]
+  xs.map() do |x| xs.push(0); x end
+end
+
+def each_child() = native_each()
+def map_child() = native_map()
+
+sup = Supervisor.new()
+sup.add_child(c_loop_child)
+sup.add_child(each_child)
+sup.add_child(map_child)
+puts(sup.stop(100))
+puts(sup.alive?(0))
+puts(sup.alive?(1))
+puts(sup.alive?(2))
