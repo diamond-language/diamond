@@ -8,6 +8,7 @@ authoritative fine-grained record.
 
 ### Changed
 
+- Developer documentation reflects retry/capture semantics, JIT error and cancellation contracts, and current CI and test-running procedures.
 - Ubuntu 22.04 is no longer a supported deployment target and has been removed from portable CI validation.
 
 ### Fixed

@@ -87,11 +87,12 @@ make lsp        # build/d6-lsp
 
 `sanitize`, `tsan` and `release` rebuild `build/d6` and `build/run_cases` with their own flags,
 so switching between them (and back to `debug`) recompiles those. The tools (`facet`, the LSP and
-DAP servers, the API and fiber tests) share one set of debug objects in `build/dbg/`, and the two
+DAP servers, the API and fiber tests) share one set of debug objects in `build/dbg/`, and the three
 fuzzers share one instrumented set in `build/fuzz/`; a variant switch leaves both alone. Under
 Clang's ASan+UBSan interpreter loop in `src/vm_run_chunk.c` dominates compilation,
 so the first `make fuzz` is slow, but a later edit to a harness rebuilds in seconds. `make clean` removes
-everything.
+everything, including the standalone differential executable. `make test-integration`
+starts with that clean step; rebuild standalone tools after it finishes.
 
 Test targets, from fastest/narrowest to slowest/broadest:
 

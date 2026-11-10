@@ -14,18 +14,36 @@ jobs, which can keep cancelled work alive.
 
 `tools/merge_when_green.sh PR BRANCH` accepts only explicit `SUCCESS` check
 states, with at least 34 checks by default (`MIN_CHECKS` overrides this when
-the workflow changes). Queued or running checks wait; cancelled, skipped,
-neutral, failed or unknown states stop the merge. API errors and incomplete
+the workflow changes). The current full run registers 37 checks, including
+CodeQL. Queued, running or temporarily neutral checks wait; cancelled, skipped,
+failed or unknown states stop the merge. API errors and incomplete
 reports also stop it. The script rechecks the states and count immediately
 before merging, after verifying that the branch still contains current `main`.
 Its fake-command regression tests run as part of `make test`.
+
+The Ubuntu dependency steps in `ci.yml` use `tools/ci_apt.sh`. It requires a
+complete signed index refresh, bypasses HTTP caches, and retries a failed update
+or install up to three times, refreshing indexes before each install attempt.
+Signature and package hash verification remain enabled. The recovery checks in
+`tools/test_ci_apt.sh` run before the Ubuntu matrix dependency install.
+
+Package downloads can still be slow: a connection that keeps transferring data
+does not hit APT's connection timeout. During the November 10 runs, some installs
+took about 24 minutes before an index refresh recovered a package 404. Those
+delays count against the job's overall timeout.
+
+When any required job fails, inspect its log and cancel remaining work in that
+run instead of leaving runners occupied. For a confirmed setup or runner
+failure, retry only the affected job after diagnosing it; preserve successful
+checks on the same commit. A retry still needs the full green set before merge.
 
 Jobs that download a GitHub release file (wasi-sdk for `test-wasm`, libxcrypt for the portable
 build, the 0.22.0 packages the package tests upgrade from) go through
 `tools/fetch_release_asset.sh`. github.com sometimes answers 504 for one release file for
 minutes at a time while the same file downloads through the API, which used to fail one of these
 jobs in most full runs and pass on a lone rerun. The helper retries, falls back to the API
-(authenticated with the job's `GH_TOKEN`), and still checks each pinned sha256. `test-freebsd`
+(authenticated with the job's `GH_TOKEN`), selects the exact requested asset even
+when API JSON is formatted across lines, and still checks each pinned sha256. `test-freebsd`
 cannot route its download that way, since `vmactions/freebsd-vm` fetches `anyvm.py` itself, so a
 step before it waits up to ten minutes for that file to answer.
 
@@ -71,10 +89,12 @@ version and `~` sorts a development build before its release.
 
 ## Timeout budgets
 
-Budgets are the longest successful job durations seen across recent `main` runs, including
-setup and teardown, with room for runner and package-mirror variation:
+The reference durations below come from earlier successful runs, including setup
+and teardown. They exclude the November 10 mirror delays described above and
+are not upper bounds on current successful runs. Timeouts leave room for runner
+and mirror variation:
 
-| Job | Observed maximum | Timeout |
+| Job | Earlier reference duration | Timeout |
 | --- | ---: | ---: |
 | Matrix builds | 15.2 min | 40 min |
 | Matrix integration | 12 min | 20 min |

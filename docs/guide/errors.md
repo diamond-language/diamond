@@ -107,7 +107,11 @@ puts(with_cleanup())
 That prints `working`, `cleaning up`, then `result`.
 
 `retry` inside a `rescue` runs the `begin` block again from the top, for
-operations worth another attempt:
+operations worth another attempt.
+
+Local values persist across attempts, including locals shared with blocks. A
+retry does not undo earlier assignments. With implicit handlers on a method or
+block body, it restarts that body instead.
 
 ```ruby
 attempts = 0

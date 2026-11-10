@@ -6,14 +6,15 @@ together, the exact surface a `.d6` file's raw bytes are exposed to.
 `fuzz/execute_fuzzer.c` is a second harness for `run_chunk` (via
 `diamond_vm_run`) — the exact surface `ProgramBuilder`-constructed
 bytecode exposes, and the one the pre-release audit's register-bounds
-finding actually lived on (see "Fuzzing bytecode execution" below). Both
+finding actually lived on (see "Fuzzing bytecode execution" below).
+`fuzz/differential_fuzzer.c` compares deterministic source programs in the
+interpreter and JIT, with GC stress in the native run. All three
 are Clang-only builds (`-fsanitize=fuzzer` is a Clang/LLVM feature GCC
-doesn't implement at all), the one thing in this repository that isn't
-built with the same compiler as everything else.
+doesn't implement). These targets use Clang even when the regular build uses GCC.
 
-## Why compile-only, never execute
+## Compiler-only coverage
 
-The harness calls `diamond_compile` and stops — it never calls
+The compiler harness calls `diamond_compile` and stops — it never calls
 `diamond_vm_run` on the result. d6 has real native bridges (`File`,
 `TCPSocket`/`TCPServer`, `Regexp` — see `docs/io.md`), so actually
 *executing* an arbitrary fuzzer-mutated program isn't safe without
@@ -24,12 +25,10 @@ Compile-only fuzzing already covers the highest-value target — memory
 safety in code that runs on 100% of untrusted input, before any of it is
 ever considered "valid enough to run" — without that risk.
 
-Fuzzing execution *of a compiled d6 program* (arbitrary program logic,
-with real I/O bridges reachable) is still a distinct, separable, higher-
-effort project for later. The pieces now exist -- `DIAMOND_MAX_INSTRUCTIONS`/
-`DIAMOND_MAX_WALL_MILLISECONDS` budgets and sandbox mode (docs/sandbox.md), which
-`execute_fuzzer` already uses for its run budget -- but a source-level harness would
-still have to decide which programs are worth running and keep the sandbox on.
+The differential harness below adds source-program execution with sandbox mode,
+a bounded interpreter preflight and a terminating native timeout. It filters out
+nondeterministic and I/O features; the compiler-only harness still accepts those
+inputs without executing them.
 
 ## Fuzzing bytecode execution
 
@@ -114,7 +113,7 @@ wherever `-artifact_prefix=` points) — reproduce it directly:
 ./build/execute_fuzzer crash-<hash>
 ```
 
-A run is bounded by the VM's own `DIAMOND_MAX_INSTRUCTIONS` and
+The bytecode execution run is bounded by the VM's own `DIAMOND_MAX_INSTRUCTIONS` and
 `DIAMOND_MAX_WALL_MILLISECONDS` budgets, not a timer that jumps out of the run:
 nothing may `siglongjmp` out of the VM, because doing so from inside a garbage
 collection leaves the thread-local mark stack mid-drain and the next input's
@@ -134,6 +133,35 @@ harness defaults to `-timeout=10`; supply a larger positive value for a slower c
 A native hang terminates the fuzzer and records a timeout artifact rather than resuming
 an interrupted VM. Seed it from small deterministic files in `tests/cases`.
 
+From the repository root, this builds the executable and runs in the foreground
+with progress visible. It stops after 10,000 inputs or about 90 seconds, or sooner
+if it encounters an error or an individual input exceeds the timeout:
+
+```sh
+mkdir -p /tmp/d6-differential/corpus /tmp/d6-differential/artifacts
+cp tests/cases/jit_captured_store_error.d6 tests/cases/retry_captured_locals.d6 /tmp/d6-differential/corpus/
+make -j2 build/differential_fuzzer && \
+  ./build/differential_fuzzer -runs=10000 -max_total_time=90 -max_len=4096 \
+    -artifact_prefix=/tmp/d6-differential/artifacts/ /tmp/d6-differential/corpus/
+status=$?
+printf 'Exit status: %s\n' "$status"
+```
+
+The harness accepts source inputs up to 4096 bytes. Copy `.d6` source files rather
+than generated `.d6c` caches into the corpus. LibFuzzer adds and minimizes inputs
+in that directory during the run. `make clean`, including the clean step at the
+start of `make test-integration`, removes the executable; rebuild it afterwards
+before starting another run. Keep the corpus and artifacts outside `build/` to
+preserve them across clean builds.
+
+A successful bounded run prints `Done ... runs` and exits 0. Progress lines such
+as `NEW`, `REDUCE`, or `pulse` are not a completion result. A nonzero exit or a
+return to the shell without that summary needs investigation. Inspect the saved
+`crash-*` or `timeout-*` input in the artifact directory; a timeout alone does not
+establish a language defect. Because program stdout/stderr are captured during
+comparison, a terminating diagnostic may not appear in the terminal even though
+an artifact was saved.
+
 It is not part of `make test-fuzz`. Each input costs two ASan-instrumented runs, so run it
 with few workers at low priority (`nice -n 19 build/differential_fuzzer -jobs=2 -workers=2
 ...`); six workers plus a desktop session made a development machine unresponsive. Avoid
@@ -142,9 +170,9 @@ runs while the harness itself was healthy.
 
 ## What's deliberately out of scope so far
 
-- **Executing an arbitrary compiled *program*** (real program logic, real
-  I/O bridges reachable) — see above. `execute_fuzzer` covers `run_chunk`
-  itself, not this.
+- **General I/O and nondeterministic program execution** — the differential
+  harness deliberately filters these features; `execute_fuzzer` covers synthetic
+  bytecode execution instead.
 - **Fuzzing `diamond_load_program`/`require` resolution** — involves real
   filesystem I/O (reading required files relative to a given path), which
   a pure in-memory `LLVMFuzzerTestOneInput(data, size)` harness has no

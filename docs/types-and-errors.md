@@ -444,7 +444,9 @@ native database drivers' `SQLite3Error`, `PostgreSQLError`, and
 
 A `def` or `do` block body can take the same `rescue`/`else`/`ensure` clauses
 without a `begin`, as in Ruby. The clauses cover the whole body, and `retry`
-reruns it:
+reruns it. Retry keeps the current values of locals; it does not roll back
+assignments. Locals captured by a block remain shared across attempts, including
+captures made in a rescue or ensure clause:
 
 ```ruby
 def parse_port(text: String) -> Int
