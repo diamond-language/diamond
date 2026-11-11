@@ -6,6 +6,12 @@ authoritative fine-grained record.
 
 ## Unreleased
 
+## 1.0.0-rc2 — 2026-11-10
+
+The second release candidate fixes captured-local retries, JIT error handling
+and supervised cancellation, and local type flow around safe calls. No cuts
+changed since rc1.
+
 ### Changed
 
 - Developer documentation reflects retry/capture semantics, JIT error and cancellation contracts, and current CI and test-running procedures.
