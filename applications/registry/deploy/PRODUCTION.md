@@ -5,10 +5,15 @@ The corrected A record is **142.93.192.149**. External health and catalog
 requests succeeded. Since 2026-09-25 nginx terminates TLS with certbot
 certificates (see "Proxy and certificates" below); Caddy was retired.
 
-Runtime revision: `e42eba00dd8e3b51d51cf99083697ba3b69062d1` (v0.26.0, deployed 2026-11-05 with
-`tools/deploy_registry.sh --force` after a verified snapshot; the upgrade check called it optional,
-and the owner asked for it). No cut was published: none changed after v0.23.0. The deploy's public
-verification resolved, digest-checked, loaded and reinstalled all 20 public cuts.
+Runtime revision: `0880b6a6831d28b2411f1bb72a6ffe073308f2d8` (v1.0.0-rc2, deployed 2026-11-10 with
+`tools/deploy_registry.sh --revision=v1.0.0-rc2 --force` after a verified snapshot, at the owner's
+request). The runtime is now built at `-O3 -march=x86-64-v3` and runs with `DIAMOND_JIT=1` (added to
+`/etc/diamond-registry.env`); steady RSS right after the restart was 128 MB. No cut was published:
+none changed after v0.29.0. The deploy's public verification resolved, digest-checked, loaded and
+reinstalled all 20 public cuts.
+
+Previously `e42eba00dd8e3b51d51cf99083697ba3b69062d1` (v0.26.0, deployed 2026-11-05 with
+`tools/deploy_registry.sh --force`).
 
 With v0.29.0 (2026-11-08), after a verified snapshot, a 30-minute credential (37, `publish:gremlin`,
 revoked) published gremlin 0.5.4 (sha256
