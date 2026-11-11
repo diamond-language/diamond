@@ -250,4 +250,26 @@ if [[ "$(id -u)" != 0 ]]; then
     count=$((count + 1))
 fi
 
+
+# Type sets survive the compact cache encoding (unions, typed Callable
+# parameters, nested element types), and a program full of typed calls keeps a
+# cache near the size of its code: whole 354-byte type sets once made it 4x.
+mkdir -p "$work/sets"
+cat > "$work/sets/app.d6" <<'D6'
+def twice(callback: Callable[[Int], Int]) -> Int = callback(callback(1))
+def pick(value: Int | String | Nil) -> String = value.to_s()
+def total(values: Array[Int]) -> Int = values.sum()
+def g(a: Int) = a
+def add_one(value: Int) -> Int = value + 1
+puts(twice(add_one))
+puts(pick("s") + pick(2) + pick(nil))
+puts(total([1, 2, 3]))
+D6
+for i in $(seq 1 1000); do printf 'y = g(%s)\n' "$i"; done >> "$work/sets/app.d6"
+first="$("$diamond" "$work/sets/app.d6")"
+second="$(DIAMOND_TRACE_CACHE=1 "$diamond" "$work/sets/app.d6" 2>&1)"
+[[ "$first" == $'3\ns2nil\n6'* && "$second" == *"cache: hit"* && "$second" == *$'3\ns2nil\n6'* ]]
+(( $(wc -c < "$work/sets/app.d6c") < 400000 ))
+count=$((count + 1))
+
 echo "$count cache tests passed"

@@ -111,6 +111,28 @@ static bool write_function_image(FILE *file, const DiamondFunction *function) {
     return true;
 }
 
+/* A type member field by field instead of the whole 44-byte struct: the scalar
+ * fields, then the callable parameter sets as the value the array ends with
+ * (the "no set" marker unless the member is a Callable), a count, and only the
+ * entries before that trailing run. */
+enum { TYPE_MEMBER_PARAMETER_SLOTS = sizeof(((DiamondTypeMember *)0)->callable_parameter_sets) /
+    sizeof(uint16_t) };
+static bool write_type_member(FILE *file, const DiamondTypeMember *member) {
+    const uint16_t fill = member->callable_parameter_sets[TYPE_MEMBER_PARAMETER_SLOTS - 1];
+    uint8_t used = TYPE_MEMBER_PARAMETER_SLOTS;
+    while (used > 0 && member->callable_parameter_sets[used - 1] == fill) used--;
+    const uint8_t flags = member->callable_parameters_typed ? 1 : 0;
+    return write_all(file, &member->id, sizeof member->id) &&
+        write_all(file, &member->argument_set, sizeof member->argument_set) &&
+        write_all(file, &member->second_argument_set, sizeof member->second_argument_set) &&
+        write_all(file, &member->callable_arity, sizeof member->callable_arity) &&
+        write_all(file, &member->callable_return_set, sizeof member->callable_return_set) &&
+        write_all(file, &flags, sizeof flags) &&
+        write_all(file, &fill, sizeof fill) &&
+        write_all(file, &used, sizeof used) &&
+        write_all(file, member->callable_parameter_sets, used * sizeof *member->callable_parameter_sets);
+}
+
 static bool write_function(FILE *file, const DiamondFunction *function) {
     if (!write_function_image(file, function)) return false;
     if (!write_all(file, function->code, function->code_count * sizeof *function->code)) return false;
@@ -125,7 +147,19 @@ static bool write_function(FILE *file, const DiamondFunction *function) {
         if (!write_all(file, &length, sizeof length)) return false;
         if (!write_all(file, function->strings[index].chars, (size_t)length)) return false;
     }
-    if (!write_all(file, function->type_sets, function->type_set_count * sizeof *function->type_sets)) return false;
+    /* A DiamondTypeSet holds DIAMOND_MAX_UNION_TYPES member slots (354 bytes) and
+     * almost every set uses one. Writing whole structs made type sets nearly all
+     * of a large program's cache (63 of Pheint's 71 MB), and of every `d6 build`
+     * binary that embeds it. On disk each set is its count, its inferred flag and
+     * only the members it uses (see write_type_member); the reader zero-fills the rest. */
+    for (size_t index = 0; index < function->type_set_count; index++) {
+        const DiamondTypeSet *set = &function->type_sets[index];
+        const uint8_t header[2] = {set->count, set->inferred ? 1 : 0};
+        if (set->count > DIAMOND_MAX_UNION_TYPES) return false;
+        if (!write_all(file, header, sizeof header)) return false;
+        for (uint8_t member = 0; member < set->count; member++)
+            if (!write_type_member(file, &set->members[member])) return false;
+    }
     return true;
 }
 
@@ -313,6 +347,29 @@ static const uint8_t *take(const uint8_t **cursor, const uint8_t *end, size_t si
  * (valid only for the duration of this call), then deep-copying it via
  * diamond_function_copy -- the exact same clone clone_program_from_chunk
  * (src/vm.c) already trusts for this. */
+/* The inverse of write_type_member; `out` must already be zeroed. */
+static bool read_type_member(const uint8_t **cursor, const uint8_t *end, DiamondTypeMember *out) {
+    enum { SCALARS = 2 + 2 + 2 + 1 + 2 + 1 + 2 + 1 };
+    const uint8_t *bytes = take(cursor, end, SCALARS);
+    if (bytes == nullptr) return false;
+    memcpy(&out->id, bytes, 2);
+    memcpy(&out->argument_set, bytes + 2, 2);
+    memcpy(&out->second_argument_set, bytes + 4, 2);
+    out->callable_arity = bytes[6];
+    memcpy(&out->callable_return_set, bytes + 7, 2);
+    const uint8_t flags = bytes[9], used = bytes[12];
+    uint16_t fill;
+    memcpy(&fill, bytes + 10, 2);
+    if (flags > 1 || used > TYPE_MEMBER_PARAMETER_SLOTS) return false;
+    out->callable_parameters_typed = flags == 1;
+    for (size_t slot = used; slot < TYPE_MEMBER_PARAMETER_SLOTS; slot++) out->callable_parameter_sets[slot] = fill;
+    if (used == 0) return true;
+    const uint8_t *parameters = take(cursor, end, used * sizeof *out->callable_parameter_sets);
+    if (parameters == nullptr) return false;
+    memcpy(out->callable_parameter_sets, parameters, used * sizeof *out->callable_parameter_sets);
+    return true;
+}
+
 static bool read_function(const uint8_t **cursor, const uint8_t *end,
         DiamondFunction *destination) {
     DiamondFunction view;
@@ -346,9 +403,10 @@ static bool read_function(const uint8_t **cursor, const uint8_t *end,
        (view.captures_type_variables&&(!view.nested||view.type_variable_count==0||
             view.class_type_variable!=0)))return false;
     const size_t remaining = (size_t)(end - *cursor);
+    /* Each type set takes at least its 2-byte header on disk. */
     if (view.code_count > remaining / sizeof *view.code ||
         view.constant_count > remaining / sizeof *view.constants ||
-        view.type_set_count > remaining / sizeof *view.type_sets)
+        view.type_set_count > remaining / 2)
         return false;
     const uint8_t *code = take(cursor, end, view.code_count * sizeof *view.code);
     const uint8_t *lines_bytes = take(cursor, end, view.code_count * sizeof *view.lines);
@@ -377,18 +435,36 @@ static bool read_function(const uint8_t **cursor, const uint8_t *end,
         if (length > 0) memcpy(strings[index].chars, chars, (size_t)length);
         strings[index].length = (size_t)length;
     }
-    const uint8_t *type_sets_bytes = take(cursor, end, view.type_set_count * sizeof *view.type_sets);
-    if (view.type_set_count > 0 && type_sets_bytes == nullptr) {
-        free(strings);
-        return false;
+    /* Expand the compact type sets (see write_function) back into whole records. */
+    DiamondTypeSet *type_sets = nullptr;
+    if (view.type_set_count > 0) {
+        type_sets = calloc(view.type_set_count, sizeof *type_sets);
+        if (type_sets == nullptr) {
+            free(strings);
+            return false;
+        }
+    }
+    for (size_t index = 0; index < view.type_set_count; index++) {
+        const uint8_t *header = take(cursor, end, 2);
+        bool valid = header != nullptr && header[0] <= DIAMOND_MAX_UNION_TYPES && header[1] <= 1;
+        for (uint8_t member = 0; valid && member < header[0]; member++)
+            valid = read_type_member(cursor, end, &type_sets[index].members[member]);
+        if (!valid) {
+            free(type_sets);
+            free(strings);
+            return false;
+        }
+        type_sets[index].count = header[0];
+        type_sets[index].inferred = header[1] == 1;
     }
     view.code = (uint8_t *)code;
     view.lines = (uint32_t *)(const void *)lines_bytes;
     view.columns = (uint32_t *)(const void *)columns_bytes;
     view.constants = (DiamondValue *)(const void *)constants_bytes;
     view.strings = strings;
-    view.type_sets = (DiamondTypeSet *)(const void *)type_sets_bytes;
+    view.type_sets = type_sets;
     const bool copied = diamond_function_copy(destination, &view);
+    free(type_sets);
     free(strings);
     return copied;
 }
@@ -839,8 +915,9 @@ enum { DIAMOND_CACHE_MAGIC_LENGTH = 8 };
  *    longer and every stored type id has a different value.
  * 9: classes store a type parameter; methods distinguish its instance binding.
  * 10: NEW_TYPED constructs explicitly specialized generic instances.
- * 11: generic class methods bind method variables after the receiver slot. */
-enum { DIAMOND_CACHE_FORMAT_VERSION = 20 };
+ * 11: generic class methods bind method variables after the receiver slot.
+ * 21: type sets are stored as their count, inferred flag and used members only. */
+enum { DIAMOND_CACHE_FORMAT_VERSION = 21 };
 
 /* A checksum of the compiler's own sources and prelude (every .c and .h
  * file under src/, plus lib/core.d6 and lib/core/), passed in by the
