@@ -3,8 +3,10 @@
 # is needed, take a verified backup, build the bundle in the local build VM, upload
 # it, run deploy/upgrade.sh as root, verify the public registry, and prune.
 #
-#   tools/deploy_registry.sh [--force] [--dry-run] [--no-verify]
+#   tools/deploy_registry.sh [--force] [--dry-run] [--no-verify] [--revision=REF]
 #
+# --revision=REF deploys a tag or commit already on origin/main (a release tag, say) instead
+# of HEAD; this script, the VM build flags and upgrade.sh still come from this checkout.
 # By default it stops when tools/registry_needs_upgrade.d6 says NONE or OPTIONAL;
 # --force upgrades anyway. --dry-run prints every mutating command instead of
 # running it (the read-only upgrade check still runs).
@@ -14,13 +16,14 @@
 # is kept. Needs: the build VM running (REGISTRY_VM_PORT, REGISTRY_VM_KNOWN_HOSTS as
 # for tools/build_registry_vm.sh) and root ssh to the host (REGISTRY_HOST).
 set -euo pipefail
-force=false dry=false verify=true
+force=false dry=false verify=true ref=HEAD
 for arg in "$@"; do
     case "$arg" in
         --force) force=true ;;
         --dry-run) dry=true ;;
         --no-verify) verify=false ;;
-        *) echo "usage: $0 [--force] [--dry-run] [--no-verify]" >&2; exit 64 ;;
+        --revision=?*) ref=${arg#--revision=} ;;
+        *) echo "usage: $0 [--force] [--dry-run] [--no-verify] [--revision=REF]" >&2; exit 64 ;;
     esac
 done
 repo=$(cd "$(dirname "$0")/.." && pwd)
@@ -42,12 +45,13 @@ vm() {
 
 git diff --quiet && git diff --cached --quiet || { echo "commit or stash tracked changes first" >&2; exit 1; }
 git fetch -q origin main
-git merge-base --is-ancestor HEAD origin/main || { echo "HEAD is not on origin/main; deploy merged code only" >&2; exit 1; }
-revision=$(git rev-parse HEAD); short=${revision:0:8}
+revision=$(git rev-parse --verify "$ref^{commit}") || { echo "unknown revision $ref" >&2; exit 64; }
+git merge-base --is-ancestor "$revision" origin/main || { echo "$ref is not on origin/main; deploy merged code only" >&2; exit 1; }
+short=${revision:0:8}
 
 echo "== is an upgrade needed?"
 verdict=0
-build/diamond tools/registry_needs_upgrade.d6 --host "$host" || verdict=$?
+build/diamond tools/registry_needs_upgrade.d6 --host "$host" --target "$revision" || verdict=$?
 # 20 = required, 10 = optional, 0 = none. Anything else means the check itself failed (host unreachable, deployed revision unknown, git error), which must not look like "nothing to do".
 case $verdict in
     20) ;;
@@ -77,7 +81,7 @@ if [[ -f "$bundle/SHA256SUMS" ]]; then
 else
     # A bundle directory without SHA256SUMS is what an earlier failed build left behind; the build creates its output exclusively.
     run rm -rf -- "$bundle"
-    run tools/build_registry_vm.sh "$bundle"
+    run tools/build_registry_vm.sh "$bundle" "$revision"
 fi
 
 uploaded=false
