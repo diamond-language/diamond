@@ -20,13 +20,13 @@ and install it:
 ```sh
 # Ubuntu 26.04
 sudo apt update && sudo apt upgrade
-sudo apt install ~/Downloads/d6-lang_1.0.0-rc2-1_amd64.deb
-sudo apt install ~/Downloads/d6-lang_1.0.0-rc2-1_arm64.deb     # 64-bit ARM
+sudo apt install ~/Downloads/d6-lang_1.0.0-rc3-1_amd64.deb
+sudo apt install ~/Downloads/d6-lang_1.0.0-rc3-1_arm64.deb     # 64-bit ARM
 
 # Fedora 44
 sudo dnf upgrade
-sudo dnf install ~/Downloads/d6-lang-1.0.0-rc2-1.fc44.x86_64.rpm
-sudo dnf install ~/Downloads/d6-lang-1.0.0-rc2-1.fc44.aarch64.rpm   # 64-bit ARM
+sudo dnf install ~/Downloads/d6-lang-1.0.0-rc3-1.fc44.x86_64.rpm
+sudo dnf install ~/Downloads/d6-lang-1.0.0-rc3-1.fc44.aarch64.rpm   # 64-bit ARM
 ```
 
 The package puts `d6`, `facet`, `d6-lsp` and `d6-dap` in
@@ -71,7 +71,7 @@ This puts `d6`, `facet`, `d6-lsp` and `d6-dap` in
 Either way, check it:
 
 ```sh
-d6 --version     # d6 1.0.0-rc2
+d6 --version     # d6 1.0.0-rc3
 ```
 
 The [asdf-diamond](https://github.com/diamond-language/asdf-diamond) plugin

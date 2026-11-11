@@ -6,6 +6,12 @@ authoritative fine-grained record.
 
 ## Unreleased
 
+## 1.0.0-rc3 — 2026-11-11
+
+The third release candidate reduces cache and executable sizes, fixes native
+collection dispatch in JIT-compiled blocks, and expands general runtime
+verification. No bundled cut versions changed since rc2.
+
 ### Changed
 
 - The runtime test suite now checks cross-feature failure recovery and native-service workflows across interpreter, JIT, GC-stress, cached-bytecode and standalone-binary execution.
