@@ -9,6 +9,7 @@ authoritative fine-grained record.
 ### Changed
 
 - Registry deployments build the runtime at `-O3` (was `-O2`), turn on the JIT through `DIAMOND_JIT=1` in the env file, and `tools/deploy_registry.sh --revision=REF` deploys a release tag instead of HEAD.
+- Bytecode caches and `d6 build` binaries store type sets compactly (count, flag and used members only) instead of as fixed 354-byte records: Pheint's cache went from 71 MB to 7.3 MB and its binary from 76 MB to 11 MB. The cache format version is now 21, so existing caches are rebuilt once.
 
 ## 1.0.0-rc2 — 2026-11-10
 

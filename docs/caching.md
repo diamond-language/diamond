@@ -71,12 +71,15 @@ A program that mentions `JSON` is compiled against the same embedded prelude (it
 includes JSON), so its cache is just as small. Only a program that declares names of its own
 that collide with the prelude's JSON classes falls back to compiling a live prelude, and its
 cache then stores the whole prelude too. Large applications are large in their own code: a
-program that requires ActiveRecord or GraphSQL has a cache of a few megabytes.
+program that requires ActiveRecord or GraphSQL has a cache of a few megabytes (Pheint, a GraphQL
+server of about 1.2 MB of source with its cuts, has a 7 MB cache).
 
 Format version 2 stored string constants as length-prefixed bytes rather than fixed 4 KB
 records, version 6 stored the prelude once in the binary instead of in every file, and
 version 7 added the byte order to the fingerprint (an image built for an opposite-endian
-target is refused); older files are ignored and rebuilt.
+target is refused), and version 21 stored type sets as their used members only instead of fixed
+354-byte records (which had made a large program's cache, and its `d6 build` binary, ten times
+larger); older files are ignored and rebuilt.
 
 ## Removing caches
 
