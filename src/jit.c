@@ -3252,7 +3252,12 @@ static int32_t register_new_class_or_move_src(const DiamondFunction *fn,
             uint16_t field = 0;
             if (!decode_u16(fn, &operands, &first) || !decode_u16(fn, &operands, &field))
                 return -1;
-            if (field < DIAMOND_MAX_JIT_KNOWN_FIELDS &&
+            /* Only a class method's own self has this class's snapshot.
+             * Blocks capture self but are not class-table methods, so their
+             * zero-initialized table is not a proof (class zero is valid).
+             * A different receiver's field index belongs to its own class. */
+            if (fn->owner_class < DIAMOND_OWNER_CAPTURED_SELF && first == 0 &&
+                field < DIAMOND_MAX_JIT_KNOWN_FIELDS &&
                 fn->ivar_known_class[field] != DIAMOND_NO_CLASS)
                 return (int32_t)fn->ivar_known_class[field];
             return -1;

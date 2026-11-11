@@ -13,6 +13,7 @@ authoritative fine-grained record.
 
 ### Fixed
 
+- JIT-compiled blocks dispatch methods on captured instance-variable arrays, hashes and strings correctly instead of treating them as user-defined instances. This fixes Pheint's benchmark worker-pool initialization.
 - The docs site rendered the "Compatibility links" lists on the syntax and I/O pages as raw Markdown. Its renderer now keeps inline anchors, `<br>`, `<kbd>`, `<sup>` and `<sub>` inside paragraphs and list items, and an anchor on a line of its own no longer swallows the list below it.
 
 ## 1.0.0-rc2 — 2026-11-10
