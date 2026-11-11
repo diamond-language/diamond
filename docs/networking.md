@@ -560,6 +560,7 @@ zero-external-dependencies stance.
     each), offered to the server in preference order for Application-
     Layer Protocol Negotiation:
 
+    <!-- doc-check: skip -->
     ```ruby
     conn = TLSSocket.connect("example.com", 443, {"alpn": ["h2", "http/1.1"]})
     conn.alpn_protocol()   # => "h2", or nil if nothing was negotiated
