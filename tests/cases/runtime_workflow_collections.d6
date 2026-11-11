@@ -1,0 +1,31 @@
+def guarded_rows(rows: Hash[String, Array[Int]]) = rows
+
+def collection_rounds()
+  table = {}
+  300.times() do |i| table[i] = "value-#{i}" end
+  150.times() do |i| table.delete(i * 2) end
+  300.times() do |i| table[i + 300] = "new-#{i}" end
+  150.times() do |i|
+    key = i * 2 + 1
+    raise "rehash lost an existing key" if table[key] != "value-#{key}"
+  end
+  raise "deleted keys returned after rehash" if table.include_key?(0)
+  large = 9223372036854775807 + 1
+  table[large] = "wide"
+  raise "arbitrary precision key lookup" if table[(large * 2) / 2] != "wide"
+  table["nil"] = nil
+  raise "nil was confused with absent" if table.fetch("nil", "fallback") != nil
+  raise "missing key lost fallback" if table.fetch("absent", "fallback") != "fallback"
+  rows = guarded_rows({"items": [1, 2]})
+  alias = rows["items"]
+  refused = false
+  begin
+    alias.push("wrong")
+  rescue error: TypeError
+    refused = true
+  end
+  raise "nested type guard allowed a partial mutation" if !refused || rows["items"] != [1, 2]
+  alias.push(3)
+  rows["items"] == [1, 2, 3] && table.length() == 452
+end
+collection_rounds()

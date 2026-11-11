@@ -1,0 +1,43 @@
+def recorded(events, name, value)
+  events.push(name)
+  value
+end
+
+def combine(first, second = "default", suffix = "!") = first + second + suffix
+
+def protected_return(events)
+  begin
+    return ["kept", 42]
+  ensure
+    events.push("ensure")
+    begin
+      raise RuntimeError.new("cleanup")
+    rescue error: RuntimeError
+      events.push(error.message())
+    end
+  end
+end
+
+def request_flow()
+  events = []
+  result = combine(recorded(events, "first", "a"), *[recorded(events, "spread", "b")],
+    suffix: recorded(events, "keyword", "c"))
+  raise "argument order or keyword binding" if result != "abc" || events != ["first", "spread", "keyword"]
+  missing = nil
+  missing&.call(recorded(events, "must not run", 0))
+  raise "safe navigation evaluated an argument" if events.length() != 3
+  kept = protected_return(events)
+  raise "cleanup replaced a pending return" if kept != ["kept", 42]
+  attempts = 0
+  begin
+    attempts += 1
+    snapshot = attempts
+    [1].each() do |n| raise RuntimeError.new("retry") if snapshot < 3 end
+  rescue error: RuntimeError
+    retry
+  ensure
+    events.push("finished")
+  end
+  attempts == 3 && events == ["first", "spread", "keyword", "ensure", "cleanup", "finished"]
+end
+request_flow()

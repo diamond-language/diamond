@@ -1,0 +1,25 @@
+root = Process.run(["mktemp", "-d"]).stdout().strip()
+begin
+  first = "#{root}/first"
+  second = "#{root}/second"
+  bytes = Base64.decode("AAEC/w==") * 1024
+  File.publish(first, bytes)
+  refused = false
+  begin
+    File.publish(first, "must not replace")
+  rescue error: IOError
+    refused = true
+  end
+  raise "publish replaced an existing file" if !refused || File.read(first) != bytes
+  File.copy(first, second)
+  raise "binary copy changed bytes" if File.read(second) != bytes || File.size(second) != bytes.length()
+  File.write(second, "replacement")
+  File.rename(second, first)
+  raise "rename did not replace atomically" if File.read(first) != "replacement" || File.exist?(second)
+  # A failed publication must not leave its private temporary file behind.
+  entries = Dir.entries(root).select() do |name| name != "." && name != ".." end
+  raise "publish leaked a temporary file" if entries != ["first"]
+ensure
+  Process.run(["rm", "-rf", root])
+end
+true

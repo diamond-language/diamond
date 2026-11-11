@@ -1,0 +1,12 @@
+# Both output pipes exceed common pipe capacities. A nonzero child exit must
+# still retain every byte, and per-child env must not leak into the next run.
+script = "i=0; while [ $i -lt 8192 ]; do printf 'abcdefgh01234567'; printf 'error-line-123456' >&2; i=$((i+1)); done; exit 7"
+result = Process.run(["sh", "-c", script])
+raise "large stdout truncated" if result.stdout() != "abcdefgh01234567" * 8192
+raise "large stderr truncated" if result.stderr() != "error-line-123456" * 8192
+raise "nonzero status lost" if result.exit_code() != 7 || result.success?()
+baseline = Process.run(["sh", "-c", "printf '%s' \"${D6_WORKFLOW_CHILD_ENV-unset}\""]).stdout()
+first = Process.run(["sh", "-c", "printf '%s' \"$D6_WORKFLOW_CHILD_ENV\""], {"env": {"D6_WORKFLOW_CHILD_ENV": "child only"}})
+second = Process.run(["sh", "-c", "printf '%s' \"${D6_WORKFLOW_CHILD_ENV-unset}\""])
+raise "child environment leaked" if first.stdout() != "child only" || second.stdout() != baseline
+Process.run(["cat"], {"stdin": "binary\n" * 10000}).stdout() == "binary\n" * 10000

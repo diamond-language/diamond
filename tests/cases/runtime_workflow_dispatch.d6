@@ -1,0 +1,31 @@
+module Labelled
+  def label() = "#{self.name()}:#{self.amount()}"
+end
+
+class WorkflowItem
+  include Labelled
+  def initialize(name: String, amount: Int)
+    @name = name
+    @amount = amount
+  end
+  def name() -> String = @name
+  def amount() -> Int = @amount
+  def callback()
+    closure read() = self.label()
+    read
+  end
+end
+
+class WorkflowDiscount < WorkflowItem
+  def amount() -> Int = @amount / 2
+end
+
+def render_items(items)
+  items.map() do |item| item.label() end
+end
+
+items = [WorkflowItem.new("full", 10), WorkflowDiscount.new("half", 10)]
+callbacks = items.map() do |item| item.callback() end
+raise "module dispatch missed subclass override" if render_items(items) != ["full:10", "half:5"]
+raise "escaped closure lost self" if callbacks[0]() != "full:10" || callbacks[1]() != "half:5"
+items[1].public_send("label") == "half:5"

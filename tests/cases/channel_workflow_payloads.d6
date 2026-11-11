@@ -1,0 +1,22 @@
+def structured_worker(inbox, outbox)
+  loop do
+    request = inbox.receive()
+    if request == nil then return "drained" end
+    request["items"].push("worker")
+    outbox.send(JSON.parse(JSON.stringify(request)))
+  end
+end
+
+inbox = Channel.new(2)
+outbox = Channel.new(2)
+worker = Thread.new(structured_worker, inbox, outbox)
+original = {"id": 1, "items": ["café", "🙂"], "optional": nil}
+inbox.send(original)
+first = outbox.receive()
+inbox.send({"id": 2, "items": [], "optional": false})
+second = outbox.receive()
+inbox.close()
+raise "channel failed to drain before close" if worker.join() != "drained"
+raise "cross-thread mutation changed sender" if original["items"] != ["café", "🙂"]
+raise "structured payload lost data" if first != {"id": 1, "items": ["café", "🙂", "worker"], "optional": nil}
+second == {"id": 2, "items": ["worker"], "optional": false}
