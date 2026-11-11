@@ -1,0 +1,22 @@
+def text_requests()
+  rejected = false
+  begin
+    Regexp.new("(")
+  rescue error: RegexpError
+    rejected = true
+  end
+  raise "invalid expression did not raise" if !rejected
+  pattern = Regexp.new("^([^:]+):([0-9]+)(?:-([a-z]+))?$")
+  rows = ["café:12", "🙂:34-ok", "plain:0"]
+  records = rows.map() do |row|
+    groups = pattern.match(row)
+    {"name": groups[1], "number": groups[2].to_i(), "tag": groups[3]}
+  end
+  raise "optional capture leaked from an earlier match" if records[0]["tag"] != nil || records[2]["tag"] != nil
+  raise "UTF-8 capture boundaries" if records[1]["name"] != "🙂" || records[1]["tag"] != "ok"
+  raise "failed match retained prior result" if pattern.match("invalid") != nil
+  raise "regexp reuse after failed match" if pattern.match("next:9")[2] != "9"
+  cleaned = "naïve résumé".gsub(Regexp.new("[éï]"), "_")
+  JSON.parse(JSON.stringify(records)) == records && cleaned == "na_ve r_sum_"
+end
+text_requests()

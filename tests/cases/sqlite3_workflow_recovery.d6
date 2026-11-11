@@ -1,0 +1,36 @@
+# Reuse the same prepared statement after bind and uniqueness errors, and the
+# connection after rollback; failures must not leak bindings or partial rows.
+db = SQLite3.open(":memory:")
+begin
+  db.execute("CREATE TABLE events (id INTEGER PRIMARY KEY, body TEXT UNIQUE, optional TEXT)")
+  insert = db.prepare("INSERT INTO events VALUES (:id, :body, :optional)")
+  begin
+    insert.execute({"id": 1, "body": "café", "optional": nil})
+    failures = 0
+    begin
+      insert.execute({"id": 2, "body": "café", "optional": "stale"})
+    rescue error: SQLite3Error
+      failures += 1
+    end
+    begin
+      insert.execute({"id": 2, "body": "missing parameter"})
+    rescue error: ArgumentError
+      failures += 1
+    end
+    insert.execute({"id": 2, "body": "next", "optional": nil})
+    db.execute("BEGIN")
+    insert.execute({"id": 3, "body": "rolled back", "optional": "x"})
+    db.execute("ROLLBACK")
+    insert.execute({"id": 3, "body": "committed", "optional": nil})
+    rows = db.query("SELECT id, body, optional FROM events ORDER BY id")
+    raise "statement error or transaction recovery" if failures != 2 || rows != [
+      {"id": 1, "body": "café", "optional": nil},
+      {"id": 2, "body": "next", "optional": nil},
+      {"id": 3, "body": "committed", "optional": nil}]
+  ensure
+    insert.close()
+  end
+ensure
+  db.close()
+end
+true

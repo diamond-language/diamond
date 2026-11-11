@@ -1,0 +1,26 @@
+# A block's captured self does not carry its enclosing method's ivar-class
+# snapshot. Native ivar values must keep native dispatch, including on the
+# first call and through a nested closure or an intermediate local.
+class NativePool
+  def initialize(size)
+    @items = []
+    @lookup = {"step": 2}
+    @label = "pool"
+    size.times() do |i|
+      @items.push(i * @lookup.fetch("step"))
+    end
+  end
+
+  def fill()
+    2.times() do |i|
+      values = @items
+      values.push(i + 10)
+      1.times() do |j|
+        @items.push(@label.upcase().length() + j)
+      end
+    end
+    @items
+  end
+end
+
+NativePool.new(3).fill()

@@ -17,6 +17,11 @@ own "Learn more" section links the full set.
 
 ## Build and test
 
+Cross-feature runtime and native-service checks are documented in
+[`tests/RUNTIME_WORKFLOWS.md`](tests/RUNTIME_WORKFLOWS.md). `make test` runs their
+interpreter/JIT/GC/cache matrix; `make test-runtime-workflows` also checks
+standalone binaries.
+
 Required system dependencies:
 
 - GCC 15+ or Clang 19+ with C23 support;

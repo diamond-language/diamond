@@ -17,6 +17,9 @@ guide/errors.md
 guide/concurrency.md
 getting-started.md
 
+== Release notes
+release-1.0.0-rc3.md
+
 == Reference: the language
 syntax.md
 core-syntax.md

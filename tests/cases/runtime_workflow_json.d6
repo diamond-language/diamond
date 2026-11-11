@@ -1,0 +1,23 @@
+# A long-lived request loop must recover from invalid input without corrupting
+# subsequent nested values, UTF-8, control bytes, or nil/false distinctions.
+def json_request_rounds()
+  rejected = 0
+  ["[1,", "{\"x\":}", "true false", "\"\\uD800\""].each() do |text|
+    begin
+      JSON.parse(text)
+    rescue error: JSONError
+      rejected += 1
+    end
+  end
+  raise "JSON error recovery" if rejected != 4
+  30.times() do |i|
+    original = {"id": i, "name": "café 🙂", "body": "line\nquote\"\t\\",
+      "values": [false, nil, true, -i, 1.25], "nested": {"empty": [], "object": {}}}
+    parsed = JSON.parse(JSON.stringify(original))
+    raise "JSON nested round trip" if parsed != original
+    parsed["values"].push("changed")
+    raise "JSON values must not alias their source" if original["values"].length() != 5
+  end
+  JSON.parse("{\"ok\":true}")["ok"]
+end
+json_request_rounds()

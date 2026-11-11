@@ -1422,9 +1422,11 @@ typedef struct DiamondFunction {
     /* JIT-only (src/jit.c, "ivar load" INVOKE-receiver phase, docs/internal/
      * jit-design.md): for a real class method (owner_class is a genuine
      * class index), field F's compile-time-known concrete class, or
-     * UINT8_MAX if F's value isn't provably always one concrete class (or F
-     * itself is out of range). Snapshotted once, at the end of compiling the
-     * owning DiamondClass's body (compile_class_body, src/compiler.c) --
+     * DIAMOND_NO_CLASS if F's value isn't provably always one concrete class
+     * (or F itself is out of range). Only valid for this method's own self,
+     * not captured-self blocks or another instance. Snapshotted once, at the
+     * end of compiling the owning DiamondClass's body (compile_class_body,
+     * src/compiler.c) --
      * *after* every SET_IVAR site for that class has run, so it reflects
      * DiamondClass.field_known_class's own final, whole-class-exhaustive
      * answer, not a partial one from mid-compile. Deliberately a snapshot

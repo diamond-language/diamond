@@ -6,13 +6,21 @@ authoritative fine-grained record.
 
 ## Unreleased
 
+## 1.0.0-rc3 — 2026-11-11
+
+The third release candidate reduces cache and executable sizes, fixes native
+collection dispatch in JIT-compiled blocks, and expands general runtime
+verification. No bundled cut versions changed since rc2.
+
 ### Changed
 
+- The runtime test suite now checks cross-feature failure recovery and native-service workflows across interpreter, JIT, GC-stress, cached-bytecode and standalone-binary execution.
 - Registry deployments build the runtime at `-O3` (was `-O2`), turn on the JIT through `DIAMOND_JIT=1` in the env file, and `tools/deploy_registry.sh --revision=REF` deploys a release tag instead of HEAD.
 - Bytecode caches and `d6 build` binaries store type sets compactly (count, flag and used members only) instead of as fixed 354-byte records: Pheint's cache went from 71 MB to 7.3 MB and its binary from 76 MB to 11 MB. The cache format version is now 21, so existing caches are rebuilt once.
 
 ### Fixed
 
+- JIT-compiled blocks dispatch methods on captured instance-variable arrays, hashes and strings correctly instead of treating them as user-defined instances. This fixes Pheint's benchmark worker-pool initialization.
 - The docs site rendered the "Compatibility links" lists on the syntax and I/O pages as raw Markdown. Its renderer now keeps inline anchors, `<br>`, `<kbd>`, `<sup>` and `<sub>` inside paragraphs and list items, and an anchor on a line of its own no longer swallows the list below it.
 
 ## 1.0.0-rc2 — 2026-11-10

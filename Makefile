@@ -398,9 +398,15 @@ test: debug
 	bash tests/merge_when_green_test.sh
 	sh tests/fetch_release_asset_test.sh
 	bash tests/run.sh
+	bash tests/runtime_workflows.sh
+
+.PHONY: test-runtime-workflows
+test-runtime-workflows: debug
+	bash tests/runtime_workflows.sh --aot
 
 test-release: release
 	bash tests/run.sh
+	bash tests/runtime_workflows.sh
 
 # The test run, its one retry for harness timing flakes, and why a sanitizer finding is never retried are in tools/test_sanitize.sh.
 test-sanitize: sanitize
@@ -1252,6 +1258,7 @@ test-integration:
 	$(MAKE) test-repl-line-view
 	$(MAKE) test-exit
 	$(MAKE) test-cache
+	$(MAKE) test-runtime-workflows
 	$(MAKE) test-self-host-smoke
 
 clean:

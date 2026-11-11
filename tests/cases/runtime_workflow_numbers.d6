@@ -1,0 +1,30 @@
+def numeric_rounds()
+  max = 9223372036854775807
+  min = -9223372036854775808
+  large = max + 1
+  raise "overflow promotion" if large.to_s() != "9223372036854775808"
+  raise "negative overflow promotion" if (min - 1).to_s() != "-9223372036854775809"
+  raise "demotion loses precision" if large - 1 != max || (min - 1) + 1 != min
+  raise "wide division" if min / -1 != large
+  value = (large << 40) + 12345
+  raise "wide shift round trip" if (value >> 40) != large
+  raise "wide bit operations" if (value & 65535) != 12345 || (value ^ value) != 0
+  [7, -7, 100000000000000003].each() do |divisor|
+    remainder = value % divisor
+    multiple = value - remainder
+    raise "modulo did not leave an exact multiple" if multiple / divisor * divisor != multiple
+  end
+  failures = 0
+  begin
+    value / 0
+  rescue error: ZeroDivisionError
+    failures += 1
+  end
+  begin
+    value % 0
+  rescue error: ZeroDivisionError
+    failures += 1
+  end
+  failures == 2 && value + 1 - value == 1 && 2 + 0.5 == 2.5
+end
+numeric_rounds()
