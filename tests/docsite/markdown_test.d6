@@ -66,6 +66,13 @@ unless fallback == "<p><a href=\"https://gh/blob/main/docs/../README.md#top\">x<
   puts("FAIL fallback links: #{fallback.inspect()}")
 end
 check("html anchor kept", "<a id=\"x\"></a>", "<a id=\"x\"></a>")
+check("anchor inside list item", "- <a id=\"x\"></a>[Other](other.md)",
+  "<ul>\n<li><a id=\"x\"></a><a href=\"/docs/other.html\">Other</a></li>\n</ul>")
+check("anchor line above list item", "<a id=\"x\"></a>\n- [Other](other.md)",
+  "<a id=\"x\"></a>\n<ul>\n<li><a href=\"/docs/other.html\">Other</a></li>\n</ul>")
+check("inline kbd and br", "Press <kbd>Tab</kbd><br>now", "<p>Press <kbd>Tab</kbd><br>now</p>")
+check("other tags stay escaped", "Use Array<String> or <script>", "<p>Use Array&lt;String&gt; or &lt;script&gt;</p>")
+check("block html still raw", "<div class=\"x\">\n*hi*\n</div>", "<div class=\"x\">\n*hi*\n</div>")
 check("quote", "> quoted *text*", "<blockquote>\n<p>quoted <em>text</em></p>\n</blockquote>")
 check("em dash", "a — b", "<p>a — b</p>")
 

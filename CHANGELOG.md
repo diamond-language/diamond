@@ -10,6 +10,10 @@ authoritative fine-grained record.
 
 - Registry deployments build the runtime at `-O3` (was `-O2`), turn on the JIT through `DIAMOND_JIT=1` in the env file, and `tools/deploy_registry.sh --revision=REF` deploys a release tag instead of HEAD.
 
+### Fixed
+
+- The docs site rendered the "Compatibility links" lists on the syntax and I/O pages as raw Markdown. Its renderer now keeps inline anchors, `<br>`, `<kbd>`, `<sup>` and `<sub>` inside paragraphs and list items, and an anchor on a line of its own no longer swallows the list below it.
+
 ## 1.0.0-rc2 — 2026-11-10
 
 The second release candidate fixes captured-local retries, JIT error handling

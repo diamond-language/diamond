@@ -2,7 +2,7 @@
 #
 # Covers the Markdown the docs use: ATX headings, paragraphs, fenced code,
 # bullet and ordered lists (nested by indentation), tables, block quotes,
-# horizontal rules, raw HTML lines, and inline code, links, autolinks,
+# horizontal rules, raw HTML lines, inline anchors/<br>/<kbd>/<sup>/<sub>, and inline code, links, autolinks,
 # **strong**, *emphasis* and backslash escapes. It is not a full CommonMark
 # implementation. A `<!-- docsite: no-run -->` (or `<!-- doc-check: skip -->`)
 # comment right above a code block marks it data-run="no", so the site gives
@@ -31,6 +31,12 @@ RULE = Regexp.new("^\\s{0,3}((-\\s*){3,}|(\\*\\s*){3,}|(_\\s*){3,})$")
 TABLE_DELIMITER = Regexp.new("^\\s*\\|?\\s*:?-+:?\\s*(\\|\\s*:?-+:?\\s*)*\\|?\\s*$")
 HTML_BLOCK = Regexp.new("^\\s{0,3}(<!--|</?[A-Za-z][A-Za-z0-9-]*(\\s|>|/>|$))")
 QUOTE = Regexp.new("^\\s{0,3}>\\s?(.*)$")
+# Inline tags kept as written inside a paragraph or list item: anchors (`<a id="old-name"></a>`
+# keeps an old link target alive), <br>, <kbd>, <sup> and <sub>. Every other "<" is escaped.
+INLINE_TAG_SOURCE = "(<a(\\s+[A-Za-z-]+=\"[^\"<>]*\")*\\s*>|</a>|<br\\s*/?>|</?(kbd|sup|sub)>)"
+INLINE_TAG = Regexp.new(INLINE_TAG_SOURCE)
+INLINE_TAG_AT_START = Regexp.new("^" + INLINE_TAG_SOURCE)
+INLINE_LEAD = Regexp.new("^\\s{0,3}" + INLINE_TAG_SOURCE)
 LINK = Regexp.new("\\[([^\\]]+)\\]\\(([^)\\s]+)\\)")
 AUTOLINK = Regexp.new("&lt;(https?://[^\\s&]+)&gt;")
 STRONG = Regexp.new("\\*\\*(\\S((.|\\n)*?\\S)?)\\*\\*")
@@ -68,7 +74,7 @@ class Markdown
     while index < lines.length()
       line = lines[index]
       # A no-run marker applies only to the code block right after it.
-      @no_run = false unless line.strip() == "" || FENCE.match?(line) || HTML_BLOCK.match?(line)
+      @no_run = false unless line.strip() == "" || FENCE.match?(line) || html_block_start?(line)
       if line.strip() == ""
         index += 1
       elsif FENCE.match?(line)
@@ -80,7 +86,7 @@ class Markdown
       elsif RULE.match?(line)
         out.push("<hr>")
         index += 1
-      elsif HTML_BLOCK.match?(line)
+      elsif html_block_start?(line)
         index = html_block(lines, index, out)
       elsif QUOTE.match?(line)
         index = quote(lines, index, out)
@@ -109,7 +115,7 @@ class Markdown
   # A line that ends a paragraph because another block starts on it.
   def interrupts?(line: String) -> Bool
     line.strip() == "" || FENCE.match?(line) || ATX_HEADING.match?(line.lstrip()) ||
-      RULE.match?(line) || QUOTE.match?(line) || HTML_BLOCK.match?(line) ||
+      RULE.match?(line) || QUOTE.match?(line) || html_block_start?(line) ||
       BULLET.match?(line) || starts_ordered_at_one?(line)
   end
 
@@ -146,7 +152,21 @@ class Markdown
     "<h#{level} id=\"#{id}\"><a class=\"anchor\" href=\"##{id}\">#{inline(raw)}</a></h#{level}>"
   end
 
+  # A line opening raw HTML, unless it starts with an inline tag and has text after it
+  # (`<a id="x"></a>[Link](page.md)`), which is a paragraph or list item.
+  def html_block_start?(line: String) -> Bool
+    HTML_BLOCK.match?(line) && !(INLINE_LEAD.match?(line) && only_inline_tags?(line) == false)
+  end
+
+  def only_inline_tags?(line: String) -> Bool = line.gsub(INLINE_TAG, "").strip() == ""
+
   def html_block(lines: Array, start: Int, out: Array) -> Int
+    # A line of nothing but inline tags (an anchor kept for an old link) stands alone, so
+    # the list or paragraph right below it is still Markdown.
+    if INLINE_LEAD.match?(lines[start]) && only_inline_tags?(lines[start])
+      out.push(lines[start].strip())
+      return start + 1
+    end
     index = start
     block = []
     # A comment ends at its own "-->", so a fence right below it (the docs'
@@ -351,7 +371,11 @@ class Markdown
     index = 0
     while index < chars.length()
       char = chars[index]
-      if char == "\\" && index + 1 < chars.length() && ESCAPABLE.include?(chars[index + 1])
+      tag = char == "<" ? INLINE_TAG_AT_START.match(chars.slice(index, chars.length() - index).join("")) : nil
+      if tag != nil
+        out.push(placeholder(tag[0]))
+        index += tag[0].length()
+      elsif char == "\\" && index + 1 < chars.length() && ESCAPABLE.include?(chars[index + 1])
         out.push(placeholder(escape(chars[index + 1])))
         index += 2
       elsif char == "`"

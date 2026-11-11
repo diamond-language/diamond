@@ -26,15 +26,9 @@ Related guides cover [Time](time.md), [Fibers](fibers.md),
 These links preserve commonly referenced anchors from the former single-page
 reference:
 
-<a id="multiple-assignment"></a>
-- [Multiple assignment](core-syntax.md#multiple-assignment)
-<a id="writer-call-assignment-sugar"></a>
-- [Writer-call assignment sugar](core-syntax.md#writer-call-assignment-sugar)
-<a id="bare-singleton-method-references"></a>
-- [Bare singleton method references](classes-and-modules.md#bare-singleton-method-references)
-<a id="operator-overloading"></a>
-- [Operator overloading](classes-and-modules.md#operator-overloading)
-<a id="collections"></a>
-- [Collections](collections.md)
-<a id="no-ast"></a>
-- [Compiler overview: no AST](runtime-reference.md#no-ast)
+- <a id="multiple-assignment"></a>[Multiple assignment](core-syntax.md#multiple-assignment)
+- <a id="writer-call-assignment-sugar"></a>[Writer-call assignment sugar](core-syntax.md#writer-call-assignment-sugar)
+- <a id="bare-singleton-method-references"></a>[Bare singleton method references](classes-and-modules.md#bare-singleton-method-references)
+- <a id="operator-overloading"></a>[Operator overloading](classes-and-modules.md#operator-overloading)
+- <a id="collections"></a>[Collections](collections.md)
+- <a id="no-ast"></a>[Compiler overview: no AST](runtime-reference.md#no-ast)
