@@ -87,7 +87,7 @@ The entries below distinguish continuous CI checks from manual validation.
   threads, Regexp, JSON and fibers on a glibc host. `MySQL.open` raises there.
 - **wasm32-wasip1** -- `wasm/build.sh` with wasi-sdk; the module runs the
   interpreter and the REPL under Node's WASI and in Firefox. Fibers, threads, sockets, TLS,
-  subprocesses and every database driver are unavailable. See
+  subprocesses, PostgreSQL and MySQL are unavailable; SQLite works in memory. See
   [WebAssembly build](internal/wasm.md). The `test-wasm` CI job builds the module
   with wasi-sdk 34 and tests it under Node through the site's JavaScript runner;
   Firefox validation is manual.
