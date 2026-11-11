@@ -140,10 +140,13 @@ target (default `HEAD`) and answers:
 VM, a verified backup, the bundle build, upload and `upgrade.sh`, public verification
 (`verify_registry_launch.d6`), and pruning. It stops unless the verdict is REQUIRED;
 `--force` upgrades anyway, `--dry-run` prints every mutating command instead of
-running it, and `--no-verify` skips the public verification when the bundled seed names
+running it, `--revision=REF` deploys a tag or commit already on `origin/main` (a release
+tag) instead of HEAD, and `--no-verify` skips the public verification when the bundled seed names
 versions you have not published yet (an upgrade never publishes; run
 `verify_registry_launch.d6` after publishing them). Backups and bundles live in `~/diamond-registry-backups/` (outside every
-checkout) and only the newest of each is kept. Afterwards update the "Runtime
+checkout) and only the newest of each is kept. The VM builds the runtime with
+`-O3 -march=x86-64-v3` (and the usual profile-guided release build), and `DIAMOND_JIT=1` in
+`/etc/diamond-registry.env` turns the JIT on. Afterwards update the "Runtime
 revision" line in `PRODUCTION.md`.
 
 For upgrades, take a verified backup, stage the new version and its migrations,

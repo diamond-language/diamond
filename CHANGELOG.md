@@ -6,6 +6,10 @@ authoritative fine-grained record.
 
 ## Unreleased
 
+### Changed
+
+- Registry deployments build the runtime at `-O3` (was `-O2`), turn on the JIT through `DIAMOND_JIT=1` in the env file, and `tools/deploy_registry.sh --revision=REF` deploys a release tag instead of HEAD.
+
 ## 1.0.0-rc2 — 2026-11-10
 
 The second release candidate fixes captured-local retries, JIT error handling

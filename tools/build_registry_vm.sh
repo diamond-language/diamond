@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Build a committed registry deployment bundle in the local Ubuntu QEMU guest.
 set -euo pipefail
-[[ $# == 1 ]] || { echo "usage: $0 <new-local-output-directory>" >&2; exit 64; }
+[[ $# == 1 || $# == 2 ]] || { echo "usage: $0 <new-local-output-directory> [REVISION]" >&2; exit 64; }
 repo=$(realpath "$(dirname "$0")/..")
 port=${REGISTRY_VM_PORT:-2222}
 known_hosts=${REGISTRY_VM_KNOWN_HOSTS:-$repo/../.vm-build/known_hosts}
@@ -10,7 +10,9 @@ known_hosts=${REGISTRY_VM_KNOWN_HOSTS:-$repo/../.vm-build/known_hosts}
 git -C "$repo" diff --quiet && git -C "$repo" diff --cached --quiet || {
     echo 'Commit tracked changes before building a deployment bundle' >&2; exit 1;
 }
-revision=$(git -C "$repo" rev-parse HEAD)
+# REVISION (a tag or commit, default HEAD) picks the runtime and registry sources; this script and
+# its build flags always come from the checkout running it.
+revision=$(git -C "$repo" rev-parse --verify "${2:-HEAD}^{commit}")
 mkdir -m 700 -- "$1"
 output=$(realpath "$1")
 ssh_options=(-F /dev/null -p "$port" -o BatchMode=yes -o ConnectTimeout=10
@@ -27,7 +29,7 @@ cd "$1"
 [[ "$ID" == ubuntu && "$VERSION_ID" == 26.04 && "$(uname -m)" == x86_64 ]] || {
     echo 'Registry deployment builds require Ubuntu 26.04 x86_64' >&2; exit 1;
 }
-make -j2 CFLAGS_RELEASE='-O2 -DNDEBUG -march=x86-64-v3' CFLAGS_DEBUG='-O2 -g -march=x86-64-v3' release
+make -j2 CFLAGS_RELEASE='-O3 -DNDEBUG -march=x86-64-v3' CFLAGS_DEBUG='-O2 -g -march=x86-64-v3' release
 make CFLAGS_DEBUG='-O2 -g -march=x86-64-v3' facet
 FACET_BIN="$PWD/build/facet" DIAMOND_BIN="$PWD/build/diamond" build/diamond packages/registry/http_test.d6
 mkdir -p payload/bin payload/app payload/deploy

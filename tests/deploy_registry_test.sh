@@ -65,4 +65,11 @@ if ! grep -Eq 'cutbackup-[0-9]{4}-[0-9]{2}-[0-9]{2}-[0-9]{6}-pre-' <<<"$required
     exit 1
 fi
 
+# --revision builds that revision instead of HEAD, and refuses one that is unknown or not on origin/main.
+first=$(git -C "$repo" rev-parse HEAD)
+(cd "$repo" && git commit -q --allow-empty -m unmerged)
+expect "revision on main" "$(deploy 20 --dry-run --revision="$first")" 0 "+ tools/build_registry_vm.sh $work/backups/registry-bundle-${first:0:12} $first"
+expect "HEAD not on main" "$(deploy 20 --dry-run)" 1 "HEAD is not on origin/main"
+expect "unknown revision" "$(deploy 20 --dry-run --revision=no-such-ref)" 64 "unknown revision no-such-ref"
+
 echo "deploy_registry tests passed"
