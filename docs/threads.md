@@ -27,7 +27,11 @@ thread is still running without blocking.
 
 d6 does not support detached or fire-and-forget threads. If an unjoined
 Thread becomes unreachable, garbage collection waits for it to finish before
-reclaiming its resources.
+reclaiming its resources, and a program that ends normally waits for every
+unjoined thread before exiting. An uncaught exception in a thread that is
+never joined is discarded: nothing is printed and the exit status is
+unaffected. Join every thread whose failure matters, or run it under a
+`Supervisor`.
 
 The one exception is a program that fails: if the main program ends with an
 uncaught exception while any spawned thread or supervised child is still
