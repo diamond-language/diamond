@@ -185,11 +185,9 @@ static void compile_attribute_named(Compiler *compiler,bool writer,bool predicat
     for(size_t index=0;index<DIAMOND_MAX_DECLARED_PARAMETERS;index++)function->parameter_type_sets[index]=DIAMOND_NO_TYPE_SET;
     if(type_set>=0) {
         function->type_set_count=compiler->function->type_set_count;
-        if(!diamond_function_reserve_type_sets(function,function->type_set_count)) {
+        if(!diamond_function_copy_type_sets(function,compiler->function)) {
             fail(compiler,name,"out of memory");return;
         }
-        memcpy(function->type_sets,compiler->function->type_sets,
-               function->type_set_count*sizeof(DiamondTypeSet));
         if(writer)function->parameter_type_sets[0]=(uint16_t)type_set;
         else function->return_type_set=(uint16_t)type_set;
     }
@@ -242,9 +240,10 @@ static void compile_attribute_named(Compiler *compiler,bool writer,bool predicat
         if(!diamond_function_reserve_strings(function,1)) {
             fail(compiler,name,"out of memory compiling module attribute");return;
         }
-        DiamondStringConstant *string=&function->strings[0];
-        (void)snprintf(string->chars,sizeof string->chars,"%s",field_name);
-        string->length=strlen(field_name);function->string_count=1;
+        if(!diamond_function_set_string(function,0,field_name,strlen(field_name))) {
+            fail(compiler,name,"out of memory storing field name");return;
+        }
+        function->string_count=1;
         function->code[code++]=(uint8_t)(writer?DIAMOND_OP_SET_IVAR_NAME:
                                           DIAMOND_OP_GET_IVAR_NAME);
         function->code[code++]=0;function->code[code++]=writer?0:1;
@@ -1554,10 +1553,9 @@ static uint16_t add_literal_string(Compiler *compiler,const char *text,
           compiler->function->string_capacity*2)) {
         fail(compiler,span,"out of memory growing function strings");return 0;
     }
-    DiamondStringConstant *string=
-        &compiler->function->strings[compiler->function->string_count];
-    memcpy(string->chars,text,length);
-    string->length=length;string->chars[length]='\0';
+    if(!diamond_function_set_string(compiler->function,compiler->function->string_count,text,length)) {
+        fail(compiler,compiler->previous.span,"out of memory storing string");return 0;
+    }
     return (uint16_t)compiler->function->string_count++;
 }
 
@@ -1837,8 +1835,7 @@ static bool struct_parent_bindings(Compiler *compiler,const DiamondClass *class,
     for(size_t i=0;i<parent->class_type_variable;i++) {
         if(!reserve_type_sets(compiler,mapped[i].node_count))return false;
         bindings[i]=(uint16_t)compiler->function->type_set_count;
-        if(!diamond_binding_type_sets(&mapped[i],compiler->function->type_sets+bindings[i],
-            mapped[i].node_count,bindings[i]))return false;
+        if(!store_type_binding(compiler,&mapped[i],bindings[i]))return false;
         compiler->function->type_set_count+=mapped[i].node_count;
     }
     return true;

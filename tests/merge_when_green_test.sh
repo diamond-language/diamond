@@ -14,12 +14,17 @@ case "${0##*/}" in
     sleep) exit 0 ;;
     git)
         echo "git $*" >> "$FIXTURE/calls"
-        if [[ "$1" == merge-base && "$SCENARIO" == moved ]]; then exit 1; fi
+        if [[ "$1" == merge-base && "$SCENARIO" == *moved ]]; then exit 1; fi
         if [[ "$1" == log ]]; then echo "abc fixture"; fi
         exit 0 ;;
     gh)
         echo "gh $*" >> "$FIXTURE/calls"
         if [[ "$2" == merge ]]; then exit 0; fi
+        if [[ "$2" == view ]]; then
+            if [[ "$SCENARIO" == changed_base && -f "$FIXTURE/viewed" ]]; then echo main
+            else echo "${PR_BASE:-main}"; fi
+            touch "$FIXTURE/viewed";exit 0
+        fi
         [[ "$*" == *"--json state --jq"* ]] || exit 2
         n=$(cat "$FIXTURE/count" 2>/dev/null || echo 0)
         n=$((n + 1))
@@ -44,11 +49,13 @@ chmod +x "$work/bin/fake"
 for command in gh git sleep; do ln -s fake "$work/bin/$command"; done
 
 run_case() {
-    local scenario="$1" expected="$2" state="${3:-}" output status=0
+    local scenario="$1" expected="$2" state="${3:-}" base="${4:-main}" actual_base="${5:-${4:-main}}" output status=0
     local fixture="$work/$scenario-${state:-default}"
+    local -a arguments=(123 fixture-branch)
+    if (( $# >= 4 )); then arguments+=("$base"); fi
     mkdir -p "$fixture"
-    output=$(PATH="$work/bin:$PATH" FIXTURE="$fixture" SCENARIO="$scenario" CHECK_STATE="$state" MIN_CHECKS=2 \
-        bash "$work/repo/tools/merge_when_green.sh" 123 fixture-branch 2>&1) || status=$?
+    output=$(PATH="$work/bin:$PATH" FIXTURE="$fixture" SCENARIO="$scenario" CHECK_STATE="$state" MIN_CHECKS=2 PR_BASE="$actual_base" \
+        bash "$work/repo/tools/merge_when_green.sh" "${arguments[@]}" 2>&1) || status=$?
     if [[ "$status" != "$expected" ]]; then
         echo "FAIL: $scenario $state: exit $status, expected $expected: $output" >&2
         exit 1
@@ -56,6 +63,9 @@ run_case() {
     if [[ "$expected" == 0 ]]; then
         grep -q '^gh pr merge 123 --merge$' "$fixture/calls"
         grep -q '^git push origin --delete fixture-branch$' "$fixture/calls"
+        grep -Fq "git merge-base --is-ancestor origin/$base origin/fixture-branch" "$fixture/calls"
+        grep -Fxq "git checkout -q $base" "$fixture/calls"
+        grep -Fxq "git pull -q --ff-only origin $base" "$fixture/calls"
         [[ $(cat "$fixture/count") -ge 2 ]]
     elif grep -q '^gh pr merge\|^git checkout\|^git branch -D\|^git push' "$fixture/calls"; then
         echo "FAIL: $scenario $state: unsafe merge or cleanup: $output" >&2
@@ -65,6 +75,10 @@ run_case() {
 
 run_case success 0
 run_case pending 0
+run_case release 0 '' 1.0
+run_case wrong_base 1 '' 1.0 main
+run_case release_moved 1 '' 1.0
+run_case changed_base 1 '' 1.0
 for state in CANCELLED FAILURE TIMED_OUT ACTION_REQUIRED STARTUP_FAILURE SKIPPED NEUTRAL STALE UNKNOWN; do
     run_case blocked 1 "$state"
 done

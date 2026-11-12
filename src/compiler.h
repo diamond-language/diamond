@@ -112,6 +112,15 @@ bool diamond_function_reserve_code(DiamondFunction *function,size_t capacity);
 bool diamond_function_reserve_constants(DiamondFunction *function,size_t capacity);
 bool diamond_function_reserve_strings(DiamondFunction *function,size_t capacity);
 bool diamond_function_reserve_type_sets(DiamondFunction *function,size_t capacity);
+void *diamond_function_metadata_alloc(DiamondFunction *function,size_t size);
+bool diamond_function_set_string(DiamondFunction *function,size_t index,
+    const char *chars,size_t length);
+bool diamond_function_set_type_set(DiamondFunction *function,size_t index,
+    DiamondTypeSet source);
+bool diamond_function_reserve_type_members(DiamondFunction *function,size_t index,size_t count);
+bool diamond_function_copy_type_sets(DiamondFunction *destination,
+    const DiamondFunction *source);
+void diamond_function_free_arrays(DiamondFunction *function);
 bool diamond_function_copy(DiamondFunction *destination,
                            const DiamondFunction *source);
 bool diamond_compile(const char *source, DiamondProgram *program,

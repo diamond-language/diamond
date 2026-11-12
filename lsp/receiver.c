@@ -769,10 +769,9 @@ static bool infer_structural_class_bindings(const DiamondChunk *chunk,
     if(!diamond_project_type_member(chunk->classes,chunk->class_count,wanted->id,&aligned,actual_sets,&owned))return false;
     if(owned!=nullptr) {
         enum { ROOT=2*DIAMOND_BOUND_TYPE_NODES };
-        DiamondTypeSet *projected=realloc(owned,(ROOT+1)*sizeof *projected);
-        if(projected==nullptr) {free(owned);return false;}
+        DiamondTypeSet *projected=owned;
         aligned.id=wanted->id;
-        projected[ROOT]=(DiamondTypeSet){.count=1,.members={aligned}};
+        projected[ROOT]=(DiamondTypeSet){.count=1,.members=(DiamondTypeMember[DIAMOND_MAX_UNION_TYPES]){aligned}};
         const bool result=infer_structural_class_bindings(chunk,expected_sets,expected_count,
             expected_index,projected,ROOT+1,ROOT,bindings,binding_count,depth+1,constructor);
         free(projected);return result;

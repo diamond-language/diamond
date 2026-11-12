@@ -2308,11 +2308,12 @@ DiamondVmStatus public_send_helper(DiamondVm *vm,
     const size_t protected_count=vm->gc_protected_count;
     if(!gc_protect(vm,DIAMOND_OBJECT(forwarded)))
         return DIAMOND_VM_OUT_OF_MEMORY;
-    DiamondStringConstant *dynamic_name=malloc(sizeof *dynamic_name);
+    DiamondStringConstant *dynamic_name=malloc(sizeof *dynamic_name+name_length+1);
     if(dynamic_name==nullptr) {
         gc_unprotect(vm,protected_count);
         return DIAMOND_VM_OUT_OF_MEMORY;
     }
+    dynamic_name->chars=(char *)(dynamic_name+1);
     memcpy(dynamic_name->chars,name_chars,name_length);
     dynamic_name->chars[name_length]='\0';dynamic_name->length=name_length;
     uint8_t code[12]={DIAMOND_OP_INVOKE_SPREAD,

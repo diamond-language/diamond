@@ -698,6 +698,8 @@ DIAMOND_INTERNAL void emit_type_check(Compiler *compiler, uint16_t reg, uint16_t
                             DiamondSpan span);
 DIAMOND_INTERNAL uint16_t add_constant(Compiler *compiler, DiamondValue value);
 DIAMOND_INTERNAL bool reserve_type_sets(Compiler *compiler,size_t additional);
+DIAMOND_INTERNAL void store_type_set(Compiler *compiler,size_t index,DiamondTypeSet source);
+DIAMOND_INTERNAL bool store_type_binding(Compiler *compiler,const DiamondTypeBinding *binding,uint16_t base);
 DIAMOND_INTERNAL uint16_t concrete_type_set(Compiler *compiler,uint16_t type);
 DIAMOND_INTERNAL int32_t join_type_set_indices(Compiler *compiler,int32_t left,
         int32_t right);
