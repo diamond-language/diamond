@@ -1,0 +1,168 @@
+require "../test/support"
+
+def must(condition, text)
+  if !condition then raise "soak: #{text}" end
+end
+
+def phase(name)
+  File.write(ENV["SOAK_PHASE_FILE"], name)
+end
+
+def checked(client, method, path, form, status)
+  reply = client.request(method, path, form)
+  must(reply[0] == status, "#{method} #{path}: #{reply[0]} #{reply[2].slice(0, 100)}")
+  reply[2]
+end
+
+def exercise(client, actor, token, sequence)
+  path = "/skins/#{actor["skin"]}"
+  kind = sequence % 8
+  if kind == 0 || kind == 7
+    html = checked(client, "GET", "/", nil, 200)
+    must(html.include?("Skin ") && html.include?("owner"), "populated listing")
+  elsif kind == 1
+    html = checked(client, "GET", path, nil, 200)
+    must(html.include?("Skin #{actor["skin"]}") && html.include?("seed comment"), "populated skin and comments")
+  elsif kind == 2
+    row = JSON.parse(checked(client, "GET", path + ".json", nil, 200))
+    must(row["title"] == "Skin #{actor["skin"]}" && row["uploader"] == "owner", "skin JSON identity")
+  elsif kind == 3
+    must(checked(client, "GET", "/users/owner", nil, 200).include?("owner"), "uploader profile")
+  elsif kind == 4
+    must(checked(client, "GET", "/settings", nil, 200).include?(actor["name"]), "authenticated settings")
+  elsif kind == 5
+    checked(client, "POST", path + "/favorite", {"csrf_token": token}, 302)
+    must(checked(client, "GET", path, nil, 200).include?("Favorited"), "favorite read-back")
+    checked(client, "POST", path + "/unfavorite", {"csrf_token": token}, 302)
+    must(!checked(client, "GET", path, nil, 200).include?("Favorited"), "unfavorite read-back")
+    return 4
+  else
+    body = "soak-comment-#{actor["name"]}-#{sequence}"
+    checked(client, "POST", "/comments/#{actor["comment"]}/edit", {"csrf_token": token, "body": body}, 302)
+    must(checked(client, "GET", path, nil, 200).include?(body), "comment edit read-back")
+    return 2
+  end
+  1
+end
+
+def actor_loop(inbox, outbox, actor)
+  client = Client.new(actor["port"])
+  client.keep_cookie("session_token=" + actor["cookie"])
+  sequence = 0
+  loop do
+    job = inbox.receive()
+    if job == nil then return nil end
+    begin
+      requests = 0
+      began = Time.monotonic()
+      while Time.monotonic() < job["stop"]
+        requests += exercise(client, actor, actor["csrf"], sequence)
+        sequence += 1
+      end
+      outbox.send({"requests": requests, "sequence": sequence, "seconds": Time.monotonic() - began})
+    rescue error: StandardError
+      outbox.send({"error": error.message()})
+    end
+  end
+end
+
+def batch(inboxes, outbox, seconds)
+  started = Time.monotonic()
+  stop = started + seconds
+  inboxes.each() do |inbox| inbox.send({"stop": stop}) end
+  replies = inboxes.map() do |inbox| outbox.receive() end
+  replies.each() do |reply| must(reply["error"] == nil, "client failed: #{reply["error"]}") end
+  count = replies.map() do |reply| reply["requests"] end.sum()
+  elapsed = Time.monotonic() - started
+  {"requests": count, "seconds": elapsed, "rps": count / elapsed}
+end
+
+def database_state(path)
+  counts = {}
+  ["users", "skins", "comments", "sessions", "favorites", "downloads"].each() do |table|
+    counts[table] = db_rows(path, "SELECT count(*) FROM #{table}")[0][0]
+  end
+  must(db_rows(path, "PRAGMA integrity_check")[0][0] == "ok", "database integrity")
+  must(db_rows(path, "PRAGMA foreign_key_check").length() == 0, "foreign keys")
+  counts
+end
+
+def main()
+  out = ENV["SOAK_RESULT_DIR"]
+  work = out + "/data"
+  Process.run(["mkdir", "-p", work + "/uploads"])
+  database = work + "/skindicate.db"
+  seed = "INSERT INTO users (id,email,username,password_digest) VALUES (1,'owner@example.com','owner','x');\n" +
+    "WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM n WHERE i<128) " +
+    "INSERT INTO skins (id,user_id,title,description,file_path,original_filename,source_md5,created_at) SELECT i,1,'Skin '||i,'soak description','skin.zip','skin.zip',printf('%032x',i),1700000000+i FROM n;\n" +
+    "INSERT INTO comments (skin_id,user_id,body,created_at) SELECT id,1,'seed comment '||id,1700001000 FROM skins;\n"
+  db_script(database, File.read("db/schema.sql") + "\n" + seed)
+  port = (ENV["SOAK_PORT"] || "18480").to_i()
+  settings = {"SKINDICATE_DB": database, "SKINDICATE_UPLOADS": work + "/uploads", "PORT": port.to_s(),
+    "SKINDICATE_THREADS": ENV["SOAK_WORKERS"], "SKINDICATE_SESSION_SECRET": "local-soak-secret-local-soak-secret", "LOG_LEVEL": "off"}
+  phase("startup")
+  server = Process.spawn([ENV["SOAK_SERVER"]], {"env": settings, "stdout": out + "/startup.log", "stderr_to_stdout": true})
+  inboxes = []
+  threads = []
+  outbox = Channel.new(8)
+  begin
+    ready = false
+    300.times() do |attempt|
+      if !ready
+        begin
+          ready = Client.new(port).request("GET", "/robots.txt")[0] == 200
+        rescue error: IOError
+          ready = false
+        end
+        if !ready then pause(0.1) end
+      end
+    end
+    must(ready, "server startup")
+    phase("preflight")
+    actors = []
+    8.times() do |i|
+      name = "soak_actor_#{i}"
+      client = Client.new(port)
+      checked(client, "POST", "/signup", {"email": "#{name}@example.com", "username": name, "password": "soak-password"}, 302)
+      token = csrf_from(checked(client, "GET", "/settings", nil, 200))
+      must(token != nil && token.length() == 64, "CSRF token")
+      checked(client, "POST", "/skins/#{i + 1}/comments", {"csrf_token": token, "body": name}, 302)
+      comment = db_rows(database, "SELECT id FROM comments WHERE body = ?", [name])[0][0]
+      actor = {"name": name, "skin": i + 1, "comment": comment, "csrf": token, "port": port, "cookie": client.jar()["session_token"]}
+      checked(client, "POST", "/skins/#{i + 1}/favorite", {}, 403)
+      8.times() do |sequence| exercise(client, actor, token, sequence) end
+      actors.push(actor)
+      inbox = Channel.new(1)
+      inboxes.push(inbox)
+      threads.push(Thread.new(actor_loop, inbox, outbox, actor))
+    end
+    puts("Skindicate preflight: 8 actors, populated pages/JSON, CSRF refusal, favorite and comment read-backs passed")
+    phase("warmup")
+    warm = batch(inboxes, outbox, (ENV["SOAK_WARMUP_SECONDS"] || "30").to_f())
+    File.write(out + "/db-warm.json", JSON.stringify(database_state(database)))
+    rows = []
+    (ENV["SOAK_ROUNDS"] || "3").to_i().times() do |round|
+      phase("quiet-#{round + 1}")
+      pause((ENV["SOAK_QUIET_SECONDS"] || "10").to_f())
+      phase("load-#{round + 1}")
+      row = batch(inboxes, outbox, (ENV["SOAK_SECONDS"] || "60").to_f())
+      rows.push(row)
+      puts("round #{round + 1}: #{row["requests"]} checked HTTP responses, #{row["rps"].round(2)} req/s")
+    end
+    phase("final-quiet")
+    pause((ENV["SOAK_FINAL_QUIET_SECONDS"] || "30").to_f())
+    phase("final-check")
+    counts = database_state(database)
+    must(counts == {"users": 9, "skins": 128, "comments": 136, "sessions": 8, "favorites": 0, "downloads": 0}, "bounded final row counts: #{counts}")
+    File.write(out + "/db-final.json", JSON.stringify(counts))
+    File.write(out + "/workload.json", JSON.stringify({"warmup": warm, "rounds": rows, "verified_actors": actors.length()}))
+    puts("Skindicate post-soak integrity, foreign keys and bounded row counts passed")
+  ensure
+    inboxes.each() do |inbox| inbox.close() end
+    threads.each() do |thread| thread.join() end
+    server.terminate()
+    server.wait()
+  end
+end
+
+main()
