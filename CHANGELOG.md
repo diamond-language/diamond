@@ -6,6 +6,7 @@ authoritative fine-grained record.
 
 ## Unreleased
 
+- A thread that fails and is never joined now prints its uncaught exception and backtrace on stderr (`d6: runtime error in unjoined thread: ...`) instead of losing it silently. Exit status is unchanged.
 - Bundled cut maintenance avoids redundant timestamp formatting in text logging and simplifies database-config and static-file reads, including file cleanup on read errors. Network-safety comments now describe its string-only checks without outdated claims about runtime capabilities.
 
 ## 1.0.0-rc4 — 2026-11-11

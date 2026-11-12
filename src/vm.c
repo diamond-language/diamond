@@ -1083,12 +1083,27 @@ DiamondThreadHandle *allocate_thread_handle(DiamondVm *vm,DiamondThread *thread)
  * every DiamondThread's lifecycle is guaranteed to pass through exactly
  * once, whether reaped after a normal .join() or cleaned up from a
  * spawn-time failure partway through construction. */
+/* A thread nobody joined has no one to re-raise its failure, so say it on
+ * stderr instead of dropping it. Skipped for a thread that never ran (a
+ * spawn failure) and for one told to stop (a cancelled supervised attempt
+ * interrupts its threads, which is not a failure of theirs). The exit
+ * status is unchanged. */
+static void report_unjoined_thread_failure(const DiamondThread *thread) {
+    if(!atomic_load(&thread->finished)||atomic_load(&thread->interrupt))return;
+    if(!thread->raised&&!thread->internal_failure)return;
+    const char *detail=thread->child_vm!=nullptr?diamond_vm_error(thread->child_vm):nullptr;
+    fprintf(stderr,"d6: runtime error in unjoined thread: %s\n",
+        detail!=nullptr?detail:"thread failed");
+}
+
 void free_thread(DiamondThread *thread) {
     if(thread==nullptr)return;
+    const bool never_joined=!thread->joined;
     if(thread->spawned&&!thread->joined) {
         pthread_join(thread->handle,nullptr);
         thread->joined=true;
     }
+    if(never_joined)report_unjoined_thread_failure(thread);
     if(thread->child_vm!=nullptr) {
         diamond_vm_free(thread->child_vm);
         free(thread->child_vm);
