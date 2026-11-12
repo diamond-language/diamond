@@ -1,0 +1,69 @@
+# Application and package maintenance review — 2026-11-12
+
+This was a focused source cleanup with existing suite coverage, not a security
+audit or a release. Production remains on rc4 for the owner's soak period.
+No applications, runtime binaries or cuts were published or deployed.
+
+The package cleanup is committed locally on `review/package-cleanup` (initial
+implementation `91be8aa8`) in the `diamond-package-review` worktree beside the
+main `diamond` checkout in the project workspace. An
+attempt to push it was rejected by automatic approval review: exporting the
+repository to the remote requires explicit owner authorization. Nothing was
+pushed, no pull request was created, and remote CI has not run. The clean
+worktree is retained for review; obtain authorization before attempting a push.
+
+## Application cleanup
+
+Changes are committed on `review/app-cleanup` in each application repository:
+
+| Repository | Commit | Change |
+| --- | --- | --- |
+| Pheint | `d87111c` | Filter, count and paginate notifications in SQL instead of loading and filtering rows in the application. Regression checks cover unread pagination and an empty mark-read ID list. |
+| SkindicateV3 | `d036498` | Derive follower/following query columns from one argument; correct the README's runtime version to rc4. |
+| example-apps | `2b271ce` | Use `File.write` for Tasks and KVD temporary-file saves, retaining rename-based replacement. |
+
+Verification completed:
+
+- Pheint: `./test.sh`, with the JIT off and with `DIAMOND_JIT=1`.
+- Pheint frontend: `npm run build`, `npm test` (47 passed, 9 skipped), and
+  `npm run test:player` (the remaining 9 passed). Browser end-to-end tests were
+  not run; frontend source was unchanged.
+- SkindicateV3: `test/run_all.sh`, including HTTP/WebSocket, worker concurrency,
+  ingestion, migration, backup and deployment-preflight checks. A newly built
+  standalone app was not tested; the cleanup is not a deployment bundle.
+- Separate example-apps: Tasks (9 tests), KVD (10), Stash (9), and the resource
+  monitor's collector tests.
+- Diamond bundled examples: `make test-examples` and `make test-example-apps`.
+
+The pre-existing Pheint README benchmark edit was left uncommitted and untouched.
+Skindicate V2 (`skindicate.dia`) remains the legacy reference and was not changed.
+
+An initial Stash run could not bind a local socket in the sandbox; it passed
+with localhost access. One Pheint run was interrupted by a concurrent rebuild
+of its shared local interpreter; both complete engine runs were repeated
+successfully after the rebuild. Package builds use a separate worktree.
+
+## Package cleanup
+
+- Logger 0.5.3 formats the JSON timestamp only for JSON output; text logging
+  no longer computes and discards that extra timestamp.
+- database_config 0.2.3 delegates its file-read helper to `File.read`.
+- Rack 0.2.3 uses `File.read` for static responses, keeping the existing
+  fallback behaviour and closing the native file on read failure.
+- network_safety 0.2.3 removes obsolete comments claiming the runtime has no
+  DNS resolution, bitwise operators or usable constants. URL checks remain
+  string-only; DNS rebinding protection has not been added.
+
+The four patch versions and deterministic candidate registry inventory are
+updated together. Existing caret dependency ranges accept these patch releases.
+The candidate archives are local only; the live registry remains unchanged.
+The focused package suites and registry reproducibility/inventory checks pass.
+`make test` passed (2,210 tests and 60 runtime workflow executions), and the
+complete `make test-integration` run exited 0, including package suites,
+standalone runtime workflows (66 executions), bundled examples, language-server,
+debugger, REPL, cache and self-hosted parser smoke checks. No sanitizer or
+external database-dialect matrix was run for these Diamond-only cleanups.
+
+The resource dashboard remains undeployed on its existing development branch.
+Its README records remaining deployment/overhead checks and the requested
+nginx 5xx monitoring scope.

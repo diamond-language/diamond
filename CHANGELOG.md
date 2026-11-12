@@ -6,6 +6,8 @@ authoritative fine-grained record.
 
 ## Unreleased
 
+- Bundled cut maintenance avoids redundant timestamp formatting in text logging and simplifies database-config and static-file reads, including file cleanup on read errors. Network-safety comments now describe its string-only checks without outdated claims about runtime capabilities.
+
 ## 1.0.0-rc4 — 2026-11-11
 
 The fourth release candidate extends rc3's compact disk representation to
