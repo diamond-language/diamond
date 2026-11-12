@@ -1,16 +1,21 @@
 # Application and package maintenance review — 2026-11-12
 
 This was a focused source cleanup with existing suite coverage, not a security
-audit or a release. Production remains on rc4 for the owner's soak period.
-No applications, runtime binaries or cuts were published or deployed.
+audit or a release. The runtime stays on rc4; nothing in `src/` changed.
 
-The package cleanup is committed locally on `review/package-cleanup` (initial
-implementation `91be8aa8`) in the `diamond-package-review` worktree beside the
-main `diamond` checkout in the project workspace. An
-attempt to push it was rejected by automatic approval review: exporting the
-repository to the remote requires explicit owner authorization. Nothing was
-pushed, no pull request was created, and remote CI has not run. The clean
-worktree is retained for review; obtain authorization before attempting a push.
+## Outcome (shipped 2026-11-12)
+
+- Package cleanup merged as #550 (`b83d3882`, 38 checks green).
+- database_config 0.2.3, logger 0.5.3, network_safety 0.2.3 and rack 0.2.3
+  published with a scoped, since-revoked credential; all 20 public cuts verified.
+- App cleanups merged and deployed: Pheint #46 (`a7bbcee`), SkindicateV3 #17
+  (`5e8f5de`). Both passed the external checks.
+- Registry redeployed at `b83d3882` (needed for logger 0.5.3).
+- Verified pre-deploy backup: `/root/diamond-maintenance-20261112` on the host,
+  with an off-host copy in the operations workspace.
+
+Production records: `applications/registry/deploy/PRODUCTION.md`, Pheint
+`docs/deployment.md`, SkindicateV3 `DEPLOYMENT.md`.
 
 ## Application cleanup
 
