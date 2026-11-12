@@ -4,14 +4,7 @@
 # environments. DatabaseConfig.load(path, "production") selects one named
 # object; DatabaseConfig.open(config) opens the corresponding native handle.
 class DatabaseConfig
-  def self.read_file(path: String) -> String
-    file = File.open(path, "r")
-    begin
-      file.read()
-    ensure
-      file.close()
-    end
-  end
+  def self.read_file(path: String) -> String = File.read(path)
 
   def self.adapter(config: Hash) -> String
     adapter = config["adapter"]

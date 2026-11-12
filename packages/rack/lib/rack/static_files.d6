@@ -19,8 +19,8 @@
 # Only `GET` is handled; every other method falls through to `forward`
 # unconditionally. A `GET` is served from disk when the path (after
 # stripping `prefix`, if any) resolves to a real, readable file --
-# checked by actually trying to open and read it (`File.open`/`.read`,
-# both of which raise a rescuable `IOError` on failure -- a missing
+# checked by actually trying to read it (`File.read`, which raises
+# a rescuable `IOError` on failure -- a missing
 # file, a directory, a permissions error, all indistinguishable from
 # here and all treated the same way: fall through to `forward` instead
 # of erroring, so an app's own route at the same path still gets a
@@ -123,9 +123,7 @@ class StaticFiles
     full_path = "#{@@root}/#{relative}"
     body = nil
     begin
-      file = File.open(full_path, "r")
-      body = file.read()
-      file.close()
+      body = File.read(full_path)
     rescue error: IOError
       return forward(request, context)
     end
