@@ -5,7 +5,20 @@ The corrected A record is **142.93.192.149**. External health and catalog
 requests succeeded. Since 2026-09-25 nginx terminates TLS with certbot
 certificates (see "Proxy and certificates" below); Caddy was retired.
 
-Runtime revision: `fdf6ab487f03fde5ece43290714a8f48b0922a16` (v1.0.0-rc3, deployed 2026-11-11 with
+Runtime revision: `0e482f26c56854c4c41c6c82d093ad04f6569a21` (v1.0.0-rc4, deployed 2026-11-12 UTC (2026-11-11 Pacific)
+with `tools/deploy_registry.sh --revision=v1.0.0-rc4 --force` after its dry run).
+The fresh snapshot at
+`~/diamond-registry-backups/cutbackup-2026-11-11-213807-pre-0e482f26/snapshot`
+passed off-host restore verification before activation. The Ubuntu 26.04 VM
+bundle passed HTTPS integration/restore and seed checks; production health and
+all 20 public cuts passed resolve, digest, load and unchanged-lock reinstall.
+The running executable matched the verified bundle. Existing `-O3`/LTO,
+`DIAMOND_JIT=1` and worker settings were preserved. No cut changed or was
+republished. Pheint, SkindicateV3, marketing/docs/browser runtime and all four
+native packages were updated and verified in the same rollout. See the
+[rc4 operations record](../../../docs/release-1.0.0-rc4-operations.md).
+
+Previously `fdf6ab487f03fde5ece43290714a8f48b0922a16` (v1.0.0-rc3, deployed 2026-11-11 with
 `tools/deploy_registry.sh --revision=v1.0.0-rc3 --force`, after its dry run and a restore-verified
 snapshot at `~/diamond-registry-backups/cutbackup-2026-11-11-154444-pre-fdf6ab48/snapshot`).
 The Ubuntu 26.04 VM bundle passed the registry HTTPS integration and seed verification;
