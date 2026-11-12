@@ -4,6 +4,13 @@ This was a focused source cleanup with existing suite coverage, not a security
 audit or a release. Production remains on rc4 for the owner's soak period.
 No applications, runtime binaries or cuts were published or deployed.
 
+The package cleanup is committed locally on `review/package-cleanup` (initial
+implementation `91be8aa8`) in the `/tmp/diamond-package-review` worktree. An
+attempt to push it was rejected by automatic approval review: exporting the
+repository to the remote requires explicit owner authorization. Nothing was
+pushed, no pull request was created, and remote CI has not run. The clean
+worktree is retained for review; obtain authorization before attempting a push.
+
 ## Application cleanup
 
 Changes are committed on `review/app-cleanup` in each application repository:
