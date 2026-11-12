@@ -41,6 +41,10 @@ CI is slow (about 15 minutes) because it runs two distros times two compilers ti
 
 ## State at the last hand-off (2026-11-11)
 
+The `1.0` branch contains the compact in-memory metadata fix and RC4 preparation,
+with the standalone application soak recorded in `docs/internal/rc4-application-soak.md`.
+RC4 has not been tagged, published or deployed by this preparation change.
+
 The latest release is v1.0.0-rc3. v0.23.0 was the first under the d6 name (`d6` commands, `d6-lang` packages, `Cutfile`); the live registry runs v1.0.0-rc3 at -O3 with the JIT on (deployed 2026-11-11 with `tools/deploy_registry.sh --revision=v1.0.0-rc3`; v0.29.0 added gremlin 0.5.4, and no release since changed a cut); SkindicateV3 and Pheint also run rc3 with the JIT, with every public cut (republished in v0.23.0) carrying `Cutfile`. The remaining rebrand steps (the GitHub org rename, then a domain) wait on the owner; see `docs/roadmap.md`. CI runs the live database dialect tests (`make test-database-dialects`, through `tools/ci_database_dialects.sh`, in an `ubuntu:26.04` container beside the runner's docker) and the registry nginx drill with the full seed rehearsal (`test-registry-nginx` job). Open items:
 
 1. Needs an owner decision or a driving use case first: sandbox path and host allow-lists (`docs/sandbox.md` says why they were left out; a JSON policy of exact resolved-path prefixes and exact hostnames was proposed), supervisors that cross threads, and endless-def conversion of `packages/` (143 methods; do it with the next release of each package, not on its own).

@@ -6,7 +6,15 @@ authoritative fine-grained record.
 
 ## Unreleased
 
+## 1.0.0-rc4 — 2026-11-11
+
+The fourth release candidate extends rc3's compact disk representation to
+runtime metadata. No bundled cut versions changed since rc3.
+
+### Changed
+
 - Compiled programs keep string constants and type-set members at their used sizes in memory, avoiding the expansion of compact caches and standalone binaries into mostly unused 4 KB string buffers and eight-member type records. Compiler, template and thread copies retain independent metadata ownership. Existing bytecode caches rebuild once for format 22.
+- A reproducible standalone-application soak exercises populated Pheint GraphQL APIs and authenticated Skindicate reads and writes with the JIT at one and four workers. The RC4 candidate used 50–67% less loaded RSS than rc3 in these runs, with successful read-backs and database integrity checks. See the [measurement report](docs/internal/rc4-application-soak.md) for results and limits.
 
 ## 1.0.0-rc3 — 2026-11-11
 
