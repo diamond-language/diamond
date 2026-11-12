@@ -5,7 +5,17 @@ The corrected A record is **142.93.192.149**. External health and catalog
 requests succeeded. Since 2026-09-25 nginx terminates TLS with certbot
 certificates (see "Proxy and certificates" below); Caddy was retired.
 
-Runtime revision: `0880b6a6831d28b2411f1bb72a6ffe073308f2d8` (v1.0.0-rc2, deployed 2026-11-10 with
+Runtime revision: `fdf6ab487f03fde5ece43290714a8f48b0922a16` (v1.0.0-rc3, deployed 2026-11-11 with
+`tools/deploy_registry.sh --revision=v1.0.0-rc3 --force`, after its dry run and a restore-verified
+snapshot at `~/diamond-registry-backups/cutbackup-2026-11-11-154444-pre-fdf6ab48/snapshot`).
+The Ubuntu 26.04 VM bundle passed the registry HTTPS integration and seed verification;
+production health and all 20 public cuts passed resolve, digest, load and unchanged-lock reinstall
+checks. The runtime retains `-O3 -march=x86-64-v3` and `DIAMOND_JIT=1`. No cuts changed or were
+republished. Pheint and SkindicateV3 also run the same rc3 runtime; the marketing/docs/WASM site
+and all four native packages were released together. See the
+[rc3 operations record](../../../docs/release-1.0.0-rc3-operations.md).
+
+Previously `0880b6a6831d28b2411f1bb72a6ffe073308f2d8` (v1.0.0-rc2, deployed 2026-11-10 with
 `tools/deploy_registry.sh --revision=v1.0.0-rc2 --force` after a verified snapshot, at the owner's
 request). The runtime is now built at `-O3 -march=x86-64-v3` and runs with `DIAMOND_JIT=1` (added to
 `/etc/diamond-registry.env`); steady RSS right after the restart was 128 MB. No cut was published:
