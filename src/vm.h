@@ -61,8 +61,7 @@ enum {
     DIAMOND_MAX_FUNCTIONS = UINT16_MAX,
     DIAMOND_MAX_FUNCTION_NAME = 64,
     DIAMOND_MAX_STRING_CONSTANTS = UINT16_MAX,
-    /* Compile-time literal-constant buffer size only (DiamondStringConstant,
-     * the source-text constant pool) -- unrelated to the runtime String
+    /* Compile-time literal-constant length limit -- unrelated to the runtime String
      * object's own dynamic allocation (DiamondString), which has no such
      * cap. Was 255; raised after repeatedly hitting it in practice on
      * genuinely ordinary literals (a multi-line SQL CREATE TABLE
@@ -926,7 +925,9 @@ typedef enum DiamondBuiltinClass : uint8_t {
 } DiamondBuiltinClass;
 
 typedef struct DiamondStringConstant {
-    char chars[DIAMOND_MAX_STRING_LENGTH + 1];
+    /* Exact-size, NUL-terminated character data owned by the function. The
+     * explicit length also preserves literals containing embedded NUL bytes. */
+    char *chars;
     size_t length;
 } DiamondStringConstant;
 
@@ -941,14 +942,35 @@ typedef struct DiamondTypeMember {
 } DiamondTypeMember;
 
 typedef struct DiamondTypeSet {
-    DiamondTypeMember members[DIAMOND_MAX_UNION_TYPES];
+    /* Function-owned used members, rather than an eight-member inline array.
+     * Scratch views use block-scoped backing arrays; retaining one requires
+     * diamond_function_set_type_set, never a shallow struct assignment. */
+    DiamondTypeMember *members;
     uint8_t count;
+    uint8_t capacity;
     /* True for advisory unions synthesized by compiler control-flow joins,
      * rather than written as a source annotation. They can prove a compatible
      * annotation but must retain the historical runtime-check fallback when
      * they do not satisfy one; see emit_type_check. */
     bool inferred;
 } DiamondTypeSet;
+
+/* Mutable scratch copies have block scope, like the old inline records. Stored
+ * sets are copied into their function's metadata arena before the scope ends. */
+static inline DiamondTypeSet diamond_type_set_copy_to(DiamondTypeSet source,
+        DiamondTypeMember *members) {
+    if(source.count>0)memcpy(members,source.members,source.count*sizeof *members);
+    source.members=members;
+    source.capacity=DIAMOND_MAX_UNION_TYPES;
+    return source;
+}
+#define DIAMOND_TYPE_SET_EMPTY ((DiamondTypeSet){.members=(DiamondTypeMember[DIAMOND_MAX_UNION_TYPES]){}})
+#define DIAMOND_TYPE_SET_COPY(source_) diamond_type_set_copy_to((source_), (DiamondTypeMember[DIAMOND_MAX_UNION_TYPES]){})
+#define DIAMOND_TYPE_SET_SCRATCH(name_, count_) \
+    DiamondTypeMember name_##_members[count_][DIAMOND_MAX_UNION_TYPES]={}; \
+    DiamondTypeSet name_[count_]; \
+    for(size_t scratch_index_=0;scratch_index_<(count_);scratch_index_++) \
+        name_[scratch_index_]=(DiamondTypeSet){.members=name_##_members[scratch_index_],.capacity=DIAMOND_MAX_UNION_TYPES}
 
 typedef struct DiamondChunk DiamondChunk;
 
@@ -1367,6 +1389,9 @@ typedef struct DiamondFunction {
     DiamondTypeSet *type_sets;
     size_t type_set_count;
     size_t type_set_capacity;
+    /* Stable arena blocks for mutable compilation/ProgramBuilder metadata.
+     * Immutable clones carry characters and members in their combined buffer. */
+    struct DiamondMetadataBlock *metadata;
     /* True only for a function built by diamond_function_copy (src/
      * compiler.c) -- code/lines/columns/constants/strings/type_sets
      * above all point into ONE combined malloc'd block instead of 6

@@ -199,7 +199,8 @@ int32_t type_set_with_nil(Compiler *compiler,uint16_t source_index) {
     if(source.count==DIAMOND_MAX_UNION_TYPES||
        !grow_type_sets(compiler->function,1))return -1;
     const size_t result=compiler->function->type_set_count++;
-    compiler->function->type_sets[result]=source;
+    store_type_set(compiler,result,source);
+    if(!diamond_function_reserve_type_members(compiler->function,result,source.count+1))return -1;
     DiamondTypeSet *set=&compiler->function->type_sets[result];
     set->members[set->count++]=(DiamondTypeMember){
         .id=DIAMOND_TYPE_NIL,.argument_set=DIAMOND_NO_TYPE_SET,
@@ -211,7 +212,7 @@ int32_t type_set_with_nil(Compiler *compiler,uint16_t source_index) {
 static bool split_nil_type_set(Compiler *compiler,uint16_t source_index,
                                int32_t *without_nil,int32_t *only_nil) {
     const DiamondTypeSet source=compiler->function->type_sets[source_index];
-    DiamondTypeSet narrowed={};bool found_nil=false;
+    DiamondTypeSet narrowed=DIAMOND_TYPE_SET_EMPTY;bool found_nil=false;
     for(size_t index=0;index<source.count;index++) {
         if(source.members[index].id==DIAMOND_TYPE_NIL)found_nil=true;
         else narrowed.members[narrowed.count++]=source.members[index];
@@ -219,13 +220,11 @@ static bool split_nil_type_set(Compiler *compiler,uint16_t source_index,
     if(!found_nil||narrowed.count==0||
        !grow_type_sets(compiler->function,2))return false;
     *without_nil=(int32_t)compiler->function->type_set_count;
-    compiler->function->type_sets[compiler->function->type_set_count++]=narrowed;
+    store_type_set(compiler,compiler->function->type_set_count++,narrowed);
     *only_nil=(int32_t)compiler->function->type_set_count;
-    DiamondTypeSet *nil_set=&compiler->function->type_sets[
-        compiler->function->type_set_count++];
-    *nil_set=(DiamondTypeSet){.members={{.id=DIAMOND_TYPE_NIL,
+    store_type_set(compiler,compiler->function->type_set_count++,(DiamondTypeSet){.members=(DiamondTypeMember[DIAMOND_MAX_UNION_TYPES]){{.id=DIAMOND_TYPE_NIL,
         .argument_set=DIAMOND_NO_TYPE_SET,.second_argument_set=DIAMOND_NO_TYPE_SET,
-        .callable_arity=UINT8_MAX,.callable_return_set=DIAMOND_NO_TYPE_SET}},.count=1};
+        .callable_arity=UINT8_MAX,.callable_return_set=DIAMOND_NO_TYPE_SET}},.count=1});
     return true;
 }
 
@@ -233,7 +232,7 @@ static bool split_type_set(Compiler *compiler,uint16_t source_index,
                            uint16_t tested_type,int32_t *matching,
                            int32_t *remaining) {
     const DiamondTypeSet source=compiler->function->type_sets[source_index];
-    DiamondTypeSet yes={},no={};
+    DiamondTypeSet yes=DIAMOND_TYPE_SET_EMPTY,no=DIAMOND_TYPE_SET_EMPTY;
     for(size_t index=0;index<source.count;index++) {
         const DiamondTypeMember member=source.members[index];
         if(known_type_satisfies_one(compiler,member.id,tested_type))
@@ -243,9 +242,9 @@ static bool split_type_set(Compiler *compiler,uint16_t source_index,
     if(yes.count==0||no.count==0||
        !grow_type_sets(compiler->function,2))return false;
     *matching=(int32_t)compiler->function->type_set_count;
-    compiler->function->type_sets[compiler->function->type_set_count++]=yes;
+    store_type_set(compiler,compiler->function->type_set_count++,yes);
     *remaining=(int32_t)compiler->function->type_set_count;
-    compiler->function->type_sets[compiler->function->type_set_count++]=no;
+    store_type_set(compiler,compiler->function->type_set_count++,no);
     return true;
 }
 
@@ -261,7 +260,7 @@ void apply_type_set_fact(Compiler *compiler,uint16_t reg,int32_t set_index) {
 static bool split_truthy_type_set(Compiler *compiler,int32_t source_index,
                                   int32_t *truthy,int32_t *falsy) {
     const DiamondTypeSet source=compiler->function->type_sets[source_index];
-    DiamondTypeSet yes={},no={};
+    DiamondTypeSet yes=DIAMOND_TYPE_SET_EMPTY,no=DIAMOND_TYPE_SET_EMPTY;
     for(size_t index=0;index<source.count;index++) {
         const DiamondTypeMember member=source.members[index];
         if(member.id!=DIAMOND_TYPE_NIL)yes.members[yes.count++]=member;
@@ -272,9 +271,9 @@ static bool split_truthy_type_set(Compiler *compiler,int32_t source_index,
        (yes.count==source.count&&no.count==source.count)||
        !grow_type_sets(compiler->function,2))return false;
     *truthy=(int32_t)compiler->function->type_set_count;
-    compiler->function->type_sets[compiler->function->type_set_count++]=yes;
+    store_type_set(compiler,compiler->function->type_set_count++,yes);
     *falsy=(int32_t)compiler->function->type_set_count;
-    compiler->function->type_sets[compiler->function->type_set_count++]=no;
+    store_type_set(compiler,compiler->function->type_set_count++,no);
     return true;
 }
 
@@ -490,7 +489,7 @@ void merge_flow_types(Compiler *compiler,uint16_t left_type,int32_t left_set,
     if(left_type==right_type&&left_set==right_set) {
         *result_type=left_type;*result_set=left_set;return;
     }
-    DiamondTypeSet merged={};
+    DiamondTypeSet merged=DIAMOND_TYPE_SET_EMPTY;
     if(!append_flow_type(compiler,&merged,left_type,left_set)||
        !append_flow_type(compiler,&merged,right_type,right_set))return;
     merged.inferred=true;
@@ -503,7 +502,7 @@ void merge_flow_types(Compiler *compiler,uint16_t left_type,int32_t left_set,
     }
     if(!grow_type_sets(compiler->function,1))return;
     const size_t index=compiler->function->type_set_count++;
-    compiler->function->type_sets[index]=merged;
+    store_type_set(compiler,index,merged);
     *result_set=(int32_t)index;
     *result_type=merged.count==1?merged.members[0].id:TYPE_UNKNOWN;
 }
