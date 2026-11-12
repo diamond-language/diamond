@@ -202,7 +202,7 @@ static uint16_t interface_clone_members(InterfaceTypeArena *arena,const DiamondT
         unsigned source,size_t depth) {
     if(depth>32)return DIAMOND_NO_TYPE_SET;
     const bool signature=source==1;
-    DiamondTypeSet result={};
+    DiamondTypeSet result=DIAMOND_TYPE_SET_EMPTY;
     for(size_t i=0;i<set->count;i++) {
         DiamondTypeMember member=set->members[i];
         if(member.id>=DIAMOND_TYPE_VARIABLE_BASE&&member.id<DIAMOND_TYPE_INTERFACE_BASE) {
@@ -242,7 +242,10 @@ static uint16_t interface_clone_members(InterfaceTypeArena *arena,const DiamondT
         arena->sets=grown;arena->capacity=capacity;
     }
     const uint16_t added=(uint16_t)arena->count++;
-    arena->sets[added]=result;return added;
+    DiamondTypeMember *members=malloc(result.count*sizeof *members);
+    if(result.count>0&&members==nullptr) {arena->count--;return DIAMOND_NO_TYPE_SET;}
+    if(result.count>0)memcpy(members,result.members,result.count*sizeof *members);
+    result.members=members;arena->sets[added]=result;return added;
 }
 
 static uint16_t interface_clone_set(InterfaceTypeArena *arena,uint16_t index,
@@ -342,7 +345,7 @@ static bool generic_interface_signature(const Compiler *compiler,
     for(size_t variable=implementation->class_type_variable;
         variable<implementation->type_variable_count&&found;variable++) {
         if(!witnesses[variable].inferred)continue;
-        DiamondTypeSet sets[DIAMOND_BOUND_TYPE_NODES];int32_t map[DIAMOND_BOUND_TYPE_NODES];
+        DIAMOND_TYPE_SET_SCRATCH(sets,DIAMOND_BOUND_TYPE_NODES);int32_t map[DIAMOND_BOUND_TYPE_NODES];
         for(size_t n=0;n<DIAMOND_BOUND_TYPE_NODES;n++)map[n]=-1;
         const DiamondTypeSet *saved_arguments=arena.method_arguments;
         int32_t *saved_map=arena.method_map;
@@ -369,6 +372,7 @@ static bool generic_interface_signature(const Compiler *compiler,
     }
     active_interface_arena=arena.parent;
     generic_interface_depth--;
+    for(size_t i=0;i<arena.count;i++)free(arena.sets[i].members);
     free(arena.sets);free(arena.signature_map);free(arena.argument_map);free(arena.method_map);return found;
 }
 
@@ -431,7 +435,7 @@ bool known_type_satisfies_one(const Compiler *compiler, uint16_t known,
                     method->arity,&native_return))return false;
                 if(method->return_type_set!=DIAMOND_NO_TYPE_SET) {
                     if(native_return==DIAMOND_TYPE_NONE)return false;
-                    const DiamondTypeSet native={.members={{.id=native_return,
+                    const DiamondTypeSet native={.members=(DiamondTypeMember[DIAMOND_MAX_UNION_TYPES]){{.id=native_return,
                         .argument_set=DIAMOND_NO_TYPE_SET,.second_argument_set=DIAMOND_NO_TYPE_SET,
                         .callable_arity=UINT8_MAX,.callable_return_set=DIAMOND_NO_TYPE_SET}},.count=1};
                     if(!type_sets_satisfy_across(compiler,&native,0,
@@ -545,7 +549,7 @@ __attribute__((noinline))
 static bool fixed_member_satisfies(const Compiler *compiler,DiamondTypeMember known,
         const DiamondTypeSet *expected_sets,DiamondTypeMember expected) {
     const DiamondClass *fixed=compiler->program->classes[known.id-DIAMOND_TYPE_CLASS_BASE];
-    DiamondTypeSet sets[2*DIAMOND_BOUND_TYPE_NODES];size_t count=0;
+    DIAMOND_TYPE_SET_SCRATCH(sets,2*DIAMOND_BOUND_TYPE_NODES);size_t count=0;
     for(size_t variable=0;variable<DIAMOND_CLASS_TYPE_PARAMETER_COUNT(fixed);variable++) {
         if(!diamond_binding_type_sets(&fixed->fixed_type_bindings[variable],sets+count,
             2*DIAMOND_BOUND_TYPE_NODES-count,(uint16_t)count))return false;
@@ -885,10 +889,13 @@ void publish_self_return_type(Compiler *compiler,uint16_t reg,const DiamondFunct
     } else {
         if(!reserve_type_sets(compiler,1))return;
         others=(uint16_t)compiler->function->type_set_count++;
-        compiler->function->type_sets[others]=(DiamondTypeSet){};
+        store_type_set(compiler,others,(DiamondTypeSet){});
     }
     DiamondTypeSet *set=&compiler->function->type_sets[others];
     if(set->count==DIAMOND_MAX_UNION_TYPES)return;
+    if(!diamond_function_reserve_type_members(compiler->function,others,set->count+1)) {
+        fail(compiler,compiler->current.span,"out of memory storing Self union");return;
+    }
     DiamondTypeMember *member=&set->members[set->count++];
     *member=(DiamondTypeMember){.id=(uint16_t)(DIAMOND_TYPE_CLASS_BASE+class_index),
         .argument_set=DIAMOND_NO_TYPE_SET,.second_argument_set=DIAMOND_NO_TYPE_SET,
@@ -965,7 +972,22 @@ bool grow_type_sets(DiamondFunction *function,size_t additional) {
         if(capacity>DIAMOND_MAX_TYPE_SETS)capacity=DIAMOND_MAX_TYPE_SETS;
         if(!diamond_function_reserve_type_sets(function,capacity))return false;
     }
+    for(size_t i=function->type_set_count;i<needed;i++)
+        if(!diamond_function_reserve_type_members(function,i,1))return false;
     return true;
+}
+
+void store_type_set(Compiler *compiler,size_t index,DiamondTypeSet source) {
+    if(!diamond_function_set_type_set(compiler->function,index,source))
+        fail(compiler,compiler->current.span,"out of memory storing type set");
+}
+
+bool store_type_binding(Compiler *compiler,const DiamondTypeBinding *binding,uint16_t base) {
+    for(size_t i=0;i<binding->node_count;i++)
+        if(!diamond_function_reserve_type_members(compiler->function,base+i,binding->nodes[i].count)) {
+            fail(compiler,compiler->current.span,"out of memory storing type binding");return false;
+        }
+    return diamond_binding_type_sets(binding,compiler->function->type_sets+base,binding->node_count,base);
 }
 
 bool reserve_type_sets(Compiler *compiler,size_t additional) {
@@ -1006,7 +1028,7 @@ int32_t join_type_set_indices(Compiler *compiler,int32_t left,
     if(left<0||right<0||(size_t)left>=compiler->function->type_set_count||
        (size_t)right>=compiler->function->type_set_count)return -1;
     if(left==right)return left;
-    DiamondTypeSet joined=compiler->function->type_sets[(size_t)left];
+    DiamondTypeSet joined=DIAMOND_TYPE_SET_COPY(compiler->function->type_sets[(size_t)left]);
     const DiamondTypeSet addition=compiler->function->type_sets[(size_t)right];
     for(size_t source=0;source<addition.count;source++) {
         const DiamondTypeMember member=addition.members[source];
@@ -1026,7 +1048,7 @@ int32_t join_type_set_indices(Compiler *compiler,int32_t left,
                 compiler->function->type_sets[index]))return (int32_t)index;
     if(!reserve_type_sets(compiler,1))return -1;
     const size_t index=compiler->function->type_set_count++;
-    compiler->function->type_sets[index]=joined;
+    store_type_set(compiler,index,joined);
     return (int32_t)index;
 }
 
@@ -1171,8 +1193,7 @@ static uint16_t clone_type_set_into_current_impl(Compiler *compiler,
         uint16_t source_index,bool source_is_current) {
     if(source_index==DIAMOND_NO_TYPE_SET||source_index>=source_count)
         return DIAMOND_NO_TYPE_SET;
-    DiamondTypeSet cloned=source_is_current?
-        compiler->function->type_sets[source_index]:source_sets[source_index];
+    DiamondTypeSet cloned=DIAMOND_TYPE_SET_COPY(source_is_current?compiler->function->type_sets[source_index]:source_sets[source_index]);
     if(!reserve_type_sets(compiler,1))return DIAMOND_NO_TYPE_SET;
     const size_t destination_index=compiler->function->type_set_count++;
     for(size_t member_index=0;member_index<cloned.count;member_index++) {
@@ -1192,7 +1213,7 @@ static uint16_t clone_type_set_into_current_impl(Compiler *compiler,
                         source_count,member->callable_parameter_sets[parameter],
                         source_is_current);
     }
-    compiler->function->type_sets[destination_index]=cloned;
+    store_type_set(compiler,destination_index,cloned);
     return (uint16_t)destination_index;
 }
 
@@ -1226,7 +1247,7 @@ uint16_t clone_substituted_type_set(Compiler *compiler,
         *resolved=false;return DIAMOND_NO_TYPE_SET;
     }
     const size_t destination_index=compiler->function->type_set_count++;
-    DiamondTypeSet substituted={.inferred=source.inferred};
+    DiamondTypeSet substituted=DIAMOND_TYPE_SET_EMPTY;substituted.inferred=source.inferred;
     for(size_t member_index=0;member_index<source.count;member_index++) {
         DiamondTypeMember source_member=source.members[member_index];
         if(source_member.id>=DIAMOND_TYPE_VARIABLE_BASE&&
@@ -1280,7 +1301,7 @@ uint16_t clone_substituted_type_set(Compiler *compiler,
         }
         substituted.members[substituted.count++]=member_value;
     }
-    compiler->function->type_sets[destination_index]=substituted;
+    store_type_set(compiler,destination_index,substituted);
     return (uint16_t)destination_index;
 }
 
@@ -1514,8 +1535,9 @@ uint16_t add_string_range_mode(Compiler *compiler,size_t start,size_t length,
           compiler->function->string_capacity*2)) {
         fail(compiler,span,"out of memory growing function strings");return 0;
     }
-    DiamondStringConstant *string =
-        &compiler->function->strings[compiler->function->string_count];
+    char buffer[DIAMOND_MAX_STRING_LENGTH+1];
+    DiamondStringConstant temporary={.chars=buffer};
+    DiamondStringConstant *string=&temporary;
     for(size_t index=0;index<length;index++) {
         char character=compiler->source[start+index];
         char encoded[4];
@@ -1590,7 +1612,8 @@ uint16_t add_string_range_mode(Compiler *compiler,size_t start,size_t length,
         for(size_t byte=0;byte<encoded_length;byte++)
             string->chars[string->length++] = encoded[byte];
     }
-    string->chars[string->length] = '\0';
+    if(!diamond_function_set_string(compiler->function,compiler->function->string_count,
+            string->chars,string->length)) {fail(compiler,span,"out of memory storing string");return 0;}
     return (uint16_t)compiler->function->string_count++;
 }
 
@@ -1621,12 +1644,9 @@ uint16_t add_name_text(Compiler *compiler,const char *text,size_t length,Diamond
           compiler->function->string_capacity*2)) {
         fail(compiler,span,"out of memory growing function strings");return 0;
     }
-    DiamondStringConstant *string =
-        &compiler->function->strings[compiler->function->string_count];
-    for (size_t i = 0; i < length; i++)
-        string->chars[i] = text[i];
-    string->length = length;
-    string->chars[length] = '\0';
+    if(!diamond_function_set_string(compiler->function,compiler->function->string_count,text,length)) {
+        fail(compiler,span,"out of memory storing name");return 0;
+    }
     return (uint16_t)compiler->function->string_count++;
 }
 
@@ -2841,7 +2861,7 @@ int parse_type_annotation(Compiler *compiler) {
     DiamondTypeSet *set=&compiler->function->type_sets[set_index];
     /* Failed advisory proofs rewind the count and can leave a populated slot
      * behind. A new annotation must not inherit those discarded alternatives. */
-    *set=(DiamondTypeSet){};
+    set->count=0;set->inferred=false;
     while(!compiler->failed) {
         if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER) {
             fail(compiler,compiler->current.span,"expected type annotation");break;
@@ -2976,6 +2996,9 @@ int parse_type_annotation(Compiler *compiler) {
                 fail(compiler,member_span,"duplicate type in union");break;
             }
         if(compiler->failed)break;
+        if(!diamond_function_reserve_type_members(compiler->function,set_index,set->count+1)) {
+            fail(compiler,member_span,"out of memory storing union");break;
+        }
         set->members[set->count++]=parsed;
         if(compiler->current.kind!=DIAMOND_TOKEN_PIPE)break;
         advance_token(compiler);

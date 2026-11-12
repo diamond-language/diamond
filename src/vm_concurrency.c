@@ -153,8 +153,11 @@ DiamondProgram *clone_program_from_chunk(const DiamondChunk *chunk) {
                 entry_type_count)) {
             diamond_program_free(clone);free(clone);return nullptr;
         }
-        memcpy(clone->entry.type_sets,entry_types,
-            entry_type_count*sizeof *clone->entry.type_sets);
+        for(size_t i=0;i<entry_type_count;i++) {
+            if(!diamond_function_set_type_set(&clone->entry,i,entry_types[i])) {
+                diamond_program_free(clone);free(clone);return nullptr;
+            }
+        }
         clone->entry.type_set_count=entry_type_count;
     }
     for(size_t index=0;index<chunk->function_count;index++) {

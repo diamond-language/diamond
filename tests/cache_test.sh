@@ -257,7 +257,7 @@ fi
 mkdir -p "$work/sets"
 cat > "$work/sets/app.d6" <<'D6'
 def twice(callback: Callable[[Int], Int]) -> Int = callback(callback(1))
-def pick(value: Int | String | Nil) -> String = value.to_s()
+def pick(value: Int | String | Nil | Bool | Float | Array[Int] | Hash[String, Int] | Time) -> String = value.to_s()
 def total(values: Array[Int]) -> Int = values.sum()
 def g(a: Int) = a
 def add_one(value: Int) -> Int = value + 1

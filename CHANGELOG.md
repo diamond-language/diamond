@@ -6,6 +6,8 @@ authoritative fine-grained record.
 
 ## Unreleased
 
+- Compiled programs keep string constants and type-set members at their used sizes in memory, avoiding the expansion of compact caches and standalone binaries into mostly unused 4 KB string buffers and eight-member type records. Compiler, template and thread copies retain independent metadata ownership. Existing bytecode caches rebuild once for format 22.
+
 ## 1.0.0-rc3 — 2026-11-11
 
 The third release candidate reduces cache and executable sizes, fixes native
