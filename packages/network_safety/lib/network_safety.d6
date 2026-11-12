@@ -6,44 +6,21 @@ require_cut "http"
 # ingest-style caller (see e.g. skindicate.dia's own winamp ingester)
 # hands a URL from a third-party API response to http_get/http_post.
 #
-# **String-level checks only -- this is a real, deliberate reduction
-# from the Ruby original, not an oversight.** The Ruby version resolves
-# the hostname via DNS, validates the resulting IP address, then
-# connects to that *exact* IP (bypassing a second DNS lookup), so a
-# hostname that resolves to a private/internal address is caught even
-# though the URL string itself looks innocuous, and a DNS answer that
-# changes between the check and the connect (DNS rebinding) can't slip
-# through either. Diamond has no way to resolve a hostname to an IP
-# address without actually connecting (`TCPSocket.connect` does
-# resolve+connect as one step and never exposes the resolved address
-# afterward), so neither of those protections is buildable at the
-# Diamond-language level today. What's checked here instead: the URL
-# scheme, a missing host, embedded userinfo (`user:pass@host` -- some
-# HTTP clients historically use this to smuggle a different real
-# target), and whether the host *string itself* is a private/loopback/
-# link-local IPv4 literal or an obviously-local name (`localhost`, a
-# `.local`/`.internal` suffix). A hostname that only *resolves* to a
-# private address is not caught. Confirmed with the maintainer this is
-# an acceptable gap for now: the URLs this guards (a fixed third-party
-# API's own GraphQL/CDN responses) aren't raw, arbitrary user input,
-# just semi-trusted data from that API. A native DNS-resolve-without-
-# connecting VM primitive would close this gap properly; that's a
-# separate, bigger change (touches src/vm.c, needs a rebuild), not
-# attempted here.
+# String-level checks only: this package validates the scheme, authority,
+# local names and IPv4 literals. It does not resolve hostnames or pin the
+# subsequent HTTP connection to a checked address. A public-looking hostname
+# that resolves to a private address is not caught, and DNS rebinding is not
+# prevented. Diamond now has DNS.resolve and nonblocking connection APIs,
+# but using them safely here would also require the HTTP transport to connect
+# to the validated address while preserving the original hostname for TLS.
+# A separate DNS check followed by an ordinary http_get is not sufficient.
 #
-# IPv4 only, matching the Ruby original's own real coverage need: no
-# bitwise-AND operator exists in Diamond (only `<<`, for left-shift),
-# so CIDR containment is done via integer division instead (two
+# IPv4 only, matching the Ruby original's own real coverage need.
+# CIDR containment uses integer division (two
 # addresses share a /prefix network iff they're equal after dividing
 # out the 2^(32-prefix) host-bit range) -- exact, no masking needed.
-# The same trick doesn't scale as cleanly to IPv6's 128-bit space, and
-# the APIs this guards are plain IPv4/dual-stack HTTPS endpoints, so an
-# IPv6 blocklist table isn't attempted; a host that IS a literal IPv6
-# address (contains ":") is rejected outright below rather than parsed.
-# Diamond has no module-level constant a function body can read as a
-# plain variable (see e.g. active_auth's own Session.duration_seconds()
-# for the established stand-in) -- a function returning the literal
-# array in place of a real constant.
+# Literal IPv6 hosts are rejected rather than parsed against a blocklist.
+# Keep the table in a function so it is available in independent worker VMs.
 def network_safety_blocked_ipv4_networks()
   [
     ["0.0.0.0", 8], ["10.0.0.0", 8], ["100.64.0.0", 10], ["127.0.0.0", 8],

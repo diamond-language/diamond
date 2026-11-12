@@ -64,8 +64,8 @@ class Logger
 
   def emit(label: String, rank: Int, message, fields: Hash)
     if rank >= @level
-      timestamp = Time.now().strftime("%Y-%m-%dT%H:%M:%S%z")
       line = if @format == "json"
+        timestamp = Time.now().strftime("%Y-%m-%dT%H:%M:%S%z")
         JSON.stringify(fields.merge({"timestamp": timestamp, "level": label.downcase(), "tag": @tag, "message": "#{message}"}))
       else
         "[#{Time.now().strftime("%Y-%m-%d %H:%M:%S")}] #{label} #{@tag}: #{message}"
