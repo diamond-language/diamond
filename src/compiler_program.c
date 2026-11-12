@@ -18,6 +18,72 @@
 
 /* DiamondProgram and DiamondFunction storage: allocation, growth, initialisation and teardown. */
 
+typedef struct DiamondMetadataBlock {
+    struct DiamondMetadataBlock *next;
+    size_t used,capacity;
+    max_align_t data[];
+} DiamondMetadataBlock;
+
+void *diamond_function_metadata_alloc(DiamondFunction *function,size_t size) {
+    const size_t alignment=alignof(max_align_t);
+    if(size>SIZE_MAX-(alignment-1))return nullptr;
+    size=(size+alignment-1)&~(alignment-1);
+    DiamondMetadataBlock *block=function->metadata;
+    if(block==nullptr||size>block->capacity-block->used) {
+        const size_t capacity=size>4096?size:4096;
+        if(capacity>SIZE_MAX-sizeof *block)return nullptr;
+        block=malloc(sizeof *block+capacity);
+        if(block==nullptr)return nullptr;
+        *block=(DiamondMetadataBlock){.next=function->metadata,.capacity=capacity};
+        function->metadata=block;
+    }
+    void *result=(uint8_t *)block->data+block->used;
+    block->used+=size;
+    return result;
+}
+
+bool diamond_function_set_string(DiamondFunction *function,size_t index,
+        const char *chars,size_t length) {
+    if(length>DIAMOND_MAX_STRING_LENGTH)return false;
+    char *copy=diamond_function_metadata_alloc(function,length+1);
+    if(copy==nullptr)return false;
+    if(length>0)memcpy(copy,chars,length);
+    copy[length]='\0';
+    function->strings[index]=(DiamondStringConstant){.chars=copy,.length=length};
+    return true;
+}
+
+bool diamond_function_set_type_set(DiamondFunction *function,size_t index,
+        DiamondTypeSet source) {
+    if(source.count>DIAMOND_MAX_UNION_TYPES||(source.count>0&&source.members==nullptr))return false;
+    if(!diamond_function_reserve_type_members(function,index,source.count))return false;
+    DiamondTypeSet *target=&function->type_sets[index];
+    if(source.count>0)memmove(target->members,source.members,source.count*sizeof *source.members);
+    source.members=target->members;source.capacity=target->capacity;
+    function->type_sets[index]=source;
+    return true;
+}
+
+bool diamond_function_reserve_type_members(DiamondFunction *function,size_t index,size_t count) {
+    if(count>DIAMOND_MAX_UNION_TYPES)return false;
+    DiamondTypeSet *set=&function->type_sets[index];
+    if(count<=set->capacity)return true;
+    DiamondTypeMember *members=diamond_function_metadata_alloc(function,count*sizeof *members);
+    if(members==nullptr)return false;
+    if(set->count>0)memcpy(members,set->members,set->count*sizeof *members);
+    set->members=members;set->capacity=(uint8_t)count;
+    return true;
+}
+
+bool diamond_function_copy_type_sets(DiamondFunction *destination,
+        const DiamondFunction *source) {
+    if(!diamond_function_reserve_type_sets(destination,source->type_set_count))return false;
+    for(size_t i=0;i<source->type_set_count;i++)
+        if(!diamond_function_set_type_set(destination,i,source->type_sets[i]))return false;
+    destination->type_set_count=source->type_set_count;
+    return true;
+}
+
 DiamondFunction *diamond_program_add_function(DiamondProgram *program) {
     if(program->function_count>=DIAMOND_MAX_FUNCTIONS)return nullptr;
     if(program->function_count==program->function_capacity) {
@@ -135,6 +201,7 @@ bool diamond_function_copy(DiamondFunction *destination,
     destination->constants=nullptr;destination->constant_capacity=0;
     destination->strings=nullptr;destination->string_capacity=0;
     destination->type_sets=nullptr;destination->type_set_capacity=0;
+    destination->metadata=nullptr;
     destination->owns_combined_buffer=false;
     /* jit_code is executable memory tied to the SOURCE's own lifetime/
      * process, never shared across a Thread.new/gremlin_serve clone --
@@ -170,10 +237,17 @@ bool diamond_function_copy(DiamondFunction *destination,
         type_sets_offset=size;
         size+=source->type_set_count*sizeof *destination->type_sets;
     }
+    size=align_up_max(size);
+    const size_t members_offset=size;
+    for(size_t i=0;i<source->type_set_count;i++)
+        size+=source->type_sets[i].count*sizeof(DiamondTypeMember);
+    const size_t chars_offset=size;
+    for(size_t i=0;i<source->string_count;i++)size+=source->strings[i].length+1;
     if(size==0)return true;
 
     uint8_t *block=malloc(size);
     if(block==nullptr)return false;
+    destination->code=block;
 
     if(source->code_count>0) {
         destination->code=block+code_offset;
@@ -201,14 +275,27 @@ bool diamond_function_copy(DiamondFunction *destination,
     }
     if(source->string_count>0) {
         destination->strings=(DiamondStringConstant *)(void *)(block+strings_offset);
-        memcpy((void *)destination->strings,(const void *)source->strings,
-            source->string_count*sizeof *destination->strings);
+        size_t offset=chars_offset;
+        for(size_t i=0;i<source->string_count;i++) {
+            const size_t length=source->strings[i].length;
+            destination->strings[i]=(DiamondStringConstant){.chars=(char *)block+offset,.length=length};
+            memcpy(block+offset,source->strings[i].chars,length);
+            block[offset+length]='\0';offset+=length+1;
+        }
         destination->string_capacity=source->string_count;
     }
     if(source->type_set_count>0) {
         destination->type_sets=(DiamondTypeSet *)(void *)(block+type_sets_offset);
-        memcpy((void *)destination->type_sets,(const void *)source->type_sets,
-            source->type_set_count*sizeof *destination->type_sets);
+        size_t offset=members_offset;
+        for(size_t i=0;i<source->type_set_count;i++) {
+            destination->type_sets[i]=source->type_sets[i];
+            DiamondTypeMember *members=(DiamondTypeMember *)(void *)(block+offset);
+            destination->type_sets[i].members=members;
+            destination->type_sets[i].capacity=source->type_sets[i].count;
+            const size_t bytes=source->type_sets[i].count*sizeof *members;
+            if(bytes>0)memcpy(members,source->type_sets[i].members,bytes);
+            offset+=bytes;
+        }
         destination->type_set_capacity=source->type_set_count;
     }
     destination->owns_combined_buffer=true;
@@ -222,6 +309,11 @@ bool diamond_function_copy(DiamondFunction *destination,
  * allocation, `code`; the other 5 fields are interior pointers into
  * that same block and must never be passed to free() themselves. */
 void diamond_function_free_arrays(DiamondFunction *function) {
+    while(function->metadata!=nullptr) {
+        DiamondMetadataBlock *block=function->metadata;
+        function->metadata=block->next;
+        free(block);
+    }
     if(function->owns_combined_buffer) {
         free(function->code);
     } else {
@@ -1039,11 +1131,7 @@ static bool seed_program_from_template(DiamondProgram *destination,
      * when seeding a restored or incremental program; copying only the
      * methods would reinterpret their indexes against unrelated new types. */
     if(template->interface_count>0) {
-        if(!diamond_function_reserve_type_sets(&destination->entry,template->entry.type_set_count))return false;
-        if(template->entry.type_set_count>0)
-            memcpy(destination->entry.type_sets,template->entry.type_sets,
-                template->entry.type_set_count*sizeof *template->entry.type_sets);
-        destination->entry.type_set_count=template->entry.type_set_count;
+        if(!diamond_function_copy_type_sets(&destination->entry,&template->entry))return false;
     }
     /* Copy only the used prefix of each metadata table. Unused slots are
      * initialized explicitly when claimed, just as after program_init. */

@@ -78,6 +78,7 @@ static bool write_function_image(FILE *file, const DiamondFunction *function) {
     image.constants = nullptr;
     image.strings = nullptr;
     image.type_sets = nullptr;
+    image.metadata = nullptr;
     image.jit_code = nullptr;
     image.jit_code_size = 0;
     image.jit_call_count = 0;
@@ -139,19 +140,15 @@ static bool write_function(FILE *file, const DiamondFunction *function) {
     if (!write_all(file, function->lines, function->code_count * sizeof *function->lines)) return false;
     if (!write_all(file, function->columns, function->code_count * sizeof *function->columns)) return false;
     if (!write_all(file, function->constants, function->constant_count * sizeof *function->constants)) return false;
-    /* A DiamondStringConstant is a fixed DIAMOND_MAX_STRING_LENGTH buffer in
-     * memory, almost all padding; on disk each is just its length and bytes.
-     * Writing whole structs made a small program's cache tens of megabytes. */
+    /* The payload is length-prefixed on disk and exact-size in memory. The
+     * in-memory pointer and terminator are reconstructed by the reader. */
     for (size_t index = 0; index < function->string_count; index++) {
         const uint64_t length = (uint64_t)function->strings[index].length;
         if (!write_all(file, &length, sizeof length)) return false;
         if (!write_all(file, function->strings[index].chars, (size_t)length)) return false;
     }
-    /* A DiamondTypeSet holds DIAMOND_MAX_UNION_TYPES member slots (354 bytes) and
-     * almost every set uses one. Writing whole structs made type sets nearly all
-     * of a large program's cache (63 of Pheint's 71 MB), and of every `d6 build`
-     * binary that embeds it. On disk each set is its count, its inferred flag and
-     * only the members it uses (see write_type_member); the reader zero-fills the rest. */
+    /* Only used members are stored, both on disk and in memory. The old inline
+     * records reserved eight members (354 bytes), even for singleton sets. */
     for (size_t index = 0; index < function->type_set_count; index++) {
         const DiamondTypeSet *set = &function->type_sets[index];
         const uint8_t header[2] = {set->count, set->inferred ? 1 : 0};
@@ -403,6 +400,9 @@ static bool read_function(const uint8_t **cursor, const uint8_t *end,
        (view.captures_type_variables&&(!view.nested||view.type_variable_count==0||
             view.class_type_variable!=0)))return false;
     const size_t remaining = (size_t)(end - *cursor);
+    if(view.code_count>DIAMOND_MAX_CODE||view.constant_count>DIAMOND_MAX_CONSTANTS||
+       view.string_count>DIAMOND_MAX_STRING_CONSTANTS||view.type_set_count>DIAMOND_MAX_TYPE_SETS)
+        return false;
     /* Each type set takes at least its 2-byte header on disk. */
     if (view.code_count > remaining / sizeof *view.code ||
         view.constant_count > remaining / sizeof *view.constants ||
@@ -415,58 +415,45 @@ static bool read_function(const uint8_t **cursor, const uint8_t *end,
     if ((view.code_count > 0 && (code == nullptr || lines_bytes == nullptr || columns_bytes == nullptr)) ||
         (view.constant_count > 0 && constants_bytes == nullptr))
         return false;
-    /* Expand the length-prefixed strings back into fixed in-memory records. */
+    /* Keep variable-size metadata variable-size in memory as well. String
+     * views point into the input only until the final independent copy. */
     if (view.string_count > (size_t)(end - *cursor) / sizeof(uint64_t)) return false;
-    DiamondStringConstant *strings = nullptr;
-    if (view.string_count > 0) {
-        strings = calloc(view.string_count, sizeof *strings);
-        if (strings == nullptr) return false;
+    DiamondFunction storage={};
+    if(!diamond_function_reserve_strings(&storage,view.string_count)||
+       !diamond_function_reserve_type_sets(&storage,view.type_set_count))goto invalid_metadata;
+    for(size_t index=0;index<view.string_count;index++) {
+        uint64_t length=0;
+        const uint8_t *length_bytes=take(cursor,end,sizeof length);
+        if(length_bytes==nullptr)goto invalid_metadata;
+        memcpy(&length,length_bytes,sizeof length);
+        if(length>DIAMOND_MAX_STRING_LENGTH)goto invalid_metadata;
+        const uint8_t *chars=take(cursor,end,(size_t)length);
+        if(chars==nullptr&&length>0)goto invalid_metadata;
+        storage.strings[index]=(DiamondStringConstant){.chars=(char *)chars,.length=(size_t)length};
     }
-    for (size_t index = 0; index < view.string_count; index++) {
-        uint64_t length = 0;
-        const uint8_t *length_bytes = take(cursor, end, sizeof length);
-        if (length_bytes != nullptr) memcpy(&length, length_bytes, sizeof length);
-        const uint8_t *chars = length_bytes != nullptr && length <= DIAMOND_MAX_STRING_LENGTH ?
-            take(cursor, end, (size_t)length) : nullptr;
-        if (chars == nullptr && !(length_bytes != nullptr && length == 0)) {
-            free(strings);
-            return false;
-        }
-        if (length > 0) memcpy(strings[index].chars, chars, (size_t)length);
-        strings[index].length = (size_t)length;
-    }
-    /* Expand the compact type sets (see write_function) back into whole records. */
-    DiamondTypeSet *type_sets = nullptr;
-    if (view.type_set_count > 0) {
-        type_sets = calloc(view.type_set_count, sizeof *type_sets);
-        if (type_sets == nullptr) {
-            free(strings);
-            return false;
+    for(size_t index=0;index<view.type_set_count;index++) {
+        const uint8_t *header=take(cursor,end,2);
+        if(header==nullptr||header[0]>DIAMOND_MAX_UNION_TYPES||header[1]>1)
+            goto invalid_metadata;
+        if(!diamond_function_reserve_type_members(&storage,index,header[0]))goto invalid_metadata;
+        DiamondTypeSet *set=&storage.type_sets[index];
+        set->count=header[0];set->inferred=header[1]==1;
+        for(uint8_t member=0;member<set->count;member++) {
+            set->members[member]=(DiamondTypeMember){};
+            if(!read_type_member(cursor,end,&set->members[member]))goto invalid_metadata;
         }
     }
-    for (size_t index = 0; index < view.type_set_count; index++) {
-        const uint8_t *header = take(cursor, end, 2);
-        bool valid = header != nullptr && header[0] <= DIAMOND_MAX_UNION_TYPES && header[1] <= 1;
-        for (uint8_t member = 0; valid && member < header[0]; member++)
-            valid = read_type_member(cursor, end, &type_sets[index].members[member]);
-        if (!valid) {
-            free(type_sets);
-            free(strings);
-            return false;
-        }
-        type_sets[index].count = header[0];
-        type_sets[index].inferred = header[1] == 1;
-    }
-    view.code = (uint8_t *)code;
-    view.lines = (uint32_t *)(const void *)lines_bytes;
-    view.columns = (uint32_t *)(const void *)columns_bytes;
-    view.constants = (DiamondValue *)(const void *)constants_bytes;
-    view.strings = strings;
-    view.type_sets = type_sets;
-    const bool copied = diamond_function_copy(destination, &view);
-    free(type_sets);
-    free(strings);
+    view.code=(uint8_t *)code;
+    view.lines=(uint32_t *)(const void *)lines_bytes;
+    view.columns=(uint32_t *)(const void *)columns_bytes;
+    view.constants=(DiamondValue *)(const void *)constants_bytes;
+    view.strings=storage.strings;view.type_sets=storage.type_sets;
+    const bool copied=diamond_function_copy(destination,&view);
+    diamond_function_free_arrays(&storage);
     return copied;
+invalid_metadata:
+    diamond_function_free_arrays(&storage);
+    return false;
 }
 
 static bool read_u64(const uint8_t **cursor, const uint8_t *end, uint64_t *out) {
@@ -916,8 +903,9 @@ enum { DIAMOND_CACHE_MAGIC_LENGTH = 8 };
  * 9: classes store a type parameter; methods distinguish its instance binding.
  * 10: NEW_TYPED constructs explicitly specialized generic instances.
  * 11: generic class methods bind method variables after the receiver slot.
- * 21: type sets are stored as their count, inferred flag and used members only. */
-enum { DIAMOND_CACHE_FORMAT_VERSION = 21 };
+ * 21: type sets are stored as their count, inferred flag and used members only.
+ * 22: function images include the owner of variable-size in-memory metadata. */
+enum { DIAMOND_CACHE_FORMAT_VERSION = 22 };
 
 /* A checksum of the compiler's own sources and prelude (every .c and .h
  * file under src/, plus lib/core.d6 and lib/core/), passed in by the
@@ -1079,6 +1067,7 @@ static bool functions_identical(const DiamondFunction *a, const DiamondFunction 
     left.constants = right.constants = nullptr;
     left.strings = right.strings = nullptr;
     left.type_sets = right.type_sets = nullptr;
+    left.metadata = right.metadata = nullptr;
     left.jit_code = right.jit_code = nullptr;
     left.code_capacity = right.code_capacity = 0;
     left.constant_capacity = right.constant_capacity = 0;
@@ -1100,9 +1089,13 @@ static bool functions_identical(const DiamondFunction *a, const DiamondFunction 
         if (a->strings[index].length != b->strings[index].length ||
             memcmp(a->strings[index].chars, b->strings[index].chars, a->strings[index].length) != 0)
             return false;
-    if (a->type_set_count > 0 &&
-        memcmp(a->type_sets, b->type_sets, a->type_set_count * sizeof *a->type_sets) != 0)
-        return false;
+    for(size_t i=0;i<a->type_set_count;i++) {
+        const DiamondTypeSet *left_set=&a->type_sets[i],*right_set=&b->type_sets[i];
+        if(left_set->count!=right_set->count||left_set->inferred!=right_set->inferred||
+           (left_set->count>0&&memcmp(left_set->members,right_set->members,
+                left_set->count*sizeof *left_set->members)!=0))
+            return false;
+    }
     return true;
 }
 

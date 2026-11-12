@@ -145,7 +145,8 @@ static bool fuzz_function_fill(DiamondFunction *function, const char *name, Fuzz
     }
     if (string_count > 0) {
         if (!diamond_function_reserve_strings(function, string_count)) return false;
-        memcpy(function->strings, strings, string_count * sizeof *strings);
+        for(size_t index=0;index<string_count;index++)
+            if(!diamond_function_set_string(function,index,strings[index].chars,strings[index].length))return false;
         function->string_count = string_count;
     }
     return true;
@@ -172,7 +173,9 @@ static void fuzz_fill_types(DiamondFunction *function, FuzzReader *reader, size_
     if (set_total == 0 || !diamond_function_reserve_type_sets(function, set_total)) return;
     for (size_t index = 0; index < set_total; index++) {
         DiamondTypeSet *set = &function->type_sets[index];
-        *set = (DiamondTypeSet){.count = (uint8_t)(1 + fuzz_byte(reader) % 3)};
+        const uint8_t count=(uint8_t)(1+fuzz_byte(reader)%3);
+        if(!diamond_function_reserve_type_members(function,index,count))return;
+        set->count=count;
         for (size_t member = 0; member < set->count; member++) {
             uint16_t ids[DIAMOND_TYPE_CLASS_BASE + DIAMOND_MAX_CLASSES + 64];
             size_t id_count = 0;
@@ -269,9 +272,11 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
         }
     }
     DiamondStringConstant strings[8];
+    char string_bytes[8][16]={};
     for (size_t index = 0; index < string_count; index++) {
         const size_t length = fuzz_byte(&reader) % 16;
         memset(&strings[index], 0, sizeof strings[index]);
+        strings[index].chars=string_bytes[index];
         for (size_t byte = 0; byte < length; byte++) strings[index].chars[byte] = (char)fuzz_byte(&reader);
         strings[index].length = length;
     }

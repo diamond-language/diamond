@@ -760,7 +760,7 @@ static uint16_t join_constructor_type_sets(Compiler *compiler,uint16_t left,uint
     diamond_join_type_binding(&joined,&incoming);
     if(joined.invalid||!reserve_type_sets(compiler,joined.node_count))return (uint16_t)(DIAMOND_NO_TYPE_SET-1u);
     const uint16_t result=(uint16_t)compiler->function->type_set_count;
-    if(!diamond_binding_type_sets(&joined,compiler->function->type_sets+result,joined.node_count,result))
+    if(!store_type_binding(compiler,&joined,result))
         return (uint16_t)(DIAMOND_NO_TYPE_SET-1u);
     compiler->function->type_set_count+=joined.node_count;
     return result;
@@ -1965,12 +1965,10 @@ static uint16_t parse_singleton_reference(Compiler *compiler,
     function->required_arity=method->required_arity;
     function->has_variadic=method->has_variadic;
     function->type_set_count=compiler->function->type_set_count;
-    if(!diamond_function_reserve_type_sets(function,function->type_set_count)) {
+    if(!diamond_function_copy_type_sets(function,compiler->function)) {
         fail(compiler,namespace_name,"out of memory");return 0;
     }
-    if(function->type_set_count>0)
-        memcpy(function->type_sets,compiler->function->type_sets,
-            function->type_set_count*sizeof function->type_sets[0]);
+
     static const char reference_name[]="<method reference>";
     for(size_t index=0;index<sizeof(reference_name);index++)
         function->name[index]=reference_name[index];

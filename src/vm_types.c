@@ -34,7 +34,7 @@ static bool closure_signature_set(const DiamondChunk *chunk,const DiamondClosure
 __attribute__((noinline))
 static bool closure_signature_satisfies(const DiamondChunk *chunk,const DiamondClosure *closure,
         const DiamondFunction *function,uint16_t actual,uint16_t expected,bool parameter) {
-    DiamondTypeSet sets[DIAMOND_BOUND_TYPE_NODES];
+    DIAMOND_TYPE_SET_SCRATCH(sets,DIAMOND_BOUND_TYPE_NODES);
     if(!closure_signature_set(chunk,closure,function,actual,sets))return false;
     return parameter?runtime_set_satisfies(chunk,chunk->type_sets,expected,sets,0):
         runtime_set_satisfies(chunk,sets,0,chunk->type_sets,expected);
@@ -313,7 +313,8 @@ bool diamond_binding_type_sets(const DiamondTypeBinding *binding,DiamondTypeSet 
        binding->node_count>DIAMOND_BOUND_TYPE_NODES||
        (size_t)base+binding->node_count>DIAMOND_NO_TYPE_SET)return false;
     for(size_t node=0;node<binding->node_count;node++) {
-        DiamondTypeSet set={.count=binding->nodes[node].count};
+        if(binding->nodes[node].count>sets[node].capacity)return false;
+        DiamondTypeSet set=sets[node];set.count=binding->nodes[node].count;set.inferred=false;
         for(size_t i=0;i<set.count;i++) {
             const DiamondBoundTypeMember from=binding->nodes[node].members[i];
             DiamondTypeMember member={.id=from.id,
@@ -586,7 +587,7 @@ bool value_matches_type(const DiamondChunk *chunk, DiamondValue value,
                     method->arity,&native_return))return false;
                 if(method->return_type_set!=DIAMOND_NO_TYPE_SET) {
                     if(native_return==DIAMOND_TYPE_NONE)return false;
-                    const DiamondTypeSet native={.members={{.id=native_return,
+                    const DiamondTypeSet native={.members=(DiamondTypeMember[DIAMOND_MAX_UNION_TYPES]){{.id=native_return,
                         .argument_set=DIAMOND_NO_TYPE_SET,.second_argument_set=DIAMOND_NO_TYPE_SET,
                         .callable_arity=UINT8_MAX,.callable_return_set=DIAMOND_NO_TYPE_SET}},.count=1};
                     if(!runtime_set_satisfies(chunk,&native,0,interface->type_sets,
@@ -721,7 +722,7 @@ static bool runtime_type_id_satisfies(const DiamondChunk *chunk,uint16_t known,
                     method->arity,&native_return))return false;
                 if(method->return_type_set!=DIAMOND_NO_TYPE_SET) {
                     if(native_return==DIAMOND_TYPE_NONE)return false;
-                    const DiamondTypeSet native={.members={{.id=native_return,
+                    const DiamondTypeSet native={.members=(DiamondTypeMember[DIAMOND_MAX_UNION_TYPES]){{.id=native_return,
                         .argument_set=DIAMOND_NO_TYPE_SET,.second_argument_set=DIAMOND_NO_TYPE_SET,
                         .callable_arity=UINT8_MAX,.callable_return_set=DIAMOND_NO_TYPE_SET}},.count=1};
                     if(!runtime_set_satisfies(chunk,&native,0,interface->type_sets,
@@ -967,7 +968,7 @@ static bool runtime_member_satisfies(const DiamondChunk *chunk,
        (size_t)(known.id-DIAMOND_TYPE_CLASS_BASE)<chunk->class_count&&
        chunk->classes[known.id-DIAMOND_TYPE_CLASS_BASE]->fixed_type_arguments&&
        expected.argument_set!=DIAMOND_NO_TYPE_SET) {
-        const DiamondTypeSet actual={.count=1,.members={known}},wanted={.count=1,.members={expected}};
+        const DiamondTypeSet actual={.count=1,.members=(DiamondTypeMember[DIAMOND_MAX_UNION_TYPES]){known}},wanted={.count=1,.members=(DiamondTypeMember[DIAMOND_MAX_UNION_TYPES]){expected}};
         DiamondTypeBinding a={.node_count=1},b={.node_count=1};
         bind_context_members(&a,0,chunk,known_sets,&actual);
         bind_context_members(&b,0,chunk,expected_sets,&wanted);
@@ -1751,7 +1752,7 @@ bool diamond_map_class_bindings(DiamondClass *const *classes,size_t count,
             for(size_t i=0;i<parent_count&&valid;i++) {
                 if(inverse)valid=match_parent_template(&class->parent_type_bindings[i],0,&current[i],0,next,0);
                 else {
-                    DiamondTypeSet sets[DIAMOND_BOUND_TYPE_NODES];
+                    DIAMOND_TYPE_SET_SCRATCH(sets,DIAMOND_BOUND_TYPE_NODES);
                     valid=diamond_binding_type_sets(&class->parent_type_bindings[i],sets,DIAMOND_BOUND_TYPE_NODES,0);
                     if(!valid)break;
                     const DiamondChunk context={.type_sets=sets,.type_set_count=class->parent_type_bindings[i].node_count,
@@ -1812,8 +1813,12 @@ bool diamond_project_type_member(DiamondClass *const *classes,size_t count,
         if(!diamond_bind_type_template(sets,DIAMOND_NO_TYPE_SET,arguments[i],&input[i]))return false;
     if(!diamond_map_class_bindings(classes,count,actual,owner,input,output,false)&&
        !diamond_map_class_bindings(classes,count,owner,actual,input,output,true))return false;
-    DiamondTypeSet *table=calloc(2*DIAMOND_BOUND_TYPE_NODES,sizeof *table);
+    enum { CAPACITY=2*DIAMOND_BOUND_TYPE_NODES+1 };
+    DiamondTypeSet *table=calloc(CAPACITY,sizeof *table+DIAMOND_MAX_UNION_TYPES*sizeof(DiamondTypeMember));
     if(table==nullptr)return false;
+    DiamondTypeMember *members=(DiamondTypeMember *)(void *)(table+CAPACITY);
+    for(size_t i=0;i<CAPACITY;i++)table[i]=(DiamondTypeSet){
+        .members=members+i*DIAMOND_MAX_UNION_TYPES,.capacity=DIAMOND_MAX_UNION_TYPES};
     size_t used=0;
     uint16_t roots[2]={DIAMOND_NO_TYPE_SET,DIAMOND_NO_TYPE_SET};
     for(size_t i=0;i<DIAMOND_CLASS_TYPE_PARAMETER_COUNT(classes[owner]);i++) {
@@ -1906,7 +1911,7 @@ static void infer_from_closure_set(const DiamondChunk *chunk,const DiamondClosur
         infer_from_known_set(chunk,function->type_sets,actual,expected_sets,expected,bindings);
         return;
     }
-    DiamondTypeSet sets[DIAMOND_BOUND_TYPE_NODES];
+    DIAMOND_TYPE_SET_SCRATCH(sets,DIAMOND_BOUND_TYPE_NODES);
     if(closure_signature_set(chunk,closure,function,actual,sets))
         infer_from_known_set(chunk,sets,0,expected_sets,expected,bindings);
 }
@@ -1926,7 +1931,8 @@ static void infer_from_bound_node(const DiamondChunk *chunk,const DiamondTypeBin
             DiamondTypeMember aligned={.id=original.id,.argument_set=original.argument_node,
                 .second_argument_set=original.second_argument_node};
             if(!diamond_align_type_member(chunk->classes,chunk->class_count,expected.id,&aligned)) {
-                DiamondTypeSet source_sets[DIAMOND_BOUND_TYPE_NODES],*owned=nullptr;
+                DIAMOND_TYPE_SET_SCRATCH(source_sets,DIAMOND_BOUND_TYPE_NODES);
+                DiamondTypeSet *owned=nullptr;
                 if(!diamond_binding_type_sets(binding,source_sets,DIAMOND_BOUND_TYPE_NODES,0))continue;
                 aligned.argument_set=original.argument_node==UINT8_MAX?DIAMOND_NO_TYPE_SET:original.argument_node;
                 aligned.second_argument_set=original.second_argument_node==UINT8_MAX?DIAMOND_NO_TYPE_SET:original.second_argument_node;

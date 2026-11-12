@@ -217,6 +217,11 @@ All new functionality is added on a branch and merged through a pull request;
 nothing new is committed straight to `main`. This applies equally to people and
 to agent sessions.
 
+For work explicitly targeting a maintained release branch such as `1.0`, use
+that branch as the base throughout these steps. The same green-check gate
+supports it with `tools/merge_when_green.sh PR FEATURE_BRANCH 1.0`; it verifies
+the PR's actual base before merging and updates that release branch.
+
 1. Branch from the latest `main` (`git fetch`, then branch from `origin/main`),
    one branch per change. Use a separate worktree when several branches are in
    flight at once.

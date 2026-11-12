@@ -74,7 +74,7 @@ static void check_specialized_constructor_bytecode(const DiamondProgram *program
     if(class_index>=program->class_count)return;
     uint8_t code[]={DIAMOND_OP_NEW_TYPED,0,1,(uint8_t)(class_index>>8),
         (uint8_t)(class_index&UINT8_MAX),0,0,0,0,0,DIAMOND_OP_RETURN,0,1};
-    const DiamondTypeSet set={.count=1,.members={{.id=DIAMOND_TYPE_INT,
+    const DiamondTypeSet set={.count=1,.members=(DiamondTypeMember[DIAMOND_MAX_UNION_TYPES]){{.id=DIAMOND_TYPE_INT,
         .argument_set=DIAMOND_NO_TYPE_SET,.second_argument_set=DIAMOND_NO_TYPE_SET,
         .callable_arity=UINT8_MAX,.callable_return_set=DIAMOND_NO_TYPE_SET}}};
     DiamondChunk chunk=diamond_program_chunk(program);
@@ -636,7 +636,53 @@ static void check_generic_class_round_trip(const DiamondProgram *template) {
     diamond_program_free(program);free(program);
 }
 
+static void check_compact_metadata(void) {
+    enum { SETS=5000, STRINGS=1000 };
+    DiamondFunction *source=calloc(1,sizeof *source),*copy=calloc(1,sizeof *copy);
+    check(source!=nullptr&&copy!=nullptr,"metadata fixtures allocate");
+    if(source==nullptr||copy==nullptr) {free(source);free(copy);return;}
+    bool prepared=diamond_function_reserve_type_sets(source,SETS)&&
+        diamond_function_reserve_strings(source,STRINGS);
+    const DiamondTypeMember member={.id=DIAMOND_TYPE_INT,.argument_set=DIAMOND_NO_TYPE_SET,
+        .second_argument_set=DIAMOND_NO_TYPE_SET,.callable_arity=UINT8_MAX,
+        .callable_return_set=DIAMOND_NO_TYPE_SET};
+    const DiamondTypeSet set={.members=(DiamondTypeMember[]){member},.count=1};
+    for(size_t i=0;prepared&&i<SETS;i++)prepared=diamond_function_set_type_set(source,i,set);
+    for(size_t i=0;prepared&&i<STRINGS;i++)
+        prepared=diamond_function_set_string(source,i,"a\0b",3);
+    char longest[DIAMOND_MAX_STRING_LENGTH];memset(longest,'x',sizeof longest);
+    prepared=prepared&&diamond_function_set_string(source,STRINGS-2,longest,sizeof longest)&&
+        diamond_function_set_string(source,STRINGS-3,"",0)&&
+        diamond_function_set_type_set(source,SETS-1,(DiamondTypeSet){});
+    source->type_set_count=SETS;source->string_count=STRINGS;
+    check(prepared,"large metadata fixture stores exact-size values");
+    const bool copied=prepared&&diamond_function_copy(copy,source);
+    check(copied,"metadata-only function clones without bytecode");
+    if(copied) {
+        const char *end=copy->strings[STRINGS-1].chars+4;
+        const size_t footprint=(size_t)(end-(const char *)copy->code);
+        check(footprint<512*1024,"5000 sets and 1000 short strings occupy less than 512 KiB");
+        check(copy->type_sets[0].members!=source->type_sets[0].members&&
+            copy->strings[0].chars!=source->strings[0].chars,"clone owns its member and character data");
+        source->type_sets[0].members[0].id=DIAMOND_TYPE_STRING;
+        source->strings[0].chars[0]='x';
+        diamond_function_free_arrays(source);
+        check(copy->type_sets[0].members[0].id==DIAMOND_TYPE_INT&&
+            copy->strings[0].length==3&&memcmp(copy->strings[0].chars,"a\0b\0",4)==0,
+            "clone survives source mutation and teardown, including embedded NUL");
+        check(copy->strings[STRINGS-2].length==sizeof longest&&
+            copy->strings[STRINGS-2].chars[sizeof longest]=='\0'&&
+            memcmp(copy->strings[STRINGS-2].chars,longest,sizeof longest)==0&&
+            copy->strings[STRINGS-3].length==0&&copy->strings[STRINGS-3].chars[0]=='\0'&&
+            copy->type_sets[SETS-1].count==0,
+            "maximum-length and empty strings and empty type sets survive cloning");
+    }
+    diamond_function_free_arrays(source);diamond_function_free_arrays(copy);
+    free(source);free(copy);
+}
+
 int main(void) {
+    check_compact_metadata();
     const size_t prelude_length = diamond_prelude_length(true);
     char *prelude_source = malloc(prelude_length + 1);
     diamond_prelude_write(prelude_source, true);
@@ -664,6 +710,7 @@ int main(void) {
     diamond_program_init(restored);
     check(diamond_program_read_compiled((const uint8_t *)buffer, buffer_size, restored),
         "read_compiled succeeded");
+    free(buffer);buffer=nullptr;
     check(restored->function_count == original->function_count,
         "restored function_count matches original");
     check(restored->class_count == original->class_count,

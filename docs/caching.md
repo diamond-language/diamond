@@ -81,6 +81,13 @@ target is refused), and version 21 stored type sets as their used members only i
 354-byte records (which had made a large program's cache, and its `d6 build` binary, ten times
 larger); older files are ignored and rebuilt.
 
+The runtime also keeps these tables compact in memory: strings have their actual
+character lengths plus a terminator, and type sets allocate only their used members.
+Loading a cache does not recreate the old 4 KB string buffers or eight-member
+type-set records. Template and thread clones copy the used data into independently
+owned storage. Format version 22 reflects the new in-memory metadata ownership;
+older caches rebuild automatically.
+
 ## Removing caches
 
 ```sh

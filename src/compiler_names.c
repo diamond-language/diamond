@@ -294,7 +294,7 @@ static uint16_t compile_constructor_block(Compiler *compiler,int class_index,
  * still have no payload in the runtime graph, so erase only that shape. */
 static uint16_t constructor_value_hint(Compiler *compiler,uint16_t source,size_t depth) {
     if(depth>32||source>=compiler->function->type_set_count)return DIAMOND_NO_TYPE_SET;
-    DiamondTypeSet set=compiler->function->type_sets[source];
+    DiamondTypeSet set=DIAMOND_TYPE_SET_COPY(compiler->function->type_sets[source]);
     for(size_t index=0;index<set.count;index++) {
         DiamondTypeMember *member=&set.members[index];
         if(member->id==DIAMOND_TYPE_CALLABLE) {
@@ -315,7 +315,7 @@ static uint16_t constructor_value_hint(Compiler *compiler,uint16_t source,size_t
     }
     if(!reserve_type_sets(compiler,1))return DIAMOND_NO_TYPE_SET;
     const uint16_t result=(uint16_t)compiler->function->type_set_count++;
-    compiler->function->type_sets[result]=set;
+    store_type_set(compiler,result,set);
     return result;
 }
 
@@ -325,7 +325,7 @@ static uint16_t import_fixed_binding(Compiler *compiler,const DiamondTypeBinding
     if(binding->invalid||binding->node_count==0||
        !reserve_type_sets(compiler,binding->node_count))return DIAMOND_NO_TYPE_SET;
     const uint16_t base=(uint16_t)compiler->function->type_set_count;
-    if(!diamond_binding_type_sets(binding,compiler->function->type_sets+base,binding->node_count,base))
+    if(!store_type_binding(compiler,binding,base))
         return DIAMOND_NO_TYPE_SET;
     compiler->function->type_set_count+=binding->node_count;
     return base;
@@ -380,11 +380,11 @@ static void publish_constructor_type(Compiler *compiler,uint16_t reg,int class_i
             if(argument>=compiler->function->type_set_count||type_set_contains_variable(compiler,argument))return;
             if(!inference->exact)argument=constructor_value_hint(compiler,argument,0);
             else {
-                DiamondTypeSet exact=compiler->function->type_sets[argument];
+                DiamondTypeSet exact=DIAMOND_TYPE_SET_COPY(compiler->function->type_sets[argument]);
                 exact.inferred=false;
                 if(!reserve_type_sets(compiler,1))return;
                 argument=(uint16_t)compiler->function->type_set_count++;
-                compiler->function->type_sets[argument]=exact;
+                store_type_set(compiler,argument,exact);
             }
             if(argument==DIAMOND_NO_TYPE_SET)return;
             arguments[variable]=argument;
@@ -392,10 +392,10 @@ static void publish_constructor_type(Compiler *compiler,uint16_t reg,int class_i
     }
     if(!reserve_type_sets(compiler,1))return;
     const uint16_t set=(uint16_t)compiler->function->type_set_count++;
-    compiler->function->type_sets[set]=(DiamondTypeSet){.count=1,.members={{
+    store_type_set(compiler,set,(DiamondTypeSet){.count=1,.members=(DiamondTypeMember[DIAMOND_MAX_UNION_TYPES]){{
         .id=(uint16_t)(DIAMOND_TYPE_CLASS_BASE+class_index),
         .argument_set=arguments[0],.second_argument_set=arguments[1],
-        .callable_arity=UINT8_MAX,.callable_return_set=DIAMOND_NO_TYPE_SET}}};
+        .callable_arity=UINT8_MAX,.callable_return_set=DIAMOND_NO_TYPE_SET}}});
     if(class->fixed_type_arguments||explicit_type!=DIAMOND_NO_TYPE_SET||inference->exact)
         publish_known_type_set(compiler,reg,set);
     else compiler->tooling_type_sets[reg]=(int32_t)set;
@@ -827,8 +827,10 @@ uint16_t emit_invoke_call(Compiler *compiler, uint16_t receiver,
         if(string->length==DIAMOND_MAX_STRING_LENGTH)
             fail(compiler,method_name,"method name is too long");
         else {
-            string->chars[string->length++]='=';
-            string->chars[string->length]='\0';
+            char buffer[DIAMOND_MAX_STRING_LENGTH+1];
+            memcpy(buffer,string->chars,string->length);buffer[string->length]='=';
+            if(!diamond_function_set_string(compiler->function,method,buffer,string->length+1))
+                fail(compiler,compiler->previous.span,"out of memory storing writer name");
         }
     }
     return emit_invoke_with_name(compiler,receiver,method,type_arguments,
@@ -851,11 +853,9 @@ uint16_t emit_invoke_named(Compiler *compiler, uint16_t receiver,
         fail(compiler,compiler->previous.span,"too many or oversized names in function");
         return 0;
     }
-    DiamondStringConstant *string=
-        &compiler->function->strings[compiler->function->string_count];
-    memcpy(string->chars,name,length);
-    string->length=length;
-    string->chars[length]='\0';
+    if(!diamond_function_set_string(compiler->function,compiler->function->string_count,name,length)) {
+        fail(compiler,compiler->previous.span,"out of memory storing string");return 0;
+    }
     const uint16_t method=(uint16_t)compiler->function->string_count++;
     return emit_invoke_with_name(compiler,receiver,method,nullptr,0,args,count);
 }
@@ -2281,12 +2281,10 @@ static uint16_t parse_bound_method_reference(Compiler *compiler,uint16_t receive
     wrapper->has_variadic=typed_wrapper?target->has_variadic:true;
     wrapper->return_type_set=return_set;
     wrapper->type_set_count=compiler->function->type_set_count;
-    if(!diamond_function_reserve_type_sets(wrapper,wrapper->type_set_count)) {
+    if(!diamond_function_copy_type_sets(wrapper,compiler->function)) {
         fail(compiler,method_name,"out of memory");return 0;
     }
-    if(wrapper->type_set_count>0)
-        memcpy(wrapper->type_sets,compiler->function->type_sets,
-            wrapper->type_set_count*sizeof wrapper->type_sets[0]);
+
     for(size_t index=0;index<DIAMOND_MAX_DECLARED_PARAMETERS;index++) {
         wrapper->parameter_type_sets[index]=parameter_sets[index];
         if(typed_wrapper&&index<wrapper->arity)
@@ -2926,8 +2924,10 @@ uint16_t parse_self_class_method_arguments(Compiler *compiler,
         if(string->length==DIAMOND_MAX_STRING_LENGTH)
             fail(compiler,name,"method name is too long");
         else {
-            string->chars[string->length++]='=';
-            string->chars[string->length]='\0';
+            char buffer[DIAMOND_MAX_STRING_LENGTH+1];
+            memcpy(buffer,string->chars,string->length);buffer[string->length]='=';
+            if(!diamond_function_set_string(compiler->function,method,buffer,string->length+1))
+                fail(compiler,compiler->previous.span,"out of memory storing writer name");
         }
     }
     emit_opcode(compiler,DIAMOND_OP_INVOKE_SELF_METHOD);

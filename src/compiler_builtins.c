@@ -1116,11 +1116,9 @@ static uint16_t emit_literal_string(Compiler *compiler,const char *text) {
         fail(compiler,compiler->previous.span,"too many or oversized names in function");
         return 0;
     }
-    DiamondStringConstant *string=
-        &compiler->function->strings[compiler->function->string_count];
-    memcpy(string->chars,text,length);
-    string->length=length;
-    string->chars[length]='\0';
+    if(!diamond_function_set_string(compiler->function,compiler->function->string_count,text,length)) {
+        fail(compiler,compiler->previous.span,"out of memory storing string");return 0;
+    }
     const uint16_t index=(uint16_t)compiler->function->string_count++;
     const uint16_t destination=allocate_register(compiler);
     emit_instruction(compiler,DIAMOND_OP_STRING,destination,index,0,2);

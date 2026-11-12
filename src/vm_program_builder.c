@@ -355,10 +355,8 @@ static DiamondVmStatus program_builder_add_string(DiamondVm *vm, DiamondProgram 
             "ProgramBuilder#add_string could not grow strings");
         return DIAMOND_VM_OUT_OF_MEMORY;
     }
-    DiamondStringConstant *slot=&target->strings[target->string_count];
-    memcpy(slot->chars,text->chars,text->length);
-    slot->chars[text->length]='\0';
-    slot->length=text->length;
+    if(!diamond_function_set_string(target,target->string_count,text->chars,text->length))
+        return DIAMOND_VM_OUT_OF_MEMORY;
     const int64_t new_index=(int64_t)target->string_count;
     target->string_count++;
     *result=DIAMOND_INT(new_index);return DIAMOND_VM_OK;
@@ -1467,8 +1465,11 @@ static DiamondVmStatus program_builder_declare_type_set(DiamondVm *vm, DiamondPr
             return DIAMOND_VM_OUT_OF_MEMORY;
     }
     const int64_t new_index=(int64_t)target->type_set_count;
-    DiamondTypeSet *set=&target->type_sets[target->type_set_count++];
-    *set=(DiamondTypeSet){.count=(uint8_t)type_ids->count};
+    DiamondTypeSet *set=&target->type_sets[target->type_set_count];
+    if(!diamond_function_reserve_type_members(target,(size_t)new_index,type_ids->count))
+        return DIAMOND_VM_OUT_OF_MEMORY;
+    target->type_set_count++;
+    set->count=(uint8_t)type_ids->count;set->inferred=false;
     for(size_t member=0;member<type_ids->count;member++) {
         const DiamondArray *descriptor=
             (const DiamondArray *)type_ids->values[member].as.object;
