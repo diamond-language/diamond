@@ -1,7 +1,7 @@
 # div
 
-Compile `.html.div` view templates into ordinary D6 functions. A template is
-HTML with embedded D6; the compiled result is a function you call with the
+Compile `.html.div` view templates into ordinary d6 functions. A template is
+HTML with embedded d6; the compiled result is a function you call with the
 template's locals and that returns the rendered string. Generated code has no
 runtime dependency on this cut.
 
@@ -130,7 +130,7 @@ Files compiled by an older Div have no stamp and read as stale until recompiled.
 | `<%# locals: a, b %>` | Once per file. Becomes the render function's parameter list. |
 | `<%= expr %>` | Output `expr`, HTML-escaped. |
 | `<%== expr %>` | Output `expr` unescaped. Use only for trusted HTML, such as another template's result. |
-| `<% code %>` | Run D6 code; no output. Blocks (`each ... do`, `if`) span tags. |
+| `<% code %>` | Run d6 code; no output. Blocks (`each ... do`, `if`) span tags. |
 | `<%# text %>` | Comment; dropped from the output. |
 
 There is no layout or `yield` mechanism: a compiled template is a plain function,
