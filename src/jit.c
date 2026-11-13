@@ -3702,6 +3702,50 @@ static void emit_cmp_byte_rsp_imm(JitBuffer *buf, int32_t disp, uint8_t imm) {
     emit_u8(buf, imm);
 }
 
+/* array_push(loop.collected, the value at [rsp + value]) when it needs no
+ * call: room left in the array, and gc_write_barrier_index's work is either
+ * none (a young array) or one card byte (an old array already remembered
+ * whose card table already covers its capacity, so mark_card_dirty would
+ * not allocate). Anything else jumps to the returned placeholder with RAX
+ * clobbered, for diamond_jit_loop_step to push. Clobbers RAX, RCX, RDX, RSI
+ * and xmm0. */
+static size_t emit_loop_push(JitBuffer *buf, int32_t loop, int32_t value, size_t *slow) {
+    size_t count = 0;
+    emit_load_r64_sib(buf, REG_RDX, REG_RSP, loop + (int32_t)offsetof(DiamondJitLoop, collected));
+    emit_load_r64(buf, REG_RAX, REG_RDX, (int32_t)offsetof(DiamondArray, count));
+    emit_cmp_r64_mem(buf, REG_RAX, REG_RDX, (int32_t)offsetof(DiamondArray, capacity));
+    slow[count++] = emit_jcc_placeholder(buf, JCC_AE);
+    emit_load_byte_zx(buf, REG_RCX, REG_RDX, (int32_t)offsetof(DiamondObject, old));
+    emit_test_r8(buf, REG_RCX);
+    const size_t young = emit_jcc_placeholder(buf, JCC_E);
+    emit_load_byte_zx(buf, REG_RCX, REG_RDX, (int32_t)offsetof(DiamondObject, remembered));
+    emit_test_r8(buf, REG_RCX);
+    slow[count++] = emit_jcc_placeholder(buf, JCC_E);
+    emit_load_r64(buf, REG_RCX, REG_RDX, (int32_t)offsetof(DiamondArray, dirty_cards));
+    emit_test_r64(buf, REG_RCX, REG_RCX);
+    slow[count++] = emit_jcc_placeholder(buf, JCC_E);
+    /* (capacity + card - 1) / card cards needed, as mark_card_dirty works out. */
+    emit_load_r64(buf, REG_RSI, REG_RDX, (int32_t)offsetof(DiamondArray, capacity));
+    emit_u8(buf, 0x48); emit_u8(buf, 0x83); emit_u8(buf, 0xC6);   /* add rsi, card - 1 */
+    emit_u8(buf, (uint8_t)(DIAMOND_JIT_GC_CARD_SIZE - 1));
+    emit_u8(buf, 0x48); emit_u8(buf, 0xC1); emit_u8(buf, 0xEE);   /* shr rsi, log2(card) */
+    emit_u8(buf, (uint8_t)DIAMOND_JIT_GC_CARD_SHIFT);
+    emit_cmp_r64_mem(buf, REG_RSI, REG_RDX, (int32_t)offsetof(DiamondArray, dirty_card_capacity));
+    slow[count++] = emit_jcc_placeholder(buf, JCC_A);
+    emit_u8(buf, 0x48); emit_u8(buf, 0x89); emit_u8(buf, 0xC6);   /* mov rsi, rax */
+    emit_u8(buf, 0x48); emit_u8(buf, 0xC1); emit_u8(buf, 0xEE);   /* shr rsi, log2(card) */
+    emit_u8(buf, (uint8_t)DIAMOND_JIT_GC_CARD_SHIFT);
+    emit_u8(buf, 0xC6); emit_u8(buf, 0x04); emit_u8(buf, 0x31); emit_u8(buf, 0x01); /* mov byte [rcx+rsi], 1 */
+    patch_rel32_to_here(buf, young);
+    emit_load_r64(buf, REG_RCX, REG_RDX, (int32_t)offsetof(DiamondArray, values));
+    emit_u8(buf, 0x48); emit_u8(buf, 0x8D); emit_u8(buf, 0x70); emit_u8(buf, 0x01); /* lea rsi, [rax+1] */
+    emit_store_r64(buf, REG_RDX, (int32_t)offsetof(DiamondArray, count), REG_RSI);
+    emit_u8(buf, 0x48); emit_u8(buf, 0xC1); emit_u8(buf, 0xE0); emit_u8(buf, 0x04);  /* shl rax, 4 */
+    emit_movups_load_rsp(buf, 0, value);
+    emit_u8(buf, 0x0F); emit_u8(buf, 0x11); emit_u8(buf, 0x04); emit_u8(buf, 0x01);  /* movups [rcx+rax], xmm0 */
+    return count;
+}
+
 /* A block loop at an INVOKE site (see jit.h, DiamondJitLoop):
  * diamond_jit_loop_begin decides, then the loop runs here, calling the
  * block's compiled entry for each element as emit_native_entry_call would,
@@ -3710,7 +3754,7 @@ static void emit_cmp_byte_rsp_imm(JitBuffer *buf, int32_t disp, uint8_t imm) {
  * `kind`, which the site's method name fixes; begin checks the receiver and
  * the rest at run time. An Array's count is re-read every time round, as the
  * C loops do. A status other than OK goes through diamond_jit_loop_step, and
- * so does every map result and every select result that is truthy; the end
+ * so does a map or select push that needs a call (emit_loop_push); the end
  * goes through diamond_jit_loop_end. When begin says no, the usual call is
  * emitted. */
 static void compile_block_loop(JitCompiler *jc, size_t instruction_start, uint16_t dest,
@@ -3835,27 +3879,33 @@ static void compile_block_loop(JitCompiler *jc, size_t instruction_start, uint16
     emit_call_reg(buf, REG_R10);
     emit_load_r64_sib(buf, REG_RCX, REG_RSP, 8);
     emit_u8(buf, 0x48); emit_u8(buf, 0x01); emit_u8(buf, 0xCC);   /* add rsp, rcx */
-    /* Status in AL. map always takes the step (it pushes every result);
-     * select takes it for a failure or a truthy result (it pushes the
-     * element); the rest only for a failure. */
+    /* Status in AL; a failure takes the step. map pushes the result and
+     * select a truthy result's element inline (emit_loop_push), falling
+     * back to the step, which pushes, when that needs a call. */
     emit_movzx_r64_al(buf, REG_RAX);
-    size_t no_step = 0, falsy_nil = 0, falsy_false = 0;
-    if (kind != DIAMOND_JIT_LOOP_MAP) {
-        emit_test_r8(buf, REG_RAX);
+    emit_test_r8(buf, REG_RAX);
+    size_t no_step = 0, falsy_nil = 0, falsy_false = 0, pushed = 0;
+    if (kind == DIAMOND_JIT_LOOP_MAP || kind == DIAMOND_JIT_LOOP_SELECT) {
+        const size_t failed_call = emit_jcc_placeholder(buf, JCC_NE);
+        int32_t value = L + (int32_t)offsetof(DiamondJitLoop, result);
         if (kind == DIAMOND_JIT_LOOP_SELECT) {
-            const size_t failed_call = emit_jcc_placeholder(buf, JCC_NE);
-            const int32_t result_kind = L + (int32_t)offsetof(DiamondJitLoop, result);
-            emit_cmp_byte_rsp_imm(buf, result_kind, DIAMOND_VALUE_NIL);
+            emit_cmp_byte_rsp_imm(buf, value, DIAMOND_VALUE_NIL);
             falsy_nil = emit_jcc_placeholder(buf, JCC_E);
-            emit_cmp_byte_rsp_imm(buf, result_kind, DIAMOND_VALUE_BOOL);
+            emit_cmp_byte_rsp_imm(buf, value, DIAMOND_VALUE_BOOL);
             const size_t truthy = emit_jcc_placeholder(buf, JCC_NE);
-            emit_cmp_byte_rsp_imm(buf, result_kind + (int32_t)offsetof(DiamondValue, as), 0);
+            emit_cmp_byte_rsp_imm(buf, value + (int32_t)offsetof(DiamondValue, as), 0);
             falsy_false = emit_jcc_placeholder(buf, JCC_E);
             patch_rel32_to_here(buf, truthy);
-            patch_rel32_to_here(buf, failed_call);
-        } else {
-            no_step = emit_jcc_placeholder(buf, JCC_E);
+            value = L + (int32_t)offsetof(DiamondJitLoop, current);
         }
+        size_t slow[4];
+        const size_t slow_count = emit_loop_push(buf, L, value, slow);
+        pushed = emit_jmp_placeholder(buf);
+        for (size_t i = 0; i < slow_count; i++) patch_rel32_to_here(buf, slow[i]);
+        emit_u8(buf, 0x31); emit_u8(buf, 0xC0);   /* xor eax, eax: OK, step pushes */
+        patch_rel32_to_here(buf, failed_call);
+    } else {
+        no_step = emit_jcc_placeholder(buf, JCC_E);
     }
     patch_rel32_to_here(buf, interrupted);
     emit_mov_rr(buf, REG_RDI, JIT_VM);
@@ -3868,6 +3918,7 @@ static void compile_block_loop(JitCompiler *jc, size_t instruction_start, uint16
     if (no_step != 0) patch_rel32_to_here(buf, no_step);
     if (falsy_nil != 0) patch_rel32_to_here(buf, falsy_nil);
     if (falsy_false != 0) patch_rel32_to_here(buf, falsy_false);
+    if (pushed != 0) patch_rel32_to_here(buf, pushed);
     if (kind == DIAMOND_JIT_LOOP_REDUCE) {
         /* The new running value is the next call's first argument; keep it
          * protected until then. */
