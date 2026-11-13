@@ -91,7 +91,9 @@ with an `X-CSRF-Token` header matching it.
 
 A real deployment sets `GUESTBOOK_SESSION_SECRET`; without it, `app.d6`
 falls back to a fixed development-only secret so the example runs with
-zero setup -- see `boot.d6`'s own comment.
+zero setup -- see `boot.d6`'s own comment. With `DIAMOND_ENV=production` the session
+cookie is also marked `Secure`, for serving behind a TLS proxy such as nginx: the app
+still speaks plain HTTP, and the browser only sends the cookie over HTTPS.
 
 ## Smoke test
 

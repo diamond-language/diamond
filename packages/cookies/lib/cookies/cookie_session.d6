@@ -45,9 +45,12 @@ end
 #     rack_run_chain(RackChain.get(build_chain), 0, request, context)
 #   end
 class CookieSession
-  def self.configure(secret: String, cookie_name: String = "_session")
+  # The cookie carries Secure under DIAMOND_ENV=production (the same default as active_auth);
+  # pass `secure: false` for a production deployment that serves plain HTTP with no TLS proxy.
+  def self.configure(secret: String, cookie_name: String = "_session", secure: Bool = ENV["DIAMOND_ENV"] == "production")
     @@secret = secret
     @@cookie_name = cookie_name
+    @@secure = secure
   end
 
   def self.call(request, context, forward)
@@ -80,7 +83,7 @@ class CookieSession
     response = forward(request, context)
     [status, headers, body] = response
     encoded = EncryptedCookies.encrypt(JSON.stringify(session), @@secret)
-    set_cookie_value = cookie_serialize(cookie_name, encoded, {})
+    set_cookie_value = cookie_serialize(cookie_name, encoded, {"path": "/", "secure": @@secure})
     merged = cookie_session_merge_header(headers["Set-Cookie"], set_cookie_value)
     [status, headers.merge({"Set-Cookie": merged}), body]
   end

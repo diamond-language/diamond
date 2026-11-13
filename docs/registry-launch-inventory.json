@@ -22,9 +22,9 @@
       "archive": "cookies.tar",
       "dependencies": {},
       "name": "cookies",
-      "sha256": "bbc7b785e53bd7e6c428403e2b358acc9a2d3a3d8203385972e9397354523208",
-      "size": 30208,
-      "version": "0.2.3"
+      "sha256": "edf23867da083900cee32c113e2baf18d058af73934637c0fad5df6b693703f2",
+      "size": 30720,
+      "version": "0.2.4"
     },
     {
       "archive": "database_config.tar",

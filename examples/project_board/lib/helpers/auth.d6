@@ -3,8 +3,17 @@
 # looks that token up (current_user), so logging out or expiry is just
 # deleting the row.
 
+# The session cookie's Set-Cookie value. HttpOnly hides it from page scripts; SameSite=Lax
+# stops it being sent on cross-site POSTs. In production it is also Secure: the app speaks
+# plain HTTP behind a TLS proxy such as nginx, but the browser sees HTTPS and must never send
+# the token over an unencrypted connection.
+def session_cookie(value, max_age: Int)
+  secure = if AppEnvironment.name() == "production" then " Secure;" else "" end
+  "session_token=#{value}; Path=/; Max-Age=#{max_age}; HttpOnly;#{secure} SameSite=Lax"
+end
+
 # A Set-Cookie value that makes the browser delete the cookie (Max-Age=0).
-def expired_session_cookie() = "session_token=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax"
+def expired_session_cookie() = session_cookie("", 0)
 
 # Finds one cookie's value in the request's `Cookie` header, or nil.
 # The header looks like "a=1; session_token=abc; b=2".
