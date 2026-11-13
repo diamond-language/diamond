@@ -19,6 +19,12 @@ their main `230de947` versions (#553/#554, the brand written as D6). The app rea
 each request, so no restart was needed. The previous copies are in
 `/root/diamond-brand-d6-20261112/registry/`; nothing else in the release changed.
 
+cookies 0.2.4 (#555/#556: `Secure` session cookie under `DIAMOND_ENV=production`, `Path=/`) was
+published on 2026-11-13 UTC with a 30-minute `publish:cookies` credential for the owner subject
+`diamond-language` (id 41, revoked afterwards; id 40 was issued for the wrong subject, got a 403
+and was revoked unused). The published sha256 `edf23867...` matches the reviewed inventory, and a
+fresh `facet install` resolved it. The registry itself does not load cookies, so no redeploy.
+
 Previously `0e482f26c56854c4c41c6c82d093ad04f6569a21` (v1.0.0-rc4, deployed 2026-11-12 UTC (2026-11-11 Pacific)
 with `tools/deploy_registry.sh --revision=v1.0.0-rc4 --force` after its dry run).
 The fresh snapshot at
