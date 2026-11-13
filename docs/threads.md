@@ -27,7 +27,13 @@ thread is still running without blocking.
 
 d6 does not support detached or fire-and-forget threads. If an unjoined
 Thread becomes unreachable, garbage collection waits for it to finish before
-reclaiming its resources.
+reclaiming its resources, and a program that ends normally waits for every
+unjoined thread before exiting. A thread that is never joined has no one to
+re-raise its uncaught exception, so d6 prints it on stderr when the thread is
+reclaimed, as `d6: runtime error in unjoined thread: ...` with its backtrace.
+The exit status is unaffected, and a thread stopped by its supervisor is not
+reported. Join every thread whose failure should change what the program does,
+or run it under a `Supervisor`.
 
 The one exception is a program that fails: if the main program ends with an
 uncaught exception while any spawned thread or supervised child is still

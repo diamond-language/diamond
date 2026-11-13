@@ -15,6 +15,8 @@ set -euo pipefail
 
 diamond="$(realpath ./build/diamond)"
 count=0
+TMPDIR_EXIT="$(mktemp -d)"
+trap 'rm -rf "$TMPDIR_EXIT"' EXIT
 
 # --- exit(code) sets the process exit status, and halts before any
 # later statement runs ---
@@ -98,6 +100,49 @@ status=$?
 set -e
 [[ "$status" == 70 ]]
 [[ "$error_output" == *"after join"* ]]
+count=$((count + 1))
+
+# --- a thread that fails and is never joined reports its error on stderr
+# instead of dropping it; the program's own output and exit status are
+# unchanged ---
+set +e
+out="$("$diamond" -e 'def bad() = raise ArgumentError.new("lost worker")
+Thread.new(bad)
+puts("main done")' 2>"$TMPDIR_EXIT/err")"
+status=$?
+set -e
+[[ "$status" == 0 ]]
+[[ "$out" == "main done"* ]]
+grep -q 'runtime error in unjoined thread: uncaught exception: ArgumentError: lost worker' "$TMPDIR_EXIT/err"
+count=$((count + 1))
+
+# --- ...also when the dropped handle is collected mid-program rather than
+# at exit ---
+"$diamond" -e 'def bad(i) = raise "dropped #{i}"
+def spawn_some()
+  (0...2).each() do |i| Thread.new(bad, i) end
+  nil
+end
+spawn_some()
+junk = []
+(0...200000).each() do |i| junk.push("x#{i}") end' >/dev/null 2>"$TMPDIR_EXIT/err"
+[[ "$(grep -c 'runtime error in unjoined thread' "$TMPDIR_EXIT/err")" == 2 ]]
+count=$((count + 1))
+
+# --- a joined failure is the joiner's to handle: no second report ---
+"$diamond" -e 'def bad() = raise ArgumentError.new("seen")
+begin
+  Thread.new(bad).join()
+rescue e: ArgumentError
+  puts(e.message())
+end' >/dev/null 2>"$TMPDIR_EXIT/err"
+[[ ! -s "$TMPDIR_EXIT/err" ]]
+count=$((count + 1))
+
+# --- and an unjoined thread that succeeds stays silent ---
+"$diamond" -e 'def ok() = 1
+Thread.new(ok)' >/dev/null 2>"$TMPDIR_EXIT/err"
+[[ ! -s "$TMPDIR_EXIT/err" ]]
 count=$((count + 1))
 
 echo "$count exit tests passed"

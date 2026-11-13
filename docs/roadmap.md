@@ -55,14 +55,6 @@ Current behavior: [threads](threads.md).
   channel is deliberately not planned: the capacity bound is what keeps memory
   predictable and gives `send` backpressure.
 
-### `Supervisor`
-
-Current behavior: [threads](threads.md).
-
-- **Cross-thread-transferable supervisor handles** -- a `Supervisor` cannot cross a
-  `Thread.new`/`Channel` boundary, and a supervised child cannot reference its parent
-  by design. Needs a concrete use case.
-
 ### `d6 build`
 
 Current behavior: [deployment](deployment.md).
@@ -316,6 +308,11 @@ built and tested in CI but no longer attached to releases.
 - free-form runtime source evaluation (`ClassName.compile_method` compiles a source
   string into one capture-free method for `define_method` and is not a general `eval`);
 - a JIT without representative profiling evidence;
+- supervisors that cross threads (decided 2026-11): a `Supervisor` stays on the thread
+  that created it, and a supervised child cannot reference its parent. Sharing restart
+  state across isolated heaps invites ownership and shutdown-order bugs;
+- literate programming (decided 2026-11): the pilot (PR #250) was closed and is not
+  coming back;
 - portability claims without continuous testing on the claimed platform;
 - runtime class *synthesis* (decided 2026-09): a class's identity is a 16-bit
   `class_index` inside the type-tag space the static type system uses, from a table sized at
