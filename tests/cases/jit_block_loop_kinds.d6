@@ -1,0 +1,207 @@
+# select, each_with_index, reduce and times with a block run as native loops
+# under the JIT too (compile_block_loop); everything here must match the
+# interpreter.
+
+xs = [1, 2, 3, 4, 5]
+
+# Plain calls, at the top level and inside methods.
+def evens(xs) = xs.select() do |x| x % 2 == 0 end
+def weighted(xs) -> Int
+  total = 0
+  xs.each_with_index() do |x, i|
+    total = total + x * i
+  end
+  total
+end
+def product(xs) = xs.reduce(1) do |acc, x| acc * x end
+def squares(n)
+  out = []
+  n.times() do |i|
+    out.push(i * i)
+  end
+  out
+end
+
+puts(evens(xs))
+puts(weighted(xs))
+puts(product(xs))
+puts(squares(5))
+puts(xs.select() do |x| x > 3 end)
+puts(xs.reduce("") do |acc, x| acc + x.to_s() end)
+
+# What each answers: the array, n, the running value, the kept elements.
+def answers(xs)
+  a = xs.each_with_index() do |x, i| x end
+  b = 3.times() do |i| i end
+  "#{a} #{b}"
+end
+
+puts(answers(xs))
+
+# Truthiness: only nil and false drop an element; 0 and "" keep it.
+puts([1, 2, 3, 4, 5].select() do |x|
+  if x == 1 then nil elsif x == 2 then false elsif x == 3 then 0 elsif x == 4 then "" else true end
+end)
+
+# Counts and sizes the loops must not run at all, or must start from.
+def edges()
+  ran = 0
+  0.times() do |i| ran += 1 end
+  (-3).times() do |i| ran += 1 end
+  empty_sum = [].reduce(42) do |acc, x| acc + x end
+  empty_select = [].select() do |x| true end
+  empty_index = [].each_with_index() do |x, i| ran += 1 end
+  "#{ran} #{empty_sum} #{empty_select} #{empty_index}"
+end
+
+puts(edges())
+
+# Blocks written in methods read self (the self slot).
+class Scale
+  def initialize(n)
+    @n = n
+  end
+
+  def big(xs) = xs.select() do |x| x * @n > 6 end
+  def offsets(xs)
+    out = []
+    xs.each_with_index() do |x, i|
+      out.push(x * @n + i)
+    end
+    out
+  end
+  def total(xs) = xs.reduce(0) do |acc, x| acc + x * @n end
+  def ticks()
+    out = []
+    @n.times() do |i|
+      out.push(i + @n)
+    end
+    out
+  end
+end
+
+s = Scale.new(2)
+puts(s.big(xs))
+puts(s.offsets(xs))
+puts(s.total(xs))
+puts(s.ticks())
+
+# break and return leave each loop.
+def first_big_index(xs)
+  xs.each_with_index() do |x, i|
+    return i if x > 3
+  end
+  nil
+end
+
+def stop_times()
+  seen = []
+  10.times() do |i|
+    break if i == 3
+    seen.push(i)
+  end
+  seen
+end
+
+def stop_reduce(xs)
+  xs.reduce(0) do |acc, x|
+    return acc if x == 4
+    acc + x
+  end
+end
+
+def stop_select(xs)
+  xs.select() do |x|
+    return "stopped at #{x}" if x == 3
+    true
+  end
+end
+
+puts(first_big_index(xs))
+puts(stop_times())
+puts(stop_reduce(xs))
+puts(stop_select(xs))
+
+# An exception raised in the block reaches the caller's rescue.
+def boom(kind)
+  begin
+    if kind == 1
+      [1, 2, 3].select() do |x| raise "select #{x}" if x == 2 end
+    elsif kind == 2
+      [1, 2, 3].each_with_index() do |x, i| raise "index #{i}" if i == 1 end
+    elsif kind == 3
+      [1, 2, 3].reduce(0) do |acc, x| raise "reduce #{acc}" if x == 3 end
+    else
+      5.times() do |i| raise "times #{i}" if i == 4 end
+    end
+  rescue e
+    return e
+  end
+  "none"
+end
+
+puts(boom(1))
+puts(boom(2))
+puts(boom(3))
+puts(boom(4))
+
+# select keeps an element the block removed from the array and stopped
+# referring to, while the collector runs often: the loop must hold it.
+class Item
+  def initialize(n)
+    @n = n
+  end
+
+  def n() = @n
+end
+
+def keep_removed()
+  items = (0...50).to_a().map() do |i| Item.new(i) end
+  kept = items.select() do |item|
+    items.delete_at(0) if items.length() > 0 && items[0] == item
+    keep = item.n() % 5 == 0
+    item = nil
+    junk = (0...20).to_a().map() do |j| "junk #{j}" end
+    keep
+  end
+  kept.map() do |item| item.n() end
+end
+
+puts(keep_removed())
+
+# reduce's running value is a fresh object each call, only the loop holds it
+# between calls, and the block allocates enough to collect in between.
+def build_up()
+  joined = (0...200).to_a().reduce("") do |acc, i|
+    junk = (0...5).to_a().map() do |j| "junk #{j}" end
+    acc + (i % 10).to_s()
+  end
+  "#{joined.length()} #{joined.slice(0, 12)}"
+end
+
+puts(build_up())
+
+# The loops re-read the length, as the prelude loops do.
+def grow_with_index()
+  grow = [1, 2]
+  grow.each_with_index() do |x, i|
+    grow.push(x + 10) if grow.length() < 5
+  end
+  grow
+end
+
+puts(grow_with_index())
+
+# Many calls, so the compiled loops run warm.
+def warm()
+  total = 0
+  (0...200).each() do |round|
+    total = total + [1, 2, 3, 4].select() do |x| x > 2 end.length()
+    total = total + [1, 2, 3].reduce(0) do |acc, x| acc + x end
+    4.times() do |i| total = total + i end
+    [5, 6].each_with_index() do |x, i| total = total + i end
+  end
+  total
+end
+
+puts(warm())

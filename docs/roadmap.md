@@ -121,10 +121,12 @@ Ruby, 1.0.0-rc1 with native JIT calls, inline array stores and constant-operand 
 
 - **JIT coverage** -- calls between compiled functions and methods are native now, with a
   four-way class cache per method call site. Traced on 0.29.0:
-  - Array `each` and `map` call their blocks natively from compiled code; `select`,
-    `each_with_index`, `reduce` and `times` still call each block through C (`block_call_run`).
-    Setting up a native loop is still a C call per loop (`diamond_jit_loop_begin`: extension
-    lookup, block prepare), 2% of nbody, which runs `each` over five bodies.
+  - Array `each`, `map`, `select`, `each_with_index` and `reduce` and Int `times` call their
+    blocks natively from compiled code (about 85-105 instructions per element with an empty
+    block). `map`, and `select` for each kept element, still push through a C call per element
+    (`diamond_jit_loop_step`, about 70 more). Setting up a native loop is still a C call per
+    loop (`diamond_jit_loop_begin`: extension lookup, block prepare), 2% of nbody, which runs
+    `each` over five bodies.
   - Compiled bodies keep every value in memory and re-check types the caller already proved
     (fib's `n < 2` reloads and re-tests the tag of a parameter the entry check just
     confirmed). Most of fib's remaining gap to YJIT is register allocation and type
