@@ -50,7 +50,7 @@ failed, so it also works as a checker for a file of expressions.
   are variadic (`def calc_min(first, *rest)`).
 - **Numbers.** Integer results stay `Int`, and `Int` promotes past 64 bits
   on its own, so `2 ^ 100` is exact. `Evaluator#int_pow` squares its way
-  up as a self-recursive tail call, which d6 runs in constant stack
+  up as a self-recursive tail call, which D6 runs in constant stack
   space. `-7 % 3` is `2`: `%` is floored, as in Ruby.
 - **Visibility.** The parser's and evaluator's helpers sit under
   `private`.

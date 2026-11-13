@@ -1,6 +1,6 @@
 # {{name}}
 
-A UDP server written in [d6](https://getdiamond.codes). Each datagram a client sends
+A UDP server written in [D6](https://getdiamond.codes). Each datagram a client sends
 gets one datagram back.
 
 ```sh

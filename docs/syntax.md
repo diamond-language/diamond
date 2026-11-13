@@ -1,11 +1,11 @@
 # Language reference
 
-d6's default and preferred source extension is `.d6`. Existing `.di`
+D6's default and preferred source extension is `.d6`. Existing `.di`
 files remain supported for backward compatibility. Extensionless imports
 prefer `.d6` when both suffixes exist; see
 [Source files and imports](core-syntax.md#source-files-and-imports).
 
-d6's language and standard-library reference is organized by topic:
+D6's language and standard-library reference is organized by topic:
 
 - [Core syntax and values](core-syntax.md) — expressions, control flow,
   assignment, numbers, ranges, and symbols.

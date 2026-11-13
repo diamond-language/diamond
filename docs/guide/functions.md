@@ -127,7 +127,7 @@ puts(apply(increment, 41))       # => 42
 
 A `def` inside another `def` is a closure: it can see the outer function's
 local variables, and it keeps them alive after the outer function returns.
-This is how d6 makes a function with private state:
+This is how D6 makes a function with private state:
 
 ```ruby
 def make_counter()
@@ -184,7 +184,7 @@ p(first_negative([3, -1, -5]))   # => -1
 
 ## Coming from another language
 
-- **Ruby**: there is no `yield` for blocks (in d6, `yield` suspends a
+- **Ruby**: there is no `yield` for blocks (in D6, `yield` suspends a
   [fiber](concurrency.md#fibers)). Take the block as `&block` and call
   `block(x)`. There is no `.call`: a callable is called with parentheses.
   There are no `lambda`/`proc` literals; a nested `def` is the closure.

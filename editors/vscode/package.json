@@ -1,7 +1,7 @@
 {
   "name": "diamond-language",
-  "displayName": "d6",
-  "description": "Syntax highlighting and language server diagnostics/hover/go-to-definition/outline for the d6 programming language",
+  "displayName": "D6",
+  "description": "Syntax highlighting and language server diagnostics/hover/go-to-definition/outline for the D6 programming language",
   "version": "0.7.0",
   "engines": {
     "vscode": "^1.75.0"
@@ -13,13 +13,13 @@
     "languages": [
       {
         "id": "diamond",
-        "aliases": ["d6", "diamond"],
+        "aliases": ["D6", "d6", "diamond"],
         "extensions": [".d6"],
         "configuration": "./language-configuration.json"
       },
       {
         "id": "diamond-template",
-        "aliases": ["d6 Template"],
+        "aliases": ["D6 Template"],
         "extensions": [".div"]
       }
     ],
@@ -39,7 +39,7 @@
       }
     ],
     "configuration": {
-      "title": "d6",
+      "title": "D6",
       "properties": {
         "diamond.languageServerPath": {
           "type": "string",
@@ -56,7 +56,7 @@
     "commands": [
       {
         "command": "diamond.restartLanguageServer",
-        "title": "d6: Restart Language Server"
+        "title": "D6: Restart Language Server"
       }
     ],
     "debuggers": [
@@ -91,18 +91,18 @@
           {
             "type": "diamond",
             "request": "launch",
-            "name": "Debug d6 File",
+            "name": "Debug D6 File",
             "program": "${file}"
           }
         ],
         "configurationSnippets": [
           {
-            "label": "d6: Launch",
-            "description": "Launch and debug the currently open d6 file",
+            "label": "D6: Launch",
+            "description": "Launch and debug the currently open D6 file",
             "body": {
               "type": "diamond",
               "request": "launch",
-              "name": "Debug d6 File",
+              "name": "Debug D6 File",
               "program": "^\"${1:\\${file\\}}\""
             }
           }

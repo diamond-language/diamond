@@ -1,6 +1,6 @@
 # Portability
 
-This document records which OS/libc/kernel/toolchain assumptions d6's
+This document records which OS/libc/kernel/toolchain assumptions D6's
 native implementation actually depends on, where each one lives in the code,
 and what's been verified versus merely assumed. It exists because "should
 build on Linux" is not a claim worth making without checking what "Linux"
@@ -67,7 +67,7 @@ Language-level pthreads explicitly request an 8 MiB stack on every platform.
 That matches the stack against which the interpreter recursion guard is
 calibrated instead of inheriting libc-dependent defaults (roughly 128 KiB on
 musl and 512 KiB on Darwin), which are too small for `run_chunk`'s fixed native
-frame and can fault before d6 can report `SystemStackError`. The program's
+frame and can fault before D6 can report `SystemStackError`. The program's
 own main thread runs on a 512 MiB pthread stack (`DIAMOND_MAIN_STACK_MB`), with
 the call-depth limit scaled to match; if that allocation fails it halves the
 request and finally falls back to the process's own stack.
@@ -173,7 +173,7 @@ the feature-test-macro gap above:
    source change needed once linked, and confirmed to actually *work*
    (not just link): a real yield/resume fiber program runs correctly
    under it. This is a real, external build-time dependency for musl
-   specifically, not something to route around in d6's own code.
+   specifically, not something to route around in D6's own code.
 2. **`crypt_gensalt_rn`/`CRYPT_GENSALT_OUTPUT_SIZE` don't exist on musl at
    all** -- these are libxcrypt-specific convenience functions (Fedora and
    Ubuntu both link against libxcrypt, not a bare glibc `crypt`) for
@@ -221,7 +221,7 @@ the feature-test-macro gap above:
    next validates this on a *container* specifically (not just a musl
    host): a container with no real init process (PID 1 that reaps
    orphans) can make an unrelated, environment-only "zombie processes
-   left behind" test failure look like a d6 bug -- confirmed by
+   left behind" test failure look like a D6 bug -- confirmed by
    re-running the identical test under `podman run --init`, which passed
    cleanly. `docker run --init` / `podman run --init` (or an
    equivalent minimal reaper) is a real prerequisite for that specific
@@ -356,7 +356,7 @@ not just a build-level check.
     own `%z` conversion trusts that field on glibc but not on Darwin's
     libc, confirmed directly by this same CI run (`tests/cases/
     time_calendar_constructors.d6`, `east`/`west`'s own `%z` cases).
-    Fixed at the source rather than excluded: d6 now substitutes
+    Fixed at the source rather than excluded: D6 now substitutes
     `%z` itself before a fixed-offset Time's format string ever reaches
     the system `strftime(3)` (`substitute_fixed_offset_z`), so the
     directive no longer depends on the platform honoring it, on Darwin
@@ -507,7 +507,7 @@ attempted, and the prerequisites everything above sits on top of.
   compatibility library needed. **`<ucontext.h>` does not exist at all on
   OpenBSD** -- `fatal error: 'ucontext.h' file not found`, not merely an
   unimplemented symbol the way musl's case was. This is a real gap in
-  d6's own Fiber implementation (`src/vm.c` depends on POSIX
+  D6's own Fiber implementation (`src/vm.c` depends on POSIX
   `ucontext` unconditionally), not a build/CI-tooling problem: "Known
   limitations" below already notes there's no fallback fiber
   implementation (e.g. hand-rolled `setjmp`/`longjmp` + manual stack
@@ -577,7 +577,7 @@ non-`ucontext` Fiber implementation, not as a CI task on its own.
 ## What hasn't been found (checked, not just assumed)
 
 - No `#ifdef __linux__`/`__APPLE__`/`__FreeBSD__`/`_WIN32`-style OS
-  branching exists anywhere in d6's own source (`src/`, `lsp/`,
+  branching exists anywhere in D6's own source (`src/`, `lsp/`,
   `tools/`, `tests/`, `fuzz/`); the only platform conditionals are the JIT's
   x86-64/glibc gate and `__wasm__` in `src/vm.h` (fiber stubs) and
   `src/run_source.c` (a portable SHA-256). The vendored `reginold/vendor/onigmo/`

@@ -3,9 +3,9 @@
 A from-scratch, GPT-style decoder-only transformer built on native
 `Tensor` (`DIAMOND_OBJECT_TENSOR`, `src/vm.c`/`vm.h`/`object.h`/
 `compiler.c`) -- motivated by an earlier Ruby attempt (native
-extensions included) that was still too slow. d6's own `Array` is
+extensions included) that was still too slow. D6's own `Array` is
 boxed `DiamondValue*` with no packed float buffer and no SIMD anywhere
-in the VM, so a matmul in pure d6 loops sits at roughly the same
+in the VM, so a matmul in pure D6 loops sits at roughly the same
 performance class Ruby did; `Tensor#matmul` is a real, threaded,
 k-blocked native implementation instead (38-62 GFLOPS on
 BERT-base-shaped matmuls, see this example's own commit history for
@@ -24,15 +24,15 @@ what a real workload would need.
 
 - `lib/rng.d6` -- a deterministic LCG, only ever used to seed
   `Tensor.random` (the actual random fill happens natively in C, not
-  in a d6 loop -- see its own comment for why that distinction
+  in a D6 loop -- see its own comment for why that distinction
   mattered).
-- `lib/tensor_ops.d6` -- thin d6 wrappers around native Tensor
+- `lib/tensor_ops.d6` -- thin D6 wrappers around native Tensor
   methods: add!/scale!/add_bias!/row_softmax!/gelu!/columns/
   concat_columns/column_sums/clone, plus LayerNorm's forward+backward
   pair (`#layernorm_forward`/`#layernorm_backward`) and softmax/GELU's
   own backward passes (`#softmax_backward`/`#gelu_backward`), all in
   `src/vm.c`. These were *not* native in this scaffold's first pass
-  ("none of these are O(n^3) like #matmul, a plain d6 loop is
+  ("none of these are O(n^3) like #matmul, a plain D6 loop is
   fine" -- true for correctness, wrong for speed): one training step
   measured 5.55s before moving the forward mutators to C, barely
   improved (7.24s -- noise) until the *backward* passes were moved too,
@@ -86,7 +86,7 @@ what a real workload would need.
   max_stories)`: assembles training text from every matching file
   under a folder, walked recursively via `Dir.entries`/`File.
   directory?` (main branch, this session -- an earlier version of this
-  shelled out to `find` via `Process.run`, since d6 had neither
+  shelled out to `find` via `Process.run`, since D6 had neither
   primitive at the time), sorted byte-lexicographically so "the first
   N files" means what it sounds like on a numbered dataset like
   TinyStories' `data00.json`..`data50.json` (only correct for

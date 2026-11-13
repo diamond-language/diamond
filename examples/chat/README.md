@@ -56,7 +56,7 @@ with `textContent`, so chat text can't inject markup.
 ```
 
 This starts the real server and uses a minimal WebSocket client written in
-d6 to cover joining, duplicate names, fan-out, bot
+D6 to cover joining, duplicate names, fan-out, bot
 replies, a crash and restart, `/stats`, history for late joiners, departure
 notices, and a clean SIGTERM exit.
 

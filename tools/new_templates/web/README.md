@@ -1,6 +1,6 @@
 # {{name}}
 
-A web application written in [d6](https://getdiamond.codes), served by
+A web application written in [D6](https://getdiamond.codes), served by
 [gremlin](https://github.com/diamond-language/diamond/tree/main/packages/gremlin) with
 [rack](https://github.com/diamond-language/diamond/tree/main/packages/rack) middleware.
 

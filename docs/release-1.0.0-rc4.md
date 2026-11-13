@@ -1,6 +1,6 @@
-# d6 1.0.0-rc4
+# D6 1.0.0-rc4
 
-The fourth release candidate for d6 1.0 keeps compact program metadata compact
+The fourth release candidate for D6 1.0 keeps compact program metadata compact
 in memory, extending rc3's smaller bytecode caches and executables.
 
 ## Smaller runtime metadata

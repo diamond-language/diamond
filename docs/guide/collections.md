@@ -1,6 +1,6 @@
 # Collections and blocks
 
-d6 has three everyday collections: `Array`, `Hash` and `Range`. You will
+D6 has three everyday collections: `Array`, `Hash` and `Range`. You will
 mostly work with them through methods that take a *block*, a piece of code
 written `do |...| ... end` that the method calls for you.
 

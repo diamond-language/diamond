@@ -4,7 +4,7 @@
 
 A `Cancellation::Source` owns an idempotent `cancel()` capability. Its token
 can be passed through a Thread, Channel, or Supervisor argument. Sources and
-tokens are ordinary d6 objects; their cancellation state is a shared
+tokens are ordinary D6 objects; their cancellation state is a shared
 Channel whose closure is permanent and visible in every heap. Cancelling a
 source does not consume a message or cancel its parent. A child source retains
 its parent token and optionally adds a deadline. Checkpoints consult both.

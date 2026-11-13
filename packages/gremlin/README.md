@@ -119,7 +119,7 @@ end
 ```
 
 Token mode needs the [`cancellation`](https://github.com/diamond-language/diamond/tree/main/packages/cancellation) cut, which is not yet on the
-registry (copy `packages/cancellation` from a d6 checkout into `cuts/`), and a runtime
+registry (copy `packages/cancellation` from a D6 checkout into `cuts/`), and a runtime
 with cancellable `IO.poll` (cancellation 0.3.0). Gremlin itself keeps its existing
 HTTP/logger dependencies; ordinary callers need no cancellation package.
 

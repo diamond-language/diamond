@@ -3,7 +3,7 @@
 Status: implementation and launch plan, 2026-09-23. This document tracks delivery;
 `docs/packages.md` describes the current `facet` and `require_cut` behavior.
 
-d6 calls a reusable package a **cut**. Keep `facet` as the package manager,
+D6 calls a reusable package a **cut**. Keep `facet` as the package manager,
 `Cutfile` as the manifest (`diamond.cut` in older releases), `require_cut` as the import form, and `cuts/` as
 the project-local installation directory. A registry may have its own brand
 later without renaming these interfaces. A rename now would affect source code,
@@ -98,4 +98,4 @@ Immutable version identifiers and restrained removal follow
 publishing credentials and provenance follow
 [npm's trusted publishing model](https://docs.npmjs.com/trusted-publishers/)
 and [RubyGems' security guidance](https://guides.rubygems.org/security/).
-These are design inputs, not claims that d6 already implements them.
+These are design inputs, not claims that D6 already implements them.
