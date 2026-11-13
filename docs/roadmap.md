@@ -128,11 +128,13 @@ Ruby, 1.0.0-rc1 with native JIT calls, inline array stores and constant-operand 
     lookup, block prepare), 2% of nbody, which runs `each` over five bodies.
   - Compiled bodies keep every value in memory and re-check types the caller already proved
     (fib's `n < 2` reloads and re-tests the tag of a parameter the entry check just
-    confirmed). Most of fib's remaining gap to YJIT is register allocation and type
-    propagation inside a body. Reloads alone are not the cost: handing one op's result to the
-    next in RAX instead of through the register file made loop 6% slower on Zen 3, which
-    forwards those stack reloads for free, so the gain has to come from dropping tag checks
-    and stores.
+    confirmed; an `Int` parameter can also be a BigInt object, so dropping the check needs
+    a second copy of the body). Reloads are cheap on Zen 3 as long as each load matches the
+    width of the store it reads: values are written as whole 8-byte kind and payload words
+    and copied in 8-byte halves, because a load spanning a narrower or a second store waits
+    for both to retire (that alone was half of fib's cycles). Handing one op's result to the
+    next in RAX instead of through the register file made loop 6% slower, so the remaining
+    gain has to come from dropping tag checks and stores.
 - **Call machinery** -- about 300 of a fib call's ~450 instructions are call setup (prologue,
   register zeroing, CALL and RETURN), spread thinly, and frame size is not the cost. A
   VM-stack frame design is the remaining large lever; inline frames were tried and lost cycles
