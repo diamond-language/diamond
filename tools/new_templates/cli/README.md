@@ -1,6 +1,6 @@
 # {{name}}
 
-A command-line program written in [d6](https://getdiamond.codes).
+A command-line program written in [D6](https://getdiamond.codes).
 
 ```sh
 facet install              # fetch minitest, the test library, into cuts/

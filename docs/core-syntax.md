@@ -21,11 +21,11 @@ the last top-level expression, so `d6 -e '20 + 22'` prints `42`. Set
 
 ## Source files and imports
 
-`.d6` is d6's default and preferred source extension. `.di` files remain
+`.d6` is D6's default and preferred source extension. `.di` files remain
 supported for backward compatibility, but use `.d6` for new source files.
 Compiled caches for `.d6` sources use `.d6c`.
 
-For an extensionless `require`, d6 tries `.d6` first and falls back to
+For an extensionless `require`, D6 tries `.d6` first and falls back to
 `.di` only if the `.d6` file is absent. For example, put these three files in
 the same directory:
 
@@ -108,7 +108,7 @@ inclusion, a `Regexp` searches a String subject, and a user class name matches
 instances of that class or its subclasses. Other patterns use equality, with
 the pattern as receiver, so a user instance can customize matching through
 `def ==(value)`. Native type names such as `String` are not class-pattern
-values because d6's native types are not reified classes. A subject-less
+values because D6's native types are not reified classes. A subject-less
 boolean form (Ruby's `case` with no expression, where each `when`'s own value
 is tested for truthiness instead of compared against a subject) is also
 supported — see below.
@@ -291,7 +291,7 @@ own specific shape of subject:
   unchecked too**, not an error either way — zero is more likely "this
   hierarchy isn't built out yet" than an intentional 0-variant type, and
   more than 8 exceeds the same fixed member-count ceiling every union in
-  d6 already has (`DIAMOND_MAX_UNION_TYPES`). A `case` with no
+  D6 already has (`DIAMOND_MAX_UNION_TYPES`). A `case` with no
   `else` over either of these compiles exactly as if `Shape` weren't
   sealed at all.
 - **A union containing any native scalar/container type (`Int`,
@@ -348,11 +348,11 @@ precedence — `x = a ? b : c` reads as `x = (a ? b : c)`, and `true ||
 false ? "t" : "f"` reads as `(true || false) ? "t" : "f"`. Nested
 ternaries in the false branch (as above) right-associate the way Ruby's
 own does. Both branches are plain expressions, not statement blocks —
-same as everywhere else d6 takes an expression, this rules out
+same as everywhere else D6 takes an expression, this rules out
 `x = 5` as a branch, but not another `?:`, a method call, or a literal.
 
 Line continuation follows the same "trailing operator" convention every
-other multi-line expression in d6 uses — put the `?`/`:` at the end
+other multi-line expression in D6 uses — put the `?`/`:` at the end
 of the line, not the start:
 ```ruby
 x > 3 ?
@@ -453,7 +453,7 @@ y`/`x = x && y` evaluated unconditionally: the right-hand side is only
 evaluated (and the assignment only happens) when the existing value
 doesn't already decide the outcome — `x ||= y` skips `y` entirely when `x`
 is already truthy, `x &&= y` skips `y` entirely when `x` is already falsy.
-Truthy/falsy here means d6's ordinary truthiness (only `nil` and
+Truthy/falsy here means D6's ordinary truthiness (only `nil` and
 `false` are falsy), not specifically "is nil" — `count ||= 99` above is a
 no-op once `count` is `0`, since `0` is truthy, the same way plain `if
 count` would treat it.
@@ -762,7 +762,7 @@ to_sym("ok") == status # => true
 from `String`, useful for enum-like constants and Hash keys. `Symbol`
 equality and hashing are by byte content, exactly like `String` (`:ok ==
 :ok` is `true` even across two separately-created `:ok` literals) — unlike
-Ruby, where `Symbol` is interned and pointer-equal. d6 deliberately
+Ruby, where `Symbol` is interned and pointer-equal. D6 deliberately
 scoped Symbol this way: interning would mean every Symbol ever created lives
 for the rest of the process (Ruby's own tradeoff), and this codebase defers
 that kind of complexity until profiling shows it's actually worth it (see

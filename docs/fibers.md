@@ -82,7 +82,7 @@ is required.
 
 ## Scheduling and I/O
 
-d6 does not expose a built-in fiber scheduler. An application can keep
+D6 does not expose a built-in fiber scheduler. An application can keep
 fibers in an Array and decide which one to resume. The Gremlin HTTP server uses
 this approach with non-blocking sockets and `IO.poll`; see
 [`packages/gremlin`](../packages/gremlin/README.md) and the

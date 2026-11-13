@@ -1,6 +1,6 @@
 # Time and calendar guide
 
-d6's `Time` represents an instant as fractional Unix-epoch seconds. Each
+D6's `Time` represents an instant as fractional Unix-epoch seconds. Each
 value also has an immutable display mode:
 
 - UTC;
@@ -11,7 +11,7 @@ The display mode controls calendar fields and formatting. It does not change
 the represented instant, equality, ordering, hashing, or elapsed-time
 arithmetic.
 
-d6 deliberately does not provide named IANA timezone selection such as
+D6 deliberately does not provide named IANA timezone selection such as
 `"America/New_York"`. Local time uses the timezone configured for the process;
 explicit zones use UTC offsets. Fixed offsets are stored per `Time` value and
 never mutate the process-global `TZ` setting, so they are safe when independent
@@ -125,13 +125,13 @@ t.yday()  # 1..366
 t.strftime("%Y-%m-%d %H:%M:%S %z")
 ```
 
-`%z` on a fixed-offset Time is the one exception: d6 substitutes it
+`%z` on a fixed-offset Time is the one exception: D6 substitutes it
 itself before the format string ever reaches the system implementation,
 rather than relying on the platform to honor the offset, since not every
 `strftime(3)` does (confirmed on Darwin). Every other directive, `%Z`
 included, still delegates straight through.
 
-`to_s()` and interpolation use d6's default human-readable format.
+`to_s()` and interpolation use D6's default human-readable format.
 `to_i()` returns truncated epoch seconds; `to_f()` returns the fractional
 epoch.
 

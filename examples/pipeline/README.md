@@ -1,6 +1,6 @@
 # examples/pipeline
 
-A streaming pipeline whose stages are **untrusted d6 scripts**, kept
+A streaming pipeline whose stages are **untrusted D6 scripts**, kept
 running under supervision. It combines [sandbox mode](../../docs/sandbox.md)
 (`--sandbox`, the `DIAMOND_SANDBOX_ALLOW` allow-list, resource budgets) with
 [Threads, Channels and a Supervisor](../../docs/threads.md). Where

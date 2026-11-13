@@ -100,7 +100,7 @@ read/write logic exists for sockets at all. Only connection
   `DIAMOND_OBJECT_LISTENER` (`DiamondListenerHandle`, wrapping a raw
   listening-socket file descriptor rather than a `FILE *`, since a
   listening socket is never read from or written to). Like `File`,
-  nothing inside it references another d6 value, so it needs no
+  nothing inside it references another D6 value, so it needs no
   `mark_object` branch; sweeping an unreached handle whose fd is still
   open closes it, same safety-net role as `File`/`Fiber`.
 - `.accept()` is native `DIAMOND_OP_INVOKE` dispatch on a
@@ -197,8 +197,8 @@ that let a fiber's own I/O yield back to a scheduler instead:
   same length and order as the corresponding input — `readable[i]`
   answers "is `readables[i]` ready," not "which are ready" — deliberately
   avoiding a design needing `Array#include?`/object-identity comparison
-  on the d6 side, neither of which exists. The same fd can appear in
-  both lists (or twice within one, from two different d6 objects
+  on the D6 side, neither of which exists. The same fd can appear in
+  both lists (or twice within one, from two different D6 objects
   wrapping the same underlying connection) — internally deduplicated by
   fd and OR'd together into one `pollfd` entry, since `poll(2)` itself
   keys purely by fd. `POLLHUP`/`POLLERR`/`POLLNVAL` count toward *both*
@@ -400,7 +400,7 @@ from the stream-oriented `TCPSocket`/`TCPServer` above:
 - **`.receive(n)`** — blocks until a datagram arrives, then returns a
   `Hash`: `{"data": ..., "host": ..., "port": ...}` — the payload (up to
   `n` bytes; a UDP datagram larger than the buffer is silently truncated
-  by the kernel, standard `recvfrom` behavior, not something d6 adds
+  by the kernel, standard `recvfrom` behavior, not something D6 adds
   handling for) plus the sender's own address, extracted via
   `getnameinfo(..., NI_NUMERICHOST|NI_NUMERICSERV)` so `host` is always a
   plain address string, never a reverse-DNS lookup that could block or
@@ -452,8 +452,8 @@ nothing.
 CPU-bound code.** The actual OS signal handler installed by `Signal.trap`
 only does what POSIX guarantees is async-signal-safe: set a
 `volatile sig_atomic_t` and return (`diamond_signal_handler`, `src/vm.c`)
-— resolving which d6 closure to call and actually calling it happens
-later, synchronously. For CPU-bound d6 code, "later" means within a
+— resolving which D6 closure to call and actually calling it happens
+later, synchronously. For CPU-bound D6 code, "later" means within a
 few instructions: `run_chunk` checks a single cheap flag (almost always
 false, negligible steady-state cost) on every backward jump, every call
 and every pass through its dispatch loop's top, so any loop or recursion
@@ -467,7 +467,7 @@ deliberately omits `SA_RESTART`: the signal actually interrupts the
 blocking syscall (`EINTR`) instead of the kernel silently resuming it as
 if nothing happened, and each of those three call sites has its own
 small retry loop that dispatches any pending signal(s) — running the
-d6 handler — before transparently retrying the syscall. From the
+D6 handler — before transparently retrying the syscall. From the
 caller's own perspective, `.accept()` still either blocks until a real
 connection or raises a real error; it's just no longer *unresponsive*
 while doing so. `TCPSocket.connect` and buffered `File`/stdin reads are
@@ -484,7 +484,7 @@ would be.
 
 When testing `Signal.trap` from a shell script, remember that bash starts
 asynchronous commands with `SIGINT` and `SIGQUIT` ignored. That disposition
-survives `exec`, so `kill -INT` will not reach a d6 handler in a process
+survives `exec`, so `kill -INT` will not reach a D6 handler in a process
 started with a plain `... &`. Reset the signal before executing the program:
 
 ```sh

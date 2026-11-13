@@ -47,7 +47,7 @@ constructor argument inference provide no contextual hint at this stage.
 
 ### Tail-call optimization
 
-Each d6 function call is an ordinary recursive call in the native
+Each D6 function call is an ordinary recursive call in the native
 implementation, so ordinary recursion is bounded by a call-depth limit: about
 9,600 levels in the main program (which runs on a 512 MiB stack;
 `DIAMOND_MAIN_STACK_MB` changes it), and 150 inside a fiber or a thread, which
@@ -134,7 +134,7 @@ block whatever comes before it. It works the same way on a direct call to a top-
 function: `apply(5) do |n| n * 2 end`.
 
 Delimiters are `do ... end` only — there is no `{ ... }` block form, and
-none is planned. Every other d6 control construct (`if`, `while`,
+none is planned. Every other D6 control construct (`if`, `while`,
 `def`, `class`, `case`) already uses `end`, and `{` already means a Hash
 literal, so `arr.each { |x| ... }` would collide with a bare Hash
 argument the way it does in Ruby.
@@ -328,7 +328,7 @@ declared parameter and return contract. Explicit generic references such as
 `object.wrap[Int]` and `Factory.wrap[Int]` retain the substituted contract, so
 their results compose with indexing, Callable arguments, and later calls.
 When a bare generic singleton or bound instance reference is passed directly to
-a statically resolved Callable parameter, d6 can infer those bindings from
+a statically resolved Callable parameter, D6 can infer those bindings from
 the parameter's expected Callable graph. This works for positional and keyword
 arguments on functions, singleton methods, instance methods, and constructors.
 A declared function return supplies the same context to an endless body, an
@@ -366,7 +366,7 @@ context when it can satisfy every arm through contravariant inputs and covariant
 returns. Bound references preserve omitted optional arguments, so defaults are
 still evaluated by the original method rather than replaced with `nil`.
 This also applies when optional fixed arguments precede `*rest`. If no complete
-Callable arm supplies union-block context, d6 may synthesize parameter
+Callable arm supplies union-block context, D6 may synthesize parameter
 context from existing declared input types that safely accept every arm. If no
 such input graph exists, it constructs a union of the arms' input graphs.
 Return context uses an existing declared subtype only when it satisfies every

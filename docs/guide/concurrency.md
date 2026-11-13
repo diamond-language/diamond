@@ -1,6 +1,6 @@
 # Concurrency
 
-d6 has two tools for doing several things at once:
+D6 has two tools for doing several things at once:
 
 - **Threads** run on separate CPU cores. Each one has its own memory, so
   threads never share objects: values are *copied* between them, and they
@@ -48,7 +48,7 @@ puts(worker.join())     # => 2
 puts(mine.length())     # => 1
 ```
 
-This is the central idea of d6's concurrency. Because no two threads ever
+This is the central idea of D6's concurrency. Because no two threads ever
 hold the same object, there are no data races and no locks to get wrong.
 When threads need to cooperate, they send each other values.
 
