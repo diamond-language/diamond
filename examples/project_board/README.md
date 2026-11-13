@@ -58,6 +58,9 @@ For production:
 DIAMOND_ENV=production DIAMOND_DATABASE_PATH=/srv/diamond/project-board.db LOG_LEVEL=info ../../build/d6 app.d6
 ```
 
+Production marks the session cookie `Secure`, so serve it behind a TLS proxy such as nginx
+(the app itself speaks plain HTTP); a browser on plain `http://` cannot stay signed in.
+
 Run the direct-dispatch smoke test (public reads and association rendering, denied anonymous writes, failed login, missing/forged CSRF rejection, validation failures without persistence, complete project/task create-update-delete flows, cascading project deletion, logout, rejected stale sessions, and expired-session deletion) with:
 
 ```sh
