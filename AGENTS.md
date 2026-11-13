@@ -11,7 +11,7 @@
 - **Check before claiming.** Reviewers (human or model) over-claim: verify a finding against the code before fixing it. Report outcomes as they are, including a merge or step that went wrong.
 - **Keep the changelog current.** Include user-visible language and tooling changes in `CHANGELOG.md` under `Unreleased` in the same pull request. Summarize capability milestones rather than every implementation step.
 - Use they/them for people whose pronouns are not stated.
-- **Write the brand as D6.** In prose, titles and UI strings the language is **D6**; commands, file names, code and the program name in messages stay lowercase (`d6 build`, `.d6`, `d6: runtime error`). `docs/internal/` records keep their original wording.
+- **Write the brand as D6.** In prose, titles and UI strings the language is **D6**; commands, file names, code and the program name in messages stay lowercase (`d6 build`, `.d6`, `d6: runtime error`). `docs/internal/` records keep their original wording. Cut READMEs under `packages/` change with each package's next release, since editing them changes the reviewed seed archives.
 
 ## Landing a change
 

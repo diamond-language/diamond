@@ -4,9 +4,9 @@ Cooperative cancellation, monotonic deadlines, and scopes that join their tasks.
 
 ## Installation
 
-`cancellation` is not published to the registry yet. Until it is, copy `packages/cancellation` from a checkout of the [D6 repository](https://github.com/diamond-language/diamond) into your project as `cuts/cancellation/`, then load it with `require_cut "cancellation"`. `facet update` leaves hand-copied cuts in place.
+`cancellation` is not published to the registry yet. Until it is, copy `packages/cancellation` from a checkout of the [d6 repository](https://github.com/diamond-language/diamond) into your project as `cuts/cancellation/`, then load it with `require_cut "cancellation"`. `facet update` leaves hand-copied cuts in place.
 
-Version 0.6.0 requires a D6 runtime with channel readiness waits and cancellation options for `IO.poll`, `TCPSocket.connect_nonblocking`, `DNS.resolve`, and `TLSSocket.start_handshake`.
+Version 0.6.0 requires a d6 runtime with channel readiness waits and cancellation options for `IO.poll`, `TCPSocket.connect_nonblocking`, `DNS.resolve`, and `TLSSocket.start_handshake`.
 
 ## Usage
 

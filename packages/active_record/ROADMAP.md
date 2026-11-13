@@ -8,4 +8,4 @@
 - Keep relation composition lazy and preserve explicit database connections at execution.
 - Verify model and migration behavior across supported database dialects.
 
-Avoid adding Ruby-style macros unless D6 can support them with clear, predictable behavior.
+Avoid adding Ruby-style macros unless d6 can support them with clear, predictable behavior.

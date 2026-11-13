@@ -1,6 +1,6 @@
 # registry
 
-Storage primitives for the D6 cut registry.
+Storage primitives for the d6 cut registry.
 
 The package provides the SQLite schema and a content-addressed blob store.
 The authenticated publish transaction verifies archives with `facet` and stores
@@ -17,7 +17,7 @@ facet add registry
 facet install
 ```
 
-This installs the cut into `cuts/registry/` along with `mjolnir` and `arel`; load it with `require_cut "registry"`. To run a registry service rather than embed these primitives, see `applications/registry` in the D6 repository.
+This installs the cut into `cuts/registry/` along with `mjolnir` and `arel`; load it with `require_cut "registry"`. To run a registry service rather than embed these primitives, see `applications/registry` in the d6 repository.
 
 `BlobStore.read` verifies the stored bytes against their digest and raises
 `IOError` for corrupt or incomplete files. `contains?` only says whether the file
