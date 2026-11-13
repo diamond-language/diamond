@@ -35,10 +35,9 @@ class SessionsController
     context["csrf_token"] = csrf_token
     log_info(request, context, "login.succeeded", {"user_id": user.id(), "lifetime_seconds": lifetime})
 
-    # Redirect to the project list and set the cookie. HttpOnly hides it from
-    # page scripts; SameSite=Lax stops it being sent on cross-site POSTs;
-    # Max-Age matches the server-side expiry.
-    [302, {"Location": "/projects", "Set-Cookie": "session_token=#{token}; Path=/; Max-Age=#{lifetime}; HttpOnly; SameSite=Lax"}, "signed in"]
+    # Redirect to the project list and set the cookie (see session_cookie for its
+    # attributes); Max-Age matches the server-side expiry.
+    [302, {"Location": "/projects", "Set-Cookie": session_cookie(token, lifetime)}, "signed in"]
   end
 
   # POST /logout. Delete the session row (so the cookie is dead even if

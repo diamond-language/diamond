@@ -248,6 +248,37 @@ body2
 [[ "$actual" == "a|b|nil" ]]
 count=$((count + 1))
 
+# --- The session cookie is site-wide (Path=/) and carries Secure only
+# --- when configured so; the default follows DIAMOND_ENV=production
+actual="$(run_case '
+def handler(request, context) = [200, {}, "ok"]
+def attributes()
+  [status, headers, body] = CookieSession.call({"headers": {}}, {}, handler)
+  headers["Set-Cookie"][0].split("; ").slice(1, 4).join(",")
+end
+CookieSession.configure(secret: "s", secure: true)
+on = attributes()
+CookieSession.configure(secret: "s", secure: false)
+off = attributes()
+"#{on}|#{off}"
+')"
+[[ "$actual" == "Path=/,HttpOnly,Secure,SameSite=Lax|Path=/,HttpOnly,SameSite=Lax" ]]
+count=$((count + 1))
+default_off="$(run_case '
+def handler(request, context) = [200, {}, "ok"]
+CookieSession.configure(secret: "s")
+[status, headers, body] = CookieSession.call({"headers": {}}, {}, handler)
+headers["Set-Cookie"][0].include?("Secure")
+')"
+default_on="$(DIAMOND_ENV=production run_case '
+def handler(request, context) = [200, {}, "ok"]
+CookieSession.configure(secret: "s")
+[status, headers, body] = CookieSession.call({"headers": {}}, {}, handler)
+headers["Set-Cookie"][0].include?("Secure")
+')"
+[[ "$default_off|$default_on" == "false|true" ]]
+count=$((count + 1))
+
 # --- CookieSession/Csrf middleware, end to end against a real
 # --- gremlin_serve instance: a first request gets a fresh session and a
 # --- Set-Cookie; replaying that cookie on a second request restores the

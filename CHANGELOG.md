@@ -6,6 +6,7 @@ authoritative fine-grained record.
 
 ## Unreleased
 
+- Session cookies are marked `Secure` under `DIAMOND_ENV=production`, matching active_auth: the cookies cut's `CookieSession` (0.2.4, with a `secure:` override, and now `Path=/`) and the project_board example. Apps behind a TLS proxy such as nginx keep speaking plain HTTP. The guestbook, project_board, chat (`wss:`) and library examples were checked behind nginx over HTTPS; bookmarks, job_service and task_board are loopback-only single-user tools.
 - The brand is written **D6** everywhere it names the language: guides, READMEs, the docs site, registry pages, the VS Code extension, CLI help text and GitHub release titles. Commands, file names and code stay lowercase (`d6 build`, `.d6`, `d6-lang`).
 - A thread that fails and is never joined now prints its uncaught exception and backtrace on stderr (`d6: runtime error in unjoined thread: ...`) instead of losing it silently. Exit status is unchanged.
 - Bundled cut maintenance avoids redundant timestamp formatting in text logging and simplifies database-config and static-file reads, including file cleanup on read errors. Network-safety comments now describe its string-only checks without outdated claims about runtime capabilities.
