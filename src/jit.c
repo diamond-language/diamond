@@ -170,6 +170,9 @@ typedef struct JitCompiler {
     size_t function_count;
     size_t landing_calls[16];
     size_t landing_call_count;
+    /* Where the comparison being compiled ends (set by its case just before
+     * compiling it), for fused_branch_after. */
+    size_t instruction_end;
 } JitCompiler;
 
 static void jit_buf_ensure(JitBuffer *buf, size_t extra) {
@@ -283,12 +286,16 @@ static void emit_movups_store_rsp(JitBuffer *buf, int32_t disp, int xmm) {
     emit_u8(buf, 0x24);                          /* SIB: base rsp, no index */
     emit_u32_le(buf, (uint32_t)disp);
 }
-/* movups xmm<n>, [base + disp32] (n < 8; base not rsp or r12) */
-static void emit_movups_load(JitBuffer *buf, int xmm, int base, int32_t disp) {
-    if (base >= 8) emit_u8(buf, emit_rex(false, xmm, base));
-    emit_u8(buf, 0x0F); emit_u8(buf, 0x10);
-    emit_u8(buf, (uint8_t)(0x80 | (xmm << 3) | (base & 7)));
-    emit_u32_le(buf, (uint32_t)disp);
+
+/* A register-file value into [rsp + disp] as two 8-byte halves through RSI:
+ * a 16-byte load that spans the separate kind and payload stores the
+ * compiled code writes cannot be forwarded from them and waits for both
+ * to retire. */
+static void emit_copy_value_to_rsp(JitBuffer *buf, int32_t disp, int32_t source) {
+    emit_load_r64(buf, REG_RSI, JIT_REGISTERS_BASE, source);
+    emit_store_r64_sib(buf, REG_RSP, disp, REG_RSI);
+    emit_load_r64(buf, REG_RSI, JIT_REGISTERS_BASE, source + 8);
+    emit_store_r64_sib(buf, REG_RSP, disp + 8, REG_RSI);
 }
 
 /* lea reg64, [base + disp32] */
@@ -325,21 +332,25 @@ static void emit_load_byte_zx(JitBuffer *buf, int reg, int base, int32_t disp) {
     emit_u32_le(buf, (uint32_t)disp);
 }
 
-/* mov byte [base + disp32], imm8 */
+/* mov qword [base + disp32], kind: the kind and the padding after it, as
+ * one 8-byte store. A 1-byte store here made the 8- and 16-byte loads that
+ * copy the value later straddle it and older bytes, which the store queue
+ * cannot forward: those loads waited for the stores to retire. */
 static void emit_store_kind_imm(JitBuffer *buf, int base, int32_t disp, uint8_t kind) {
-    emit_u8(buf, emit_rex(false, 0, base));
-    emit_u8(buf, 0xC6);
+    emit_u8(buf, emit_rex(true, 0, base));
+    emit_u8(buf, 0xC7);
     emit_u8(buf, (uint8_t)(0x80 | (base & 7)));
     emit_u32_le(buf, (uint32_t)disp);
-    emit_u8(buf, kind);
+    emit_u32_le(buf, kind);
 }
 
-/* mov byte [base + disp32], reg8 -- reg must be RAX/RCX/RDX/RBX (AL/CL/DL/BL),
- * the only 8-bit sources this file ever stores from. */
+/* A Bool payload from reg8 (AL/CL/DL/BL, the only 8-bit sources this file
+ * stores from), zero-extended into the whole 8-byte payload for the same
+ * reason as emit_store_kind_imm. Leaves the zero-extended value in reg. */
 static void emit_store_byte_reg(JitBuffer *buf, int base, int32_t disp, int reg) {
-    emit_u8(buf, 0x88);
-    emit_u8(buf, (uint8_t)(0x80 | ((reg & 7) << 3) | (base & 7)));
-    emit_u32_le(buf, (uint32_t)disp);
+    emit_u8(buf, 0x0F); emit_u8(buf, 0xB6);                       /* movzx reg32, reg8 */
+    emit_u8(buf, (uint8_t)(0xC0 | ((reg & 7) << 3) | (reg & 7)));
+    emit_store_r64(buf, base, disp, reg);
 }
 
 /* mov reg64, imm64 */
@@ -1242,6 +1253,54 @@ static void finish_binary_op(JitCompiler *jc, size_t instruction_start, uint16_t
     if (has_float) patch_rel32_to_here(buf, done_float);
 }
 
+/* A comparison whose very next instruction is a forward JUMP_IF_FALSE or
+ * JUMP_IF_TRUE on its result: the fast path can branch on the flags it just
+ * set instead of falling into that jump's reload and re-test of the Bool.
+ * It still stores the Bool, which later code may read; the jump's own code
+ * stays for the slow path and anything else that reaches it. A backward
+ * jump is left alone, since it polls for interrupts. */
+typedef struct {
+    bool fused;
+    bool jump_if_true;
+    size_t target;
+    size_t after;   /* the instruction after the jump */
+} JitFusedBranch;
+
+static JitFusedBranch fused_branch_after(const JitCompiler *jc, uint16_t dest) {
+    const DiamondFunction *fn = jc->function;
+    const size_t at = jc->instruction_end;
+    JitFusedBranch branch = {};
+    if (at + 5 > fn->code_count) return branch;
+    const uint8_t opcode = fn->code[at];
+    if (opcode != DIAMOND_OP_JUMP_IF_FALSE && opcode != DIAMOND_OP_JUMP_IF_TRUE) return branch;
+    const uint16_t condition = (uint16_t)(((uint16_t)fn->code[at + 1] << 8) | fn->code[at + 2]);
+    const size_t target = ((size_t)fn->code[at + 3] << 8) | fn->code[at + 4];
+    if (condition != dest || target <= at || target >= fn->code_count) return branch;
+    branch.fused = true;
+    branch.jump_if_true = opcode == DIAMOND_OP_JUMP_IF_TRUE;
+    branch.target = target;
+    branch.after = at + 5;
+    return branch;
+}
+
+/* With the flags from a comparison whose setcc is `condition`: jump to the
+ * branch's target when the jump would be taken, else to the instruction
+ * after the jump. (jcc's opcode is setcc's less 0x10; flipping the low bit
+ * negates a condition.) */
+static void emit_fused_branch(JitCompiler *jc, const JitFusedBranch *branch, uint8_t condition) {
+    JitBuffer *buf = &jc->buf;
+    const uint8_t taken = (uint8_t)((branch->jump_if_true ? condition : condition ^ 1) - 0x10);
+    emit_u8(buf, 0x0F);
+    emit_u8(buf, taken);
+    const size_t target_field = buf->length;
+    emit_u32_le(buf, 0);
+    record_global_patch(jc, target_field, branch->target);
+    emit_u8(buf, 0xE9);
+    const size_t after_field = buf->length;
+    emit_u32_le(buf, 0);
+    record_global_patch(jc, after_field, branch->after);
+}
+
 static void compile_binary_int_op(JitCompiler *jc, size_t instruction_start, uint16_t dest,
                                    uint16_t left, uint16_t right, DiamondOpCode op) {
     JitBuffer *buf = &jc->buf;
@@ -1262,6 +1321,8 @@ static void compile_binary_int_op(JitCompiler *jc, size_t instruction_start, uin
         emit_setcc_al(buf, condition);
         emit_store_kind_imm(buf, JIT_REGISTERS_BASE, reg_disp(dest, KIND_OFF), DIAMOND_VALUE_BOOL);
         emit_store_byte_reg(buf, JIT_REGISTERS_BASE, reg_disp(dest, AS_OFF), REG_RAX);
+        const JitFusedBranch branch = fused_branch_after(jc, dest);
+        if (branch.fused) emit_fused_branch(jc, &branch, condition);
         size_t done = emit_jmp_placeholder(buf);
         finish_binary_op(jc, instruction_start, dest, left, right, op, done, kind_jumps,
                          slow_jumps, slow_jump_count, true);
@@ -1398,6 +1459,8 @@ static void compile_int_k_op(JitCompiler *jc, size_t instruction_start, uint16_t
         emit_setcc_al(buf, condition);
         emit_store_kind_imm(buf, JIT_REGISTERS_BASE, reg_disp(dest, KIND_OFF), DIAMOND_VALUE_BOOL);
         emit_store_byte_reg(buf, JIT_REGISTERS_BASE, reg_disp(dest, AS_OFF), REG_RAX);
+        const JitFusedBranch branch = fused_branch_after(jc, dest);
+        if (branch.fused) emit_fused_branch(jc, &branch, condition);
     } else if (generic == DIAMOND_OP_MODULO && constant > 0 && constant <= INT32_MAX) {
         if ((constant & (constant - 1)) == 0) {
             /* Floored modulo by a positive power of two is the low bits,
@@ -2127,8 +2190,8 @@ static void compile_self_call_native(JitCompiler *jc, uint16_t dest, uint16_t ba
     /* The callee's register file: arguments, then zeroes. */
     emit_sub_rsp_imm32(buf, reserve);
     for (uint8_t i = 0; i < argc; i++) {
-        emit_movups_load(buf, 1, JIT_REGISTERS_BASE, reg_disp((uint16_t)(base + i), 0));
-        emit_movups_store_rsp(buf, (int32_t)(i * sizeof(DiamondValue)), 1);
+        emit_copy_value_to_rsp(buf, (int32_t)(i * sizeof(DiamondValue)),
+            reg_disp((uint16_t)(base + i), 0));
     }
     if (count - argc <= 32) {
         emit_zero_xmm0(buf);
@@ -2207,12 +2270,12 @@ static void emit_native_entry_call(JitCompiler *jc, uint16_t dest, int self_reg,
     emit_store_r64_sib(buf, REG_RSP, 0, REG_RCX);
     uint32_t slot = 0;
     if (self_reg >= 0) {
-        emit_movups_load(buf, 1, JIT_REGISTERS_BASE, reg_disp((uint16_t)self_reg, 0));
-        emit_movups_store_rsp(buf, (int32_t)(NATIVE_CALL_HEADER + 16 * slot++), 1);
+        emit_copy_value_to_rsp(buf, (int32_t)(NATIVE_CALL_HEADER + 16 * slot++),
+            reg_disp((uint16_t)self_reg, 0));
     }
     for (uint8_t i = 0; i < argc; i++) {
-        emit_movups_load(buf, 1, JIT_REGISTERS_BASE, reg_disp((uint16_t)(base + i), 0));
-        emit_movups_store_rsp(buf, (int32_t)(NATIVE_CALL_HEADER + 16 * slot++), 1);
+        emit_copy_value_to_rsp(buf, (int32_t)(NATIVE_CALL_HEADER + 16 * slot++),
+            reg_disp((uint16_t)(base + i), 0));
     }
     emit_zero_xmm0(buf);
     if (frame_bytes != 0 && frame_bytes / 16 - count <= 16) {
@@ -4310,6 +4373,7 @@ static bool compile_value_instruction(JitCompiler *jc, DiamondOpCode opcode, siz
             uint16_t dest = 0, left = 0, right = 0;
             if (!decode_u16(fn, &pc, &dest) || !decode_u16(fn, &pc, &left) ||
                 !decode_u16(fn, &pc, &right)) { jc->bailed = true; return true; }
+            jc->instruction_end = pc;
             compile_binary_int_op(jc, instruction_start, dest, left, right, opcode);
             break;
         }
@@ -4384,6 +4448,7 @@ static bool compile_value_instruction(JitCompiler *jc, DiamondOpCode opcode, siz
                 opcode == DIAMOND_OP_LESS_EQUAL_INT_K ? DIAMOND_OP_LESS_EQUAL :
                 opcode == DIAMOND_OP_GREATER_INT_K ? DIAMOND_OP_GREATER :
                 DIAMOND_OP_GREATER_EQUAL;
+            jc->instruction_end = pc;
             compile_int_k_op(jc, instruction_start, dest, left, scratch,
                 fn->constants[index].as.integer, generic);
             break;

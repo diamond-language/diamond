@@ -1,0 +1,45 @@
+# A comparison followed by a forward conditional jump on its result branches
+# on the CPU flags under the JIT (fused_branch_after), but still stores the
+# Bool, and other operand kinds still take the slow path into the jump's
+# own code. Everything here must match the interpreter. The first call of
+# each function runs in the interpreter; the JIT compiles the rest.
+
+# A ternary on `<`: Int, Float and BigInt operands.
+def size(x) = x < 2 ? "small" : "big"
+
+puts("#{size(1)} #{size(5)} #{size(1)} #{size(1.5)} #{size(2.5)} #{size(2 ** 70)}")
+
+# A comparison stored in a variable the branch tests and the body reads.
+def at_least(x, y)
+  ok = x >= y
+  if ok then "#{ok} yes" else "#{ok} no" end
+end
+
+puts("#{at_least(3, 2)}, #{at_least(1, 2)}, #{at_least(2.5, 2)}, #{at_least(2 ** 70, 1)}")
+
+# `||` jumps when its left side is true (JUMP_IF_TRUE).
+def far(x) = x > 3 || x < -3
+
+puts("#{far(5)} #{far(0)} #{far(-9)} #{far(4.5)} #{far(-(2 ** 70))}")
+
+# Loop conditions, against a constant and against a variable.
+def count_up(n)
+  i = 0
+  total = 0
+  while i < n
+    total += i
+    i += 1
+  end
+  total
+end
+
+def count_down(x)
+  steps = 0
+  while x > 0
+    x -= 1
+    steps += 1
+  end
+  steps
+end
+
+puts("#{count_up(10)} #{count_up(0)} #{count_up(100)} #{count_down(5)} #{count_down(0)} #{count_down(7)}")
