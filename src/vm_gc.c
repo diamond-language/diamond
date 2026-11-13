@@ -36,7 +36,7 @@
  * this early because mark_remembered_set (just below) already needs it
  * to size its own card-index arithmetic. */
 enum { DIAMOND_GC_CARD_SIZE = 64 };
-static_assert(DIAMOND_GC_CARD_SIZE == DIAMOND_JIT_GC_CARD_SIZE, "jit.c marks cards inline");
+static_assert((int)DIAMOND_GC_CARD_SIZE == (int)DIAMOND_JIT_GC_CARD_SIZE, "jit.c marks cards inline");
 
 /* The per-kind "walk this object's own direct children" switch,
  * deliberately factored out of mark_object below (which adds the
