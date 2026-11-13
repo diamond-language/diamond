@@ -14,6 +14,11 @@ network_safety 0.2.3 and rack 0.2.3 were published first with a scoped 30-minute
 administration and restore tests; all 20 public cuts passed resolve, digest, load and
 unchanged-lock reinstall. `DIAMOND_JIT=1` and the worker settings were preserved.
 
+On 2026-11-12 `catalog.html` and `cut.html` in the live app directory were replaced with
+their main `230de947` versions (#553/#554, the brand written as D6). The app reads them on
+each request, so no restart was needed. The previous copies are in
+`/root/diamond-brand-d6-20261112/registry/`; nothing else in the release changed.
+
 Previously `0e482f26c56854c4c41c6c82d093ad04f6569a21` (v1.0.0-rc4, deployed 2026-11-12 UTC (2026-11-11 Pacific)
 with `tools/deploy_registry.sh --revision=v1.0.0-rc4 --force` after its dry run).
 The fresh snapshot at
