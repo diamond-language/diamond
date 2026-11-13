@@ -115,9 +115,9 @@ Collections are stop-the-world within each isolated VM.
 ### Close the benchmark gaps to Ruby
 
 The local `fistfight` suite pairs D6 and Ruby programs (21 pairs). The D6 interpreter beats
-the Ruby interpreter on all 21, and D6 with its JIT (opt-in) beats YJIT on 18. The gaps left
-are on call-heavy and object code: fib 1.83x, trees 1.19x and poly 1.05x (best D6 over best
-Ruby, 1.0.0-rc1 with native JIT calls, inline array stores and constant-operand Int ops).
+the Ruby interpreter on all 21, and D6 with its JIT (opt-in) is at least even with YJIT on all
+21 (main b9d43998, best D6 over best Ruby). The closest are the call-heavy ones: fib and trees
+at 1.00x (61 and 78 ms, same as YJIT), then loop and poly at 0.85x.
 
 - **JIT coverage** -- calls between compiled functions and methods are native now, with a
   four-way class cache per method call site. Traced on 0.29.0:
