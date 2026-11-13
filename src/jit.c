@@ -830,6 +830,7 @@ enum {
     JCC_BE = 0x86,
     JCC_A = 0x87,
     JCC_NS = 0x89,
+    JCC_GE = 0x8D,
 };
 static size_t emit_jcc_placeholder(JitBuffer *buf, uint8_t condition) {
     emit_u8(buf, 0x0F);
@@ -3676,21 +3677,51 @@ static void compile_invoke_any_native(JitCompiler *jc, size_t instruction_start,
     emit_invoke_native_end(jc, native);
 }
 
-/* `array.each() do |x| ... end` and `array.map() do |x| ... end` (see jit.h,
- * DiamondJitLoop): diamond_jit_loop_begin decides, then the loop runs here,
- * calling the block's compiled entry for each element as
- * emit_native_entry_call would, with the closure as the seventh argument and
- * the element as its one argument (after a nil self slot for a block written
- * in a method). The count is re-read every time round, as the C loop does.
- * A status other than OK, and every map result, goes through
- * diamond_jit_loop_step; the end through diamond_jit_loop_end. When begin
- * says no, `fallback` emits the usual call. */
+/* movups xmm<n>, [rsp + disp32] (n < 8) */
+static void emit_movups_load_rsp(JitBuffer *buf, int xmm, int32_t disp) {
+    emit_u8(buf, 0x0F); emit_u8(buf, 0x10);
+    emit_u8(buf, (uint8_t)(0x84 | (xmm << 3)));
+    emit_u8(buf, 0x24);
+    emit_u32_le(buf, (uint32_t)disp);
+}
+
+/* vm->gc_protected[loop.protect_slot] = xmm<n> (n < 8), through RAX and RCX:
+ * the array can move when something else grows it, the slot's index cannot. */
+static void emit_store_protected_slot(JitBuffer *buf, int32_t loop, int xmm) {
+    emit_load_r64_sib(buf, REG_RAX, JIT_VM, (int32_t)offsetof(DiamondVm, gc_protected));
+    emit_load_r64_sib(buf, REG_RCX, REG_RSP, loop + (int32_t)offsetof(DiamondJitLoop, protect_slot));
+    emit_u8(buf, 0x48); emit_u8(buf, 0xC1); emit_u8(buf, 0xE1); emit_u8(buf, 0x04);  /* shl rcx, 4 */
+    emit_u8(buf, 0x0F); emit_u8(buf, 0x11);                                           /* movups */
+    emit_u8(buf, (uint8_t)(0x04 | (xmm << 3))); emit_u8(buf, 0x08);                  /* [rax+rcx] */
+}
+
+/* cmp byte [rsp + disp32], imm8 */
+static void emit_cmp_byte_rsp_imm(JitBuffer *buf, int32_t disp, uint8_t imm) {
+    emit_u8(buf, 0x80); emit_u8(buf, 0xBC); emit_u8(buf, 0x24);
+    emit_u32_le(buf, (uint32_t)disp);
+    emit_u8(buf, imm);
+}
+
+/* A block loop at an INVOKE site (see jit.h, DiamondJitLoop):
+ * diamond_jit_loop_begin decides, then the loop runs here, calling the
+ * block's compiled entry for each element as emit_native_entry_call would,
+ * with the closure as the seventh argument and the loop's arguments (after a
+ * nil self slot for a block written in a method). The code is specialized for
+ * `kind`, which the site's method name fixes; begin checks the receiver and
+ * the rest at run time. An Array's count is re-read every time round, as the
+ * C loops do. A status other than OK goes through diamond_jit_loop_step, and
+ * so does every map result and every select result that is truthy; the end
+ * goes through diamond_jit_loop_end. When begin says no, the usual call is
+ * emitted. */
 static void compile_block_loop(JitCompiler *jc, size_t instruction_start, uint16_t dest,
-        uint16_t recv, uint16_t base, uint8_t argc, uint16_t site_type) {
+        uint16_t recv, uint16_t base, uint8_t argc, uint16_t site_type,
+        DiamondJitLoopKind kind) {
     jc->needs_frame = true;
     jc->has_called = true;
     JitBuffer *buf = &jc->buf;
     const int32_t L = 0;   /* the loop state sits at [rsp] while the loop runs */
+    const bool two_arguments =
+        kind == DIAMOND_JIT_LOOP_EACH_WITH_INDEX || kind == DIAMOND_JIT_LOOP_REDUCE;
     emit_sub_rsp_imm32(buf, DIAMOND_JIT_LOOP_BYTES);
     emit_mov_rr(buf, REG_RDI, JIT_VM);
     emit_mov_rr(buf, REG_RSI, JIT_CHUNK);
@@ -3704,7 +3735,8 @@ static void compile_block_loop(JitCompiler *jc, size_t instruction_start, uint16
 
     const size_t loop_top = buf->length;
     /* This loop bypasses block_call_run. Send cancellation through step's
-     * failure path so map releases its protected result before unwinding. */
+     * failure path so the loop's protected values are released before
+     * unwinding. */
     emit_mov_rr(buf, REG_RAX, JIT_VM);
     emit_load_r64(buf, REG_RAX, REG_RAX, (int32_t)offsetof(DiamondVm, interrupt_flag));
     emit_test_r64(buf, REG_RAX, REG_RAX);
@@ -3716,14 +3748,41 @@ static void compile_block_loop(JitCompiler *jc, size_t instruction_start, uint16
     const size_t interrupted = emit_jmp_placeholder(buf);
     patch_rel32_to_here(buf, no_interrupt_flag);
     patch_rel32_to_here(buf, not_interrupted);
-    emit_load_r64_sib(buf, REG_RDX, REG_RSP, L + (int32_t)offsetof(DiamondJitLoop, array));
     emit_load_r64_sib(buf, REG_RAX, REG_RSP, L + (int32_t)offsetof(DiamondJitLoop, index));
-    emit_cmp_r64_mem(buf, REG_RAX, REG_RDX, (int32_t)offsetof(DiamondArray, count));
-    const size_t finished = emit_jcc_placeholder(buf, JCC_AE);
-    emit_load_r64(buf, REG_RCX, REG_RDX, (int32_t)offsetof(DiamondArray, values));
-    emit_u8(buf, 0x48); emit_u8(buf, 0xC1); emit_u8(buf, 0xE0); emit_u8(buf, 0x04);  /* shl rax, 4 */
-    emit_u8(buf, 0x0F); emit_u8(buf, 0x10); emit_u8(buf, 0x14); emit_u8(buf, 0x01);  /* movups xmm2, [rcx+rax] */
-    emit_movups_store_rsp(buf, L + (int32_t)offsetof(DiamondJitLoop, current), 2);
+    size_t finished;
+    if (kind == DIAMOND_JIT_LOOP_TIMES) {
+        /* 0 up to the receiver (signed: a negative count runs nothing); the
+         * element is the Int index, whose kind begin already wrote. */
+        emit_load_r64_sib(buf, REG_RDX, REG_RSP, L + (int32_t)offsetof(DiamondJitLoop, limit));
+        emit_u8(buf, 0x48); emit_u8(buf, 0x39); emit_u8(buf, 0xD0);   /* cmp rax, rdx */
+        finished = emit_jcc_placeholder(buf, JCC_GE);
+        emit_store_r64_sib(buf, REG_RSP,
+            L + (int32_t)offsetof(DiamondJitLoop, current) + (int32_t)offsetof(DiamondValue, as),
+            REG_RAX);
+        emit_movups_load_rsp(buf, 2, L + (int32_t)offsetof(DiamondJitLoop, current));
+    } else {
+        emit_load_r64_sib(buf, REG_RDX, REG_RSP, L + (int32_t)offsetof(DiamondJitLoop, array));
+        emit_cmp_r64_mem(buf, REG_RAX, REG_RDX, (int32_t)offsetof(DiamondArray, count));
+        finished = emit_jcc_placeholder(buf, JCC_AE);
+        if (kind == DIAMOND_JIT_LOOP_EACH_WITH_INDEX) {
+            /* The index argument, whose kind begin already wrote. */
+            emit_store_r64_sib(buf, REG_RSP,
+                L + (int32_t)offsetof(DiamondJitLoop, second) + (int32_t)offsetof(DiamondValue, as),
+                REG_RAX);
+            emit_movups_load_rsp(buf, 3, L + (int32_t)offsetof(DiamondJitLoop, second));
+        }
+        emit_load_r64(buf, REG_RCX, REG_RDX, (int32_t)offsetof(DiamondArray, values));
+        emit_u8(buf, 0x48); emit_u8(buf, 0xC1); emit_u8(buf, 0xE0); emit_u8(buf, 0x04);  /* shl rax, 4 */
+        emit_u8(buf, 0x0F); emit_u8(buf, 0x10); emit_u8(buf, 0x14); emit_u8(buf, 0x01);  /* movups xmm2, [rcx+rax] */
+        emit_movups_store_rsp(buf, L + (int32_t)offsetof(DiamondJitLoop, current), 2);
+    }
+    if (kind == DIAMOND_JIT_LOOP_SELECT)
+        emit_store_protected_slot(buf, L, 2);
+    if (kind == DIAMOND_JIT_LOOP_REDUCE) {
+        /* (running value, element) */
+        emit_u8(buf, 0x0F); emit_u8(buf, 0x28); emit_u8(buf, 0xDA);   /* movaps xmm3, xmm2 */
+        emit_movups_load_rsp(buf, 2, L + (int32_t)offsetof(DiamondJitLoop, result));
+    }
     /* Everything the call needs, read before RSP moves. */
     emit_load_r64_sib(buf, REG_R10, REG_RSP, L + (int32_t)offsetof(DiamondJitLoop, code));
     emit_load_r64_sib(buf, REG_R11, REG_RSP, L + (int32_t)offsetof(DiamondJitLoop, child));
@@ -3750,15 +3809,18 @@ static void compile_block_loop(JitCompiler *jc, size_t instruction_start, uint16
     emit_u8(buf, 0x10);
     emit_u8(buf, 0x48); emit_u8(buf, 0x39); emit_u8(buf, 0xCF);   /* cmp rdi, rcx */
     emit_u8(buf, 0x72); emit_u8(buf, (uint8_t)-12);               /* jb the loop */
-    /* The element: register 0, or register 1 behind a nil self slot. */
+    /* The arguments (xmm2, then xmm3): from register 0, or register 1
+     * behind a nil self slot. */
     emit_u8(buf, 0x45); emit_u8(buf, 0x84); emit_u8(buf, 0xC9);   /* test r9b, r9b */
     const size_t with_self = emit_jcc_placeholder(buf, JCC_NE);
     emit_movups_store_rsp(buf, NATIVE_CALL_HEADER, 2);
-    emit_mov_imm64(buf, REG_RCX, 1);
+    if (two_arguments) emit_movups_store_rsp(buf, NATIVE_CALL_HEADER + 16, 3);
+    emit_mov_imm64(buf, REG_RCX, two_arguments ? 2 : 1);
     const size_t placed = emit_jmp_placeholder(buf);
     patch_rel32_to_here(buf, with_self);
     emit_movups_store_rsp(buf, NATIVE_CALL_HEADER + 16, 2);
-    emit_mov_imm64(buf, REG_RCX, 2);
+    if (two_arguments) emit_movups_store_rsp(buf, NATIVE_CALL_HEADER + 32, 3);
+    emit_mov_imm64(buf, REG_RCX, two_arguments ? 3 : 2);
     patch_rel32_to_here(buf, placed);
     /* (vm, registers, &loop.result, count, chunk, depth + 1): the loop state
      * is now [rsp + header-and-file size]. */
@@ -3773,13 +3835,28 @@ static void compile_block_loop(JitCompiler *jc, size_t instruction_start, uint16
     emit_call_reg(buf, REG_R10);
     emit_load_r64_sib(buf, REG_RCX, REG_RSP, 8);
     emit_u8(buf, 0x48); emit_u8(buf, 0x01); emit_u8(buf, 0xCC);   /* add rsp, rcx */
-    /* Status in AL. each skips the step when it is OK; map always takes it. */
+    /* Status in AL. map always takes the step (it pushes every result);
+     * select takes it for a failure or a truthy result (it pushes the
+     * element); the rest only for a failure. */
     emit_movzx_r64_al(buf, REG_RAX);
-    /* movzx ecx, byte [rsp + map] */
-    emit_u8(buf, 0x0F); emit_u8(buf, 0xB6); emit_u8(buf, 0x8C); emit_u8(buf, 0x24);
-    emit_u32_le(buf, (uint32_t)(L + (int32_t)offsetof(DiamondJitLoop, map)));
-    emit_u8(buf, 0x08); emit_u8(buf, 0xC1);                       /* or cl, al */
-    const size_t no_step = emit_jcc_placeholder(buf, JCC_E);
+    size_t no_step = 0, falsy_nil = 0, falsy_false = 0;
+    if (kind != DIAMOND_JIT_LOOP_MAP) {
+        emit_test_r8(buf, REG_RAX);
+        if (kind == DIAMOND_JIT_LOOP_SELECT) {
+            const size_t failed_call = emit_jcc_placeholder(buf, JCC_NE);
+            const int32_t result_kind = L + (int32_t)offsetof(DiamondJitLoop, result);
+            emit_cmp_byte_rsp_imm(buf, result_kind, DIAMOND_VALUE_NIL);
+            falsy_nil = emit_jcc_placeholder(buf, JCC_E);
+            emit_cmp_byte_rsp_imm(buf, result_kind, DIAMOND_VALUE_BOOL);
+            const size_t truthy = emit_jcc_placeholder(buf, JCC_NE);
+            emit_cmp_byte_rsp_imm(buf, result_kind + (int32_t)offsetof(DiamondValue, as), 0);
+            falsy_false = emit_jcc_placeholder(buf, JCC_E);
+            patch_rel32_to_here(buf, truthy);
+            patch_rel32_to_here(buf, failed_call);
+        } else {
+            no_step = emit_jcc_placeholder(buf, JCC_E);
+        }
+    }
     patch_rel32_to_here(buf, interrupted);
     emit_mov_rr(buf, REG_RDI, JIT_VM);
     emit_lea_rsp(buf, REG_RSI, L);
@@ -3788,7 +3865,15 @@ static void compile_block_loop(JitCompiler *jc, size_t instruction_start, uint16
     emit_body_call(jc, (void *)(uintptr_t)diamond_jit_loop_step);
     emit_test_r8(buf, REG_RAX);
     const size_t failed = emit_jcc_placeholder(buf, JCC_NE);
-    patch_rel32_to_here(buf, no_step);
+    if (no_step != 0) patch_rel32_to_here(buf, no_step);
+    if (falsy_nil != 0) patch_rel32_to_here(buf, falsy_nil);
+    if (falsy_false != 0) patch_rel32_to_here(buf, falsy_false);
+    if (kind == DIAMOND_JIT_LOOP_REDUCE) {
+        /* The new running value is the next call's first argument; keep it
+         * protected until then. */
+        emit_movups_load_rsp(buf, 0, L + (int32_t)offsetof(DiamondJitLoop, result));
+        emit_store_protected_slot(buf, L, 0);
+    }
     /* add qword [rsp + index], 1 */
     emit_u8(buf, 0x48); emit_u8(buf, 0x83); emit_u8(buf, 0x84); emit_u8(buf, 0x24);
     emit_u32_le(buf, (uint32_t)(L + (int32_t)offsetof(DiamondJitLoop, index)));
@@ -3819,16 +3904,34 @@ static void compile_block_loop(JitCompiler *jc, size_t instruction_start, uint16
     patch_rel32_to_here(buf, done);
 }
 
-/* Whether an INVOKE could be an Array each/map with a block (compile_block_loop). */
-static bool site_may_be_block_loop(const DiamondFunction *fn, DiamondOpCode opcode, uint16_t name,
+/* The block loop an INVOKE could be (compile_block_loop), or -1: the method
+ * name and argument count fix it, and a known site type must fit the
+ * receiver (an Array, or an Int for times). */
+static int site_block_loop_kind(const DiamondFunction *fn, DiamondOpCode opcode, uint16_t name,
         uint8_t argc, uint16_t site_type) {
-    if ((opcode != DIAMOND_OP_INVOKE && opcode != DIAMOND_OP_INVOKE_MONO) || argc != 1 ||
+    if ((opcode != DIAMOND_OP_INVOKE && opcode != DIAMOND_OP_INVOKE_MONO) ||
         name >= fn->string_count)
-        return false;
-    if (site_type != DIAMOND_TYPE_NONE && site_type != DIAMOND_TYPE_ARRAY) return false;
+        return -1;
+    static const struct { const char *name; DiamondJitLoopKind kind; uint8_t argc; } loops[] = {
+        {"each", DIAMOND_JIT_LOOP_EACH, 1},
+        {"map", DIAMOND_JIT_LOOP_MAP, 1},
+        {"select", DIAMOND_JIT_LOOP_SELECT, 1},
+        {"each_with_index", DIAMOND_JIT_LOOP_EACH_WITH_INDEX, 1},
+        {"reduce", DIAMOND_JIT_LOOP_REDUCE, 2},
+        {"times", DIAMOND_JIT_LOOP_TIMES, 1},
+    };
     const DiamondStringConstant *text = &fn->strings[name];
-    return (text->length == 4 && memcmp(text->chars, "each", 4) == 0) ||
-           (text->length == 3 && memcmp(text->chars, "map", 3) == 0);
+    for (size_t i = 0; i < sizeof loops / sizeof loops[0]; i++) {
+        if (text->length != strlen(loops[i].name) ||
+            memcmp(text->chars, loops[i].name, text->length) != 0)
+            continue;
+        const uint16_t receiver =
+            loops[i].kind == DIAMOND_JIT_LOOP_TIMES ? DIAMOND_TYPE_INT : DIAMOND_TYPE_ARRAY;
+        if (argc != loops[i].argc || (site_type != DIAMOND_TYPE_NONE && site_type != receiver))
+            return -1;
+        return (int)loops[i].kind;
+    }
+    return -1;
 }
 
 static void compile_invoke(JitCompiler *jc, size_t instruction_start, DiamondOpCode opcode,
@@ -3911,8 +4014,10 @@ static void compile_invoke(JitCompiler *jc, size_t instruction_start, DiamondOpC
         }
     }
     if (name >= fn->string_count) { jc->bailed = true; return; }
-    if (site_may_be_block_loop(jc->function, opcode, name, argc, site_type))
-        compile_block_loop(jc, instruction_start, dest, recv, base, argc, site_type);
+    const int loop_kind = site_block_loop_kind(jc->function, opcode, name, argc, site_type);
+    if (loop_kind >= 0)
+        compile_block_loop(jc, instruction_start, dest, recv, base, argc, site_type,
+            (DiamondJitLoopKind)loop_kind);
     else
         compile_invoke_any_native(jc, instruction_start, dest, recv, base, argc, site_type);
 }

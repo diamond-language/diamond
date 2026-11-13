@@ -630,36 +630,49 @@ DiamondVmStatus diamond_jit_method_call_finish(DiamondVm *vm, const DiamondChunk
         const DiamondValue *registers, uint64_t operands, size_t depth, DiamondValue *out,
         uint8_t status);
 
-/* Native block loops (jit.c compile_block_loop): `array.each() do |x| ... end`
- * and `array.map() do |x| ... end` at a compiled INVOKE site run their loop in
- * the caller's own code, calling the block's compiled body directly, when
- * the C path would end in native_array_map_select's loop calling that body
- * through block_call_run. The loop state lives on the caller's native stack;
- * generated code reads the fields up to `index` and `result`, so keep the
- * static_asserts in vm_collections.c in step. */
+/* Native block loops (jit.c compile_block_loop): an Array each, map, select,
+ * each_with_index or reduce, or an Int times, with a block at a compiled
+ * INVOKE site runs its loop in the caller's own code, calling the block's
+ * compiled body directly, when the C path would end in one of
+ * vm_collections.c's native loops calling that body through block_call_run.
+ * The loop state lives on the caller's native stack; generated code reads
+ * and writes it by offset, so keep the static_asserts in vm_collections.c in
+ * step. */
+typedef enum DiamondJitLoopKind : uint8_t {
+    DIAMOND_JIT_LOOP_EACH,              /* block(element); answers the array */
+    DIAMOND_JIT_LOOP_MAP,               /* collects the results */
+    DIAMOND_JIT_LOOP_SELECT,            /* collects elements whose result is truthy */
+    DIAMOND_JIT_LOOP_EACH_WITH_INDEX,   /* block(element, index); answers the array */
+    DIAMOND_JIT_LOOP_REDUCE,            /* block(running value, element); answers it */
+    DIAMOND_JIT_LOOP_TIMES,             /* block(index) for 0...n; answers n */
+} DiamondJitLoopKind;
 typedef struct DiamondJitLoop {
-    const struct DiamondArray *array;   /*  0 the receiver */
+    const struct DiamondArray *array;   /*  0 the receiver (nullptr for times) */
     void *code;                         /*  8 the block's compiled entry */
     const DiamondChunk *child;          /* 16 the chunk it runs in */
     const struct DiamondClosure *closure; /* 24 the block */
     uint32_t frame_bytes;               /* 32 its register file */
-    uint8_t self_slot;                  /* 36 the element goes in register 1 */
-    uint8_t map;                        /* 37 collect the results */
+    uint8_t self_slot;                  /* 36 arguments start at register 1 */
+    uint8_t kind;                       /* 37 a DiamondJitLoopKind */
     uint8_t reserved[2];
     uint64_t index;                     /* 40 the next element */
-    DiamondValue result;                /* 48 the block's result */
-    DiamondValue current;               /* 64 the element being passed */
-    struct DiamondArray *collected;     /* 80 map's result, gc-protected */
-    size_t gc_mark;                     /* 88 vm->gc_protected_count before it */
+    DiamondValue result;                /* 48 the block's result; reduce's running value */
+    DiamondValue current;               /* 64 the element being passed (times: Int index) */
+    struct DiamondArray *collected;     /* 80 map/select's result, gc-protected */
+    size_t gc_mark;                     /* 88 vm->gc_protected_count before the loop */
+    int64_t limit;                      /* 96 times: the receiver */
+    size_t protect_slot;                /* 104 vm->gc_protected index: select's element,
+                                         *     reduce's running value */
+    DiamondValue second;                /* 112 each_with_index's Int index argument */
 } DiamondJitLoop;
-enum { DIAMOND_JIT_LOOP_BYTES = 96 };
+enum { DIAMOND_JIT_LOOP_BYTES = 128 };
 
 /* Fills *loop and returns true when the call at `site` (INVOKE or
- * INVOKE_MONO, one argument) is an Array each or map whose block is compiled
- * and takes the element as its one argument, and nothing native code does
- * not handle is in play (a debugger, a resource budget, the depth limit).
- * map's result array is allocated and protected here. False leaves nothing
- * to undo, and the caller makes its usual call. */
+ * INVOKE_MONO) is one of the loops above whose block is compiled and takes
+ * exactly the arguments that loop passes, and nothing native code does not
+ * handle is in play (a debugger, a resource budget, the depth limit).
+ * map/select's result array and the protected slots are set up here. False
+ * leaves nothing to undo, and the caller makes its usual call. */
 bool diamond_jit_loop_begin(DiamondVm *vm, const DiamondChunk *chunk,
         const DiamondValue *registers, const uint8_t *site, size_t depth,
         DiamondJitLoop *loop);
