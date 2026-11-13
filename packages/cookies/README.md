@@ -84,8 +84,12 @@ end
 gremlin_serve(8080, app)
 ```
 
-- `CookieSession.configure(secret:, cookie_name: "_session")` must run inside the
+- `CookieSession.configure(secret:, cookie_name: "_session", secure:)` must run inside the
   per-worker `build_chain`, as above, because each `gremlin_serve` worker has its own VM.
+  The session cookie is sent with `Path=/`, and with `Secure` when `DIAMOND_ENV=production`
+  (the default for `secure:`). Behind a TLS proxy such as nginx the app itself still speaks
+  HTTP; the browser sees HTTPS, so the cookie works. Pass `secure: false` only for a
+  production deployment with no TLS at all.
 - `Csrf.call` allows `GET`, `HEAD`, and `OPTIONS`; any other method must send the
   session's token in an `x-csrf-token` request header, or it gets a 403. A plain HTML
   form needs a little script that copies `Csrf.token(request)` into that header.
