@@ -1,6 +1,6 @@
 # Types
 
-d6 is *gradually typed*. You can write a whole program without a single type
+D6 is *gradually typed*. You can write a whole program without a single type
 annotation, and it runs like a dynamic language. Each annotation you add is a
 promise the language enforces: the compiler rejects code it can prove breaks
 the promise, and the runtime checks the rest the moment a value arrives.
@@ -55,7 +55,7 @@ typed or not.
 
 Some values are only known when the program runs: an element read from an
 untyped array, a value from an untyped function, input you parsed. When one
-of those reaches a typed parameter, attribute or result, d6 checks it right
+of those reaches a typed parameter, attribute or result, D6 checks it right
 there and raises an error that names both types:
 
 ```ruby
@@ -100,10 +100,10 @@ puts(greet(nil))     # => Hello, stranger
 puts(greet("Ada"))   # => Hello, Ada
 ```
 
-After a check such as `name == nil`, `if name`, or `name != nil`, d6 treats
+After a check such as `name == nil`, `if name`, or `name != nil`, D6 treats
 the variable as the non-`nil` type for the rest of that branch.
 
-d6 does not yet *force* you to check: calling `name.upcase()` on a
+D6 does not yet *force* you to check: calling `name.upcase()` on a
 `String | Nil` without a check compiles, and raises
 `undefined method 'upcase' for Nil` at run time if the value is `nil`. The
 annotation still documents the possibility and rejects `nil` everywhere it
@@ -144,7 +144,7 @@ puts(describe("hi"))   # => the text HI
 
 ## Generics
 
-Functions and classes can take type parameters in square brackets. d6 infers
+Functions and classes can take type parameters in square brackets. D6 infers
 them from the arguments, so you rarely write them at the call site:
 
 ```ruby

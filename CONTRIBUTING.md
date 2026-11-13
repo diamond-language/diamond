@@ -1,6 +1,6 @@
 # Contributing
 
-d6 is a personal research language (see [README.md](README.md)). This
+D6 is a personal research language (see [README.md](README.md)). This
 file documents how work actually gets done in this repository -- for
 future-me as much as anyone else -- not a generic open-source intake process.
 
@@ -32,7 +32,7 @@ Required system dependencies:
 - POSIX threads and `ucontext`, provided by the target Linux environment;
 - On x86_64: a CPU supporting the `x86-64-v3` microarchitecture level
   (AVX2, BMI2, FMA -- roughly Intel Haswell/2013 or AMD Excavator/2015
-  onward). `make`/`make release` default to `-march=native`; d6's
+  onward). `make`/`make release` default to `-march=native`; D6's
   arbitrary-precision integers (`src/bignum.c`) lean on BMI2/ADX heavily
   enough that going without them is roughly a 7x slowdown, not a
   rounding error.
@@ -147,7 +147,7 @@ suites start HTTP and WebSocket servers, all bound only to
 targets outside any OS/container or agent sandbox that denies socket
 creation, binding, or loopback connections. An error such as
 `TCPServer.listen ... Operation not permitted` indicates outer sandbox
-policy, not a d6 test failure -- independent of d6's own
+policy, not a D6 test failure -- independent of D6's own
 `--sandbox` mode, which the suite exercises separately.
 
 `make sanitize`/`test-sanitize` run with LeakSanitizer enabled

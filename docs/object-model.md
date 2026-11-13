@@ -1,4 +1,4 @@
-# d6 object model
+# D6 object model
 
 This document describes the implemented object model and its deliberate
 metaprogramming boundaries.
@@ -17,7 +17,7 @@ An instance contains:
 
 Class metadata contains a name, optional superclass index, method table, and an
 ordered instance-variable name table. Classes are module metadata, deliberately
-not first-class d6 objects -- see "Metaprogramming boundaries" below.
+not first-class D6 objects -- see "Metaprogramming boundaries" below.
 
 ## Fields
 

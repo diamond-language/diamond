@@ -54,7 +54,7 @@ Ensure the editor inherits `DIAMOND_BIN` pointing to the absolute path of
 to the absolute path of `build/d6-dap`.
 
 Open `debug_me.d6` and set a gutter breakpoint on `total = price + quantity`.
-Launch **Debug d6 File**. The breakpoint pauses before the calculation;
+Launch **Debug D6 File**. The breakpoint pauses before the calculation;
 inspect `price` and `quantity` in Variables. Use Step Over to reach the
 explicit `debugger()` pause and inspect `total`. The Call Stack shows
 `line_total` and its caller. Continue to see the incorrect printed total.

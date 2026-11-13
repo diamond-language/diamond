@@ -1,7 +1,7 @@
-# d6 for VS Code
+# D6 for VS Code
 
-The extension associates `.d6` with d6. It leaves `.di` files to D;
-legacy d6 sources can still be assigned the d6 language manually.
+The extension associates `.d6` with D6. It leaves `.di` files to D;
+legacy D6 sources can still be assigned the D6 language manually.
 
 Syntax highlighting for `.d6` files — a TextMate grammar (`syntaxes/diamond.tmLanguage.json`)
 built directly from `src/lexer.h`/`src/lexer.c`'s own token list, not derived
@@ -30,7 +30,7 @@ VS Code's own built-in debug UI and protocol handling do the rest.
    `diamond.languageServerPath` to the built binary's absolute path (e.g.
    `/path/to/diamond/build/d6-lsp`).
 3. Open a `.d6` file. The extension activates on the `d6` language,
-   spawns the server, and diagnostics appear as you type (d6's
+   spawns the server, and diagnostics appear as you type (D6's
    compiler stops at the first error, so at most one diagnostic per file
    at a time). A top-level function name or a class name — at its own
    declaration or anywhere it's used, including across a `require` —
@@ -50,7 +50,7 @@ VS Code's own built-in debug UI and protocol handling do the rest.
 
 If the server fails to start (wrong path, not built yet), VS Code shows an
 error notification with the attempted path; server stderr and lifecycle
-events are logged to the "d6 Language Server" output channel. The
+events are logged to the "D6 Language Server" output channel. The
 `d6: Restart Language Server` command restarts it without reloading
 the whole window — useful after rebuilding `d6-lsp`.
 
@@ -65,7 +65,7 @@ the whole window — useful after rebuilding `d6-lsp`.
    in VS Code settings to its absolute path, the same way
    `diamond.languageServerPath` works for the language server above.
 3. Open a `.d6` file, set a gutter breakpoint on any line with a real
-   statement on it, then Run & Debug ("Debug d6 File" from the
+   statement on it, then Run & Debug ("Debug D6 File" from the
    dropdown, or F5). Breakpoints can be added or removed during the session.
    Continue, Step Over, Step Into, and Step Out are supported (see
    [debugging details](../../docs/debugging.md) for limitations).
@@ -85,7 +85,7 @@ own `diamond-template` language id, separate from `d6` — highlighted
 via `syntaxes/diamond-template.tmLanguage.json`, an ERB-style embedded
 grammar: everything outside `<% %>` is plain HTML (VS Code's own built-in
 `text.html.basic` grammar, not bundled here), everything inside a tag is
-real d6 source (the same `source.diamond` grammar a `.d6` file gets),
+real D6 source (the same `source.diamond` grammar a `.d6` file gets),
 and `<%# ... %>` is a comment either way. Diagnostics work the same way
 they do for a `.d6` file (`lsp/div.c` translates the template and maps
 errors back to their real template position — see `docs/lsp.md`'s own

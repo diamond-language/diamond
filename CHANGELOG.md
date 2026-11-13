@@ -1,11 +1,12 @@
 # Changelog
 
-d6 is currently pre-release. This file records user-visible capability
+D6 is currently pre-release. This file records user-visible capability
 milestones rather than every implementation step; the Git history remains the
 authoritative fine-grained record.
 
 ## Unreleased
 
+- The brand is written **D6** everywhere it names the language: guides, READMEs, the docs site, registry pages, the VS Code extension, CLI help text and GitHub release titles. Commands, file names and code stay lowercase (`d6 build`, `.d6`, `d6-lang`).
 - A thread that fails and is never joined now prints its uncaught exception and backtrace on stderr (`d6: runtime error in unjoined thread: ...`) instead of losing it silently. Exit status is unchanged.
 - Bundled cut maintenance avoids redundant timestamp formatting in text logging and simplifies database-config and static-file reads, including file cleanup on read errors. Network-safety comments now describe its string-only checks without outdated claims about runtime capabilities.
 
@@ -58,7 +59,7 @@ changed since rc1.
 
 ## 1.0.0-rc1 — 2026-11-09
 
-The first release candidate for d6 1.0. Since 0.29.0: safe navigation (`&.`), and a faster JIT for
+The first release candidate for D6 1.0. Since 0.29.0: safe navigation (`&.`), and a faster JIT for
 array stores and Int ops with a constant operand (loop and sieve now beat YJIT).
 
 ### Added
@@ -96,7 +97,7 @@ array stores and Int ops with a constant operand (loop and sieve now beat YJIT).
 
 ### Added
 
-- **A portable d6 for any Linux.** Each release now attaches `d6-VERSION-linux-x86_64.tar.gz`
+- **A portable D6 for any Linux.** Each release now attaches `d6-VERSION-linux-x86_64.tar.gz`
   and `d6-VERSION-linux-aarch64.tar.gz`. They hold `d6`, `facet`, `d6-lsp` and `d6-dap` as
   fully static musl executables, with SQLite, PostgreSQL, MySQL/MariaDB (MySQL 8 and MariaDB
   authentication plugins included), TLS, zlib and BCrypt linked in. Before each release they
@@ -323,10 +324,10 @@ array stores and Int ops with a constant operand (loop and sieve now beat YJIT).
 
 ### Added
 
-- **A documentation site.** `tools/docsite/build.d6` (written in d6) turns `docs/` into the site
+- **A documentation site.** `tools/docsite/build.d6` (written in D6) turns `docs/` into the site
   served at getdiamond.codes/docs: a new beginner-friendly guide in `docs/guide/` for people who
   already know another language, followed by the existing reference pages, with a sidebar,
-  an on-this-page panel and d6 syntax highlighting. Guide examples have a Run button that runs
+  an on-this-page panel and D6 syntax highlighting. Guide examples have a Run button that runs
   them in the browser with the homepage's WebAssembly build, and every `# =>` claim in the guide
   is checked by `make test-docs`. `make test-docsite` builds the site and checks every link.
 
@@ -391,7 +392,7 @@ array stores and Int ops with a constant operand (loop and sieve now beat YJIT).
 
 - **Native `each`, `each_with_index`, `reduce` and `times`.** Like `map` and `select` before
   them, Array's `each`, `each_with_index` and `reduce` and Int's `times` call their block
-  from a loop in C instead of the prelude's d6 loop, about 45% fewer instructions per block
+  from a loop in C instead of the prelude's D6 loop, about 45% fewer instructions per block
   call. `break`, `next`, `return`, raises and errors behave as before.
 
 - **Native `Hash#fetch`.** A found key, or a missing key with a fallback, is answered with one
@@ -433,7 +434,7 @@ array stores and Int ops with a constant operand (loop and sieve now beat YJIT).
   object-heavy benchmark went from 457 ms to 339 ms and a block-heavy one from 378 ms to 349 ms.
 
 - **`Array#map` and `Array#select` run natively.** Their loop now runs in C and calls the block
-  directly, instead of through a d6 loop that paid for its own length, index and push calls on
+  directly, instead of through a D6 loop that paid for its own length, index and push calls on
   every element. `break`, `next`, `return` and exceptions inside the block behave as before, and
   so do the error messages for a wrong argument. `==` and `!=` on two Ints that the compiler
   couldn't prove were Ints no longer take the general comparison path. The block-heavy benchmark
@@ -508,8 +509,8 @@ array stores and Int ops with a constant operand (loop and sieve now beat YJIT).
 
 ### Changed
 
-- **Diamond is now d6.** The `.deb` and `.rpm` packages are called `d6-lang` and replace an installed
-  `diamond-lang`. The guides, cut READMEs, registry pages and the VS Code extension say d6; the
+- **Diamond is now D6.** The `.deb` and `.rpm` packages are called `d6-lang` and replace an installed
+  `diamond-lang`. The guides, cut READMEs, registry pages and the VS Code extension say D6; the
   extension's language id, `diamond.*` settings and `diamond` debug type are unchanged, so existing
   settings and `launch.json` files keep working.
 - **The commands are now `d6`, `d6-lsp` and `d6-dap`.** `make install` and the packages keep

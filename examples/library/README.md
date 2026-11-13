@@ -1,6 +1,6 @@
 # examples/library
 
-An example application using d6 cuts for database access, routing, and views:
+An example application using D6 cuts for database access, routing, and views:
 `SQLite3` (native driver) →
 [`arel`](../../packages/arel/README.md) (query builder) →
 [`active_record`](../../packages/active_record/README.md) (`ActiveRecord::Model`

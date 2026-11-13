@@ -1,6 +1,6 @@
 # Database driver benchmark
 
-This benchmark compares d6's native database drivers using:
+This benchmark compares D6's native database drivers using:
 
 - in-process SQLite using `bench/databases/bench.db`, with its default
   rollback-journal durability;
@@ -19,14 +19,14 @@ non-secret and exist only for throwaway loopback-bound containers.
 Each run opens a fresh connection, recreates and seeds the same 1,000-row
 table, warms its point-query shape, then measures 5,000 operations in each
 category. PostgreSQL, MariaDB, and MySQL run in isolated, resource-limited
-Podman services; both SQLite profiles run in the d6 process against a
+Podman services; both SQLite profiles run in the D6 process against a
 real database file, one at SQLite's default durability and one tuned to WAL:
 
 1. primary-key point reads;
 2. ordered range reads returning at most 20 rows; and
 3. primary-key updates.
 
-Every call uses the same d6 `?` placeholder API and includes native
+Every call uses the same D6 `?` placeholder API and includes native
 client preparation, binding, execution, result decoding, and allocation. The
 benchmark is intentionally single-client and sequential: it measures driver
 round-trip cost, not maximum database throughput. Connection and seed times
@@ -58,5 +58,5 @@ ranking: it has no loopback TCP, separate server process, network protocol, or
 server-side authentication. Its autocommit writes do include the filesystem
 and each profile's own transaction/durability behavior — `sqlite` uses
 SQLite's default rollback journal, `sqlite_wal` its WAL mode. Do not interpret
-MariaDB and MySQL as the same server merely because both use d6's
+MariaDB and MySQL as the same server merely because both use D6's
 `MySQL` client API; the harness reports them independently.

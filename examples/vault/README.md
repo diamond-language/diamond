@@ -1,6 +1,6 @@
 # examples/vault
 
-An encrypted secrets file, built entirely from d6's crypto and
+An encrypted secrets file, built entirely from D6's crypto and
 encoding builtins: `BCrypt`, `Cipher` (AES-256-GCM), `HMAC`, `Digest`,
 `SecureRandom`, `Base64`, `Gzip`, and `JSON`.
 
@@ -20,7 +20,7 @@ ok
 
 Commands: `init`, `add NAME` (secret on stdin), `get NAME`, `list`,
 `rm NAME`, and `verify`. The password comes from `VAULT_PASSWORD`, since
-d6 has no way to read a terminal line without echoing it. Exit status
+D6 has no way to read a terminal line without echoing it. Exit status
 is 0 on success, 1 for a vault error (wrong password, unknown entry,
 tampering), 64 for a usage error, and 66 when the file can't be read.
 
@@ -33,7 +33,7 @@ The vault file is JSON (`JSON.stringify` / `JSON.parse`):
 - `salt` and `rounds`: inputs to the key derivation. The 32-byte AES key is
   SHA-256 applied `rounds` times to the salted password (`derive_key` in
   `lib/crypto.d6`). This stands in for a real KDF such as PBKDF2, scrypt,
-  or Argon2, which d6 doesn't provide.
+  or Argon2, which D6 doesn't provide.
 - `entries`: each secret is gzipped (`Gzip.compress`), encrypted with
   AES-256-GCM under a fresh random nonce (`Cipher.encrypt`), and
   Base64-encoded. GCM authenticates as well as encrypts, so
@@ -46,7 +46,7 @@ The vault file is JSON (`JSON.stringify` / `JSON.parse`):
 
 - **The crypto builtins together**, including the nil-on-failure contract
   of `Cipher.decrypt` and the constant-time verify functions.
-- **Binary data in Strings.** A d6 String is a byte buffer, so raw key
+- **Binary data in Strings.** A D6 String is a byte buffer, so raw key
   bytes (`hex_to_bytes` builds them with `chr`) and ciphertext need no
   separate binary type.
 - **Typed `nil` handling.** `unseal` returns `String | Nil`;

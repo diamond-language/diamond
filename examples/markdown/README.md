@@ -2,7 +2,7 @@
 
 A Markdown-to-HTML converter for a practical subset: headings, paragraphs,
 bullet and numbered lists, fenced code, nested blockquotes, rules, and
-inline `code`, **strong**, *emphasis*, and links. It's a tour of d6's
+inline `code`, **strong**, *emphasis*, and links. It's a tour of D6's
 string and `Regexp` handling.
 
 ```text

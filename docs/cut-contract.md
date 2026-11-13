@@ -30,7 +30,7 @@ lookalikes, or trailing separators. A future namespace scheme must be designed
 before accepting scoped names. This narrow rule makes paths and registry names
 unambiguous on case-insensitive filesystems.
 
-Bundled source lives at `packages/<name>/` inside d6's repo. An external
+Bundled source lives at `packages/<name>/` inside D6's repo. An external
 cut may live at the root of its own repo. In either case, the publishable root
 has the same layout:
 
@@ -79,7 +79,7 @@ establish that it matches a lockfile or registry record.
 
 An installed cut occupies `cuts/<name>/` within the consuming project, with
 `cuts/<name>/lib/<name>.d6` as its entry point. Installation never writes into
-d6's own `packages/` tree. A version is selected per name for the whole
+D6's own `packages/` tree. A version is selected per name for the whole
 application because the compiler currently uses a flat program namespace.
 
 ## Manifest
@@ -125,7 +125,7 @@ specified. Runtime dependencies are name-to-range mappings; no floating Git
 branch, arbitrary URL, or local path is allowed in a published cut's runtime
 graph. Optional homepage, source, documentation, and issue links are display
 metadata only and must never determine where `facet` fetches package bytes.
-Compatibility fields for supported d6 versions and external system
+Compatibility fields for supported D6 versions and external system
 libraries need a schema before packages that require them are published.
 
 The manifest declares runtime dependencies only. Development dependencies

@@ -1,6 +1,6 @@
-# d6 1.0.0-rc3
+# D6 1.0.0-rc3
 
-Release date: 2026-11-11. The third release candidate for d6 1.0 focuses on
+Release date: 2026-11-11. The third release candidate for D6 1.0 focuses on
 correctness, smaller deployment artifacts and broader runtime verification.
 
 ## Smaller bytecode caches and executables

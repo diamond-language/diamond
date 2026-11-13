@@ -1,6 +1,6 @@
 # Debugging
 
-d6's only debugging primitive at the language level is the source
+D6's only debugging primitive at the language level is the source
 `debugger()`/`breakpoint()` call ([Runtime features and
 debugging](runtime-reference.md#debugging)): it pauses execution, prints
 the pause site and every currently-live local, then blocks on one line of

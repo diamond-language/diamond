@@ -82,7 +82,7 @@ compiled body at runtime (the callable may come from `compile_method`, as
 long as its arity matches), and `ClassName.define_method(name, callable)`
 adds a brand-new method under a name the class didn't already have. Both
 take the same "patch-factory" shaped `callable` -- a nested, named
-function (d6 has no anonymous closure literal) that captures no
+function (D6 has no anonymous closure literal) that captures no
 variables and was compiled inside the same class, typically returned
 from a `def self.x_factory()` that declares the nested `def` and then
 evaluates to its bare name:
@@ -523,11 +523,11 @@ rescue error: FrozenError
 end
 ```
 
-Every other Array/Hash method d6 has is either already read-only
+Every other Array/Hash method D6 has is either already read-only
 (`length`, `each`, `[]`, `slice`, `keys`, ...) or -- like `delete_at`,
 built from `[]=` and `pop` in the standard library -- raises the same
 way by hitting one of those two primitives internally; there's no
-separate list of "mutating methods" to keep in sync, since d6's own
+separate list of "mutating methods" to keep in sync, since D6's own
 `Array`/`Hash` have no in-place `!`-suffixed methods at all (`sort`,
 `reverse`, `uniq`, and friends already return a new collection, same as
 Ruby's own non-`!` forms). `freeze`/`frozen?` mirror `dup`'s own
@@ -575,7 +575,7 @@ over `dup`/`respond_to?`/`public_send`'s own built-in behavior, checked first.
 receivers, including inheritance, overrides, variadic methods, and
 `method_missing`. Only public targets are callable: private and protected
 methods are rejected even when `public_send` itself is called from within the
-target's class hierarchy. d6 intentionally provides no visibility-
+target's class hierarchy. D6 intentionally provides no visibility-
 bypassing `send` counterpart. A user class may define its own `public_send`;
 that method takes priority over the universal behavior.
 
@@ -657,7 +657,7 @@ keyword, never the other way around.
 **Deliberately not a module/file-boundary enforcement mechanism, unlike
 Kotlin's or Rust's own sealed/closed types** -- and this isn't a smaller
 version of that feature, it's a different one for a real architectural
-reason. d6's own compiled source has no per-file or per-module
+reason. D6's own compiled source has no per-file or per-module
 boundary that survives past `require` expansion at all (the top-level
 [README](../README.md)'s own pipeline: `source -> require expansion ->
 lexer -> Pratt compiler` splices every required file's text into one flat
@@ -847,17 +847,17 @@ Vector.new(1, 2) + Vector.new(3, 4)  # => #<Vector x=4, y=6>
 ```
 
 A class can define `+`, `-`, `*`, `/`, `%`, `==`, `<`, `<=`, `>`, `>=` as
-ordinary instance methods, and d6's own operator syntax (`a + b`, `a ==
+ordinary instance methods, and D6's own operator syntax (`a + b`, `a ==
 b`, ...) dispatches to them — same mechanism as any other method (inherited,
 overridable, reachable through `super`, and satisfies an `interface` that
 requires a method of the same name). Unary minus (`-x`) is a method named
 `negate`, not Ruby's `-@` spelling — a plain identifier, since `-` alone
-already names the binary form and d6 doesn't need new lexer syntax to
+already names the binary form and D6 doesn't need new lexer syntax to
 tell them apart by name (they're already told apart by arity: `negate`
 takes no extra arguments, `-` takes exactly one).
 
 Dispatch is receiver-based only, same as every other method call in
-d6: `a + b` checks whether `a` is an instance whose class defines `+`.
+D6: `a + b` checks whether `a` is an instance whose class defines `+`.
 There's no coercion protocol — if `a` is a plain `Int`/`Float`/`String` and
 `b` is an instance, `a + b` still raises `TypeError`; the instance has to be
 on the left. `!=` isn't separately overloadable — it's always the negation

@@ -80,7 +80,7 @@ Instance methods on the result, all ordinary `.method()` calls:
   feeds it data.
 - Fully blocking/synchronous — no way to run a child in the background,
   poll it, or kill it early (`Process.spawn`, below, is exactly that).
-  A long-running or hung child blocks the calling d6 program for as
+  A long-running or hung child blocks the calling D6 program for as
   long as it runs.
 - A trapped `Signal` (see `Signal.trap` above) does not get to run while
   a `Process.run` call is blocked waiting on the child — it runs once the
@@ -191,7 +191,7 @@ waiting for exit:
   — `db.execute("BEGIN")`/`"COMMIT"`/`"ROLLBACK"` already work today
   through plain SQL, and `packages/active_record`'s
   `ActiveRecord::Transaction.run`/`.run_nested` already builds exactly
-  this convenience layer in pure d6 code on top of it (including
+  this convenience layer in pure D6 code on top of it (including
   `SAVEPOINT`-based nesting), so there's no native gap here to close.
 - **Named timezones and a separate `Date`-only type**: no named IANA timezone
   selection (`Time.parse` and `.localtime` support explicit fixed UTC offsets;

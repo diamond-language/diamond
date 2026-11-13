@@ -1,14 +1,14 @@
-# Welcome to d6
+# Welcome to D6
 
-d6 is a typed, object-oriented language with a syntax that will look
+D6 is a typed, object-oriented language with a syntax that will look
 familiar if you have written Ruby, Python or JavaScript. You add type
 annotations where you want them, and the compiler checks them before your
 program runs. A register VM runs the result, `d6 build` turns a program into
 a single executable, and threads share nothing: they copy values instead.
 
 This guide is for people who already program in another language. It does
-not explain what a variable or a loop is. It shows how d6 spells the things
-you already know, and spends its time on the places where d6 differs from
+not explain what a variable or a loop is. It shows how D6 spells the things
+you already know, and spends its time on the places where D6 differs from
 what you would guess.
 
 ## How to read it
@@ -27,13 +27,13 @@ The chapters build on each other, so read them in order the first time:
 6. [Types](types.md): what the compiler checks and when.
 7. [Errors](errors.md): raising, rescuing and cleaning up.
 8. [Concurrency](concurrency.md): threads, channels, supervisors and fibers.
-9. [Your first project](../getting-started.md): installing d6, a project
+9. [Your first project](../getting-started.md): installing D6, a project
    with tests and dependencies, and building an executable.
 
 Most examples have a **Run** button that runs them in your browser, using the
 same interpreter compiled to WebAssembly. A comment like `# => 42` shows what
 a line evaluates to or prints. Every example in this guide is run by the
-project's test suite, so what you read is what d6 does.
+project's test suite, so what you read is what D6 does.
 
 ## A first taste
 
@@ -57,7 +57,7 @@ first line executes.
 
 ## If you are coming from...
 
-Each chapter has notes like these where d6 breaks a habit:
+Each chapter has notes like these where D6 breaks a habit:
 
 - **Ruby**: the syntax is close, but every call needs parentheses, blocks are
   `do ... end` only, there are no single-quoted strings, and `yield` belongs
