@@ -666,6 +666,9 @@ typedef struct DiamondJitLoop {
     DiamondValue second;                /* 112 each_with_index's Int index argument */
 } DiamondJitLoop;
 enum { DIAMOND_JIT_LOOP_BYTES = 128 };
+/* The GC's card size (vm_gc.c, DIAMOND_GC_CARD_SIZE), for the inline push
+ * that marks an old result array's card. */
+enum { DIAMOND_JIT_GC_CARD_SHIFT = 6, DIAMOND_JIT_GC_CARD_SIZE = 1 << DIAMOND_JIT_GC_CARD_SHIFT };
 
 /* Fills *loop and returns true when the call at `site` (INVOKE or
  * INVOKE_MONO) is one of the loops above whose block is compiled and takes
