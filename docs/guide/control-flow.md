@@ -1,6 +1,6 @@
 # Control flow
 
-d6's control structures will look familiar. Every one of them ends with
+D6's control structures will look familiar. Every one of them ends with
 `end`, and every one of them is an *expression*: it has a value you can
 assign or return.
 

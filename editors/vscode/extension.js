@@ -401,7 +401,7 @@ function registerDebugAdapter(context) {
 }
 
 function activate(context) {
-    outputChannel = vscode.window.createOutputChannel('d6 Language Server');
+    outputChannel = vscode.window.createOutputChannel('D6 Language Server');
     diagnosticCollection = vscode.languages.createDiagnosticCollection('diamond');
     context.subscriptions.push(outputChannel, diagnosticCollection);
 

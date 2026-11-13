@@ -1,7 +1,7 @@
 # Sandbox mode
 
 Sandbox mode denies every native call that opens a real filesystem, network, or
-subprocess resource -- for running untrusted or merely-not-yet-trusted d6 code
+subprocess resource -- for running untrusted or merely-not-yet-trusted D6 code
 without letting it touch anything outside the process itself. Ordinary computation,
 `puts`/`print`, and everything else keep working normally; a sandboxed program still
 runs to completion and can report a result.
@@ -120,7 +120,7 @@ instructions.
 
 All three raise a rescuable `ResourceLimitError` once exceeded -- the same way as any
 other catchable error, including for the memory budget specifically: a genuine host
-allocator failure is deliberately *not* catchable in d6 (nothing can safely
+allocator failure is deliberately *not* catchable in D6 (nothing can safely
 recover from real memory exhaustion), but hitting your own *configured* cap, with
 plenty of real memory still available, is a different, safe-to-catch situation.
 

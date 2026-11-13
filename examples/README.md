@@ -1,4 +1,4 @@
-# d6 examples
+# D6 examples
 
 Start with an application you can use, then follow its data and control flow.
 Commands below run from the repository root. Build the runtime and install the

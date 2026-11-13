@@ -1,6 +1,6 @@
 # div roadmap
 
-`div` compiles templates into d6 source. See [README.md](README.md) for usage.
+`div` compiles templates into D6 source. See [README.md](README.md) for usage.
 
 ## Potential additions
 

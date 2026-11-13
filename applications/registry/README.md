@@ -92,7 +92,7 @@ client. Configure the reverse proxy's limits and deadlines consistently.
 
 Run `make test-registry-http` from the repository root for the live integration
 suite. It uses OpenSSL, real curl, a temporary CA trusted only by the
-test, a local HTTPS proxy, and a running d6 service. It publishes cuts with
+test, a local HTTPS proxy, and a running D6 service. It publishes cuts with
 transitive dependencies, resolves and executes installed code, reinstalls a
 yanked locked release, and checks takedown visibility.
 
@@ -155,7 +155,7 @@ fields and authorization rules.
 
 ## Backup and recovery
 
-Use the d6 tool (`backup.d6`, run with the registry's own `diamond`) with trusted
+Use the D6 tool (`backup.d6`, run with the registry's own `diamond`) with trusted
 local source and destination parents. Run as the storage owner. Both commands require a **new destination**:
 
 ```sh

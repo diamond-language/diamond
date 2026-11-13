@@ -11,7 +11,7 @@ later merge commit.
 
 [Release workflow 43121499272](https://github.com/diamond-language/diamond/actions/runs/43121499272)
 built, installed and smoke-tested all four native packages before publishing
-[d6 1.0.0-rc3](https://github.com/diamond-language/diamond/releases/tag/v1.0.0-rc3).
+[D6 1.0.0-rc3](https://github.com/diamond-language/diamond/releases/tag/v1.0.0-rc3).
 Downloaded sizes and SHA-256 values matched GitHub's release-asset metadata:
 
 | Asset | SHA-256 |

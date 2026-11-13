@@ -10,7 +10,7 @@ the already tested `1.0` preparation without changing its source tree.
 
 [Release workflow 43162263306](https://github.com/diamond-language/diamond/actions/runs/43162263306)
 built, installed and smoke-tested all four packages before publishing
-[d6 1.0.0-rc4](https://github.com/diamond-language/diamond/releases/tag/v1.0.0-rc4).
+[D6 1.0.0-rc4](https://github.com/diamond-language/diamond/releases/tag/v1.0.0-rc4).
 Downloaded sizes and SHA-256 values matched GitHub's release metadata:
 
 | Asset | SHA-256 |

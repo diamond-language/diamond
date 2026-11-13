@@ -11,6 +11,7 @@
 - **Check before claiming.** Reviewers (human or model) over-claim: verify a finding against the code before fixing it. Report outcomes as they are, including a merge or step that went wrong.
 - **Keep the changelog current.** Include user-visible language and tooling changes in `CHANGELOG.md` under `Unreleased` in the same pull request. Summarize capability milestones rather than every implementation step.
 - Use they/them for people whose pronouns are not stated.
+- **Write the brand as D6.** In prose, titles and UI strings the language is **D6**; commands, file names, code and the program name in messages stay lowercase (`d6 build`, `.d6`, `d6: runtime error`). `docs/internal/` records keep their original wording.
 
 ## Landing a change
 
@@ -26,7 +27,7 @@ CI is slow (about 15 minutes) because it runs two distros times two compilers ti
 
 - `make` builds `build/diamond`; `make facet` builds the package manager. Tests: `tests/cases/NAME.d6` with `.expected`, `.expected_error`, `.expected_contains` or `.expected_lastline`, optional `.env`/`.flags`; `tests/run.sh` holds the shell-driven tests; most packages have `packages/NAME/test.sh` and a `make test-NAME-package` target (Arel is covered by `tests/cases/arel_*` and `make test-database-dialects`).
 - Measure performance on a `make release` build with `perf stat -e instructions:u`, since wall time moves with the laptop's power mode. Run each program once first so a cold bytecode cache does not skew the count, check that every variant printed the same valid output, and remember the JIT is opt-in (`DIAMOND_JIT=1`).
-- Do not add Python to build or test paths; port such checks to d6, shell or C.
+- Do not add Python to build or test paths; port such checks to D6, shell or C.
 - Kill a stale `./pheint-server` before `make test-integration` (it holds port 18200 and the TLS echo test then fails).
 - Write tests so they do not pin source line numbers. A few do on purpose (backtrace and parse-error positions: `tests/run.sh`, `tests/parser_diff.sh`, `tests/multifile`, `tests/parser_*`, `jit_*backtrace*`); leave those files' line layout alone.
 - `tools/test_sanitize.sh` retries the sanitizer suite once for harness flakes but fails at once on any sanitizer report. Do not weaken that.
@@ -45,7 +46,7 @@ The compact in-memory metadata fix and standalone application soak shipped in
 v1.0.0-rc4. See `docs/release-1.0.0-rc4-operations.md` for the verified package
 publication, production revisions, checksums and rollback records.
 
-The latest release is v1.0.0-rc4. v0.23.0 was the first under the d6 name (`d6` commands, `d6-lang` packages, `Cutfile`); the live registry runs main `b83d3882` (rc4 runtime plus the 2026-11-12 package patch releases) at -O3 with the JIT on (see `applications/registry/deploy/PRODUCTION.md`; v0.29.0 added gremlin 0.5.4, and no release since changed a cut); SkindicateV3 and Pheint also run rc4 with the JIT, with every public cut (republished in v0.23.0) carrying `Cutfile`. The remaining rebrand steps (the GitHub org rename, then a domain) wait on the owner; see `docs/roadmap.md`. CI runs the live database dialect tests (`make test-database-dialects`, through `tools/ci_database_dialects.sh`, in an `ubuntu:26.04` container beside the runner's docker) and the registry nginx drill with the full seed rehearsal (`test-registry-nginx` job). Open items:
+The latest release is v1.0.0-rc4. v0.23.0 was the first under the D6 name (`d6` commands, `d6-lang` packages, `Cutfile`); the live registry runs main `b83d3882` (rc4 runtime plus the 2026-11-12 package patch releases) at -O3 with the JIT on (see `applications/registry/deploy/PRODUCTION.md`; v0.29.0 added gremlin 0.5.4, and no release since changed a cut); SkindicateV3 and Pheint also run rc4 with the JIT, with every public cut (republished in v0.23.0) carrying `Cutfile`. The remaining rebrand steps (the GitHub org rename, then a domain) wait on the owner; see `docs/roadmap.md`. CI runs the live database dialect tests (`make test-database-dialects`, through `tools/ci_database_dialects.sh`, in an `ubuntu:26.04` container beside the runner's docker) and the registry nginx drill with the full seed rehearsal (`test-registry-nginx` job). Open items:
 
 1. Needs an owner decision or a driving use case first: sandbox path and host allow-lists (`docs/sandbox.md` says why they were left out; a JSON policy of exact resolved-path prefixes and exact hostnames was proposed) and endless-def conversion of `packages/` (143 methods; a maybe: do it with the next release of each package, or when the owner asks). Supervisors that cross threads and literate programming were rejected outright (roadmap, "Explicitly deferred"); do not propose them again.
 2. Cleanup: the example web UIs have only been tested over HTTP.

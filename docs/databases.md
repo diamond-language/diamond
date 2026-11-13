@@ -99,24 +99,24 @@ methods use:
 *positionally* to a statement's `?` placeholders (1-indexed, sqlite3's
 own convention), or a `Hash` bound *by name* to `:name` placeholders
 (`sqlite3_bind_parameter_index`, looked up with the `:` sigil prepended
-to each d6 `String` key — only the `:name` spelling is recognized
-at the d6 level, not `@name`/`$name`, matching the bare-name-key
+to each D6 `String` key — only the `:name` spelling is recognized
+at the D6 level, not `@name`/`$name`, matching the bare-name-key
 convention most host-language sqlite3 drivers already use). Either form
 is the injection-safe way to include a value in a query; never
 interpolate a value directly into the SQL string. In both forms, a
 parameter-count mismatch raises `ArgumentError`; for named binds, a Hash
 key with no matching `:name` placeholder in the statement also raises
 `ArgumentError`, and a non-`String` Hash key raises `TypeError`. An
-unsupported d6 value anywhere in `params` (anything but
+unsupported D6 value anywhere in `params` (anything but
 `Int`/`Float`/`String`/`Bool`/`Nil`) raises `TypeError`. Anything other
 than `Array`/`Hash`/omitted for `params` itself is `TypeError`. Bind/
 column type mapping:
 
-| d6 → sqlite3 (`params`) | sqlite3 → d6 (`query` results) |
+| D6 → sqlite3 (`params`) | sqlite3 → D6 (`query` results) |
 |---|---|
 | `Int` → `sqlite3_bind_int64` | `INTEGER` → `Int` |
 | `Float` → `sqlite3_bind_double` | `FLOAT` → `Float` |
-| `String` → `sqlite3_bind_text` | `TEXT`/`BLOB` → `String` (a d6 `String` is already a raw byte buffer, so a blob's raw bytes need no separate representation) |
+| `String` → `sqlite3_bind_text` | `TEXT`/`BLOB` → `String` (a D6 `String` is already a raw byte buffer, so a blob's raw bytes need no separate representation) |
 | `Bool` → bound as `Int` 0/1 | `NULL` → `Nil` |
 | `Nil` → `sqlite3_bind_null` | |
 
@@ -213,7 +213,7 @@ same mechanism `SQLite3`'s own methods use:
 `params`, when given, is an `Array` bound *positionally* — but unlike
 `SQLite3`, which binds directly to sqlite3's own native `?` placeholders,
 Postgres's C API (`PQexecParams`) requires numbered `$1`/`$2`/...
-placeholders. `SQLite3`'s `?` spelling is kept at the d6 level anyway,
+placeholders. `SQLite3`'s `?` spelling is kept at the D6 level anyway,
 for API consistency between the two drivers and so either is a drop-in
 target for the same `#query(sql, params)` contract (see
 [`packages/arel/README.md`](../packages/arel/README.md)): the driver
@@ -223,12 +223,12 @@ standard SQL escaped quote). A `?` used outside a string literal always
 counts as a placeholder — Postgres's own JSONB "key exists" `?` operator,
 for instance, isn't distinguishable from one here and isn't usable through
 the params-array call form. A parameter-count mismatch raises
-`ArgumentError`; an unsupported d6 value in `params` (anything but
+`ArgumentError`; an unsupported D6 value in `params` (anything but
 `Int`/`Float`/`String`/`Bool`/`Nil` — notably including a bignum-promoted
 `Int`, matching `SQLite3`'s own same restriction) raises `TypeError`. Bind/
 column type mapping:
 
-| d6 → Postgres (`params`, text format) | Postgres → d6 (`query` results, by OID) |
+| D6 → Postgres (`params`, text format) | Postgres → D6 (`query` results, by OID) |
 |---|---|
 | `Int` → decimal text | `int2`/`int4`/`int8` → `Int` |
 | `Float` → `%.17g`, or `Infinity`/`-Infinity`/`NaN` | `float4`/`float8`/`numeric` → `Float` (lossy for a `numeric` outside `Float` precision) |
@@ -316,11 +316,11 @@ prepared-statement parameter binding — MySQL's own placeholder spelling is
 already `?`, the same as `SQLite3`'s, so (unlike `PostgreSQL`) no
 translation step is needed. A parameter-count mismatch (checked against
 `mysql_stmt_param_count` after preparing) raises `ArgumentError`; an
-unsupported d6 value in `params` (anything but
+unsupported D6 value in `params` (anything but
 `Int`/`Float`/`String`/`Bool`/`Nil`, matching both other drivers' same
 restriction) raises `TypeError`. Bind/column type mapping:
 
-| d6 → MySQL (`params`, prepared-statement binary protocol) | MySQL → d6 (`query` results, by field type) |
+| D6 → MySQL (`params`, prepared-statement binary protocol) | MySQL → D6 (`query` results, by field type) |
 |---|---|
 | `Int` → `MYSQL_TYPE_LONGLONG` | `TINY`/`SHORT`/`LONG`/`LONGLONG`/`INT24`/`YEAR` → `Int` |
 | `Float` → `MYSQL_TYPE_DOUBLE` | `FLOAT`/`DOUBLE`/`DECIMAL`/`NEWDECIMAL` → `Float` |

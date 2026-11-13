@@ -1,6 +1,6 @@
 # examples/plugins
 
-A host that runs untrusted d6 scripts as sandboxed plugins, each in its
+A host that runs untrusted D6 scripts as sandboxed plugins, each in its
 own subprocess, with the host deciding per plugin what it's allowed to touch.
 
 ```text

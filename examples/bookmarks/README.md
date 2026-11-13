@@ -22,7 +22,7 @@ an empty tags column without losing bookmarks. Tags are comma-separated,
 trimmed, lowercased, and deduplicated.
 
 The app listens on loopback and checks Host/Origin for a single-user local
-session. All browser assets are served by d6; no Node build is needed.
+session. All browser assets are served by D6; no Node build is needed.
 Ctrl-C closes the HTTP server and database.
 
 Text imports take one `URL title` per line (title defaults to the URL). JSON

@@ -53,7 +53,7 @@ revoked) published gremlin 0.5.4 (sha256
 waits for closed duplicates before slow-mode shutdown). The runtime was not upgraded.
 `tools/verify_registry_launch.d6` passed for all 20 public cuts.
 
-v0.23.0 (`8a43ef3b0aa13a329180ed154f08641afb51615b`, the first d6 release) was
+v0.23.0 (`8a43ef3b0aa13a329180ed154f08641afb51615b`, the first D6 release) was
 deployed 2026-11-02 with `tools/deploy_registry.sh` after a verified snapshot). The upgrade comes
 first this time because older registries predate `Cutfile`; its own public verification then failed
 as expected (the seed pins versions not yet published; `--no-verify` is the flag for this order).
@@ -139,9 +139,9 @@ as `diamond-registry` with `ProtectSystem=strict` and `NoNewPrivileges=yes`.
 The droplet's other sites (the Skindicate app on skindicate.art and
 modartist.app) were checked after activation.
 
-**Always address the host as `root@dilang.tech`** in d6 tooling, scripts,
+**Always address the host as `root@dilang.tech`** in D6 tooling, scripts,
 and docs. The droplet currently also hosts Skindicate, which is expected to move
-to its own server; d6 deployments must keep working when it does and must
+to its own server; D6 deployments must keep working when it does and must
 never target a Skindicate hostname.
 
 **Reboot drill, 2026-09-24:** after a verified snapshot, the host was rebooted at

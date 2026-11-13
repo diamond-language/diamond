@@ -1,7 +1,7 @@
 # examples/grades
 
 A grade report from CSV lines of `student,course,score`, written to show
-what d6's gradual type system checks and when. Besides the program
+what D6's gradual type system checks and when. Besides the program
 itself, `rejected/` holds four small programs that the compiler refuses to
 run, one per kind of mistake it catches.
 

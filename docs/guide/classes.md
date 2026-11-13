@@ -1,6 +1,6 @@
 # Classes and structs
 
-Everything in d6 is an object, and you define your own kinds of object with
+Everything in D6 is an object, and you define your own kinds of object with
 `class`. For plain bundles of data, `struct` writes the class for you.
 
 ## A class

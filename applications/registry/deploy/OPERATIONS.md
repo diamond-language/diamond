@@ -132,7 +132,7 @@ target (default `HEAD`) and answers:
 - **REQUIRED** (exit 20): the registry app files, a cut it loads (the dependency
   closure of its `require_cut` lines), or the facet changed. Docs, tests, `deploy/`
   templates, and the launch seed never count: new cut versions go in through the API.
-- **OPTIONAL** (exit 10): only the d6 runtime changed. Upgrade for a crash or
+- **OPTIONAL** (exit 10): only the D6 runtime changed. Upgrade for a crash or
   security fix that affects the registry; otherwise wait for the next REQUIRED change.
 - **NONE** (exit 0): nothing relevant changed.
 

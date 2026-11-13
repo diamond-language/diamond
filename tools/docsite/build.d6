@@ -112,7 +112,7 @@ def layout(page: Page, nav: String, previous, following) -> String
     "<head>",
     "<meta charset=\"utf-8\">",
     "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">",
-    "<title>#{escape(page.title())} · d6 docs</title>",
+    "<title>#{escape(page.title())} · D6 docs</title>",
     "<link rel=\"icon\" type=\"image/svg+xml\" href=\"../../favicon.svg\">",
     "<link rel=\"preconnect\" href=\"https://fonts.googleapis.com\">",
     "<link rel=\"preconnect\" href=\"https://fonts.gstatic.com\" crossorigin>",
@@ -123,7 +123,7 @@ def layout(page: Page, nav: String, previous, following) -> String
     "<a class=\"skip-link\" href=\"#content\">Skip to content</a>",
     "<header class=\"topbar\">",
     "  <button class=\"nav-toggle\" aria-controls=\"sidebar\" aria-expanded=\"false\" aria-label=\"Show navigation\"><span></span></button>",
-    "  <a class=\"brand\" href=\"../../\"><span class=\"brand-mark\">d6</span> docs</a>",
+    "  <a class=\"brand\" href=\"../../\"><span class=\"brand-mark\">D6</span> docs</a>",
     "  <nav class=\"top-links\"><a href=\"../../\">Home</a><a href=\"#{REPOSITORY}\">GitHub</a></nav>",
     "</header>",
     "<div class=\"shell\">",
@@ -193,7 +193,7 @@ order.each_with_index() do |pair, index|
   File.write("#{output}/#{page.url()}", layout(page, sidebar(sections, pages, pair[0]), previous, following))
 end
 first = pages[order[0][0]].url()
-File.write("#{output}/index.html", "<!doctype html>\n<meta charset=\"utf-8\">\n<title>d6 docs</title>\n" +
+File.write("#{output}/index.html", "<!doctype html>\n<meta charset=\"utf-8\">\n<title>D6 docs</title>\n" +
   "<meta http-equiv=\"refresh\" content=\"0; url=#{first}\">\n<a href=\"#{first}\">d6 documentation</a>\n")
 ["docs.css", "docs.js"].each() do |asset|
   copy_asset("#{root}/tools/docsite/assets/#{asset}", "#{output}/assets/#{asset}")

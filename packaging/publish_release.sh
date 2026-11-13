@@ -37,5 +37,5 @@ notes="$(sed -E "s#\]\(([A-Za-z][^):]*)\)#](https://github.com/diamond-language/
 if gh release view "$tag" >/dev/null 2>&1; then
     gh release upload "$tag" "$@" --clobber
 else
-    gh release create "$tag" "$@" --verify-tag --title "Diamond $version" --notes "$notes"
+    gh release create "$tag" "$@" --verify-tag --title "D6 $version" --notes "$notes"
 fi
