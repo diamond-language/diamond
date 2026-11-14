@@ -1,6 +1,6 @@
 # Errors
 
-D6 uses exceptions: `raise` stops the current code and unwinds the call
+d6 uses exceptions: `raise` stops the current code and unwinds the call
 stack until a `rescue` handles it. An exception nobody rescues ends the
 program with a message and exit status 70.
 
