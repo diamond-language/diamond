@@ -72,6 +72,24 @@ response="$(read_until_prompt)"
 [[ "$response" == $'10\n{> ' ]]
 count=$((count + 1))
 
+# --- a blank or comment-only line starts no entry: nothing is printed, the
+# prompt comes back, and `_` still holds the previous result. ---
+
+printf '# a comment\n' >&"${REPL[1]}"
+response="$(read_until_prompt)"
+[[ "$response" == "{> " ]]
+count=$((count + 1))
+
+printf '   \n' >&"${REPL[1]}"
+response="$(read_until_prompt)"
+[[ "$response" == "{> " ]]
+count=$((count + 1))
+
+printf '_\n' >&"${REPL[1]}"
+response="$(read_until_prompt)"
+[[ "$response" == $'10\n{> ' ]]
+count=$((count + 1))
+
 # Heap-backed results must remain printable after the candidate VM returns.
 # This used to trigger a use-after-free under ThreadSanitizer because the
 # REPL freed the VM before printing the returned Range object.

@@ -493,6 +493,14 @@ static bool is_bare_clear_command(const char *line) {
     return length == 5 && memcmp(line + start, "clear", 5) == 0;
 }
 
+/* A blank or comment-only line. As the first line of an entry it has nothing
+ * to evaluate, so the REPL re-prompts instead of printing nil (irb and python
+ * do the same). Inside an unfinished entry it is ordinary input. */
+static bool is_blank_or_comment_line(const char *line) {
+    while (*line == ' ' || *line == '\t') line++;
+    return *line == '\0' || *line == '\r' || *line == '\n' || *line == '#';
+}
+
 /* Attempts to compile `source` (the whole REPL session so far, plus the
  * newest pending input) exactly the way -e/file execution do: core.d6
  * prepended, then a #line 1 reset so the diagnostic's own line/column
@@ -1043,6 +1051,11 @@ int diamond_repl_run(void) {
                     fputs("\x1b[H\x1b[2J", real_stdout);
                     fflush(real_stdout);
                 }
+                continue;
+            }
+
+            if (pending.length == 0 && is_blank_or_comment_line(line_buffer.data)) {
+                buffer_free(&line_buffer);
                 continue;
             }
 
