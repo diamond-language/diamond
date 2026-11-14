@@ -601,7 +601,8 @@ define its own `array_foo(values, ...)` (or `hash_`, `string_`, `integer_`,
   `first(n)`, `last(n)`, `count()` / `count(x)` / `count { }`,
   `find_index`/`index`/`rindex` (a value or a block), `values_at`, `dig`,
   `to_h`, `transpose`, `minmax`, `sum { }`, `filter_map`, `each_with_object`,
-  `none?`, `one?` (both also blockless), `inject`, `product`, `combination(k)`, `chunk_while`,
+  `none?`, `one?` (both also blockless), `inject`, `product`, `combination(k)`, `chunk_while`, `slice_when`, `intersect?(other)`,
+`zip` with up to six arrays,
   `rotate`, `shuffle`, `sample`, `to_a`. Operators: `a + b`, `a - b` (elements
   not in `b`), `a & b`, `a | b`, `a * n`, `a * ", "` (join), and a negative
   index (`a[-1]`) or `a[start, length]`.
@@ -610,7 +611,9 @@ define its own `array_foo(values, ...)` (or `hash_`, `string_`, `integer_`,
   has. `map`, `select`/`filter` and `reject` (a `Hash` for a two-parameter
   block), `any?`, `all?`, `none?`, `count`, `find`, `sum`, `min_by`, `max_by`,
   `sort_by`, `sort`, `group_by`, `partition`, `filter_map`,
-  `each_with_object`, `each_with_index`, `to_a`, `size`, `key?`/`has_key?`/
+  `each_with_object` (a three-parameter block gets `(key, value, memo)`),
+  `each_with_index`, `first` / `first(n)` (`[key, value]` pairs),
+  `values_at` / `fetch_values` (raising `IndexError` for a missing key), `to_a`, `size`, `key?`/`has_key?`/
   `include?`/`member?`, `value?`, `dig`, `transform_values`, `transform_keys`,
   `invert`, `update`, `slice`, `except`, `compact`, `delete_if`/`keep_if`
   (in place, like Array's), and `fetch(key)` without a fallback (an
@@ -621,14 +624,16 @@ define its own `array_foo(values, ...)` (or `hash_`, `string_`, `integer_`,
   `each_char`, `each_byte`, `center`, `chop`, `partition`, `delete_prefix`,
   `delete_suffix`, `casecmp?`, `between?`, `match?(regexp)`, `to_sym`, `hex`,
   `oct`, `to_i(base)`, `getbyte(i)`, `split()` (on whitespace),
-  `split(separator, limit)`, and `ljust`/`rjust` with a default space pad.
+  `split(separator, limit)`, `insert(index, other)` and `prepend(other)` (new
+  Strings, like every String method), and `ljust`/`rjust` with a default space
+  pad.
 - **Int and Float**: `**` (exact for an `Int` base and a non-negative `Int`
   exponent, a `Float` otherwise), `pow`, `clamp`, `between?`, `divmod`,
   `fdiv`, `zero?`, `positive?`, `negative?`, `even?`, `odd?`, `succ`,
   `pred`, `gcd`, `lcm`, `digits`, `to_s(base)`, and on Float `truncate`,
   `nan?`, `infinite?`, `finite?`, and `floor(digits)`/`ceil(digits)`/
-  `round(digits)`.
-
+  `round(digits)`; on Int, `step(limit, by) do |i| ... end` (downward for a
+  negative `by`).
 - **Every value**: `to_s()` (the text interpolation gives it) and `nil?()`;
   `Callable#arity`.
 - **Math**: `Math.sqrt`, `cbrt`, `sin`, `cos`, `tan`, `exp`, `log`, `log2`,
@@ -636,5 +641,7 @@ define its own `array_foo(values, ...)` (or `hash_`, `string_`, `integer_`,
   functions (`sqrt(x)`).
 - **Range**: `step(n)`, `first(n)`, `reverse_each`.
 
-`values_at`, `dig`, `slice`, and `except` take up to six arguments.
+`values_at`, `fetch_values`, `dig`, `slice`, and `except` take up to six
+arguments, and `zip` up to six arrays.
+
 

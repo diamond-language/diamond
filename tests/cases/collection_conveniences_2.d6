@@ -1,0 +1,39 @@
+# Hash blocks that take (key, value, memo), Hash values_at/fetch_values/first,
+# zip over several arrays, slice_when, intersect?, Int#step and String
+# insert/prepend.
+
+h = {"a" => 1, "b" => 2}
+puts(h.each_with_object([]) do |key, value, memo| memo.push("#{key}=#{value}") end)
+puts(h.each_with_object([]) do |pair, memo| memo.push(pair[0]) end)
+puts(h.values_at("a", "z", "b"))
+puts(h.fetch_values("b", "a"))
+begin
+  h.fetch_values("a", "z")
+rescue e: IndexError
+  puts(e.message())
+end
+puts(h.first())
+puts(h.first(1))
+puts({}.first())
+puts([1, 2].zip([3, 4], [5]))
+puts([1, 2, 3].zip([4]))
+puts([1, 2, 4, 5, 7].slice_when() do |a, b| b != a + 1 end)
+puts([1, 2].intersect?([2, 3]))
+puts([1, 2].intersect?([3]))
+1.step(10, 4) do |i| puts(i) end
+10.step(1, -4) do |i| puts(i) end
+puts(1.step(3, 1) do |i| end)
+puts("abc".insert(1, "X"))
+puts("abc".insert(-1, "X"))
+puts("abc".insert(0, "X"))
+puts("abc".prepend(">"))
+begin
+  "abc".insert(9, "X")
+rescue e: IndexError
+  puts(e.message())
+end
+begin
+  1.step(5, 0) do |i| end
+rescue e: ArgumentError
+  puts(e.message())
+end

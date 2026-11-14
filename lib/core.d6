@@ -767,16 +767,27 @@ end
 # `[1, 2, 3].zip([4, 5])` => `[[1, 4], [2, 5], [3, nil]]` (the receiver's
 # length wins, the other array is truncated or padded to match, never
 # the other way around).
-def array_zip(values: Array, other: Array) -> Array
+#
+# zip takes up to six arrays, each padded or truncated the same way:
+# `[1, 2].zip([3, 4], [5])` => `[[1, 3, 5], [2, 4, nil]]`.
+def array_zip(values: Array, other: Array, b = :__diamond_absent__, c = :__diamond_absent__, d = :__diamond_absent__, e = :__diamond_absent__, f = :__diamond_absent__) -> Array
+  others = [other]
+  others.push(b) unless b == :__diamond_absent__
+  others.push(c) unless c == :__diamond_absent__
+  others.push(d) unless d == :__diamond_absent__
+  others.push(e) unless e == :__diamond_absent__
+  others.push(f) unless f == :__diamond_absent__
   result = []
   index = 0
   while index < values.length()
-    paired = if index < other.length()
-      other[index]
-    else
-      nil
+    row = [values[index]]
+    column = 0
+    while column < others.length()
+      source = others[column]
+      row.push(if index < source.length() then source[index] else nil end)
+      column += 1
     end
-    result.push([values[index], paired])
+    result.push(row)
     index += 1
   end
   result
@@ -1590,6 +1601,33 @@ def diamond_array_chunk_while(values: Array, callback: Callable[2]) -> Array
   groups
 end
 
+# The opposite cut: a new group starts wherever the block says two
+# neighbours differ.
+def diamond_array_slice_when(values: Array, callback: Callable[2]) -> Array
+  return [] if values.length() == 0
+  groups = [[values[0]]]
+  index = 1
+  while index < values.length()
+    if callback(values[index - 1], values[index])
+      groups.push([values[index]])
+    else
+      groups[groups.length() - 1].push(values[index])
+    end
+    index += 1
+  end
+  groups
+end
+
+# Whether the two arrays share any element.
+def diamond_array_intersect(values: Array, other: Array) -> Bool
+  index = 0
+  while index < values.length()
+    return true if other.include?(values[index])
+    index += 1
+  end
+  false
+end
+
 def diamond_array_rotate(values: Array, count: Int = 1) -> Array
   return [] if values.length() == 0
   shift = count % values.length()
@@ -1898,14 +1936,35 @@ def diamond_hash_filter_map(values: Hash, callback) -> Array
   result
 end
 
-# The block gets ([key, value], memo) and the memo is returned.
-def diamond_hash_each_with_object(values: Hash, memo, callback: Callable[2])
+# The block gets ([key, value], memo), or (key, value, memo) when it takes
+# three parameters, and the memo is returned.
+def diamond_hash_each_with_object(values: Hash, memo, callback)
+  spread = callback.arity() == 3
   index = 0
   while index < values.length()
-    callback([values.key_at(index), values.value_at(index)], memo)
+    if spread
+      callback(values.key_at(index), values.value_at(index), memo)
+    else
+      callback([values.key_at(index), values.value_at(index)], memo)
+    end
     index += 1
   end
   memo
+end
+
+# first() is the first [key, value] pair, or nil; first(n) the first n pairs.
+def diamond_hash_first(values: Hash, n = nil)
+  if n == nil
+    return nil if values.length() == 0
+    return [values.key_at(0), values.value_at(0)]
+  end
+  result = []
+  index = 0
+  while index < n && index < values.length()
+    result.push([values.key_at(index), values.value_at(index)])
+    index += 1
+  end
+  result
 end
 
 def diamond_hash_each_with_index(values: Hash, callback: Callable[2]) -> Hash
@@ -1949,6 +2008,30 @@ def diamond_hash_update(values: Hash, other: Hash) -> Hash
     index += 1
   end
   values
+end
+
+# values_at(k, ...) is the value for each key, nil for a missing one;
+# fetch_values(k, ...) raises IndexError for a missing one instead.
+def diamond_hash_values_at(values: Hash, a = :__diamond_absent__, b = :__diamond_absent__, c = :__diamond_absent__, d = :__diamond_absent__, e = :__diamond_absent__, f = :__diamond_absent__) -> Array
+  keys = diamond_present_arguments(a, b, c, d, e, f)
+  result = []
+  index = 0
+  while index < keys.length()
+    result.push(values[keys[index]])
+    index += 1
+  end
+  result
+end
+
+def diamond_hash_fetch_values(values: Hash, a = :__diamond_absent__, b = :__diamond_absent__, c = :__diamond_absent__, d = :__diamond_absent__, e = :__diamond_absent__, f = :__diamond_absent__) -> Array
+  keys = diamond_present_arguments(a, b, c, d, e, f)
+  result = []
+  index = 0
+  while index < keys.length()
+    result.push(hash_fetch(values, keys[index]))
+    index += 1
+  end
+  result
 end
 
 def diamond_hash_slice(values: Hash, a = :__diamond_absent__, b = :__diamond_absent__, c = :__diamond_absent__, d = :__diamond_absent__, e = :__diamond_absent__, f = :__diamond_absent__) -> Hash
@@ -2116,6 +2199,17 @@ def diamond_string_chop(text: String) -> String
   return text.slice(0, text.length() - 2) if text.end_with?("\r\n")
   text.slice(0, text.length() - 1)
 end
+
+# insert(index, other) and prepend(other) return a new String, like every
+# other String method. A negative index counts from the end, -1 inserting
+# after the last byte.
+def diamond_string_insert(text: String, index: Int, other: String) -> String
+  index += text.length() + 1 if index < 0
+  raise IndexError.new("index #{index} out of string") if index < 0 || index > text.length()
+  text.slice(0, index) + other + text.slice(index, text.length() - index)
+end
+
+def diamond_string_prepend(text: String, other: String) -> String = other + text
 
 def diamond_string_delete_prefix(text: String, prefix: String) -> String
   if text.start_with?(prefix) then text.slice(prefix.length(), text.length() - prefix.length()) else text end

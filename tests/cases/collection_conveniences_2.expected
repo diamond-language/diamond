@@ -1,0 +1,27 @@
+[a=1, b=2]
+[a, b]
+[1, nil, 2]
+[2, 1]
+key not found: z
+[a, 1]
+[[a, 1]]
+nil
+[[1, 3, 5], [2, 4, nil]]
+[[1, 4], [2, nil], [3, nil]]
+[[1, 2], [4, 5], [7]]
+true
+false
+1
+5
+9
+10
+6
+2
+1
+aXbc
+abcX
+Xabc
+>abc
+index 9 out of string
+step can't be 0
+nil
