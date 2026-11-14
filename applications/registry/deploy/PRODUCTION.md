@@ -21,9 +21,16 @@ administration and restore tests; all 20 public cuts passed resolve, digest, loa
 unchanged-lock reinstall. `DIAMOND_JIT=1` and the worker settings were preserved.
 
 On 2026-11-12 `catalog.html` and `cut.html` in the live app directory were replaced with
-their main `230de947` versions (#553/#554, the brand written as d6). The app reads them on
+their main `230de947` versions (#553/#554, the brand written as D6). The app reads them on
 each request, so no restart was needed. The previous copies are in
 `/root/diamond-brand-d6-20261112/registry/`; nothing else in the release changed.
+
+On 2026-11-14 the same two files were replaced with their main `95a7b3fd` versions (#575/#576:
+the brand written as lowercase d6 again, and the die logo with white pips turned with the
+square). No restart. The previous copies are in `/root/diamond-brand-d6-lowercase-20261114/registry/`.
+The /docs pages on getdiamond.codes got only the D6 → d6 text change applied to the live rc5
+build (not a rebuild from main, whose docs describe unreleased features); the previous /docs tree
+is in `/root/diamond-brand-d6-lowercase-20261114/docs/`.
 
 cookies 0.2.4 (#555/#556: `Secure` session cookie under `DIAMOND_ENV=production`, `Path=/`) was
 published on 2026-11-13 UTC with a 30-minute `publish:cookies` credential for the owner subject
