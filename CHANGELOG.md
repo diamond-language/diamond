@@ -6,6 +6,8 @@ authoritative fine-grained record.
 
 ## Unreleased
 
+- A trapped signal (`Signal.trap`) that arrives just before `IO.poll` starts waiting now runs its handler during the wait. JIT-compiled code could miss it and wait out the whole timeout, or forever with no timeout, so a server could ignore SIGTERM.
+
 - A minus written right against a number literal is now part of it, as in Ruby: `-2.5.floor()` is -3 and `-2.abs()` is 2 (both used to negate the call's result). `-2 ** 2` is still -4, and `- 2.abs()` (with a space) and `-x.abs()` still negate the whole call.
 
 - A struct's generated `==` and `to_s` now cover fields added later: a plain subclass that adds fields gets its own `==` over all of them, every plain subclass's `to_s` shows its own name and fields, and a struct whose body assigns extra fields covers those too. Hand-written or included `==`/`to_s` are kept. Also new: `Hash.new(default)` (missing keys read as `default`; `hash.default()` returns it) and `Array.new(n) do |i| ... end`.

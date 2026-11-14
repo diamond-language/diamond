@@ -1,0 +1,22 @@
+# A trapped signal delivered before IO.poll starts waiting still runs its
+# handler during the wait. Compiled code has no per-instruction check, so
+# only IO.poll can notice it (see poll_watching_signals); without that, the
+# handler never ran here and a gremlin server could ignore SIGTERM. The .env
+# runs this under the JIT.
+def handled(times: Channel) = times.send(1)
+
+def signal_then_poll(times: Channel) -> Int
+  child = Process.spawn(["sh", "-c", "kill -TERM $PPID"])
+  child.wait()
+  IO.poll([], [], 500)
+  times.size()
+end
+
+def main()
+  times = Channel.new(4)
+  def handler() = handled(times)
+  Signal.trap("TERM", handler)
+  puts(signal_then_poll(times) == 1 ? "handled during the wait" : "not handled")
+end
+
+main()

@@ -1844,7 +1844,7 @@ DiamondVmStatus outlined_io_poll(DiamondVm *vm,const DiamondChunk *chunk,Diamond
         int poll_result=0;
         DiamondVmStatus interrupt_status=DIAMOND_VM_OK;
         errno=0;
-        poll_result=poll_interruptible(vm,fds,fd_count,timeout_ms,
+        poll_result=poll_watching_signals(vm,fds,fd_count,timeout_ms,
             &interrupt_status);
         VM_PROPAGATE(interrupt_status);
         /* Unlike the plain EINTR-retries-unconditionally loop
@@ -1863,7 +1863,7 @@ DiamondVmStatus outlined_io_poll(DiamondVm *vm,const DiamondChunk *chunk,Diamond
                 dispatch_pending_signals(vm,chunk,depth,&signal_invoked);
             VM_PROPAGATE_SIGNAL(signal_status);
             errno=0;
-            poll_result=poll_interruptible(vm,fds,fd_count,
+            poll_result=poll_watching_signals(vm,fds,fd_count,
                 timeout_ms,&interrupt_status);
             VM_PROPAGATE(interrupt_status);
         }
