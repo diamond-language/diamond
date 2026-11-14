@@ -958,6 +958,18 @@ uint16_t parse_prefix(Compiler *compiler) {
         case DIAMOND_TOKEN_LEFT_BRACE:
             return parse_hash(compiler);
         case DIAMOND_TOKEN_MINUS: {
+            /* `-2.5.round()`: a minus written against a number literal is
+             * part of it, so the call applies to -2.5, as in Ruby;
+             * parse_precedence's postfix loop picks up `.round()` after
+             * this returns. `-2 ** 2` stays -(2 ** 2), and `- 2.abs()`
+             * (with a space) and `-x.abs()` negate the call's result. */
+            if(negative_literal_ahead(compiler)) {
+                const uint16_t literal=parse_prefix(compiler);
+                const uint16_t destination=allocate_register(compiler);
+                emit_instruction(compiler,DIAMOND_OP_NEGATE,destination,literal,0,2);
+                compiler->known_types[destination]=compiler->known_types[literal];
+                return destination;
+            }
             const uint16_t operand = parse_precedence(compiler, PREC_PREFIX);
             const uint16_t destination = allocate_register(compiler);
             emit_instruction(compiler, DIAMOND_OP_NEGATE, destination,

@@ -645,9 +645,11 @@ rules as the global `to_i`: `NaN` and `Infinity` raise a rescuable
 because it scales by a power of ten, results inherit ordinary binary
 floating-point imprecision. `to_s` (including `to_s(base)` for bases 2 to 36), `to_i`, `to_f`, and `abs` also work on
 `Int`s that have promoted past 64 bits, as do the bitwise operators `&`, `|`, `^`, `<<` and `>>`;
-`"ff...".to_i(16)` parses digits past 64 bits into one. Unary minus binds after a method
-call, so `-2.5.round()` is `-(2.5.round())`; write `(0 - 2.5).round()` or
-use a variable for a negative receiver.
+`"ff...".to_i(16)` parses digits past 64 bits into one. A minus written right
+against a number literal is part of the literal, as in Ruby: `-2.5.floor()` is
+`(-2.5).floor()`, -3. Written with a space (`- 2.5.floor()`) or in front of
+anything else (`-x.floor()`), it negates the whole call, and `-2 ** 2` is
+`-(2 ** 2)`, -4.
 
 `Int` has three block-consuming iteration methods, dispatched natively
 straight to ordinary prelude functions rather than through any class —
