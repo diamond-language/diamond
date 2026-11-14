@@ -7946,9 +7946,13 @@ class Parser
   def compile_begin()
     return 0 unless self.consume_block_start()
     original_facts = self.copy_type_facts()
+    # retry revisits the body, as a loop does (compiler_control.c's
+    # open_begin_frame calls prepare_reentered_body_captures).
+    outer_loop_captures_pending = self.enter_capturing_loop()
     frame = self.open_begin_frame()
     body = self.compile_sequence()
     destination = self.close_begin_frame(frame, body, original_facts, 0, 0)
+    @loop_captures_pending = outer_loop_captures_pending
     return destination if @failed
     if @current.kind() != :end
       self.fail("expected 'end' after begin body")
@@ -7981,14 +7985,45 @@ class Parser
   # same answer from its discovery pass instead.
   def compile_body()
     original_facts = self.copy_type_facts()
+    # A rescue clause's retry revisits the body. compiler.c knows from its
+    # discovery pass whether clauses follow; this looks ahead for a rescue
+    # (false positives only cost some boxing).
+    outer_loop_captures_pending = @loop_captures_pending
+    outer_loop_captures_pending = self.enter_capturing_loop() if self.body_may_rescue?()
     skip = self.emit_jump(Opcode::JUMP, 0)
     body_start = @code_count
     body = self.compile_sequence()
     if @current.kind() != :rescue && @current.kind() != :ensure
+      @loop_captures_pending = outer_loop_captures_pending
       self.patch_jump(skip, body_start)
       return body
     end
-    self.close_begin_frame(nil, body, original_facts, skip, body_start)
+    result = self.close_begin_frame(nil, body, original_facts, skip, body_start)
+    @loop_captures_pending = outer_loop_captures_pending
+    result
+  end
+
+  # Is there a rescue before the body's own `end`, or past it? Postfix conditionals
+  # count as openers, so a nested rescue or a later one may answer true too.
+  def body_may_rescue?()
+    lookahead = @lexer.clone()
+    kind = @current.kind()
+    depth = 0
+    while kind != :eof
+      return true if kind == :rescue
+      # The next definition: the body ended, so stop rather than scan the
+      # rest of the file for every method.
+      return false if kind == :def || kind == :class || kind == :module || kind == :interface
+      if kind == :if || kind == :unless || kind == :while || kind == :until ||
+          kind == :loop || kind == :case || kind == :begin || kind == :do
+        depth = depth + 1
+      elsif kind == :end
+        return false if depth == 0
+        depth = depth - 1
+      end
+      kind = lookahead.next_token().kind()
+    end
+    false
   end
 
   # Compiles the clauses after a protected body, up to but not past `end`,
