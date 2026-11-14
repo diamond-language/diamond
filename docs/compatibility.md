@@ -1,6 +1,6 @@
 # Compatibility in 1.x
 
-D6 follows semantic versioning from 1.0.0:
+d6 follows semantic versioning from 1.0.0:
 
 - **Patch releases** (1.0.1, 1.0.2, ...) contain only bug fixes and performance
   improvements.
