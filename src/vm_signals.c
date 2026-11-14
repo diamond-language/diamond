@@ -171,3 +171,40 @@ bool poll_register_fd(struct pollfd *fds,nfds_t *fd_count,size_t max_fds,
     (*fd_count)++;
     return true;
 }
+
+/* IO.poll's wait. The handler only sets diamond_pending_signals; a blocking
+ * poll() is interrupted (EINTR) only by a delivery that lands while it is
+ * already asleep. One that lands just before -- while JIT-compiled code runs,
+ * which has no per-instruction check, or between run_chunk's check and the
+ * syscall -- would leave poll(-1) asleep with the handler unrun, and a
+ * gremlin server would ignore SIGTERM. So while this VM traps a signal, wait
+ * in slices and report EINTR as soon as one of its own signals is pending;
+ * the caller's EINTR loop dispatches it. A signal only another VM traps is
+ * left alone, so a worker without handlers does not spin on it. */
+int poll_watching_signals(DiamondVm *vm,struct pollfd *fds,nfds_t count,
+        int timeout_ms,DiamondVmStatus *status) {
+    unsigned trapped=0;
+    for(size_t index=0;index<DIAMOND_SIGNAL_COUNT;index++)
+        if(vm->trapped_signal_handlers[index].kind==DIAMOND_VALUE_OBJECT&&
+           vm->trapped_signal_handlers[index].as.object->kind==DIAMOND_OBJECT_CLOSURE)
+            trapped|=1u<<index;
+    if(trapped==0)return poll_interruptible(vm,fds,count,timeout_ms,status);
+    const int64_t deadline_ns=timeout_ms<0?0:
+        monotonic_nanoseconds()+(int64_t)timeout_ms*1000000;
+    for(;;) {
+        *status=DIAMOND_VM_OK;
+        if(atomic_load_explicit(&diamond_pending_signals,memory_order_relaxed)&trapped) {
+            errno=EINTR;
+            return -1;
+        }
+        int slice=DIAMOND_SIGNAL_SLICE_MS;
+        if(timeout_ms>=0) {
+            const int64_t remaining_ns=deadline_ns-monotonic_nanoseconds();
+            if(remaining_ns<=0)return poll_interruptible(vm,fds,count,0,status);
+            const int64_t remaining_ms=(remaining_ns+999999)/1000000;
+            if(remaining_ms<slice)slice=(int)remaining_ms;
+        }
+        const int result=poll_interruptible(vm,fds,count,slice,status);
+        if(result!=0||*status!=DIAMOND_VM_OK)return result;
+    }
+}
