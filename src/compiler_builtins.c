@@ -417,8 +417,8 @@ uint16_t plain_type_set_index(Compiler *compiler,uint16_t type_id) {
 /* Array.new(n) and Array.new(n, fill): n copies of fill (nil when omitted),
  * compiled as `[fill] * n` so the VM's own Array * Int supplies the length
  * checks and the copying -- no opcode of its own. As in Ruby, every slot holds
- * the same fill value, not a copy of it. Array.new(n) { |i| ... } is not
- * supported. */
+ * the same fill value, not a copy of it. Array.new(n) do |i| ... end calls
+ * the block for each index instead. */
 uint16_t parse_array_new_call(Compiler *compiler) {
     advance_token(compiler); /* consume '.' */
     if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER||
@@ -440,6 +440,7 @@ uint16_t parse_array_new_call(Compiler *compiler) {
         plain_type_set_index(compiler,DIAMOND_TYPE_INT),length_span);
     skip_newlines(compiler);
     uint16_t fill_register;
+    const bool fill_given=compiler->current.kind==DIAMOND_TOKEN_COMMA;
     if(compiler->current.kind==DIAMOND_TOKEN_COMMA) {
         advance_token(compiler);
         skip_newlines(compiler);
@@ -450,15 +451,30 @@ uint16_t parse_array_new_call(Compiler *compiler) {
         emit_instruction(compiler,DIAMOND_OP_NIL,fill_register,0,0,1);
     }
     if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN) {
-        fail(compiler,compiler->current.span,
-            "expected ')' after Array.new arguments (Array.new(n) { |i| ... } is not supported)");
+        fail(compiler,compiler->current.span,"expected ')' after Array.new arguments");
         return 0;
     }
     advance_token(compiler);
-    if(compiler->current.kind==DIAMOND_TOKEN_LEFT_BRACE||
-       compiler->current.kind==DIAMOND_TOKEN_DO) {
+    if(compiler->current.kind==DIAMOND_TOKEN_DO) {
+        /* Array.new(n) do |i| ... end: the block's value for each index,
+         * through the prelude's integer_diamond_array_new. */
+        if(!fill_given) {
+            /* The block may capture (and box) the local the length came from. */
+            const uint16_t length_snapshot=allocate_register(compiler);
+            emit_instruction(compiler,DIAMOND_OP_MOVE,length_snapshot,length_register,0,2);
+            const uint16_t block=compile_block(compiler);
+            const uint16_t built=emit_invoke_named(compiler,length_snapshot,
+                "diamond_array_new",&block,1);
+            compiler->known_types[built]=DIAMOND_TYPE_ARRAY;
+            return built;
+        }
         fail(compiler,compiler->current.span,
-            "Array.new does not take a block; build the array with n.times or map instead");
+            "Array.new takes a fill value or a block, not both");
+        return 0;
+    }
+    if(compiler->current.kind==DIAMOND_TOKEN_LEFT_BRACE) {
+        fail(compiler,compiler->current.span,
+            "write Array.new's block as `Array.new(n) do |i| ... end`");
         return 0;
     }
     /* ARRAY reads its elements from consecutive registers starting at base. */
@@ -468,6 +484,50 @@ uint16_t parse_array_new_call(Compiler *compiler) {
     emit_instruction(compiler,DIAMOND_OP_ARRAY,single,base,1,3);
     compiler->known_types[single]=DIAMOND_TYPE_ARRAY;
     return compile_binary_op(compiler,DIAMOND_TOKEN_STAR,single,length_register);
+}
+
+/* Hash.new() is an empty Hash; Hash.new(default) one whose missing keys read
+ * as `default` (`counts = Hash.new(0)`, then `counts[word] += 1`). As in
+ * Ruby, every missing key answers the same default object, not a copy. */
+uint16_t parse_hash_new_call(Compiler *compiler) {
+    advance_token(compiler); /* consume '.' */
+    if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER||
+       !name_equals(compiler,"new",compiler->current.span,false)) {
+        fail(compiler,compiler->current.span,"expected 'new' after 'Hash'");
+        return 0;
+    }
+    advance_token(compiler); /* consume 'new' */
+    if(compiler->current.kind!=DIAMOND_TOKEN_LEFT_PAREN) {
+        fail(compiler,compiler->current.span,"expected '(' after 'Hash.new'");
+        return 0;
+    }
+    advance_token(compiler);
+    skip_newlines(compiler);
+    bool has_default=false;
+    uint16_t default_register=0;
+    if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN) {
+        has_default=true;
+        default_register=parse_expression(compiler);
+        skip_newlines(compiler);
+    }
+    if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN) {
+        fail(compiler,compiler->current.span,"expected ')' after Hash.new's default");
+        return 0;
+    }
+    advance_token(compiler);
+    if(compiler->current.kind==DIAMOND_TOKEN_DO||
+       compiler->current.kind==DIAMOND_TOKEN_LEFT_BRACE) {
+        fail(compiler,compiler->current.span,
+            "Hash.new does not take a block; pass a default value");
+        return 0;
+    }
+    const uint16_t base=allocate_register(compiler);
+    const uint16_t hash=allocate_register(compiler);
+    emit_instruction(compiler,DIAMOND_OP_HASH,hash,base,0,3);
+    compiler->known_types[hash]=DIAMOND_TYPE_HASH;
+    if(has_default)
+        (void)emit_invoke_named(compiler,hash,"__diamond_set_default",&default_register,1);
+    return hash;
 }
 
 static uint16_t parse_file_open_arguments(Compiler *compiler) {

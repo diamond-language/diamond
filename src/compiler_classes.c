@@ -1290,6 +1290,9 @@ static bool parse_generic_parent_arguments(Compiler *compiler,DiamondClass *clas
     return true;
 }
 
+static void refresh_struct_subclass_methods(Compiler *compiler,DiamondClass *class,
+        int index,DiamondSpan name);
+
 uint16_t compile_class(Compiler *compiler) {
     const bool this_declaration_sealed=compiler->current.kind==DIAMOND_TOKEN_SEALED;
     advance_token(compiler);
@@ -1529,6 +1532,7 @@ uint16_t compile_class(Compiler *compiler) {
     compiler->current_class=outer;
     compiler->methods_private=outer_private;
     compiler->methods_protected=outer_protected;
+    if(!compiler->failed)refresh_struct_subclass_methods(compiler,class,index,name);
     if(compiler->current.kind==DIAMOND_TOKEN_END) advance_token(compiler);
     const uint16_t result=allocate_register(compiler);
     /* Sole writer; run_chunk's zero-init already covers this. */
@@ -1603,9 +1607,42 @@ static void end_struct_method(Compiler *compiler,StructMethodState *state) {
     free(state->heap_known_types);free(state->heap_known_type_sets);
 }
 
+static bool is_generated_struct_function(const Compiler *compiler,uint16_t function_index) {
+    for(size_t index=0;index<compiler->generated_struct_function_count;index++)
+        if(compiler->generated_struct_functions[index]==function_index)return true;
+    return false;
+}
+
+/* The method `name` resolves to in `class` itself (the last entry wins, as
+ * in method lookup), or nullptr. */
+static DiamondMethod *find_class_method(DiamondClass *class,const char *name) {
+    for(size_t index=class->method_count;index>0;index--)
+        if(strcmp(class->methods[index-1].name,name)==0)return &class->methods[index-1];
+    return nullptr;
+}
+
 static void register_struct_method(Compiler *compiler,DiamondClass *class,
         DiamondSpan name,const char *method_name,uint16_t function_index,
         uint8_t caller_arity) {
+    if(compiler->generated_struct_function_count==compiler->generated_struct_function_capacity) {
+        const size_t capacity=compiler->generated_struct_function_capacity==0?32:
+            compiler->generated_struct_function_capacity*2;
+        uint16_t *grown=realloc(compiler->generated_struct_functions,capacity*sizeof *grown);
+        if(grown==nullptr) {fail(compiler,name,"out of memory");return;}
+        compiler->generated_struct_functions=grown;
+        compiler->generated_struct_function_capacity=capacity;
+    }
+    compiler->generated_struct_functions[compiler->generated_struct_function_count++]=function_index;
+    /* A regenerated == / to_s (a reopened struct subclass) replaces the
+     * earlier generated entry instead of piling up behind it. */
+    DiamondMethod *existing=find_class_method(class,method_name);
+    if(existing!=nullptr&&!existing->included&&
+       is_generated_struct_function(compiler,existing->function_index)&&
+       existing->function_index!=function_index) {
+        existing->function_index=function_index;
+        existing->arity=caller_arity;existing->required_arity=caller_arity;
+        return;
+    }
     if(!diamond_reserve_methods(&class->methods,&class->method_capacity,class->method_count+1)) {
         fail(compiler,name,"too many methods");return;
     }
@@ -1966,7 +2003,13 @@ static void emit_struct_equals(Compiler *compiler, DiamondClass *class,
             const uint16_t type_ok=allocate_register(compiler);
             emit_instruction(compiler,DIAMOND_OP_IS_TYPE,type_ok,other,
                 (uint16_t)(DIAMOND_TYPE_CLASS_BASE+index),3);
-            size_t mismatch_jumps[DIAMOND_MAX_DECLARED_PARAMETERS+2];
+            /* A plain subclass may hold more fields than a struct declares. */
+            size_t *mismatch_jumps=malloc((total_count+2)*sizeof *mismatch_jumps);
+            if(mismatch_jumps==nullptr) {
+                fail(compiler,name,"out of memory compiling ==");
+                end_struct_method(compiler,&state);
+                return;
+            }
             size_t mismatch_count=0;
             mismatch_jumps[mismatch_count++]=
                 emit_jump(compiler,DIAMOND_OP_JUMP_IF_FALSE,type_ok);
@@ -1994,6 +2037,7 @@ static void emit_struct_equals(Compiler *compiler, DiamondClass *class,
             const size_t mismatch_target=compiler->function->code_count;
             for(size_t jump=0;jump<mismatch_count;jump++)
                 patch_jump(compiler,mismatch_jumps[jump],mismatch_target);
+            free(mismatch_jumps);
             const uint16_t false_result=allocate_register(compiler);
             emit_instruction(compiler,DIAMOND_OP_BOOL,false_result,false,0,2);
             emit_instruction(compiler,DIAMOND_OP_RETURN,false_result,0,0,1);
@@ -2062,6 +2106,43 @@ static void emit_struct_to_s(Compiler *compiler, DiamondClass *class,
         register_struct_method(compiler,class,name,"to_s",
             (uint16_t)to_s_function_index,0);
     }
+}
+
+/* After a plain class that inherits from a struct compiles: give it a
+ * generated `==` over all its fields when it adds fields of its own, and a
+ * generated `to_s` naming it and all its fields, so the struct's defaults
+ * keep covering every field. A hand-written (or included) `==`/`to_s` in
+ * the class, or in any class between it and the struct, including a struct
+ * body's own replacement, is kept and nothing is generated for that name.
+ * A reopened class regenerates over the fields it has gained. */
+static void refresh_struct_subclass_methods(Compiler *compiler,DiamondClass *class,
+        int index,DiamondSpan name) {
+    if(class->generated_struct||class->superclass==DIAMOND_NO_CLASS)return;
+    bool equals_open=true,to_s_open=true,found_struct=false;
+    const DiamondMethod *own_equals=find_class_method(class,"==");
+    const DiamondMethod *own_to_s=find_class_method(class,"to_s");
+    if(own_equals!=nullptr&&!is_generated_struct_function(compiler,own_equals->function_index))
+        equals_open=false;
+    if(own_to_s!=nullptr&&!is_generated_struct_function(compiler,own_to_s->function_index))
+        to_s_open=false;
+    for(uint16_t ancestor=class->superclass;ancestor!=DIAMOND_NO_CLASS&&
+            ancestor<compiler->program->class_count;
+            ancestor=compiler->program->classes[ancestor]->superclass) {
+        DiamondClass *parent=compiler->program->classes[ancestor];
+        const DiamondMethod *equals=find_class_method(parent,"==");
+        const DiamondMethod *to_s=find_class_method(parent,"to_s");
+        if(equals!=nullptr&&!is_generated_struct_function(compiler,equals->function_index))
+            equals_open=false;
+        if(to_s!=nullptr&&!is_generated_struct_function(compiler,to_s->function_index))
+            to_s_open=false;
+        if(parent->generated_struct) {found_struct=true;break;}
+    }
+    if(!found_struct)return;
+    const DiamondClass *parent=compiler->program->classes[class->superclass];
+    if(equals_open&&class->field_count>parent->field_count)
+        emit_struct_equals(compiler,class,index,name,class->field_count);
+    if(to_s_open&&!compiler->failed)
+        emit_struct_to_s(compiler,class,index,name,class->name,class->field_count);
 }
 
 /* `struct Name(field: Type, ...) ... end` -- a compile-time-only data
@@ -2190,6 +2271,20 @@ uint16_t compile_struct(Compiler *compiler) {
     compiler->struct_replaceable_eq=true;
     compiler->struct_replaceable_to_s=true;
     if(!compiler->failed) compile_class_body(compiler,class);
+    /* A body that assigned fields beyond the declared ones: regenerate the
+     * still-generated == and to_s over all of them. */
+    if(!compiler->failed&&class->field_count>total_count) {
+        /* Only while the method == / to_s resolve to is still the generated
+         * one: not after a hand-written def or an included module's. */
+        const DiamondMethod *equals=find_class_method(class,"==");
+        const DiamondMethod *to_s=find_class_method(class,"to_s");
+        if(equals!=nullptr&&!equals->included&&
+           is_generated_struct_function(compiler,equals->function_index))
+            emit_struct_equals(compiler,class,index,name,class->field_count);
+        if(to_s!=nullptr&&!to_s->included&&!compiler->failed&&
+           is_generated_struct_function(compiler,to_s->function_index))
+            emit_struct_to_s(compiler,class,index,name,stored_name,class->field_count);
+    }
     compiler->struct_replaceable_class=outer_replaceable_class;
     compiler->struct_replaceable_eq=outer_replaceable_eq;
     compiler->struct_replaceable_to_s=outer_replaceable_to_s;

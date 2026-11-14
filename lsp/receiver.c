@@ -1605,6 +1605,9 @@ bool receiver_hash_uses_enumerable(const char *name) {
 
 bool receiver_builtin_member_hidden(uint16_t builtin_type,const char *member) {
     static const char *const array_hidden[]={"membership","member","map_int","map_string","map_typed","swap_first_two"};
+    /* Helpers the compiler calls (integer_diamond_array_new behind
+     * Array.new's block form) are not methods to offer. */
+    if(strncmp(member,"diamond_",8)==0)return true;
     if(builtin_type!=DIAMOND_TYPE_ARRAY)return false;
     for(size_t index=0;index<sizeof array_hidden/sizeof array_hidden[0];index++)
         if(strcmp(member,array_hidden[index])==0)return true;

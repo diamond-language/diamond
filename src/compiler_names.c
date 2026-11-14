@@ -64,6 +64,7 @@ builtin_namespace_calls[]={
     {"HMAC",parse_hmac_call},{"ProgramBuilder",parse_program_builder_new_call},
     {"Thread",parse_thread_new_call},{"Channel",parse_channel_new_call},
     {"Supervisor",parse_supervisor_new_call},{"Array",parse_array_new_call},
+    {"Hash",parse_hash_new_call},
     {"TCPSocket",parse_tcp_connect_call},{"TCPServer",parse_tcp_listen_call},
     {"DNS",parse_dns_resolve_call},{"IO",parse_io_poll_call},
     {"UDPSocket",parse_udp_socket_call},{"Signal",parse_signal_trap_call},

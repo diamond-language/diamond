@@ -6,6 +6,8 @@ authoritative fine-grained record.
 
 ## Unreleased
 
+- A struct's generated `==` and `to_s` now cover fields added later: a plain subclass that adds fields gets its own `==` over all of them, every plain subclass's `to_s` shows its own name and fields, and a struct whose body assigns extra fields covers those too. Hand-written or included `==`/`to_s` are kept. Also new: `Hash.new(default)` (missing keys read as `default`; `hash.default()` returns it) and `Array.new(n) do |i| ... end`.
+
 ## 1.0.0-rc5 — 2026-11-13
 
 The fifth release candidate fills in everyday collection and String argument

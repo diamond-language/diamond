@@ -713,6 +713,29 @@ DiamondVmStatus collection_invoke_helper(DiamondVm *vm,const DiamondChunk *chunk
      * Checked before the prelude bridges below, since the
      * free-function spelling hash_include_key still exists
      * and calls this method. */
+    /* default() is what a missing key reads as (nil unless the Hash came
+     * from Hash.new(default)). __diamond_set_default is what Hash.new
+     * compiles to, on the Hash it has just made: the default is fixed from
+     * then on (see DiamondHash.default_value). */
+    if(receiver_kind==DIAMOND_OBJECT_HASH&&
+       method_name->length==7&&memcmp(method_name->chars,"default",7)==0) {
+        if(argc!=0)return DIAMOND_VM_ARITY_ERROR;
+        registers[dest]=((const DiamondHash *)registers[recv].as.object)->default_value;
+        return DIAMOND_VM_OK;
+    }
+    if(receiver_kind==DIAMOND_OBJECT_HASH&&
+       method_name->length==21&&memcmp(method_name->chars,"__diamond_set_default",21)==0) {
+        if(argc!=1)return DIAMOND_VM_ARITY_ERROR;
+        DiamondHash *hash=(DiamondHash *)registers[recv].as.object;
+        if(hash->object.old||hash->count!=0) {
+            snprintf(vm->error,sizeof vm->error,
+                "a Hash's default can only be set by Hash.new");
+            return DIAMOND_VM_TYPE_ERROR;
+        }
+        hash->default_value=registers[base];
+        registers[dest]=registers[recv];
+        return DIAMOND_VM_OK;
+    }
     if(receiver_kind==DIAMOND_OBJECT_HASH&&
        method_name->length==12&&
        memcmp(method_name->chars,"include_key?",12)==0) {
@@ -1306,7 +1329,7 @@ DiamondVmStatus diamond_jit_index_get(DiamondVm *vm, const DiamondChunk *chunk,
     if (receiver->as.object->kind == DIAMOND_OBJECT_HASH) {
         DiamondHash *hash = (DiamondHash *)receiver->as.object;
         const ptrdiff_t found = hash_find(hash, *index);
-        *out = found < 0 ? DIAMOND_NIL : hash->entries[(size_t)found].value;
+        *out = found < 0 ? hash->default_value : hash->entries[(size_t)found].value;
         return DIAMOND_VM_OK;
     }
     if (receiver->as.object->kind == DIAMOND_OBJECT_STRING) {
@@ -1405,7 +1428,7 @@ DiamondVmStatus diamond_jit_index_get_string(DiamondVm *vm, const DiamondChunk *
         receiver->as.object->kind == DIAMOND_OBJECT_HASH) {
         const DiamondHash *hash = (const DiamondHash *)receiver->as.object;
         const ptrdiff_t found = hash_find_string_bytes(hash, constant->chars, constant->length);
-        *out = found < 0 ? DIAMOND_NIL : hash->entries[(size_t)found].value;
+        *out = found < 0 ? hash->default_value : hash->entries[(size_t)found].value;
         return DIAMOND_VM_OK;
     }
     DiamondString *key = allocate_string(vm, constant->chars, constant->length);
