@@ -184,7 +184,7 @@ accept a `Regexp` (`"a,b,c".split(re)`, `"abc123".sub(re, "X")`,
 `"abc123".gsub(re, "X")`, `"abc123".scan(re)`), each with backreference
 and capture-group handling of its own — see the
 [Collections guide](collections.md) for those; `Regexp.new` +
-`.match`/`.match?` plus that String quartet is the whole surface for now.
+`.match`/`.match?` plus that String quartet is the whole surface.
 
 ## JSON
 

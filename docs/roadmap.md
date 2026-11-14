@@ -1,6 +1,8 @@
 # D6 roadmap
 
-This roadmap tracks possible work. Completed work belongs in the
+This roadmap lists potential directions for the project. None of it is a
+promise of future functionality: an item may change, wait indefinitely or be
+dropped. What 1.x does promise is in [compatibility](compatibility.md).
 [changelog](../CHANGELOG.md), current behavior in the topic guides, and
 implementation rationale in design documents. A section here says what is not
 done yet; when something lands, delete it (see "Completion policy").

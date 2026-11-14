@@ -126,6 +126,15 @@ puts(ages.length())            # => 3
 ```
 
 A missing key gives `nil`; `fetch(key, default)` gives a default instead.
+`Hash.new(default)` makes a hash whose missing keys read as `default`, which
+suits counting:
+
+```ruby
+counts = Hash.new(0)
+["a", "b", "a"].each() do |word| counts[word] += 1 end
+p(counts)   # => {"a": 2, "b": 1}
+```
+
 Hashes keep their keys in the order they were added. Blocks on a hash take
 the key and the value:
 
@@ -182,9 +191,8 @@ p(tail)                    # => [2, 3]
   blocks; `filter` is called `select`.
 - **Ruby**: blocks are `do ... end` only, and a hash literal's `"key": value`
   makes a *string* key, not a symbol. `array[i]` past the end raises
-  `IndexError` instead of returning `nil`. `inject` without a starting value and
-  `take_while` are not available; use `reduce(start)` and a loop with
-  `break`.
+  `IndexError` instead of returning `nil`. `reduce` and `inject` always take a
+  starting value: `reduce(0)`, not `reduce`.
 
 The [collections reference](../collections.md) lists every method on
 `Array`, `Hash`, `String` and `Range`.

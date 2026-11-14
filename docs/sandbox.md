@@ -232,8 +232,8 @@ Stated honestly, matching this project's own convention for every other feature'
 known limitations:
 
 - **No path/host allow-listing**, only whole-category granularity -- see "Per-capability
-  granularity" above for exactly what's covered and why finer-grained matching stays
-  out of scope for now.
+  granularity" above for exactly what's covered and why finer-grained matching is
+  out of scope.
 - **Spawning threads is bounded, not denied.** `DIAMOND_MAX_LIVE_THREADS` lowers the live
   thread cap (see "Resource limits"); a sandboxed program can still spawn up to that many,
   and each spawned thread's own code is still fully subject to every restriction above

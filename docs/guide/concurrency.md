@@ -29,6 +29,10 @@ The function you start a thread with must be a top-level function (or
 another function that captures no local variables), because the thread
 cannot see the variables of the code that started it.
 
+`join()` re-raises an exception the thread did not rescue. A thread that
+fails and is never joined prints its exception and backtrace on stderr, so
+the error is not lost.
+
 ## Values are copied
 
 Everything you pass to a thread, and everything it returns, is copied into
