@@ -1,0 +1,123 @@
+# A struct's generated == and to_s cover fields a plain subclass (or the
+# struct's own body) adds, unless a hand-written or included one takes over.
+
+struct Point(x: Int, y: Int)
+end
+
+# A plain subclass with a field of its own.
+class Tagged < Point
+  def initialize(x: Int, y: Int, tag: String)
+    super(x, y)
+    @tag = tag
+  end
+end
+
+puts(Tagged.new(1, 2, "a") == Tagged.new(1, 2, "b"))
+puts(Tagged.new(1, 2, "a") == Tagged.new(1, 2, "a"))
+puts(Tagged.new(1, 2, "a") == Point.new(1, 2))
+puts(Point.new(1, 2) == Tagged.new(1, 2, "a"))
+puts(Point.new(1, 2) == Point.new(1, 2))
+puts(Tagged.new(1, 2, "a"))
+
+# A subclass of the subclass, adding another field.
+class Weighted < Tagged
+  def initialize(x: Int, y: Int, tag: String, weight: Int)
+    super(x, y, tag)
+    @weight = weight
+  end
+end
+
+puts(Weighted.new(1, 2, "a", 5) == Weighted.new(1, 2, "a", 6))
+puts(Weighted.new(1, 2, "a", 5) == Weighted.new(1, 2, "a", 5))
+puts(Weighted.new(1, 2, "a", 5))
+
+# A subclass that adds nothing still prints its own name.
+class Alias < Point
+end
+
+puts(Alias.new(3, 4))
+puts(Alias.new(3, 4) == Alias.new(3, 4))
+
+# A hand-written == in the subclass is kept, and so is its subclasses' use of it.
+class ById < Point
+  def initialize(x: Int, y: Int, id: Int)
+    super(x, y)
+    @id = id
+  end
+
+  def id() = @id
+  def ==(other) = other is ById && other.id() == @id
+end
+
+class ByIdChild < ById
+  def initialize(x: Int, y: Int, id: Int, note: String)
+    super(x, y, id)
+    @note = note
+  end
+end
+
+puts(ById.new(1, 2, 7) == ById.new(9, 9, 7))
+puts(ByIdChild.new(1, 2, 7, "a") == ByIdChild.new(1, 2, 7, "b"))
+
+# A hand-written to_s is kept too.
+class Labelled < Point
+  def initialize(x: Int, y: Int, label: String)
+    super(x, y)
+    @label = label
+  end
+
+  def to_s() = "<#{@label}>"
+end
+
+puts(Labelled.new(1, 2, "here"))
+puts(Labelled.new(1, 2, "here") == Labelled.new(1, 2, "there"))
+
+# A struct whose own body adds a field.
+struct Counter(name: String)
+  def bump()
+    @hits = (@hits || 0) + 1
+    self
+  end
+end
+
+puts(Counter.new("a").bump() == Counter.new("a"))
+puts(Counter.new("a").bump() == Counter.new("a").bump())
+puts(Counter.new("a").bump())
+
+# A reopened subclass that gains a field.
+class Reopened < Point
+end
+
+class Reopened
+  def mark()
+    @marked = true
+    self
+  end
+end
+
+puts(Reopened.new(1, 2).mark() == Reopened.new(1, 2))
+puts(Reopened.new(1, 2).mark())
+
+# Hash.new(default) and Array.new(n) do |i| ... end.
+counts = Hash.new(0)
+["a", "b", "a"].each() do |word| counts[word] += 1 end
+puts(counts)
+puts(counts["missing"])
+puts(counts.default())
+puts({}.default())
+puts(counts.dup()["missing"])
+puts(Hash.new()["missing"])
+shared = Hash.new([])
+puts(shared["x"].length())
+def missing(h: Hash) = h["missing"]
+puts(Thread.new(missing, counts).join())
+begin
+  counts.__diamond_set_default(5)
+rescue e
+  puts(e.message())
+end
+puts(Array.new(4) do |i| i * i end)
+n = 3
+puts(Array.new(n) do |i| "#{i} of #{n}" end)
+puts(Array.new(0) do |i| i end)
+puts(Array.new(2, 7))

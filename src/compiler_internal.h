@@ -234,6 +234,12 @@ typedef struct Compiler {
     TailCallCandidate *tail_call_candidates;
     size_t tail_call_candidate_count;
     size_t tail_call_candidate_capacity;
+    /* Functions this pass generated for a struct's `==`/`to_s` (and for its
+     * plain subclasses'), so a subclass can tell a generated default it may
+     * regenerate over all its fields from a hand-written method it must keep. */
+    uint16_t *generated_struct_functions;
+    size_t generated_struct_function_count;
+    size_t generated_struct_function_capacity;
     DiamondDiagnostic *diagnostic;
     Local locals[DIAMOND_MAX_LOCALS];
     size_t local_count;
@@ -855,6 +861,7 @@ DIAMOND_INTERNAL uint16_t parse_channel_new_call(Compiler *compiler);
 DIAMOND_INTERNAL uint16_t parse_supervisor_new_call(Compiler *compiler);
 DIAMOND_INTERNAL uint16_t plain_type_set_index(Compiler *compiler,uint16_t type_id);
 DIAMOND_INTERNAL uint16_t parse_array_new_call(Compiler *compiler);
+DIAMOND_INTERNAL uint16_t parse_hash_new_call(Compiler *compiler);
 DIAMOND_INTERNAL uint16_t parse_dir_entries_call(Compiler *compiler);
 DIAMOND_INTERNAL uint16_t parse_file_call(Compiler *compiler);
 DIAMOND_INTERNAL uint16_t parse_sqlite3_open_call(Compiler *compiler);

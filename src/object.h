@@ -258,6 +258,10 @@ typedef struct DiamondHash {
     size_t count;
     size_t capacity;
     DiamondHashEntry *entries;
+    /* What `hash[key]` answers for a missing key: nil unless the Hash came
+     * from Hash.new(default). Set only while the Hash is brand new (still
+     * young), never changed afterwards, so it needs no write barrier. */
+    DiamondValue default_value;
     size_t *buckets;
     size_t bucket_capacity;
     struct {

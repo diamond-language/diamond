@@ -56,6 +56,7 @@ static void mark_object_children(DiamondObject *object, bool minor) {
         for(size_t i=0;i<array->count;i++) mark_value(array->values[i],minor);
     } else if(object->kind==DIAMOND_OBJECT_HASH) {
         DiamondHash *hash=(DiamondHash *)object;
+        mark_value(hash->default_value,minor);
         for(size_t i=0;i<hash->count;i++) {
             mark_value(hash->entries[i].key,minor);
             mark_value(hash->entries[i].value,minor);
