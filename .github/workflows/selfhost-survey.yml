@@ -1,0 +1,35 @@
+name: self-host survey
+
+# Runs every tests/cases program through the self-hosted compiler
+# (tools/self_host_survey.sh). Too slow for every pull request, so it runs
+# weekly and by hand; a failure means a native compiler change was not ported
+# to selfhost/parser.d6.
+on:
+  schedule:
+    - cron: '17 6 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  survey:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    container:
+      image: ubuntu:26.04
+      options: --init
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 1
+      - name: Install dependencies
+        run: |
+          sh tools/test_ci_apt.sh
+          sh tools/ci_apt.sh gcc libc6-dev make git diffutils findutils ripgrep libssl-dev libsqlite3-dev libpq-dev zlib1g-dev libmariadb-dev libcrypt-dev bc netcat-openbsd openssl curl
+      - name: Build
+        run: make -j4 build/diamond
+      - name: Survey
+        run: |
+          SURVEY_JOBS=4 tools/self_host_survey.sh survey.tsv
+          if grep -q '^fail' survey.tsv; then grep '^fail' survey.tsv; exit 1; fi
