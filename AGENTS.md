@@ -40,13 +40,17 @@ CI is slow (about 15 minutes) because it runs two distros times two compilers ti
 - Published registry releases are immutable. Never publish the taken-down cuts (`active_auth`, `active_discussion`, `active_karma`, `active_social`, `active_tagging`, `dials`). Publishing changed cuts is part of every release, so do not wait to be told; outside a release, publish only on request. Either way, take a verified backup first, use a short-lived scoped credential, revoke it afterwards and destroy local credential files. `tools/publish_registry_seed.d6`, `tools/verify_registry_launch.d6` and `applications/registry/deploy/PRODUCTION.md` (the publication record, which you update after each publish or deploy) describe the procedure; `docs/registry-release-plan.md` has the runbook.
 - Deploying the registry service: `tools/deploy_registry.sh` (`--dry-run` first). It needs the local build VM, which is off by default: start it with `qemu-system-x86_64 -enable-kvm -cpu host -smp 4 -m 4G -drive file=disk.qcow2,if=virtio,format=qcow2 -drive file=seed.iso,if=virtio,format=raw,media=cdrom,readonly=on -netdev user,id=n0,hostfwd=tcp:127.0.0.1:2222-:22 -device virtio-net-pci,netdev=n0 -display none -serial file:console.log` run from `../.vm-build`, wait about a minute for SSH on port 2222, and power it off afterwards (`ssh -p 2222 builder@127.0.0.1 sudo poweroff`, using `../.vm-build/known_hosts`). Then record the new runtime revision in `PRODUCTION.md`. Only deploy when asked.
 
-## State at the last hand-off (2026-11-11)
+## State at the last hand-off (2026-11-13)
 
-The compact in-memory metadata fix and standalone application soak shipped in
-v1.0.0-rc4. See `docs/release-1.0.0-rc4-operations.md` for the verified package
-publication, production revisions, checksums and rollback records.
+Collection conveniences and the JIT speedups shipped in v1.0.0-rc5. See
+`docs/release-1.0.0-rc5-operations.md` for the verified package publication,
+site deployment, checksums and rollback records. 1.0 is being locked down:
+`docs/compatibility.md` states the 1.x policy (patch releases are bug fixes
+and performance only, minor releases may add features, nothing in 1.x breaks
+compatibility), and `tools/self_host_survey.sh` runs weekly in the
+`selfhost-survey` workflow.
 
-The latest release is v1.0.0-rc4. v0.23.0 was the first under the D6 name (`d6` commands, `d6-lang` packages, `Cutfile`); the live registry runs main `b83d3882` (rc4 runtime plus the 2026-11-12 package patch releases) at -O3 with the JIT on (see `applications/registry/deploy/PRODUCTION.md`; v0.29.0 added gremlin 0.5.4, and no release since changed a cut); SkindicateV3 and Pheint also run rc4 with the JIT, with every public cut (republished in v0.23.0) carrying `Cutfile`. The remaining rebrand steps (the GitHub org rename, then a domain) wait on the owner; see `docs/roadmap.md`. CI runs the live database dialect tests (`make test-database-dialects`, through `tools/ci_database_dialects.sh`, in an `ubuntu:26.04` container beside the runner's docker) and the registry nginx drill with the full seed rehearsal (`test-registry-nginx` job). Open items:
+The latest release is v1.0.0-rc5. v0.23.0 was the first under the D6 name (`d6` commands, `d6-lang` packages, `Cutfile`); the live registry runs main `b83d3882` (rc4 runtime plus the 2026-11-12 package patch releases) at -O3 with the JIT on (see `applications/registry/deploy/PRODUCTION.md`; v0.29.0 added gremlin 0.5.4, and no release since changed a cut); SkindicateV3 and Pheint also run rc4 with the JIT, with every public cut (republished in v0.23.0) carrying `Cutfile`. The remaining rebrand steps (the GitHub org rename, then a domain) wait on the owner; see `docs/roadmap.md`. CI runs the live database dialect tests (`make test-database-dialects`, through `tools/ci_database_dialects.sh`, in an `ubuntu:26.04` container beside the runner's docker) and the registry nginx drill with the full seed rehearsal (`test-registry-nginx` job). Open items:
 
 1. Needs an owner decision or a driving use case first: sandbox path and host allow-lists (`docs/sandbox.md` says why they were left out; a JSON policy of exact resolved-path prefixes and exact hostnames was proposed) and endless-def conversion of `packages/` (143 methods; a maybe: do it with the next release of each package, or when the owner asks). Supervisors that cross threads and literate programming were rejected outright (roadmap, "Explicitly deferred"); do not propose them again.
 

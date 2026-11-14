@@ -217,18 +217,13 @@ Current coverage: [portability](portability.md).
 
 ### Stable public boundaries
 
-The language, bytecode format, embedding API, and package conventions are still
-unstable. Versioning should follow proven external consumers rather than freezing
-experimental interfaces prematurely.
+What 1.x promises is in [compatibility](compatibility.md). Left open:
 
-A first stability pass should cover:
-
-- source compatibility promises;
-- bytecode versioning beyond "same build only" -- cache and AOT blobs are rejected on
-  any compiler change, so there is no cross-version format to promise yet;
-- native embedding ownership and error contracts, including the `ProgramBuilder` trust
-  surface;
-- package layout and lockfile compatibility.
+- a supported embedding API (an installed header or library, with ownership and error
+  contracts, including the `ProgramBuilder` trust surface), once an external consumer
+  needs one; until then the C interfaces stay experimental;
+- a bytecode format that outlives one build, if distributing compiled programs without
+  their source becomes a real need.
 
 ## Tooling and distribution
 
