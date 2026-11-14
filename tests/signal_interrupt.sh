@@ -9,7 +9,8 @@ signal_out="$(mktemp)"
 signal_pid=""
 cleanup() {
     if [[ -n "$signal_pid" ]]; then
-        kill -TERM "$signal_pid" 2>/dev/null || true
+        pkill -KILL -P "$signal_pid" 2>/dev/null || true
+        kill -KILL "$signal_pid" 2>/dev/null || true
         wait "$signal_pid" 2>/dev/null || true
     fi
     rm -f "$signal_out"
@@ -68,3 +69,40 @@ if [[ "$actual" != $'ready\ncaught INT\naccepted\nnil' ]]; then
     cat "$signal_out" >&2
     exit 1
 fi
+
+# A trapped signal that arrives before accept() starts blocking -- here while
+# JIT-compiled code runs, which has no per-instruction signal check -- must
+# still run its handler while accept() waits, not only once a client connects
+# (wait_fd_watching_signals). Before that, "caught TERM" never appeared here.
+early_port=18750
+early_out="$(mktemp)"
+( DIAMOND_JIT=1 DIAMOND_JIT_THRESHOLD=1 exec timeout -s KILL 30 "$diamond" -e "$(printf 'def run()
+  def handler()
+    puts("caught TERM")
+  end
+  Signal.trap("TERM", handler)
+  server = TCPServer.listen(%d)
+  child = Process.spawn(["sh", "-c", "kill -TERM $PPID"])
+  child.wait()
+  puts("ready")
+  conn = server.accept()
+  puts("accepted")
+  conn.close()
+  server.close()
+end
+run()' "$early_port")" >"$early_out" 2>&1 ) &
+signal_pid=$!
+rm -f "$signal_out"
+signal_out="$early_out"
+# Without the JIT the handler may run before "ready"; either order is fine.
+wait_for_line 'caught TERM'
+exec 3<>"/dev/tcp/127.0.0.1/$early_port"
+{ exec 3<&- 3>&-; } 2>/dev/null || true
+wait "$signal_pid" || true
+signal_pid=""
+if [[ "$(grep -vx ready "$early_out")" != $'caught TERM\naccepted\nnil' ]]; then
+    echo "signal test: early TERM: unexpected output" >&2
+    cat "$early_out" >&2
+    exit 1
+fi
+rm -f "$early_out"

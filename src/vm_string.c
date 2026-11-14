@@ -789,7 +789,15 @@ static DiamondVmStatus string_chomp_method(DiamondVm *vm,DiamondValue *registers
             return DIAMOND_VM_TYPE_ERROR;
         }
         const DiamondString *suffix=(const DiamondString *)registers[base].as.object;
-        if(suffix->length<=end&&
+        /* chomp("") removes every trailing "\n" and "\r\n" (but not a
+         * lone "\r"), as in Ruby. */
+        if(suffix->length==0) {
+            for(;;) {
+                if(end>=2&&source->chars[end-2]=='\r'&&source->chars[end-1]=='\n')end-=2;
+                else if(end>=1&&source->chars[end-1]=='\n')end-=1;
+                else break;
+            }
+        } else if(suffix->length<=end&&
            memcmp(source->chars+end-suffix->length,suffix->chars,suffix->length)==0)
             end-=suffix->length;
     } else if(end>=2&&source->chars[end-2]=='\r'&&

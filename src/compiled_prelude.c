@@ -1056,6 +1056,19 @@ bool diamond_program_read_cache_file(const char *path,
  * of a cache file and rebuilding them from the template on read. Anything
  * that differs (a post-compile pass touching a prelude function, a program
  * compiled without the template) just means the full program is written. */
+/* Field by field: DiamondTypeMember has padding bytes (after callable_arity
+ * and callable_parameters_typed) that memcmp would compare too, and a member
+ * filled by assignment need not have them zeroed. */
+static bool type_members_identical(const DiamondTypeMember *a,const DiamondTypeMember *b) {
+    if(a->id!=b->id||a->argument_set!=b->argument_set||
+       a->second_argument_set!=b->second_argument_set||
+       a->callable_arity!=b->callable_arity||a->callable_return_set!=b->callable_return_set||
+       a->callable_parameters_typed!=b->callable_parameters_typed)
+        return false;
+    return memcmp(a->callable_parameter_sets,b->callable_parameter_sets,
+        sizeof a->callable_parameter_sets)==0;
+}
+
 static bool functions_identical(const DiamondFunction *a, const DiamondFunction *b) {
     if (a->code_count != b->code_count || a->constant_count != b->constant_count ||
         a->string_count != b->string_count || a->type_set_count != b->type_set_count)
@@ -1091,10 +1104,11 @@ static bool functions_identical(const DiamondFunction *a, const DiamondFunction 
             return false;
     for(size_t i=0;i<a->type_set_count;i++) {
         const DiamondTypeSet *left_set=&a->type_sets[i],*right_set=&b->type_sets[i];
-        if(left_set->count!=right_set->count||left_set->inferred!=right_set->inferred||
-           (left_set->count>0&&memcmp(left_set->members,right_set->members,
-                left_set->count*sizeof *left_set->members)!=0))
+        if(left_set->count!=right_set->count||left_set->inferred!=right_set->inferred)
             return false;
+        for(size_t member=0;member<left_set->count;member++)
+            if(!type_members_identical(&left_set->members[member],&right_set->members[member]))
+                return false;
     }
     return true;
 }
