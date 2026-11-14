@@ -37,5 +37,6 @@ redirects were not touched.
 
 ## Production applications
 
-The registry, SkindicateV3 and Pheint still run rc4 (see
-`docs/release-1.0.0-rc4-operations.md`).
+The registry, SkindicateV3 and Pheint ran rc4 (see
+`docs/release-1.0.0-rc4-operations.md`) until 2026-11-14, when every target moved to
+main `ef4cb8f0` (see `docs/main-ef4cb8f0-operations.md`).
