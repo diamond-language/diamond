@@ -1073,6 +1073,7 @@ DIAMOND_INTERNAL uint16_t add_string_range_mode(Compiler *compiler,size_t start,
                                 DiamondSpan span,bool raw);
 DIAMOND_INTERNAL Precedence token_precedence(DiamondTokenKind kind);
 DIAMOND_INTERNAL bool power_operator_ahead(const Compiler *compiler);
+DIAMOND_INTERNAL bool negative_literal_ahead(const Compiler *compiler);
 DIAMOND_INTERNAL Precedence infix_precedence(const Compiler *compiler);
 DIAMOND_INTERNAL uint16_t parse_integer(Compiler *compiler);
 DIAMOND_INTERNAL uint16_t parse_float(Compiler *compiler);
