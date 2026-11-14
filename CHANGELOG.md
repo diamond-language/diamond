@@ -1,11 +1,12 @@
 # Changelog
 
-D6 is currently pre-release. This file records user-visible capability
+d6 is currently pre-release. This file records user-visible capability
 milestones rather than every implementation step; the Git history remains the
 authoritative fine-grained record.
 
 ## Unreleased
 
+- The brand is written **d6** (lowercase) again in the guides, READMEs, CLI help, the docs site, registry pages, the VS Code extension and GitHub release titles. The registry pages and the website use a new logo: the six face of a die, a rounded square turned 45 degrees with six white pips turned with it.
 - In the REPL (and the browser REPL), a blank or comment-only line no longer prints `nil`: the prompt just comes back, as in irb. Inside an unfinished entry such a line is still ordinary input.
 - A trapped signal that arrives just before a blocking `TCPServer#accept`, `UDPSocket#receive` or socket `read` starts waiting now runs its handler during the wait, as #569 did for `IO.poll`; a signal landing during a blocking socket `read` no longer raises "Interrupted system call".
 - `Float#floor(digits)`, `ceil(digits)` and `round(digits)` give Ruby's answers when the scaled value lands just beside a whole number: `4.35.floor(2)` is 4.35 (was 4.34) and `0.07.ceil(2)` is 0.07 (was 0.08). A value too large to scale, such as `1.0e307.floor(15)`, is returned unchanged instead of `Infinity`.

@@ -1,4 +1,4 @@
-# D6 roadmap
+# d6 roadmap
 
 This roadmap lists potential directions for the project. None of it is a
 promise of future functionality: an item may change, wait indefinitely or be
@@ -7,7 +7,7 @@ dropped. What 1.x does promise is in [compatibility](compatibility.md).
 implementation rationale in design documents. A section here says what is not
 done yet; when something lands, delete it (see "Completion policy").
 
-D6 is a research language. Priorities can change when measurements expose
+d6 is a research language. Priorities can change when measurements expose
 a more valuable runtime, language, or tooling question.
 
 Broader reliability work waits for usage beyond the current two users; existing verification
@@ -19,10 +19,10 @@ background. Further JIT work is optional and measurement-driven.
 These are possible next steps, not commitments. Start with a measured need or
 a concrete application gap.
 
-### Rebrand Diamond as D6
+### Rebrand Diamond as d6
 
-The user-facing name becomes **D6**, which remains a reference to Diamond. The name
-leans into the dice: rewriting in D6 is a saving throw.
+The user-facing name becomes **d6**, which remains a reference to Diamond. The name
+leans into the dice: rewriting in d6 is a saving throw.
 
 - **Logo:** the site still uses the gem mark; a dice mark is the owner's call.
 - **GitHub:** the org becomes `roll1d6` or `rolld6` (not yet chosen). Rename it last.
@@ -95,7 +95,7 @@ New package work should be driven by a concrete application or interoperability 
   applications expose a missing query, association, migration, or dialect feature.
 - Add another SQL dialect only with a live server for verification.
 - Improve package documentation, examples, and compatibility tests.
-- Avoid framework magic that hides database access or weakens D6's type and error
+- Avoid framework magic that hides database access or weakens d6's type and error
   contracts.
 
 ## Runtime research
@@ -111,9 +111,9 @@ Collections are stop-the-world within each isolated VM.
 
 ### Close the benchmark gaps to Ruby
 
-The local `fistfight` suite pairs D6 and Ruby programs (21 pairs). The D6 interpreter beats
-the Ruby interpreter on all 21, and D6 with its JIT (opt-in) is at least even with YJIT on all
-21 (main b9d43998, best D6 over best Ruby). The closest are the call-heavy ones: fib and trees
+The local `fistfight` suite pairs d6 and Ruby programs (21 pairs). The d6 interpreter beats
+the Ruby interpreter on all 21, and d6 with its JIT (opt-in) is at least even with YJIT on all
+21 (main b9d43998, best d6 over best Ruby). The closest are the call-heavy ones: fib and trees
 at 1.00x (61 and 78 ms, same as YJIT), then loop and poly at 0.85x.
 
 - **JIT coverage** -- calls between compiled functions and methods are native now, with a
@@ -193,8 +193,8 @@ demonstrate that current bytecode/source metadata is insufficient.
 
 ### Ergonomics without compatibility chasing
 
-Ruby-inspired syntax should remain familiar, but D6 is not a Ruby compatibility
-implementation. New syntax and core methods should satisfy a demonstrated D6 use
+Ruby-inspired syntax should remain familiar, but d6 is not a Ruby compatibility
+implementation. New syntax and core methods should satisfy a demonstrated d6 use
 case and have clear typing, dispatch, and error semantics.
 
 Areas worth considering:
@@ -243,7 +243,7 @@ Every `tests/cases` program compiles and runs through it (`tools/self_host_surve
 
 ### Fewer languages to build and test
 
-Getting D6 built, tested and deployed should not need a second scripting language on
+Getting d6 built, tested and deployed should not need a second scripting language on
 the machine, and the build and test dependency set should stay a C compiler, make and a POSIX
 shell.
 
