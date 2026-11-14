@@ -7,6 +7,10 @@ authoritative fine-grained record.
 ## Unreleased
 
 - In the REPL (and the browser REPL), a blank or comment-only line no longer prints `nil`: the prompt just comes back, as in irb. Inside an unfinished entry such a line is still ordinary input.
+- A trapped signal that arrives just before a blocking `TCPServer#accept`, `UDPSocket#receive` or socket `read` starts waiting now runs its handler during the wait, as #569 did for `IO.poll`; a signal landing during a blocking socket `read` no longer raises "Interrupted system call".
+- `Float#floor(digits)`, `ceil(digits)` and `round(digits)` give Ruby's answers when the scaled value lands just beside a whole number: `4.35.floor(2)` is 4.35 (was 4.34) and `0.07.ceil(2)` is 0.07 (was 0.08). A value too large to scale, such as `1.0e307.floor(15)`, is returned unchanged instead of `Infinity`.
+- `String#chomp("")` removes every trailing `"\n"` and `"\r\n"`, as in Ruby (it removed nothing). `String#insert` reports the index it was given when out of range.
+- `Hash#merge` keeps the receiver's default (`Hash.new(0).merge(other)` still reads missing keys as 0).
 - A trapped signal (`Signal.trap`) that arrives just before `IO.poll` starts waiting now runs its handler during the wait. JIT-compiled code could miss it and wait out the whole timeout, or forever with no timeout, so a server could ignore SIGTERM.
 
 - A minus written right against a number literal is now part of it, as in Ruby: `-2.5.floor()` is -3 and `-2.abs()` is 2 (both used to negate the call's result). `-2 ** 2` is still -4, and `- 2.abs()` (with a space) and `-x.abs()` still negate the whole call.

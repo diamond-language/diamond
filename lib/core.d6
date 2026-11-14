@@ -295,9 +295,9 @@ def hash_map_values(values: Hash, callback: Callable[1]) -> Hash
 end
 
 # With a block, a key in both hashes gets block(key, old, new) instead of
-# b's value.
+# b's value. The result keeps a's default, as in Ruby.
 def hash_merge(a: Hash, b: Hash, callback = nil) -> Hash
-  result = {}
+  result = Hash.new(a.default())
   index = 0
   while index < a.length()
     result[a.key_at(index)] = a.value_at(index)
@@ -2204,9 +2204,9 @@ end
 # other String method. A negative index counts from the end, -1 inserting
 # after the last byte.
 def diamond_string_insert(text: String, index: Int, other: String) -> String
-  index += text.length() + 1 if index < 0
-  raise IndexError.new("index #{index} out of string") if index < 0 || index > text.length()
-  text.slice(0, index) + other + text.slice(index, text.length() - index)
+  at = index < 0 ? index + text.length() + 1 : index
+  raise IndexError.new("index #{index} out of string") if at < 0 || at > text.length()
+  text.slice(0, at) + other + text.slice(at, text.length() - at)
 end
 
 def diamond_string_prepend(text: String, other: String) -> String = other + text

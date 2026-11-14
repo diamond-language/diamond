@@ -1155,8 +1155,24 @@ DiamondVmStatus numeric_invoke_helper(DiamondVm *vm,const DiamondChunk *chunk,si
             }
             const double scale=pow(10.0,(double)digits.as.integer);
             const double scaled=real*scale;
-            const double whole=floor_method?floor(scaled):ceil_method?ceil(scaled):round(scaled);
-            registers[dest]=DIAMOND_FLOAT(isfinite(real)?whole/scale:real);
+            if(!isfinite(scaled)) {registers[dest]=DIAMOND_FLOAT(real);return DIAMOND_VM_OK;}
+            /* x*scale can land just beside a whole number (4.35*100 is
+             * 434.99999999999994), so the neighbouring step is checked against
+             * x itself, as Ruby does: 4.35.floor(2) is 4.35, 0.07.ceil(2) 0.07
+             * and 2.675.round(2) 2.68 (half away from zero). */
+            double whole;
+            if(floor_method) {
+                whole=floor(scaled);
+                if((whole+1.0)/scale<=real)whole+=1.0;
+            } else if(ceil_method) {
+                whole=ceil(scaled);
+                if((whole-1.0)/scale>=real)whole-=1.0;
+            } else {
+                whole=round(scaled);
+                if(real>0.0&&(whole+0.5)/scale<=real)whole+=1.0;
+                else if(real<0.0&&(whole-0.5)/scale>=real)whole-=1.0;
+            }
+            registers[dest]=DIAMOND_FLOAT(whole/scale);
             return DIAMOND_VM_OK;
         }
         if(to_int||(is_float&&(floor_method||ceil_method||round_method))) {
