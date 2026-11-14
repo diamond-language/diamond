@@ -75,6 +75,18 @@ def integer_downto(start: Int, stop: Int, callback: Callable[1]) -> Int
   start
 end
 
+# a.step(limit, by) counts from a to limit (inclusive) in steps of `by`,
+# downward when `by` is negative.
+def integer_step(start: Int, stop: Int, by: Int, callback: Callable[1]) -> Int
+  raise ArgumentError.new("step can't be 0") if by == 0
+  i = start
+  while (by > 0 && i <= stop) || (by < 0 && i >= stop)
+    callback(i)
+    i += by
+  end
+  start
+end
+
 def array_sort(values: Array[Int]) -> Array[Int]
   result = []
   index = 0
