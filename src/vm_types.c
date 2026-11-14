@@ -127,7 +127,7 @@ static const char *const NATIVE_MEMBERS_ARRAY[]={
     "reverse","sample","select","shuffle","size","slice","sort","sort_by","sum",
     "take","tally","tap","to_a","to_s","uniq","zip"};
 static const char *const NATIVE_MEMBERS_HASH[]={
-    "all?","any?","clear","compact","count","deep_freeze","delete","dup","each",
+    "all?","any?","clear","compact","count","deep_freeze","default","delete","dup","each",
     "each_with_index","empty?","fetch","find","freeze","frozen?","group_by",
     "include?","include_key?","inspect","key_at","keys","lazy","length","map","map_values",
     "max_by","merge","min_by","nil?","partition","reduce","reject","select","size",

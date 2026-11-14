@@ -1,0 +1,34 @@
+false
+true
+false
+false
+true
+Tagged(x: 1, y: 2, tag: a)
+false
+true
+Weighted(x: 1, y: 2, tag: a, weight: 5)
+Alias(x: 3, y: 4)
+true
+true
+true
+<here>
+false
+false
+true
+Counter(name: a, hits: 1)
+false
+Reopened(x: 1, y: 2, marked: true)
+{a: 2, b: 1}
+0
+0
+nil
+0
+nil
+0
+0
+a Hash's default can only be set by Hash.new
+[0, 1, 4, 9]
+[0 of 3, 1 of 3, 2 of 3]
+[]
+[7, 7]
+nil

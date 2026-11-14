@@ -32,8 +32,16 @@ value of `a`, and a bare `name: value` is not a symbol-key shorthand.
 `Array.new(n)` builds an Array of `n` nils and `Array.new(n, fill)` one of `n` copies of `fill`
 (`Array.new(3, 0)` is `[0, 0, 0]`). As in Ruby, every slot holds the same `fill` object, not a copy
 of it: `Array.new(2, [])` is two references to one inner Array. `n` must be an `Int` (a `TypeError`,
-or a compile error for a literal of another type) and not negative (`ArgumentError`). The block form
-`Array.new(n) { |i| ... }` is not supported; use `(0...n).map() do |i| ... end`.
+or a compile error for a literal of another type) and not negative (`ArgumentError`).
+`Array.new(n) do |i| ... end` instead fills each slot with the block's value for that index
+(`Array.new(3) do |i| i * i end` is `[0, 1, 4]`).
+
+`Hash.new()` is an empty Hash, and `Hash.new(default)` one whose missing keys read as `default`
+instead of `nil`, so `counts = Hash.new(0)` then `counts[word] += 1` counts words.
+`hash.default()` returns it. Reading a missing key does not store it, every missing key answers
+the same `default` object (so `Hash.new([])` shares one Array, as in Ruby), and the default is fixed
+when the Hash is made. `dup` and copies into another thread keep it; methods that build a new Hash
+(`merge`, `select`, `transform_values`, ...) do not.
 
 `.push`, `.pop`, and `.length()` are native on both. Array additionally
 has `.join(separator = "")`, native and O(n) total (a `StringBuilder`-

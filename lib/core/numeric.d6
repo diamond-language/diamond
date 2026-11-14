@@ -107,3 +107,16 @@ def array_sort(values: Array[Int]) -> Array[Int]
   end
   result
 end
+
+# What `Array.new(n) do |i| ... end` compiles to: the block's value for each
+# index below n.
+def integer_diamond_array_new(n: Int, callback: Callable[1]) -> Array
+  raise ArgumentError.new("negative array size") if n < 0
+  result = []
+  i = 0
+  while i < n
+    result.push(callback(i))
+    i += 1
+  end
+  result
+end
