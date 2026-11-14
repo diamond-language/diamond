@@ -966,6 +966,8 @@ static inline const DiamondChunk *plain_call_chunk_for(const DiamondFunction *fu
  * milliseconds and looks at the flag between them (see
  * docs/cancellation.md). A VM with no flag waits exactly as before. */
 enum { DIAMOND_INTERRUPT_SLICE_MS = 20 };
+/* How long IO.poll sleeps between checks for an already-delivered trapped signal. */
+enum { DIAMOND_SIGNAL_SLICE_MS = 250 };
 
 static inline bool vm_interrupt_requested(const DiamondVm *vm) {
     return vm->interrupt_flag!=nullptr&&
@@ -993,6 +995,10 @@ DIAMOND_INTERNAL void thread_interrupt(DiamondThread *thread);
 /* poll(2) for IO.poll: same results as poll, but a VM with an interrupt flag
  * sleeps in slices and returns DIAMOND_VM_INTERRUPTED through *status. */
 DIAMOND_INTERNAL int poll_interruptible(DiamondVm *vm,struct pollfd *fds,nfds_t count,
+    int timeout_ms,DiamondVmStatus *status);
+/* IO.poll's wait: poll_interruptible, but while the VM traps a signal it also returns -1/EINTR once
+ * one of its signals is pending, even one delivered before the wait began (vm_signals.c). */
+DIAMOND_INTERNAL int poll_watching_signals(DiamondVm *vm,struct pollfd *fds,nfds_t count,
     int timeout_ms,DiamondVmStatus *status);
 
 DIAMOND_INTERNAL void diamond_vm_init(DiamondVm *vm);
