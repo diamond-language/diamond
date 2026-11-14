@@ -214,6 +214,9 @@ end
 puts(Point.new(3, 4).distance_from_origin())   # => 5.0
 ```
 
+A plain class that extends a struct and adds fields of its own gets an `==`
+and a `to_s` covering those fields too, unless it writes its own.
+
 ## Sealed classes
 
 A `sealed` class lists its variants: it cannot be created directly, only

@@ -103,7 +103,7 @@ puts(greet("Ada"))   # => Hello, Ada
 After a check such as `name == nil`, `if name`, or `name != nil`, D6 treats
 the variable as the non-`nil` type for the rest of that branch.
 
-D6 does not yet *force* you to check: calling `name.upcase()` on a
+D6 does not *force* you to check: calling `name.upcase()` on a
 `String | Nil` without a check compiles, and raises
 `undefined method 'upcase' for Nil` at run time if the value is `nil`. The
 annotation still documents the possibility and rejects `nil` everywhere it

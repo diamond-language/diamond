@@ -133,8 +133,9 @@ sandbox.
   project with `facet new`, tests, dependencies and `d6 build`, then a
   reading order for the rest of `docs/`
 - [CHANGELOG.md](CHANGELOG.md) -- completed capability milestones
-- [docs/roadmap.md](docs/roadmap.md) -- candidate work, explicitly
-  deferred work, and known limitations
+- [Compatibility](docs/compatibility.md) -- what stays stable across 1.x
+- [docs/roadmap.md](docs/roadmap.md) -- potential directions (not promises),
+  explicitly deferred work, and known limitations
 - [Language reference](docs/syntax.md) -- [core syntax](docs/core-syntax.md),
   [callables](docs/callables.md),
   [classes and modules](docs/classes-and-modules.md),

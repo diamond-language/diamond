@@ -191,7 +191,7 @@ callable = Other.compile_method("boxed_label", [], "formatter.wrap(self.label())
   {"formatter": formatter})
 ```
 
-Out of scope for now: `self.`-owned singleton methods (instance methods
+Out of scope: `self.`-owned singleton methods (instance methods
 only) and any sandboxing -- `body_source` runs as ordinary compiled
 bytecode with full language access, the same trust level Ruby's own
 `class_eval`/`define_method` assume. Meant for programmer-authored
