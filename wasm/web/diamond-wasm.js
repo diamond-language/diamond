@@ -359,6 +359,9 @@ export class DiamondRepl {
   // Feeds one line. Returns { kind: 'continue' } while an entry is unfinished, else
   // { kind: 'ok' | 'error', text }.
   submit(line) {
+    // A blank or comment-only line starts no entry: nothing to evaluate, so nothing to print
+    // (src/repl.c does the same). Inside an unfinished entry it is ordinary input.
+    if (!this.#pending && /^\s*(#.*)?$/.test(line)) return { kind: 'ok', text: '' };
     this.#pending += line + '\n';
     let candidate = this.#session + DiamondRepl.#wrap(this.#pending);
     let attempt = this.run(candidate);
