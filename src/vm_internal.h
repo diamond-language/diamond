@@ -1000,6 +1000,10 @@ DIAMOND_INTERNAL int poll_interruptible(DiamondVm *vm,struct pollfd *fds,nfds_t 
  * one of its signals is pending, even one delivered before the wait began (vm_signals.c). */
 DIAMOND_INTERNAL int poll_watching_signals(DiamondVm *vm,struct pollfd *fds,nfds_t count,
     int timeout_ms,DiamondVmStatus *status);
+/* Waits for `fd` before a blocking syscall, running a trapped signal's handler even if the
+ * signal arrived before the wait (vm_signals.c); wait_fd_interruptible when nothing is trapped. */
+DIAMOND_INTERNAL DiamondVmStatus wait_fd_watching_signals(DiamondVm *vm,const DiamondChunk *chunk,
+    size_t depth,int fd,short events);
 
 DIAMOND_INTERNAL void diamond_vm_init(DiamondVm *vm);
 
