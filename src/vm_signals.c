@@ -3,6 +3,7 @@
 #include "vm_internal.h"
 
 #include <errno.h>
+#include <fcntl.h>
 #include <poll.h>
 #include <signal.h>
 #include <stdatomic.h>
@@ -181,13 +182,18 @@ bool poll_register_fd(struct pollfd *fds,nfds_t *fd_count,size_t max_fds,
  * in slices and report EINTR as soon as one of its own signals is pending;
  * the caller's EINTR loop dispatches it. A signal only another VM traps is
  * left alone, so a worker without handlers does not spin on it. */
-int poll_watching_signals(DiamondVm *vm,struct pollfd *fds,nfds_t count,
-        int timeout_ms,DiamondVmStatus *status) {
+static unsigned trapped_signal_mask(const DiamondVm *vm) {
     unsigned trapped=0;
     for(size_t index=0;index<DIAMOND_SIGNAL_COUNT;index++)
         if(vm->trapped_signal_handlers[index].kind==DIAMOND_VALUE_OBJECT&&
            vm->trapped_signal_handlers[index].as.object->kind==DIAMOND_OBJECT_CLOSURE)
             trapped|=1u<<index;
+    return trapped;
+}
+
+int poll_watching_signals(DiamondVm *vm,struct pollfd *fds,nfds_t count,
+        int timeout_ms,DiamondVmStatus *status) {
+    const unsigned trapped=trapped_signal_mask(vm);
     if(trapped==0)return poll_interruptible(vm,fds,count,timeout_ms,status);
     const int64_t deadline_ns=timeout_ms<0?0:
         monotonic_nanoseconds()+(int64_t)timeout_ms*1000000;
@@ -206,5 +212,33 @@ int poll_watching_signals(DiamondVm *vm,struct pollfd *fds,nfds_t count,
         }
         const int result=poll_interruptible(vm,fds,count,slice,status);
         if(result!=0||*status!=DIAMOND_VM_OK)return result;
+    }
+}
+
+/* Before a blocking accept(), recvfrom() or read(): the syscall is interrupted
+ * only by a signal that lands while it sleeps, so one delivered just before
+ * would leave it asleep with the handler unrun. While this VM traps a signal,
+ * wait for readiness with poll_watching_signals instead, running any pending
+ * handler, then let the caller make its syscall. Otherwise, and for a
+ * non-blocking descriptor (whose syscall returns EAGAIN rather than sleeping),
+ * this is wait_fd_interruptible, unchanged. */
+DiamondVmStatus wait_fd_watching_signals(DiamondVm *vm,const DiamondChunk *chunk,
+        size_t depth,int fd,short events) {
+    if(trapped_signal_mask(vm)==0)return wait_fd_interruptible(vm,fd,events);
+    const int flags=fcntl(fd,F_GETFL,0);
+    if(flags<0||(flags&O_NONBLOCK)!=0)return wait_fd_interruptible(vm,fd,events);
+    for(;;) {
+        struct pollfd interest={.fd=fd,.events=events};
+        DiamondVmStatus status=DIAMOND_VM_OK;
+        errno=0;
+        const int ready=poll_watching_signals(vm,&interest,1,-1,&status);
+        if(status!=DIAMOND_VM_OK)return status;
+        if(ready<0&&errno==EINTR) {
+            bool invoked=false;
+            status=dispatch_pending_signals(vm,chunk,depth,&invoked);
+            if(status!=DIAMOND_VM_OK)return status;
+            continue;
+        }
+        return DIAMOND_VM_OK;
     }
 }

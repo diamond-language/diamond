@@ -1370,12 +1370,22 @@ DiamondVmStatus socket_invoke_helper(DiamondVm *vm,
             registers[dest]=DIAMOND_OBJECT(empty);return DIAMOND_VM_OK;
         }
         const DiamondVmStatus wait_status=
-            wait_fd_interruptible(vm,socket_handle->fd,POLLIN);
+            wait_fd_watching_signals(vm,chunk,depth,socket_handle->fd,POLLIN);
         if(wait_status!=DIAMOND_VM_OK)return wait_status;
         char *buffer=malloc(want);
         if(buffer==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
         errno=0;
-        const ssize_t read_count=read(socket_handle->fd,buffer,want);
+        ssize_t read_count=read(socket_handle->fd,buffer,want);
+        /* A trapped signal landing during the read runs its handler and the
+         * read is retried, as accept() and receive() do; EINTR is not an error. */
+        while(read_count<0&&errno==EINTR) {
+            bool signal_invoked=false;
+            const DiamondVmStatus signal_status=
+                dispatch_pending_signals(vm,chunk,depth,&signal_invoked);
+            if(signal_status!=DIAMOND_VM_OK) {free(buffer);return signal_status;}
+            errno=0;
+            read_count=read(socket_handle->fd,buffer,want);
+        }
         if(read_count<0) {
             const int saved_errno=errno;
             free(buffer);
@@ -1489,7 +1499,7 @@ DiamondVmStatus listener_invoke_helper(DiamondVm *vm,
     }
     if(!listener->nonblocking) {
         const DiamondVmStatus wait_status=
-            wait_fd_interruptible(vm,listener->fd,POLLIN);
+            wait_fd_watching_signals(vm,chunk,depth,listener->fd,POLLIN);
         if(wait_status!=DIAMOND_VM_OK)return wait_status;
     }
     errno=0;
@@ -1713,7 +1723,7 @@ static DiamondVmStatus udp_receive_method(DiamondVm *vm,const DiamondChunk *chun
     const size_t recv_len=want==0?1:want;
     {
         const DiamondVmStatus wait_status=
-            wait_fd_interruptible(vm,udp_handle->fd,POLLIN);
+            wait_fd_watching_signals(vm,chunk,depth,udp_handle->fd,POLLIN);
         if(wait_status!=DIAMOND_VM_OK)return wait_status;
     }
     char *buffer=malloc(recv_len);

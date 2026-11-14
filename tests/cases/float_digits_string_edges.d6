@@ -1,0 +1,24 @@
+# Float#floor/ceil/round(digits) check the neighbouring step against the value
+# itself, as Ruby does: x * 10**d can land just beside a whole number.
+puts(4.35.floor(2))
+puts(0.07.ceil(2))
+puts(2.675.round(2))
+puts(-4.35.ceil(2))
+puts(1.0e307.floor(15))
+puts(1234.5.floor(-2))
+
+# chomp("") removes every trailing "\n" and "\r\n", but not a lone "\r".
+puts("line\r\n\n".chomp("").inspect())
+puts("line\r".chomp("").inspect())
+
+# insert reports the index the caller passed.
+begin
+  "ab".insert(-5, "x")
+rescue e: IndexError
+  puts(e.message())
+end
+
+# merge keeps the receiver's default.
+counts = Hash.new(0).merge({"a" => 1})
+counts["b"] += 1
+puts(counts.inspect())
