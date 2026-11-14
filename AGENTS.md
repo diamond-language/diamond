@@ -11,7 +11,7 @@
 - **Check before claiming.** Reviewers (human or model) over-claim: verify a finding against the code before fixing it. Report outcomes as they are, including a merge or step that went wrong.
 - **Keep the changelog current.** Include user-visible language and tooling changes in `CHANGELOG.md` under `Unreleased` in the same pull request. Summarize capability milestones rather than every implementation step.
 - Use they/them for people whose pronouns are not stated.
-- **Write the brand as d6.** In prose, titles and UI strings the language is **d6**, lowercase even at the start of a sentence (the owner switched back from D6 on 2026-11-14). The logo is the six face of a die: a rounded square turned 45 degrees with six pips in a braille-cell layout. `docs/internal/` records keep their original wording. Cut READMEs under `packages/` change with each package's next release, since editing them changes the reviewed seed archives.
+- **Write the brand as d6.** In prose, titles and UI strings the language is **d6**, lowercase even at the start of a sentence (the owner switched back from D6 on 2026-11-14). The logo is the six face of a die: a rounded square turned 45 degrees with six white pips turned with it. `docs/internal/` records keep their original wording. Cut READMEs under `packages/` change with each package's next release, since editing them changes the reviewed seed archives.
 
 ## Landing a change
 
