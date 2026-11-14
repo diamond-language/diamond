@@ -70,7 +70,11 @@ Array's Enumerable-style methods: `.each`/`.select`/`.map`/`.reduce`/
 `.sort`/`.sort_by`/`.min`/`.max`/`.min_by`/`.max_by`/`.reject`/`.find`/
 `.each_with_index`/`.sum`, and `.take(n)`/`.drop(n)`/`.flat_map`/
 `.partition`/`.group_by`/`.zip(other)`/`.each_slice(n)`/`.each_cons(n)`/
-`.tally`. `sort` and `sort_by` are stable merge sorts (O(n log n), and
+`.tally`/`.take_while`/`.drop_while`. `any?`, `all?`, `none?` and `one?`
+without a block test the elements themselves (only `nil` and `false` fail);
+`min(n)`/`max(n)` return the `n` smallest or largest as an `Array`;
+`sum(start)` adds onto `start` instead of `0` (`sum(0.0)`, `sum("")`), with
+or without a block. `sort` and `sort_by` are stable merge sorts (O(n log n), and
 `sort_by` calls its block once per element); a blockless `sort` of an array
 that is all Ints or all Strings runs natively. `sort() do |a, b| ... end` orders by a block
 that returns a negative, zero or positive Int. Arrays compare element by
@@ -85,7 +89,8 @@ allocate intermediate Arrays. `each`, `to_a`, and `force` drain the pipeline.
 the terminal has its answer. The remaining methods retain their eager
 behavior. The last group returns its result directly —
 `.each_slice`/`.each_cons` collect every slice/window into an
-`Array[Array]` up front, `.partition` returns `[matching,
+`Array[Array]` up front (with a block, each one is also passed to it),
+`.partition` returns `[matching,
 non_matching]`, `.group_by` a `Hash` keyed on the block's own result,
 `.tally` a `Hash` of element to occurrence count, and `.zip` pads the
 shorter array with `Nil` out to the *receiver's* own length (`[1, 2,
@@ -104,7 +109,8 @@ conversion), and
 the rest of the language having no other Unicode awareness), and
 `.strip()` (trims leading/trailing ASCII whitespace; `.lstrip()`/`.rstrip()`
 trim only one side), `.chomp()` (removes one trailing `"\n"`, `"\r\n"` or
-`"\r"`; it takes no argument), `.capitalize()` (first ASCII letter upper, the
+`"\r"`; `.chomp(suffix)` removes `suffix` instead, when the string ends
+with it), `.capitalize()` (first ASCII letter upper, the
 rest lower), `.chars()` (an `Array` of one-byte strings, so a multi-byte UTF-8
 character becomes several), and `.empty?()`
 (zero length, like Array's and Hash's own `empty?`). `.split(separator)`
@@ -283,9 +289,11 @@ or `nil` (like `String#index_of`); `values.reverse()` returns a new
 array in reverse order; `values.concat(other)` (or `values + other`)
 returns a new array with `other`'s elements appended; `values.compact()` returns a new array with
 any `nil` elements dropped; `values.uniq()` returns a new array with only
-the first occurrence of each distinct (`==`) element, order preserved;
-`values.flatten()` returns a new array with nested arrays fully
-flattened (recursively, matching Ruby's default);
+the first occurrence of each distinct (`==`) element, order preserved
+(with a block, `uniq() do |x| key end`, elements are compared by the
+block's key); `values.flatten()` returns a new array with nested arrays fully
+flattened (recursively, matching Ruby's default), and `values.flatten(depth)`
+only that many levels;
 `values.delete_at(index)` mutates `values` in place (like the native
 `.push`/`.pop`), removing and returning the element at `index`, or `nil`
 without mutating if `index` is out of bounds.
@@ -309,7 +317,9 @@ order; `hash.include_key?(needle)` returns whether `needle` is a key;
 each value passed through `callback`; `hash.empty?()` returns whether the
 hash has zero pairs (same name and meaning as Array's own); `hash.merge(other)`
 returns a new `Hash` with the receiver's pairs then `other`'s applied on top
-(`other` wins on key conflicts). Like the rest of the Enumerable set,
+(`other` wins on key conflicts, unless a block is given:
+`a.merge(b) do |key, old, new| old + new end` stores what it returns).
+ Like the rest of the Enumerable set,
 `vm.c`'s native dispatch resolves each of these receiver calls to a
 same-named top-level prelude function (`array_reverse`, `array_concat`,
 ...) at runtime, so that free-function spelling still exists underneath
@@ -591,7 +601,7 @@ define its own `array_foo(values, ...)` (or `hash_`, `string_`, `integer_`,
   `first(n)`, `last(n)`, `count()` / `count(x)` / `count { }`,
   `find_index`/`index`/`rindex` (a value or a block), `values_at`, `dig`,
   `to_h`, `transpose`, `minmax`, `sum { }`, `filter_map`, `each_with_object`,
-  `none?`, `one?`, `inject`, `product`, `combination(k)`, `chunk_while`,
+  `none?`, `one?` (both also blockless), `inject`, `product`, `combination(k)`, `chunk_while`,
   `rotate`, `shuffle`, `sample`, `to_a`. Operators: `a + b`, `a - b` (elements
   not in `b`), `a & b`, `a | b`, `a * n`, `a * ", "` (join), and a negative
   index (`a[-1]`) or `a[start, length]`.
@@ -602,10 +612,12 @@ define its own `array_foo(values, ...)` (or `hash_`, `string_`, `integer_`,
   `sort_by`, `sort`, `group_by`, `partition`, `filter_map`,
   `each_with_object`, `each_with_index`, `to_a`, `size`, `key?`/`has_key?`/
   `include?`/`member?`, `value?`, `dig`, `transform_values`, `transform_keys`,
-  `invert`, `update`, `slice`, `except`, `compact`, and `fetch(key)` without
-  a fallback (an `IndexError` for a missing key).
+  `invert`, `update`, `slice`, `except`, `compact`, `delete_if`/`keep_if`
+  (in place, like Array's), and `fetch(key)` without a fallback (an
+  `IndexError` for a missing key). `any?`, `all?` and `none?` without a block
+  ask about the entries.
 - **String**: `size`, `bytesize`, `index`, `rindex`, `count(chars)`,
-  `delete(chars)`, `squeeze`, `swapcase`, `lines`, `each_line`,
+  `delete(chars)`, `squeeze` / `squeeze(chars)`, `index(needle, start)`, `swapcase`, `lines`, `each_line`,
   `each_char`, `each_byte`, `center`, `chop`, `partition`, `delete_prefix`,
   `delete_suffix`, `casecmp?`, `between?`, `match?(regexp)`, `to_sym`, `hex`,
   `oct`, `to_i(base)`, `getbyte(i)`, `split()` (on whitespace),
@@ -614,7 +626,9 @@ define its own `array_foo(values, ...)` (or `hash_`, `string_`, `integer_`,
   exponent, a `Float` otherwise), `pow`, `clamp`, `between?`, `divmod`,
   `fdiv`, `zero?`, `positive?`, `negative?`, `even?`, `odd?`, `succ`,
   `pred`, `gcd`, `lcm`, `digits`, `to_s(base)`, and on Float `truncate`,
-  `nan?`, `infinite?`, `finite?`.
+  `nan?`, `infinite?`, `finite?`, and `floor(digits)`/`ceil(digits)`/
+  `round(digits)`.
+
 - **Every value**: `to_s()` (the text interpolation gives it) and `nil?()`;
   `Callable#arity`.
 - **Math**: `Math.sqrt`, `cbrt`, `sin`, `cos`, `tan`, `exp`, `log`, `log2`,

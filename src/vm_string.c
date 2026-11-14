@@ -777,10 +777,22 @@ static DiamondVmStatus string_bytes_method(DiamondVm *vm,DiamondValue *registers
 }
 
 __attribute__((noinline))
-static DiamondVmStatus string_chomp_method(DiamondVm *vm,DiamondValue *registers,uint8_t argc,uint16_t dest,const DiamondString *source) {
-    if(argc!=0)return DIAMOND_VM_ARITY_ERROR;
+static DiamondVmStatus string_chomp_method(DiamondVm *vm,DiamondValue *registers,uint16_t base,uint8_t argc,uint16_t dest,const DiamondString *source) {
+    if(argc>1)return DIAMOND_VM_ARITY_ERROR;
     size_t end=source->length;
-    if(end>=2&&source->chars[end-2]=='\r'&&
+    if(argc==1) {
+        /* chomp(suffix) removes that suffix when the string ends with it. */
+        if(registers[base].kind!=DIAMOND_VALUE_OBJECT||
+           registers[base].as.object->kind!=DIAMOND_OBJECT_STRING) {
+            snprintf(vm->error,sizeof vm->error,
+                "String#chomp argument must be a String");
+            return DIAMOND_VM_TYPE_ERROR;
+        }
+        const DiamondString *suffix=(const DiamondString *)registers[base].as.object;
+        if(suffix->length<=end&&
+           memcmp(source->chars+end-suffix->length,suffix->chars,suffix->length)==0)
+            end-=suffix->length;
+    } else if(end>=2&&source->chars[end-2]=='\r'&&
        source->chars[end-1]=='\n')
         end-=2;
     else if(end>=1&&(source->chars[end-1]=='\n'||
@@ -1094,7 +1106,7 @@ DiamondVmStatus string_invoke_helper(DiamondVm *vm,const DiamondChunk *chunk,siz
     if(bytes_method)
         return string_bytes_method(vm,registers,argc,dest,source);
     if(chomp_method)
-        return string_chomp_method(vm,registers,argc,dest,source);
+        return string_chomp_method(vm,registers,base,argc,dest,source);
     if(ljust_method||rjust_method)
         return string_justify_method(vm,registers,base,argc,dest,source,ljust_method);
     if(tr_method)

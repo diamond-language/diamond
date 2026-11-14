@@ -161,21 +161,24 @@ end
 # them (1 and 1.0 are one key), so the common case is linear. Anything
 # else -- an instance may define its own ==, which Hash keys don't use --
 # is compared against the kept elements with ==.
-def array_uniq(values: Array) -> Array
+# With a block, two elements are duplicates when the block answers equal
+# keys for them, and the first one is kept.
+def array_uniq(values: Array, callback = nil) -> Array
   result = []
   seen = {}
   others = []
   index = 0
   while index < values.length()
     item = values[index]
-    if item == nil || item is Bool || item is Int || item is Float ||
-       item is String || item is Symbol
-      unless seen.include_key?(item)
-        seen[item] = true
+    key = if callback == nil then item else callback(item) end
+    if key == nil || key is Bool || key is Int || key is Float ||
+       key is String || key is Symbol
+      unless seen.include_key?(key)
+        seen[key] = true
         result.push(item)
       end
-    elsif !others.include?(item)
-      others.push(item)
+    elsif !others.include?(key)
+      others.push(key)
       result.push(item)
     end
     index += 1
@@ -187,12 +190,13 @@ end
 # flattening is linear rather than re-copying the result per nested Array.
 # Defined above array_flatten: selfhost/parser.d6 needs a def before its
 # first call.
-def diamond_flatten_into(values: Array, result: Array)
+# A negative depth flattens all the way down.
+def diamond_flatten_into(values: Array, result: Array, depth: Int)
   index = 0
   while index < values.length()
     item = values[index]
-    if item is Array
-      diamond_flatten_into(item, result)
+    if item is Array && depth != 0
+      diamond_flatten_into(item, result, depth - 1)
     else
       result.push(item)
     end
@@ -200,9 +204,10 @@ def diamond_flatten_into(values: Array, result: Array)
   end
 end
 
-def array_flatten(values: Array) -> Array
+# flatten() flattens every level; flatten(depth) only that many.
+def array_flatten(values: Array, depth: Int = -1) -> Array
   result = []
-  diamond_flatten_into(values, result)
+  diamond_flatten_into(values, result, depth)
   result
 end
 
@@ -289,7 +294,9 @@ def hash_map_values(values: Hash, callback: Callable[1]) -> Hash
   result
 end
 
-def hash_merge(a: Hash, b: Hash) -> Hash
+# With a block, a key in both hashes gets block(key, old, new) instead of
+# b's value.
+def hash_merge(a: Hash, b: Hash, callback = nil) -> Hash
   result = {}
   index = 0
   while index < a.length()
@@ -298,7 +305,12 @@ def hash_merge(a: Hash, b: Hash) -> Hash
   end
   index = 0
   while index < b.length()
-    result[b.key_at(index)] = b.value_at(index)
+    key = b.key_at(index)
+    result[key] = if callback != nil && result.include_key?(key)
+      callback(key, result[key], b.value_at(index))
+    else
+      b.value_at(index)
+    end
     index += 1
   end
   result
@@ -413,11 +425,16 @@ def enumerable_reduce(values, initial, callback: Callable[2])
 end
 
 # sum() adds the elements; with a block, it adds what the block returns
-# for each one.
+# for each one. sum(start) starts from `start` instead of 0 (sum(0.0) for a
+# Float total, sum("") to join Strings), with or without a block.
 # A blockless sum of plain Ints that cannot overflow is added natively by
 # native_array_int_sum (src/vm_collections.c) and never reaches this loop.
-def array_sum(values: Array, callback = nil)
-  total = 0
+def array_sum(values: Array, start = 0, callback = nil)
+  if callback == nil && start is Callable
+    callback = start
+    start = 0
+  end
+  total = start
   index = 0
   while index < values.length()
     total = total + (if callback == nil then values[index] else callback(values[index]) end)
@@ -609,7 +626,10 @@ def enumerable_sort_by(values: Array, callback: Callable[1]) -> Array
   diamond_sort_pick(values, diamond_sort_order(keys))
 end
 
-def enumerable_min(values: Array)
+# min(n) and max(n) are the n smallest or largest, as an Array, smallest
+# first for min and largest first for max.
+def enumerable_min(values: Array, n = nil)
+  return enumerable_sort(values).take(n) if n != nil
   result = values[0]
   index = 1
   while index < values.length()
@@ -621,7 +641,8 @@ def enumerable_min(values: Array)
   result
 end
 
-def enumerable_max(values: Array)
+def enumerable_max(values: Array, n = nil)
+  return enumerable_sort(values).reverse().take(n) if n != nil
   result = values[0]
   index = 1
   while index < values.length()
@@ -761,15 +782,29 @@ def array_zip(values: Array, other: Array) -> Array
   result
 end
 
+# Calls the block with each element of `items`, for the methods that hand a
+# block what they have already collected. Defined above its callers: the
+# self-hosted parser and the editor's single-pass analysis both want a def
+# before its first call.
+def diamond_call_each(items: Array, callback: Callable[1])
+  index = 0
+  while index < items.length()
+    callback(items[index])
+    index += 1
+  end
+end
+
 # Non-overlapping chunks of exactly `size`, the last one short if
 # `values.length()` isn't an exact multiple -- Ruby's own `each_slice`.
 # Returns the slices directly rather than taking a block: with no
 # Enumerator to lazily drive a `.to_a` call, returning the collected
 # Array[Array] up front is the more broadly useful shape (still
-# trivially composable with `.each()`/`.map()` afterward). Assumes
-# `size` is a positive Int, same as Ruby's own ArgumentError-on-`<= 0`
-# contract -- not separately validated here.
-def array_each_slice(values: Array, size: Int) -> Array
+# trivially composable with `.each()`/`.map()` afterward). A size below 1
+# raises ArgumentError, as in Ruby.
+#
+# With a block, each slice is passed to it as well, and the slices are still
+# returned.
+def array_each_slice(values: Array, size: Int, callback: Callable[1] | Nil = nil) -> Array
   raise ArgumentError.new("slice size must be positive") if size <= 0
   result = []
   index = 0
@@ -783,6 +818,7 @@ def array_each_slice(values: Array, size: Int) -> Array
     result.push(slice)
     index += size
   end
+  diamond_call_each(result, callback) if callback != nil
   result
 end
 
@@ -791,7 +827,8 @@ end
 # `values.length() - size + 1` of them (none at all if the receiver is
 # shorter than `size`). Ruby's own `each_cons`; same "no Enumerator, so
 # return the collected windows directly" reasoning as each_slice above.
-def array_each_cons(values: Array, size: Int) -> Array
+def array_each_cons(values: Array, size: Int, callback: Callable[1] | Nil = nil) -> Array
+  raise ArgumentError.new("window size must be positive") if size <= 0
   result = []
   index = 0
   while index + size <= values.length()
@@ -804,7 +841,28 @@ def array_each_cons(values: Array, size: Int) -> Array
     result.push(window)
     index += 1
   end
+  diamond_call_each(result, callback) if callback != nil
   result
+end
+
+# The leading elements the block accepts, up to the first it rejects.
+def diamond_array_take_while(values: Array, callback: Callable[1]) -> Array
+  result = []
+  index = 0
+  while index < values.length() && callback(values[index])
+    result.push(values[index])
+    index += 1
+  end
+  result
+end
+
+# Everything from the first element the block rejects onward.
+def diamond_array_drop_while(values: Array, callback: Callable[1]) -> Array
+  index = 0
+  while index < values.length() && callback(values[index])
+    index += 1
+  end
+  values.drop(index)
 end
 
 def array_tally(values: Array) -> Hash
@@ -1403,19 +1461,25 @@ def diamond_array_select(values: Array, callback: Callable[1]) -> Array
   result
 end
 
-def diamond_array_any(values: Array, callback: Callable[1]) -> Bool
+# Without a block, any?, all?, none? and one? test the elements themselves:
+# only nil and false count as false.
+def diamond_test_item(callback, item) = if callback == nil then item else callback(item) end
+
+def diamond_array_any(values: Array, callback: Callable[1] | Nil = nil) -> Bool
   index = 0
   while index < values.length()
-    return true if callback(values[index])
+    item = values[index]
+    return true if diamond_test_item(callback, item)
     index += 1
   end
   false
 end
 
-def diamond_array_all(values: Array, callback: Callable[1]) -> Bool
+def diamond_array_all(values: Array, callback: Callable[1] | Nil = nil) -> Bool
   index = 0
   while index < values.length()
-    return false unless callback(values[index])
+    item = values[index]
+    return false unless diamond_test_item(callback, item)
     index += 1
   end
   true
@@ -1440,9 +1504,19 @@ def diamond_array_each_with_object(values: Array, memo, callback: Callable[2])
   memo
 end
 
-def diamond_array_none(values: Array, callback: Callable[1]) -> Bool = !values.any?(callback)
+def diamond_array_none(values: Array, callback: Callable[1] | Nil = nil) -> Bool =
+  !diamond_array_any(values, callback)
 
-def diamond_array_one(values: Array, callback: Callable[1]) -> Bool = values.count(callback) == 1
+def diamond_array_one(values: Array, callback: Callable[1] | Nil = nil) -> Bool
+  found = 0
+  index = 0
+  while index < values.length() && found < 2
+    item = values[index]
+    found += 1 if diamond_test_item(callback, item)
+    index += 1
+  end
+  found == 1
+end
 
 def diamond_array_inject(values: Array, initial, callback: Callable[2]) = values.reduce(initial, callback)
 
@@ -1670,7 +1744,10 @@ def diamond_hash_reject(values: Hash, callback) -> Hash
   result
 end
 
-def diamond_hash_any(values: Hash, callback) -> Bool
+# Without a block, any? and none? ask whether there are entries, and all? is
+# true (an entry is never nil or false).
+def diamond_hash_any(values: Hash, callback = nil) -> Bool
+  return values.length() > 0 if callback == nil
   index = 0
   while index < values.length()
     return true if diamond_hash_call_pair(callback, values.key_at(index), values.value_at(index))
@@ -1679,7 +1756,8 @@ def diamond_hash_any(values: Hash, callback) -> Bool
   false
 end
 
-def diamond_hash_all(values: Hash, callback) -> Bool
+def diamond_hash_all(values: Hash, callback = nil) -> Bool
+  return true if callback == nil
   index = 0
   while index < values.length()
     return false unless diamond_hash_call_pair(callback, values.key_at(index), values.value_at(index))
@@ -1688,7 +1766,40 @@ def diamond_hash_all(values: Hash, callback) -> Bool
   true
 end
 
-def diamond_hash_none(values: Hash, callback) -> Bool = !diamond_hash_any(values, callback)
+def diamond_hash_none(values: Hash, callback = nil) -> Bool = !diamond_hash_any(values, callback)
+
+# delete_if and keep_if change the Hash in place and return it, as on Array.
+def diamond_hash_delete_if(values: Hash, callback) -> Hash
+  doomed = []
+  index = 0
+  while index < values.length()
+    key = values.key_at(index)
+    doomed.push(key) if diamond_hash_call_pair(callback, key, values.value_at(index))
+    index += 1
+  end
+  index = 0
+  while index < doomed.length()
+    values.delete(doomed[index])
+    index += 1
+  end
+  values
+end
+
+def diamond_hash_keep_if(values: Hash, callback) -> Hash
+  doomed = []
+  index = 0
+  while index < values.length()
+    key = values.key_at(index)
+    doomed.push(key) unless diamond_hash_call_pair(callback, key, values.value_at(index))
+    index += 1
+  end
+  index = 0
+  while index < doomed.length()
+    values.delete(doomed[index])
+    index += 1
+  end
+  values
+end
 
 # count() is the number of entries; with a block, the entries it accepts.
 def diamond_hash_count(values: Hash, callback = nil) -> Int
@@ -1872,7 +1983,14 @@ end
 
 def diamond_string_size(text: String) -> Int = text.length()
 def diamond_string_bytesize(text: String) -> Int = text.length()
-def diamond_string_index(text: String, needle: String) -> Int | Nil = text.index_of(needle)
+# index(needle, start) searches from `start` (negative counts from the end).
+def diamond_string_index(text: String, needle: String, start: Int = 0) -> Int | Nil
+  return text.index_of(needle) if start == 0
+  start += text.length() if start < 0
+  return nil if start < 0 || start > text.length()
+  found = text.slice(start, text.length() - start).index_of(needle)
+  if found == nil then nil else found + start end
+end
 def diamond_string_hex(text: String) -> Int = text.to_i(16)
 def diamond_string_oct(text: String) -> Int = text.to_i(8)
 def diamond_string_to_sym(text: String) -> Symbol = to_sym(text)
@@ -1936,14 +2054,16 @@ def diamond_string_delete(text: String, set: String) -> String
   result.join("")
 end
 
-# squeeze() collapses each run of a repeated character to one.
-def diamond_string_squeeze(text: String) -> String
+# squeeze() collapses each run of a repeated character to one;
+# squeeze(chars) only runs of the characters in `chars`.
+def diamond_string_squeeze(text: String, only: String | Nil = nil) -> String
   chars = text.chars()
   result = []
   index = 0
   while index < chars.length()
     c = chars[index]
-    result.push(c) unless result.length() > 0 && result[result.length() - 1] == c
+    repeat = result.length() > 0 && result[result.length() - 1] == c
+    result.push(c) unless repeat && (only == nil || only.include?(c))
     index += 1
   end
   result.join("")
