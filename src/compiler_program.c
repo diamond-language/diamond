@@ -1092,6 +1092,7 @@ static bool run_compile_pass(const char *source, DiamondProgram *program,
         rewrite_cyclic_tail_calls(program,compiler.tail_call_candidates,
             compiler.tail_call_candidate_count);
     free(compiler.tail_call_candidates);
+    free(compiler.generated_struct_functions);
     return !compiler.failed;
 }
 

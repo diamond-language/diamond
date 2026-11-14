@@ -67,6 +67,15 @@ A successful request does not mean cancellation has finished; verify the
 status becomes completed and the conclusion cancelled. Deleting the run is
 not required to stop it.
 
+## Self-host survey
+
+The `self-host survey` workflow (`selfhost-survey.yml`) runs every
+`tests/cases` program through the self-hosted compiler
+(`tools/self_host_survey.sh`) on Mondays at 06:17 UTC, and by hand with
+`gh workflow run selfhost-survey.yml`. It is too slow for every pull request.
+A failed run means a native compiler change was not ported to
+`selfhost/parser.d6`.
+
 ## Releases
 
 A release is a `vX.Y.Z` tag on `main`, pushed once the PR run for that exact tree

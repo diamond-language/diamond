@@ -58,8 +58,18 @@ static bool copy_hash_step(DiamondVm *dest_vm, DiamondValue value,
         const DiamondChunk **adopted_owner,
         DiamondValue *out) {
     const DiamondHash *source=(const DiamondHash *)value.as.object;
+    /* The default first, so it is stored while the new Hash is still young:
+     * default_value has no write barrier (see its comment). */
+    DiamondValue default_value=DIAMOND_NIL;
+    if(!copy_value_into_vm(dest_vm,source->default_value,source_program,
+            rebase_source_classes,rebase_dest_classes,adopted_owner,&default_value))
+        return false;
+    const size_t default_mark=dest_vm->gc_protected_count;
+    if(!gc_protect(dest_vm,default_value))return false;
     DiamondHash *copy=allocate_hash(dest_vm);
+    gc_unprotect(dest_vm,default_mark);
     if(copy==nullptr)return false;
+    copy->default_value=default_value;
     const size_t mark=dest_vm->gc_protected_count;
     if(!gc_protect(dest_vm,DIAMOND_OBJECT(copy)))return false;
     for(size_t index=0;index<source->count;index++) {
@@ -1046,6 +1056,7 @@ DiamondVmStatus diamond_jit_dup(DiamondVm *vm, const DiamondValue *receiver,
         const DiamondHash *source=(const DiamondHash *)receiver->as.object;
         DiamondHash *copy=allocate_hash(vm);
         if(copy==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
+        copy->default_value=source->default_value;
         if(!hash_clone_contents(vm,copy,source))return DIAMOND_VM_OUT_OF_MEMORY;
         *out=DIAMOND_OBJECT(copy);return DIAMOND_VM_OK;
     }

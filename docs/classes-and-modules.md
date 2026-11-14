@@ -701,11 +701,16 @@ declared member, and generates four methods for it automatically:
 - `==(other)` -- `true` only when `other` is exactly the same class (checked
   first; comparing against an unrelated type, a different class, or a
   subclass instance is `false`, never a raised error) *and* every field is
-  `==` to its counterpart. A subclass that adds fields of its own should
-  define its own `==` (calling `super(other)` for the struct's fields), since
-  the generated one compares only the struct's declared fields.
+  `==` to its counterpart.
 - `to_s()` -- `"Point(x: 1, y: 2)"`: the class name, then each field as
   `name: value.to_s()`, comma-separated.
+
+Fields added later are covered too. A plain class that inherits from a struct
+gets its own generated `==` over every field when it adds fields (an `@tag`
+its `initialize` assigns, say), and a generated `to_s` with its own name and
+every field; so does a struct whose own body assigns fields beyond the declared
+ones. A hand-written or included `==`/`to_s`, in the class or in any class
+between it and the struct, is kept instead, and its subclasses inherit it.
 
 Generic structs declare one or two parameters before the field list:
 
