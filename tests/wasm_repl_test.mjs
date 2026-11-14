@@ -33,6 +33,11 @@ expect('multi-line def', ['def sq(n)', '  n * n', 'end', 'sq(12)'], equals('144'
 expect('class', ['class Dog', '  def speak() = "woof"', 'end', 'Dog.new().speak()'], equals('woof'));
 expect('block', ['[1, 2, 3].map() do |v|', '  v * 10', 'end'], equals('[10, 20, 30]'));
 expect('struct', ['struct P(x: Int, y: Int)', 'end', 'P.new(1, 2) == P.new(1, 2)'], equals('true'));
+expect('comment line prints nothing', ['x = 1', '# note'], equals(''));
+expect('blank line prints nothing', ['x = 1', '  '], equals(''));
+expect('comment line keeps _', ['x = 7', '# note', '_'], equals('7'));
+expect('comment inside an entry is input', ['def f()', '  # explains', '', '  3', 'end', 'f()'],
+  equals('3'));
 expect('syntax error is reported', 'nope()', errorContaining('undefined function'));
 expect('unfinished input continues', 'def f(', (r) => r.kind === 'continue');
 expect('type annotation is checked', ['def d(n: Int) -> Int = n * 2', 'd("x")'],

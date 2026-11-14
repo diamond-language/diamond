@@ -15,7 +15,8 @@ plus the pending input as one program. If the diagnostic indicates incomplete
 input, such as an unclosed block, the REPL prompts for another line (`... `)
 instead of reporting an error. After a successful compile, it prints the
 result and retains the source so later rounds see earlier definitions and
-variables.
+variables. A blank or comment-only line at the prompt starts no round: nothing
+is printed and the prompt comes back. Inside an unfinished entry it is ordinary input.
 
 ## Interactive line editing
 
