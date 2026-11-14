@@ -2273,6 +2273,7 @@ bool raise_capture_backtrace_helper(DiamondVm *vm,const DiamondChunk *chunk) {
 static const NativeKeywordSignature native_keyword_signatures[]={
     {"tap",{"callback"},1},{"times",{"callback"},1},
     {"upto",{"limit","callback"},2},{"downto",{"limit","callback"},2},
+    {"step",{"limit","by","callback"},3},
     {"join",{"separator"},1},{"each",{"callback"},1},
     {"select",{"callback"},1},{"count",{"callback"},1},
     {"any?",{"callback"},1},{"all?",{"callback"},1},
