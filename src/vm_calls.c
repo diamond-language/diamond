@@ -1817,6 +1817,33 @@ DiamondVmStatus diamond_jit_method_call_finish(DiamondVm *vm, const DiamondChunk
     return (DiamondVmStatus)status;
 }
 
+/* What a native loop's block call is passed, rebuilt for a retry through
+ * the interpreter: [nil self slot,] then one or two arguments. */
+static size_t jit_loop_arguments(const DiamondJitLoop *loop, DiamondValue *arguments) {
+    size_t count = 0;
+    if (loop->self_slot) arguments[count++] = DIAMOND_NIL;
+    switch ((DiamondJitLoopKind)loop->kind) {
+    case DIAMOND_JIT_LOOP_EACH_WITH_INDEX:
+        arguments[count++] = loop->current;
+        arguments[count++] = DIAMOND_INT((int64_t)loop->index);
+        break;
+    case DIAMOND_JIT_LOOP_REDUCE:
+        arguments[count++] = loop->result;
+        arguments[count++] = loop->current;
+        break;
+    default:
+        arguments[count++] = loop->current;
+        break;
+    }
+    return count;
+}
+
+/* Whether the loop holds protected values that every way out releases. */
+static bool jit_loop_protects(const DiamondJitLoop *loop) {
+    return loop->kind == DIAMOND_JIT_LOOP_MAP || loop->kind == DIAMOND_JIT_LOOP_SELECT ||
+           loop->kind == DIAMOND_JIT_LOOP_REDUCE;
+}
+
 DiamondVmStatus diamond_jit_loop_step(DiamondVm *vm, DiamondJitLoop *loop, uint8_t status,
         size_t depth) {
     DiamondVmStatus finished = (DiamondVmStatus)status;
@@ -1824,28 +1851,45 @@ DiamondVmStatus diamond_jit_loop_step(DiamondVm *vm, DiamondJitLoop *loop, uint8
         finished = jit_tail_loop(vm, loop->child, depth, &loop->result);
     } else if (status == DIAMOND_JIT_RETRY) {
         vm->jit_bailouts++;
-        const DiamondValue arguments[2] = {
-            loop->self_slot ? DIAMOND_NIL : loop->current, loop->current};
-        finished = run_chunk(loop->child, vm, arguments, loop->self_slot ? 2 : 1, depth + 1,
-            loop->closure, &loop->result);
+        DiamondValue arguments[3];
+        const size_t count = jit_loop_arguments(loop, arguments);
+        finished = run_chunk(loop->child, vm, arguments, count, depth + 1, loop->closure,
+            &loop->result);
     } else if (status != DIAMOND_VM_OK) {
         vm->jit_hard_propagations++;
     }
-    if (finished == DIAMOND_VM_OK && loop->map && !array_push(vm, loop->collected, loop->result))
-        finished = DIAMOND_VM_OUT_OF_MEMORY;
+    if (finished == DIAMOND_VM_OK) {
+        if (loop->kind == DIAMOND_JIT_LOOP_MAP) {
+            if (!array_push(vm, loop->collected, loop->result))
+                finished = DIAMOND_VM_OUT_OF_MEMORY;
+        } else if (loop->kind == DIAMOND_JIT_LOOP_SELECT) {
+            if (is_truthy(loop->result) && !array_push(vm, loop->collected, loop->current))
+                finished = DIAMOND_VM_OUT_OF_MEMORY;
+        }
+    }
     if (finished != DIAMOND_VM_OK) {
-        if (loop->map) gc_unprotect(vm, loop->gc_mark);
+        if (jit_loop_protects(loop)) gc_unprotect(vm, loop->gc_mark);
         return finished;
     }
     return DIAMOND_VM_OK;
 }
 
 void diamond_jit_loop_end(DiamondVm *vm, DiamondJitLoop *loop, DiamondValue *out) {
-    if (loop->map) {
-        gc_unprotect(vm, loop->gc_mark);
+    if (jit_loop_protects(loop)) gc_unprotect(vm, loop->gc_mark);
+    switch ((DiamondJitLoopKind)loop->kind) {
+    case DIAMOND_JIT_LOOP_MAP:
+    case DIAMOND_JIT_LOOP_SELECT:
         *out = DIAMOND_OBJECT(loop->collected);
-    } else {
+        break;
+    case DIAMOND_JIT_LOOP_REDUCE:
+        *out = loop->result;
+        break;
+    case DIAMOND_JIT_LOOP_TIMES:
+        *out = DIAMOND_INT(loop->limit);
+        break;
+    default:
         *out = DIAMOND_OBJECT((DiamondArray *)loop->array);
+        break;
     }
 }
 
@@ -2229,6 +2273,7 @@ bool raise_capture_backtrace_helper(DiamondVm *vm,const DiamondChunk *chunk) {
 static const NativeKeywordSignature native_keyword_signatures[]={
     {"tap",{"callback"},1},{"times",{"callback"},1},
     {"upto",{"limit","callback"},2},{"downto",{"limit","callback"},2},
+    {"step",{"limit","by","callback"},3},
     {"join",{"separator"},1},{"each",{"callback"},1},
     {"select",{"callback"},1},{"count",{"callback"},1},
     {"any?",{"callback"},1},{"all?",{"callback"},1},
@@ -2238,12 +2283,12 @@ static const NativeKeywordSignature native_keyword_signatures[]={
     {"min_by",{"callback"},1},{"max_by",{"callback"},1},
     {"take",{"n"},1},{"drop",{"n"},1},{"flat_map",{"callback"},1},
     {"partition",{"callback"},1},{"group_by",{"callback"},1},
-    {"zip",{"other"},1},{"each_slice",{"size"},1},
-    {"each_cons",{"size"},1},{"first_or",{"fallback"},1},
+    {"zip",{"other"},1},{"each_slice",{"size","callback"},2},
+    {"each_cons",{"size","callback"},2},{"first_or",{"fallback"},1},
     {"last_or",{"fallback"},1},{"include?",{"needle"},1},
     {"concat",{"other"},1},{"delete_at",{"index"},1},
     {"fetch",{"key","fallback"},2},{"include_key?",{"needle"},1},
-    {"map_values",{"callback"},1},{"merge",{"other"},1},
+    {"map_values",{"callback"},1},{"merge",{"other","callback"},2},
     {"key_at",{"index"},1},{"value_at",{"index"},1},{"delete",{"key"},1},
     {"index_of",{"needle"},1},{"slice",{"start","length"},2},
     {"split",{"separator"},1},{"repeat",{"count"},1},

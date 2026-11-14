@@ -1248,23 +1248,30 @@ static CollectionRelay collection_relay(const Compiler *compiler,
  * instance signature, so its result cannot use the declared-return path above.
  * Preserve the receiver's nested collection graphs for the small family whose
  * result is structurally determined without inspecting arguments or blocks. */
-/* Was the call just emitted into `reg` a plain INVOKE with no arguments?
- * first/last/sum mean something else with one (first(n) is an Array,
- * sum with a block sums the block's results). */
-static bool invoke_had_no_arguments(const Compiler *compiler,uint16_t reg) {
+/* The argument count of the plain INVOKE just emitted into `reg`, or -1 when
+ * the last instruction is something else. first/last/min/max/sum mean
+ * something else with an argument (first(n) and min(n) are Arrays, sum with
+ * a start or a block adds something else), and merge with a block stores
+ * what the block returns. */
+static int invoke_argument_count(const Compiler *compiler,uint16_t reg) {
     const size_t count=compiler->function->code_count;
-    if(count<10)return false;
+    if(count<10)return -1;
     const uint8_t *code=compiler->function->code+count-10;
-    return code[0]==DIAMOND_OP_INVOKE&&
-        (uint16_t)((code[1]<<8)|code[2])==reg&&code[9]==0;
+    if(code[0]!=DIAMOND_OP_INVOKE||(uint16_t)((code[1]<<8)|code[2])!=reg)
+        return -1;
+    return code[9];
 }
 
 static void publish_collection_method_return_type(Compiler *compiler,
         uint16_t reg,int32_t receiver_set_index,DiamondSpan name) {
     CollectionRelay relay=collection_relay(compiler,name);
+    const int argument_count=invoke_argument_count(compiler,reg);
     if((relay==COLLECTION_RELAY_SUM||name_equals(compiler,"first",name,false)||
-        name_equals(compiler,"last",name,false))&&
-       !invoke_had_no_arguments(compiler,reg))
+        name_equals(compiler,"last",name,false)||
+        name_equals(compiler,"min",name,false)||
+        name_equals(compiler,"max",name,false))&&argument_count!=0)
+        relay=COLLECTION_RELAY_NONE;
+    if(relay==COLLECTION_RELAY_MERGE&&argument_count!=1)
         relay=COLLECTION_RELAY_NONE;
     if(receiver_set_index<0||
        (size_t)receiver_set_index>=compiler->function->type_set_count)return;

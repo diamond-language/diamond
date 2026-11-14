@@ -1,0 +1,18 @@
+# map and select push into their result inline under the JIT
+# (emit_loop_push). With a minor collection on every allocation the result is
+# promoted after its first element, so every later push into it has to mark
+# its card: otherwise the next minor collection would not see the fresh
+# strings it holds and would free them.
+def big_results()
+  xs = (0...3000).to_a()
+  mapped = xs.map() do |i| "s#{i}" end
+  kept = xs.select() do |i| i % 3 == 0 end
+  strings = xs.map() do |i| "k#{i}" end.select() do |s| s.length() > 3 end
+  # Reads every pushed string back.
+  total = (mapped + strings).reduce(0) do |acc, s| acc + s.slice(1, 4).to_i() end
+  "#{mapped.length()} #{kept.length()} #{kept[999]} #{strings.length()} #{strings[0]} #{total}"
+end
+
+# The first call runs in the interpreter; the JIT compiles big_results for the second.
+puts(big_results())
+puts(big_results())

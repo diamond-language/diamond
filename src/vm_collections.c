@@ -270,71 +270,123 @@ static_assert(offsetof(DiamondJitLoop, child) == 16, "jit.c reads the chunk at 1
 static_assert(offsetof(DiamondJitLoop, closure) == 24, "jit.c reads the closure at 24");
 static_assert(offsetof(DiamondJitLoop, frame_bytes) == 32, "jit.c reads frame_bytes at 32");
 static_assert(offsetof(DiamondJitLoop, self_slot) == 36, "jit.c reads self_slot at 36");
-static_assert(offsetof(DiamondJitLoop, map) == 37, "jit.c reads map at 37");
+static_assert(offsetof(DiamondJitLoop, kind) == 37, "jit.c reads the kind at 37");
 static_assert(offsetof(DiamondJitLoop, index) == 40, "jit.c reads the index at 40");
 static_assert(offsetof(DiamondJitLoop, result) == 48, "jit.c writes the result at 48");
 static_assert(offsetof(DiamondJitLoop, current) == 64, "jit.c writes the element at 64");
+static_assert(offsetof(DiamondJitLoop, limit) == 96, "jit.c reads times' limit at 96");
+static_assert(offsetof(DiamondJitLoop, protect_slot) == 104, "jit.c reads the slot at 104");
+static_assert(offsetof(DiamondJitLoop, second) == 112, "jit.c writes the index at 112");
+static_assert(offsetof(DiamondValue, as) == 8, "jit.c writes a value's payload at 8");
 static_assert(sizeof(DiamondJitLoop) == DIAMOND_JIT_LOOP_BYTES, "jit.c reserves the loop");
 #endif
 
-/* See jit.h. Mirrors the route diamond_invoke_general takes for an Array
- * receiver and these names: the bridge (only a cached one; the first call
- * goes the long way and caches it), the prelude function's two CHECK_TYPEs
- * through native_loop_block, and block_call_prepare, then what
- * block_call_run checks before calling a compiled block natively. */
+/* The loop a method name at a native loop site names, with the prelude
+ * function the C dispatch would forward it to and how many arguments the
+ * site and the block take. */
+typedef struct {
+    const char *method;
+    const char *target;
+    DiamondJitLoopKind kind;
+    uint8_t site_argc;
+    uint8_t block_argc;
+} NativeLoopShape;
+static const NativeLoopShape native_loop_shapes[]={
+    {"each","array_each",DIAMOND_JIT_LOOP_EACH,1,1},
+    {"map","array_map",DIAMOND_JIT_LOOP_MAP,1,1},
+    {"select","diamond_array_select",DIAMOND_JIT_LOOP_SELECT,1,1},
+    {"each_with_index","array_each_with_index",DIAMOND_JIT_LOOP_EACH_WITH_INDEX,1,2},
+    {"reduce","diamond_array_reduce",DIAMOND_JIT_LOOP_REDUCE,2,2},
+    {"times","integer_times",DIAMOND_JIT_LOOP_TIMES,1,1},
+};
+
+/* See jit.h. Mirrors the route the C dispatch takes for these receivers and
+ * names: the bridge (only a cached one; the first call goes the long way and
+ * caches it), the prelude function's two CHECK_TYPEs through
+ * native_loop_block, and block_call_prepare, then what block_call_run checks
+ * before calling a compiled block natively. */
 bool diamond_jit_loop_begin(DiamondVm *vm, const DiamondChunk *chunk,
         const DiamondValue *registers, const uint8_t *site, size_t depth,
         DiamondJitLoop *loop) {
     const uint16_t recv=bridge_operand(site+3);
     const uint16_t name=bridge_operand(site+5);
     const uint16_t base=bridge_operand(site+7);
-    if(site[9]!=1||!vm->jit||vm->debug_fd>=0||vm->max_instructions!=0||
+    if(!vm->jit||vm->debug_fd>=0||vm->max_instructions!=0||
        vm->max_wall_nanoseconds!=0||vm->max_memory_bytes!=0||vm->resource_grace_active||
        vm->jit_depth_limit==0||depth+1>=vm->jit_depth_limit||
-       (size_t)name>=chunk->string_count||
-       registers[recv].kind!=DIAMOND_VALUE_OBJECT||
-       registers[recv].as.object->kind!=DIAMOND_OBJECT_ARRAY)
+       (size_t)name>=chunk->string_count)
         return false;
     const DiamondStringConstant *method_name=&chunk->strings[name];
-    bool map;
-    if(method_name->length==4&&memcmp(method_name->chars,"each",4)==0)map=false;
-    else if(method_name->length==3&&memcmp(method_name->chars,"map",3)==0)map=true;
-    else return false;
+    const NativeLoopShape *shape=nullptr;
+    for(size_t i=0;i<sizeof native_loop_shapes/sizeof native_loop_shapes[0];i++) {
+        const NativeLoopShape *each=&native_loop_shapes[i];
+        if(method_name->length==strlen(each->method)&&
+           memcmp(method_name->chars,each->method,method_name->length)==0) {
+            shape=each;
+            break;
+        }
+    }
+    if(shape==nullptr||site[9]!=shape->site_argc)return false;
+    const DiamondValue receiver=registers[recv];
+    const bool times=shape->kind==DIAMOND_JIT_LOOP_TIMES;
+    if(times?receiver.kind!=DIAMOND_VALUE_INT:
+             (receiver.kind!=DIAMOND_VALUE_OBJECT||
+              receiver.as.object->kind!=DIAMOND_OBJECT_ARRAY))
+        return false;
     const DiamondFunction *target=nullptr;
     if(!cached_extension_lookup(vm,(const uint8_t *)(const void *)method_name,
-           (uint8_t)DIAMOND_OBJECT_ARRAY,&target)||target==nullptr||
-       strcmp(target->name,map?"array_map":"array_each")!=0||target->code_count<10)
+           times?DIAMOND_EXTENSION_KIND_INT:(uint8_t)DIAMOND_OBJECT_ARRAY,&target)||
+       target==nullptr||strcmp(target->name,shape->target)!=0||target->code_count<10)
         return false;
+    /* The block is the last argument: after reduce's initial value. */
+    const uint8_t callback_parameter=shape->site_argc;
     const uint8_t *code=target->code;
     if(code[0]!=DIAMOND_OP_CHECK_TYPE||bridge_operand(code+1)!=0||
-       code[5]!=DIAMOND_OP_CHECK_TYPE||bridge_operand(code+6)!=1)
+       code[5]!=DIAMOND_OP_CHECK_TYPE||bridge_operand(code+6)!=callback_parameter)
         return false;
-    const DiamondClosure *called=native_loop_block(chunk,target,registers[recv],registers[base]);
+    const DiamondClosure *called=native_loop_block(chunk,target,receiver,
+        registers[base+callback_parameter-1]);
     if(called==nullptr)return false;
     const DiamondFunction *fn=chunk->functions[called->function_index];
     DiamondBlockCall call;
-    if(block_call_prepare(chunk,fn,called,1,&call)!=DIAMOND_VM_OK||call.argc!=1||
+    if(block_call_prepare(chunk,fn,called,shape->block_argc,&call)!=DIAMOND_VM_OK||
+       call.argc!=shape->block_argc||
        call.child==&call.child_storage||fn->jit_code==nullptr||
        (call.self_slot&&fn->owner_class!=DIAMOND_OWNER_CAPTURED_SELF)||
-       fn->register_count<(call.self_slot?2u:1u)||
+       fn->register_count<(size_t)(call.self_slot?1:0)+shape->block_argc||
        fn->register_count>DIAMOND_JIT_MAX_REGISTERS)
         return false;
     *loop=(DiamondJitLoop){
-        .array=(const DiamondArray *)registers[recv].as.object,
+        .array=times?nullptr:(const DiamondArray *)receiver.as.object,
         .code=fn->jit_code,
         .child=call.child,
         .closure=called,
         .frame_bytes=(uint32_t)(fn->register_count*sizeof(DiamondValue)),
         .self_slot=call.self_slot,
-        .map=map,
-        .result=DIAMOND_NIL,
-        .current=DIAMOND_NIL,
+        .kind=shape->kind,
+        /* reduce's running value starts as the initial value. */
+        .result=shape->kind==DIAMOND_JIT_LOOP_REDUCE?registers[base]:DIAMOND_NIL,
+        /* times and each_with_index pass Ints whose payload the loop writes. */
+        .current=times?DIAMOND_INT(0):DIAMOND_NIL,
+        .second=DIAMOND_INT(0),
         .gc_mark=vm->gc_protected_count,
+        .limit=times?receiver.as.integer:0,
     };
-    if(map) {
+    if(shape->kind==DIAMOND_JIT_LOOP_MAP||shape->kind==DIAMOND_JIT_LOOP_SELECT) {
         loop->collected=allocate_array(vm,nullptr,0);
         if(loop->collected==nullptr)return false;
         if(!gc_protect(vm,DIAMOND_OBJECT(loop->collected))) {
+            gc_unprotect(vm,loop->gc_mark);
+            return false;
+        }
+    }
+    /* A slot the generated code overwrites in place: select's element while
+     * the block runs (a block that removes it from the array could leave it
+     * otherwise unreachable before select keeps it), and reduce's running
+     * value between calls (only this loop holds it). */
+    if(shape->kind==DIAMOND_JIT_LOOP_SELECT||shape->kind==DIAMOND_JIT_LOOP_REDUCE) {
+        loop->protect_slot=vm->gc_protected_count;
+        if(!gc_protect(vm,loop->result)) {
             gc_unprotect(vm,loop->gc_mark);
             return false;
         }
@@ -1062,23 +1114,28 @@ DiamondVmStatus numeric_invoke_helper(DiamondVm *vm,const DiamondChunk *chunk,si
             }
             registers[dest]=DIAMOND_INT(integer<0?-integer:integer);return DIAMOND_VM_OK;
         }
-        if(NUMERIC_METHOD("round")&&is_float&&argc==1) {
-            const DiamondValue digits=registers[base];
-            if(digits.kind!=DIAMOND_VALUE_INT||digits.as.integer<-15||
-               digits.as.integer>15) {
-                snprintf(vm->error,sizeof vm->error,
-                    "Float#round digits must be an Int from -15 to 15");
-                return DIAMOND_VM_TYPE_ERROR;
-            }
-            const double scale=pow(10.0,(double)digits.as.integer);
-            registers[dest]=DIAMOND_FLOAT(isfinite(real)?round(real*scale)/scale:real);
-            return DIAMOND_VM_OK;
-        }
         const bool to_int=NUMERIC_METHOD("to_i");
         const bool floor_method=NUMERIC_METHOD("floor");
         const bool ceil_method=NUMERIC_METHOD("ceil");
         const bool round_method=NUMERIC_METHOD("round");
         #undef NUMERIC_METHOD
+        /* round(digits), floor(digits) and ceil(digits) keep that many
+         * decimal places (negative: tens, hundreds, ...) and answer a Float. */
+        if((floor_method||ceil_method||round_method)&&is_float&&argc==1) {
+            const DiamondValue digits=registers[base];
+            if(digits.kind!=DIAMOND_VALUE_INT||digits.as.integer<-15||
+               digits.as.integer>15) {
+                snprintf(vm->error,sizeof vm->error,
+                    "Float#%s digits must be an Int from -15 to 15",
+                    floor_method?"floor":ceil_method?"ceil":"round");
+                return DIAMOND_VM_TYPE_ERROR;
+            }
+            const double scale=pow(10.0,(double)digits.as.integer);
+            const double scaled=real*scale;
+            const double whole=floor_method?floor(scaled):ceil_method?ceil(scaled):round(scaled);
+            registers[dest]=DIAMOND_FLOAT(isfinite(real)?whole/scale:real);
+            return DIAMOND_VM_OK;
+        }
         if(to_int||(is_float&&(floor_method||ceil_method||round_method))) {
             if(argc!=0)return DIAMOND_VM_ARITY_ERROR;
             if(!is_float) {registers[dest]=registers[recv];return DIAMOND_VM_OK;}

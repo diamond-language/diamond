@@ -100,6 +100,8 @@ static const DiamondNativeMethod DIAMOND_NATIVE_METHODS[]={
     {DIAMOND_TYPE_FLOAT,"ceil",0,DIAMOND_TYPE_INT},
     {DIAMOND_TYPE_FLOAT,"round",0,DIAMOND_TYPE_INT},
     {DIAMOND_TYPE_FLOAT,"round",1,DIAMOND_TYPE_FLOAT},
+    {DIAMOND_TYPE_FLOAT,"floor",1,DIAMOND_TYPE_FLOAT},
+    {DIAMOND_TYPE_FLOAT,"ceil",1,DIAMOND_TYPE_FLOAT},
 };
 
 /* Every method name the VM implements natively (or as a universal

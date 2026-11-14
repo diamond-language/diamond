@@ -6,6 +6,20 @@ authoritative fine-grained record.
 
 ## Unreleased
 
+## 1.0.0-rc5 — 2026-11-13
+
+The fifth release candidate fills in everyday collection and String argument
+shapes, and makes JIT-compiled code substantially faster on calls,
+comparisons and block loops. The cookies cut (0.2.4) was published with these
+changes on 2026-11-12; no other bundled cut changed since rc4.
+
+### Changed
+
+- More collection and String conveniences: a Hash `each_with_object` block may take `(key, value, memo)`; Hash `values_at`, `fetch_values` and `first`/`first(n)`; `zip` over up to six arrays; Array `slice_when` and `intersect?`; `Int#step(limit, by)`; and String `insert(index, other)` and `prepend(other)`.
+- Everyday collection and String methods accept the argument shapes that used to raise an arity error: `any?`/`all?`/`none?`/`one?` without a block (on Array; `any?`/`all?`/`none?` on Hash), `each_slice(n)`/`each_cons(n)` with a block, `sum(start)` (`sum(0.0)`, `sum("")`), `min(n)`/`max(n)`, `uniq` with a key block, `flatten(depth)`, `Hash#merge` with a conflict block, `String#chomp(suffix)`, `squeeze(chars)`, `index(needle, start)`, and `Float#floor(digits)`/`ceil(digits)`. New: `Array#take_while`/`drop_while` and `Hash#delete_if`/`keep_if`.
+- With the JIT on (`DIAMOND_JIT=1`), Array `select`, `each_with_index` and `reduce` and Int `times` run their blocks as native loops, as `each` and `map` already did: about half the instructions per element for `each_with_index`, `reduce` and `times`, and a quarter fewer for `select`.
+- With the JIT on, compiled code runs much faster on calls and comparisons: fib takes half the cycles, mandelbrot a third less, poly a quarter less, and sieve, trees, nbody and objects 15-20% less. Values are now written as whole 8-byte words and copied in 8-byte halves, so the loads that read them back no longer wait for the stores to retire, and a comparison followed by a branch on its result branches directly.
+- With the JIT on, Array `map` and `select` push into their result array inline instead of calling C for every element: about 30% fewer instructions per element (map 156 to 113, select keeping everything 177 to 123, with an empty block).
 - Session cookies are marked `Secure` under `DIAMOND_ENV=production`, matching active_auth: the cookies cut's `CookieSession` (0.2.4, with a `secure:` override, and now `Path=/`) and the project_board example. Apps behind a TLS proxy such as nginx keep speaking plain HTTP. The guestbook, project_board, chat (`wss:`) and library examples were checked behind nginx over HTTPS; bookmarks, job_service and task_board are loopback-only single-user tools.
 - The brand is written **D6** everywhere it names the language: guides, READMEs, the docs site, registry pages, the VS Code extension, CLI help text and GitHub release titles. Commands, file names and code stay lowercase (`d6 build`, `.d6`, `d6-lang`).
 - A thread that fails and is never joined now prints its uncaught exception and backtrace on stderr (`d6: runtime error in unjoined thread: ...`) instead of losing it silently. Exit status is unchanged.
