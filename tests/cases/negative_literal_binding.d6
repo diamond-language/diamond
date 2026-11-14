@@ -1,0 +1,21 @@
+# A minus written against a number literal is part of it, as in Ruby: a
+# method call or index applies to the negative value. `**` and a spaced
+# minus still negate the whole expression.
+
+puts(-2.5.floor())
+puts(-2.abs())
+puts(- 2.abs())
+x = 2
+puts(-x.abs())
+puts(-2 ** 2)
+puts(-2.0 ** 2)
+puts(-2.abs() ** 2)
+puts(3 - -2.abs())
+puts(3 -2)
+puts(-9223372036854775808)
+puts(-1.5.round())
+puts([-1, -2.5])
+puts(-0.5.ceil())
+def f(x: Int) = x
+puts(f(-3.abs()))
+puts(-3.to_s().length())

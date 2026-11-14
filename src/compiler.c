@@ -2095,6 +2095,19 @@ bool power_operator_ahead(const Compiler *compiler) {
         next.span.start==compiler->current.span.start+1;
 }
 
+/* After a prefix `-`: is the current token a number literal written right
+ * against it, and not the base of `**`? */
+bool negative_literal_ahead(const Compiler *compiler) {
+    if(compiler->current.kind!=DIAMOND_TOKEN_INTEGER&&
+       compiler->current.kind!=DIAMOND_TOKEN_FLOAT)return false;
+    if(compiler->current.span.start!=compiler->previous.span.start+1)return false;
+    DiamondLexer lookahead=compiler->lexer;
+    const DiamondToken first=diamond_lexer_next(&lookahead);
+    if(first.kind!=DIAMOND_TOKEN_STAR)return true;
+    const DiamondToken second=diamond_lexer_next(&lookahead);
+    return second.kind!=DIAMOND_TOKEN_STAR||second.span.start!=first.span.start+1;
+}
+
 Precedence infix_precedence(const Compiler *compiler) {
     return power_operator_ahead(compiler)?PREC_POWER:
         token_precedence(compiler->current.kind);

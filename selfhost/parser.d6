@@ -9082,6 +9082,18 @@ class Parser
     following.kind() == :star && following.start() == @current.start() + 1
   end
 
+  # After a prefix `-`: a number literal written right against it, and not
+  # the base of `**` (`-2 ** 2` is -(2 ** 2)).
+  def negative_literal_ahead?()
+    return false if @current.kind() != :integer && @current.kind() != :float
+    return false if @current.start() != @previous.start() + 1
+    lookahead = @lexer.clone()
+    first = lookahead.next_token()
+    return true if first.kind() != :star
+    second = lookahead.next_token()
+    second.kind() != :star || second.start() != first.start() + 1
+  end
+
   def current_operator_precedence()
     return Precedence::POWER if self.power_operator_ahead?()
     token_precedence(@current.kind())
@@ -9273,6 +9285,17 @@ class Parser
       return value
     end
     if kind == :minus
+      # `-2.5.round()` calls round on -2.5, as compiler.c's
+      # negative_literal_ahead does; parse_precedence's postfix loop picks
+      # up the call after this returns.
+      if self.negative_literal_ahead?()
+        literal = self.parse_prefix()
+        destination = self.allocate_register()
+        self.emit_instruction2(Opcode::NEGATE, destination, literal)
+        literal_fact = self.type_fact(literal)
+        self.set_type_fact(destination, literal_fact) if literal_fact == Type::INT || literal_fact == Type::FLOAT
+        return destination
+      end
       operand = self.parse_precedence(Precedence::PREFIX)
       destination = self.allocate_register()
       self.emit_instruction2(Opcode::NEGATE, destination, operand)
