@@ -1114,23 +1114,28 @@ DiamondVmStatus numeric_invoke_helper(DiamondVm *vm,const DiamondChunk *chunk,si
             }
             registers[dest]=DIAMOND_INT(integer<0?-integer:integer);return DIAMOND_VM_OK;
         }
-        if(NUMERIC_METHOD("round")&&is_float&&argc==1) {
-            const DiamondValue digits=registers[base];
-            if(digits.kind!=DIAMOND_VALUE_INT||digits.as.integer<-15||
-               digits.as.integer>15) {
-                snprintf(vm->error,sizeof vm->error,
-                    "Float#round digits must be an Int from -15 to 15");
-                return DIAMOND_VM_TYPE_ERROR;
-            }
-            const double scale=pow(10.0,(double)digits.as.integer);
-            registers[dest]=DIAMOND_FLOAT(isfinite(real)?round(real*scale)/scale:real);
-            return DIAMOND_VM_OK;
-        }
         const bool to_int=NUMERIC_METHOD("to_i");
         const bool floor_method=NUMERIC_METHOD("floor");
         const bool ceil_method=NUMERIC_METHOD("ceil");
         const bool round_method=NUMERIC_METHOD("round");
         #undef NUMERIC_METHOD
+        /* round(digits), floor(digits) and ceil(digits) keep that many
+         * decimal places (negative: tens, hundreds, ...) and answer a Float. */
+        if((floor_method||ceil_method||round_method)&&is_float&&argc==1) {
+            const DiamondValue digits=registers[base];
+            if(digits.kind!=DIAMOND_VALUE_INT||digits.as.integer<-15||
+               digits.as.integer>15) {
+                snprintf(vm->error,sizeof vm->error,
+                    "Float#%s digits must be an Int from -15 to 15",
+                    floor_method?"floor":ceil_method?"ceil":"round");
+                return DIAMOND_VM_TYPE_ERROR;
+            }
+            const double scale=pow(10.0,(double)digits.as.integer);
+            const double scaled=real*scale;
+            const double whole=floor_method?floor(scaled):ceil_method?ceil(scaled):round(scaled);
+            registers[dest]=DIAMOND_FLOAT(isfinite(real)?whole/scale:real);
+            return DIAMOND_VM_OK;
+        }
         if(to_int||(is_float&&(floor_method||ceil_method||round_method))) {
             if(argc!=0)return DIAMOND_VM_ARITY_ERROR;
             if(!is_float) {registers[dest]=registers[recv];return DIAMOND_VM_OK;}

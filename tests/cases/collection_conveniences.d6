@@ -1,0 +1,90 @@
+# Argument shapes the everyday collection, String and Float methods accept:
+# blockless predicates, blocks on each_slice/each_cons/uniq/merge, a start
+# for sum, a count for min/max, a depth for flatten, and so on.
+
+# each_slice and each_cons hand each piece to a block and still return them.
+seen = []
+slices = [1, 2, 3, 4, 5].each_slice(2) do |slice| seen.push(slice.sum()) end
+puts(slices)
+puts(seen)
+windows = [1, 2, 3].each_cons(2) do |window| seen.push(window) end
+puts(windows)
+puts([1, 2, 3, 4].each_slice(size: 3))
+
+# take_while / drop_while stop at the first element the block rejects.
+puts([1, 2, 3, 1].take_while() do |x| x < 3 end)
+puts([1, 2, 3, 1].drop_while() do |x| x < 3 end)
+puts([].take_while() do |x| true end)
+
+# min(n) / max(n) answer Arrays, smallest or largest first.
+def three(xs: Array[Int]) -> Array[Int] = xs
+puts(three([5, 3, 9, 1].min(3)))
+puts(three([5, 3, 9, 1].max(3)))
+puts([5, 3, 9, 1].min())
+puts([].max(2))
+
+# uniq with a block keeps the first element per key.
+puts(["apple", "avocado", "banana", "blueberry"].uniq() do |s| s[0] end)
+puts([[1, "a"], [1, "b"]].uniq() do |pair| pair[0] end)
+
+# flatten(depth) stops after that many levels.
+nested = [1, [2, [3, [4]]]]
+puts(nested.flatten(1))
+puts(nested.flatten(2))
+puts(nested.flatten())
+puts(nested.flatten(0))
+
+# sum(start), with and without a block.
+puts([1, 2, 3].sum(0.5))
+puts(["a", "b", "c"].sum(""))
+puts([1, 2, 3].sum(100) do |x| x * 2 end)
+puts([1, 2, 3].sum() do |x| x * 2 end)
+puts([].sum(7))
+
+# Blockless any?/all?/none?/one? test the elements; only nil and false fail.
+puts([nil, false].any?())
+puts([nil, 0].any?())
+puts([0, "", []].all?())
+puts([1, nil].all?())
+puts([].all?())
+puts([nil, false].none?())
+puts([nil, 1, false].one?())
+puts([1, 2].one?())
+puts([1, 2, 3].one?() do |x| x > 2 end)
+
+# Hash: blockless any?/all?/none?, merge with a block, delete_if/keep_if.
+h = {"a" => 1, "b" => 2}
+puts(h.any?())
+puts({}.any?())
+puts(h.all?())
+puts({}.none?())
+puts(h.merge({"a" => 10, "c" => 3}) do |key, old, new| old + new end)
+puts(h.merge({"a" => 10}) do |key, old, new| "#{key}:#{old}/#{new}" end)
+puts(h.merge({"c" => 3}))
+counts = {"a" => 1, "b" => 2, "c" => 3, "d" => 4}
+same = counts.delete_if() do |key, value| value.even?() end
+puts(counts)
+puts(same == counts)
+counts.keep_if() do |value| value > 1 end
+puts(counts)
+
+# String: chomp(suffix), squeeze(chars), index(needle, start).
+puts("report.csv".chomp(".csv"))
+puts("report.csv".chomp(".txt"))
+puts("line\r\n".chomp().length())
+puts("a  b   c".squeeze(" "))
+puts("aabbcc".squeeze("b"))
+puts("aabbcc".squeeze())
+puts("abcabc".index("c", 3))
+puts("abcabc".index("c", -2))
+puts("abcabc".index("x", 2))
+puts("abc".index("c", 9))
+
+# Float: floor(digits) and ceil(digits), like round(digits).
+def places(value: Float) -> Float = value.floor(2)
+puts(places(3.14159))
+puts(3.14159.ceil(2))
+puts(1234.5.floor(-2))
+negative = 0.0 - 2.555
+puts(negative.ceil(1))
+puts(3.7.floor())

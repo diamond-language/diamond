@@ -6,6 +6,7 @@ authoritative fine-grained record.
 
 ## Unreleased
 
+- Everyday collection and String methods accept the argument shapes that used to raise an arity error: `any?`/`all?`/`none?`/`one?` without a block (on Array; `any?`/`all?`/`none?` on Hash), `each_slice(n)`/`each_cons(n)` with a block, `sum(start)` (`sum(0.0)`, `sum("")`), `min(n)`/`max(n)`, `uniq` with a key block, `flatten(depth)`, `Hash#merge` with a conflict block, `String#chomp(suffix)`, `squeeze(chars)`, `index(needle, start)`, and `Float#floor(digits)`/`ceil(digits)`. New: `Array#take_while`/`drop_while` and `Hash#delete_if`/`keep_if`.
 - With the JIT on (`DIAMOND_JIT=1`), Array `select`, `each_with_index` and `reduce` and Int `times` run their blocks as native loops, as `each` and `map` already did: about half the instructions per element for `each_with_index`, `reduce` and `times`, and a quarter fewer for `select`.
 - With the JIT on, compiled code runs much faster on calls and comparisons: fib takes half the cycles, mandelbrot a third less, poly a quarter less, and sieve, trees, nbody and objects 15-20% less. Values are now written as whole 8-byte words and copied in 8-byte halves, so the loads that read them back no longer wait for the stores to retire, and a comparison followed by a branch on its result branches directly.
 - With the JIT on, Array `map` and `select` push into their result array inline instead of calling C for every element: about 30% fewer instructions per element (map 156 to 113, select keeping everything 177 to 123, with an empty block).

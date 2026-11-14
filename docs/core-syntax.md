@@ -633,12 +633,15 @@ Both numeric types have conversion methods, and `Float` has rounding:
 2.5.round()          # => 3, halves round away from zero
 2.345.round(1)       # => 2.3, a Float
 1234.5.round(-2)     # => 1200.0
+3.14159.floor(2)     # => 3.14; ceil(digits) likewise
 ```
 
 `floor`, `ceil`, `round()`, and `to_i` return an `Int` and follow the same
 rules as the global `to_i`: `NaN` and `Infinity` raise a rescuable
 `RangeError`, and a value beyond 64 bits promotes to an arbitrary-precision
-`Int`. `round(digits)` takes an `Int` from -15 to 15 and returns a `Float`;
+`Int`. `round(digits)`, `floor(digits)` and `ceil(digits)` take an `Int` from
+-15 to 15 and return a `Float`;
+
 because it scales by a power of ten, results inherit ordinary binary
 floating-point imprecision. `to_s` (including `to_s(base)` for bases 2 to 36), `to_i`, `to_f`, and `abs` also work on
 `Int`s that have promoted past 64 bits, as do the bitwise operators `&`, `|`, `^`, `<<` and `>>`;
