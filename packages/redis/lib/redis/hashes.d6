@@ -1,18 +1,28 @@
 # Hash commands. Reopens RedisConnection (see connection.d6).
 class RedisConnection
+  ## Runs `HGET`.
   def hget(key, field) = self.command("HGET", key, field)
+  ## Runs `HSET`.
   def hset(key, field, value) = self.command("HSET", key, field, value)
+  ## Runs `HDEL`.
   def hdel(key, *fields) = self.command("HDEL", key, *fields)
+  ## Runs `HEXISTS`, returning `true` when Redis replies 1.
   def hexists(key, field) = self.command("HEXISTS", key, field) == 1
+  ## Runs `HLEN`.
   def hlen(key) = self.command("HLEN", key)
+  ## Runs `HKEYS`.
   def hkeys(key) = self.command("HKEYS", key)
+  ## Runs `HVALS`.
   def hvals(key) = self.command("HVALS", key)
+  ## Runs `HINCRBY`.
   def hincrby(key, field, amount) = self.command("HINCRBY", key, field, amount)
+  ## Runs `HMGET`.
   def hmget(key, *fields) = self.command("HMGET", key, *fields)
 
   # HSET key field1 value1 field2 value2 ... from a Hash -- the modern
   # (Redis 4+) multi-field form of HSET itself, not the separate
   # deprecated HMSET command.
+  ## Sets several fields of the hash at `key` from a Hash (`HSET key f1 v1 f2 v2 ...`).
   def hmset(key, pairs: Hash)
     args = ["HSET", key]
     pairs.keys().each() do |field|
@@ -28,6 +38,7 @@ class RedisConnection
   # connection.d6's own #resp3?), Redis sends a real Map reply for
   # this same command instead, which protocol.d6's own decoder already
   # turns into a Diamond Hash directly -- nothing left to rebuild.
+  ## Every field and value of the hash at `key`, as a Hash.
   def hgetall(key)
     reply = self.command("HGETALL", key)
     if self.resp3?()
@@ -42,3 +53,4 @@ class RedisConnection
     result
   end
 end
+

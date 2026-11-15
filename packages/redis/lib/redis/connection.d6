@@ -12,6 +12,7 @@
 # active_record/arel are both split the same "one file per class,
 # reopened as needed" way). #command(*args) is the one raw primitive
 # every one of those higher-level methods is built on.
+## Opens connections to a Redis server.
 class Redis
   # `resp3: true` sends `HELLO 3` right after connecting, switching
   # this connection over to RESP3 for the rest of its life (Redis has
@@ -34,6 +35,9 @@ class Redis
   # ordinary RedisError here rather than silently staying on RESP2 --
   # asking for RESP3 and not getting it is worth knowing about, not
   # hiding.
+  ## Connects to `host:port` (`options` are `TCPSocket.connect` options) and returns a
+  ## `RedisConnection`. `resp3: true` switches the connection to RESP3 with `HELLO 3`; a
+  ## server older than Redis 6 then raises `RedisError`.
   def self.connect(host, port = 6379, options = nil, resp3 = false)
     conn = RedisConnection.new(TCPSocket.connect(host, port, options), resp3)
     if resp3
@@ -43,6 +47,9 @@ class Redis
   end
 end
 
+## One connection to Redis. Each method sends one command and returns the decoded
+## reply (String, Int, Array, Hash or `nil`); an error reply raises `RedisError`.
+## Inside `multi`, commands return `"QUEUED"`.
 class RedisConnection
   def initialize(socket, resp3 = false)
     @socket = socket
@@ -56,6 +63,7 @@ class RedisConnection
   # inspecting the decoded value's own runtime shape to guess. See
   # hashes.d6's own #hgetall and
   # sorted_sets.d6's own #zrange/#zrangebyscore.
+  ## Whether the connection speaks RESP3.
   def resp3?() = @resp3
 
   # The raw primitive: sends one RESP2 command (`args` stringified
@@ -77,12 +85,16 @@ class RedisConnection
   # An annotated `incr` would work fine called normally but raise
   # TypeError the moment it's called from inside a #multi block --
   # exactly the case #multi's own ergonomics depend on working.
+  ## Sends any command, such as `command("SET", "k", "v")`, and returns its reply. Use
+  ## it for commands without a method here.
   def command(*args)
     @socket.write(redis_encode_command(args))
     redis_read_reply(@socket)
   end
 
+  ## Closes the connection.
   def close()
     @socket.close()
   end
 end
+
