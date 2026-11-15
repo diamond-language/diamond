@@ -3,7 +3,10 @@
 # other non-comment line is a Markdown file under docs/. Pages in a "Guide"
 # section are published under guide/, the rest under reference/; examples get
 # Run buttons on pages from docs/guide/. A docs/*.md file not
-# listed here is linked to on GitHub instead.
+# listed here is linked to on GitHub instead. "@cuts" expands to an
+# "All cuts" page and one page per cut in applications/registry/launch-cuts.json,
+# made from packages/NAME/README.md and the cut's `##` doc comments
+# (tools/docsite/cutdoc.d6), published under cuts/.
 
 == Guide
 guide/index.md
@@ -56,3 +59,6 @@ cut-contract.md
 deployment.md
 sandbox.md
 portability.md
+
+== Cuts
+@cuts

@@ -13,6 +13,8 @@ module ActiveRecord
   # using the target repository's own table/mapper/visitor (see its three
   # read-only accessors above) to render and map results consistently with
   # how the rest of that repository already works.
+  ## A many-to-many association through `join_table`: `join_owner_key` holds the
+  ## owner's id and `join_target_key` the target's primary key.
   class HasManyThrough
     def initialize(target_repository: Repository, join_table: Arel::Table,
                    join_owner_key: String, join_target_key: String)
@@ -22,6 +24,7 @@ module ActiveRecord
       @join_target_key = join_target_key
     end
 
+    ## The target records joined to `owner_id`.
     def all(db, owner_id)
       target_table = @target_repository.table()
       join_predicate = @join_table.column(@join_target_key).eq(
@@ -44,6 +47,9 @@ module ActiveRecord
     # when grouping -- a narrow, deliberate addition to the star projection
     # #all already uses, safe as long as the join table's owner-key column
     # name doesn't collide with one of the target table's own column names.
+    ## One join query for many owners: a Hash of each owner id to its Array of
+    ## records. The join table's owner column is added to the projection, so it must
+    ## not share a name with a target column.
     def preload(db, owner_ids: Array)
       target_table = @target_repository.table()
       join_predicate = @join_table.column(@join_target_key).eq(
@@ -65,3 +71,4 @@ module ActiveRecord
   end
 
 end
+

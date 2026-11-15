@@ -4,6 +4,7 @@ module Mjolnir
   # (:int, :float, :string, :bool, :any); `builder` turns one result row
   # (a Hash) into an entity. Entities are plain objects -- typically a
   # `struct` -- with no persistence methods; builds come back frozen.
+  ## Maps a table to entities of type `T`.
   class Schema[T]
     # `primary_key` is a field name, or an Array of field names for a
     # composite key (a join table keyed by its two foreign keys). A
@@ -11,6 +12,9 @@ module Mjolnir
     # With `timestamps: true` the fields must include `created_at` and
     # `updated_at` (:int, epoch seconds); Repo stamps them on insert and
     # update unless the changeset sets them itself.
+    ## `fields` maps each column to `:int`, `:float`, `:string`, `:bool` or `:any`, and
+    ## `builder` turns a row Hash into an entity. `primary_key` may be an Array for a
+    ## composite key. `timestamps` maintains `created_at`/`updated_at` integer fields.
     def initialize(table_name: String, fields: Hash, builder: Callable[[Hash], T], primary_key: String | Array = "id", timestamps: Bool = false)
       @table_name = table_name
       @fields = fields
@@ -39,6 +43,7 @@ module Mjolnir
     # Declare that `target` rows point back here through `foreign_key` (a
     # field of `target`). Loaded explicitly with Repo#preload; nothing is
     # ever fetched implicitly. Returns self so declarations chain.
+    ## Declares association `name`: rows of `target` whose `foreign_key` is this entity's key.
     def has_many(name: String, target: Schema, foreign_key: String) -> Schema[T]
       target.column(foreign_key)
       @associations[name] = {"kind": "has_many", "target": target, "key": foreign_key}
@@ -46,6 +51,7 @@ module Mjolnir
     end
 
     # Declare that this schema's `foreign_key` field points at a `target` row.
+    ## Declares association `name`: the `target` row this entity's `foreign_key` points to.
     def belongs_to(name: String, target: Schema, foreign_key: String) -> Schema[T]
       self.column(foreign_key)
       @associations[name] = {"kind": "belongs_to", "target": target, "key": foreign_key}
@@ -97,6 +103,7 @@ module Mjolnir
     def type_of(name) = @fields[name]
 
     # The Arel column for a declared field.
+    ## The Arel attribute for field `name`, for building conditions.
     def column(name)
       unless self.field?(name)
         raise UnknownFieldError.new(@table_name, name)
@@ -134,7 +141,9 @@ module Mjolnir
       values
     end
 
+    ## A query for every row of the table.
     def query() -> Query[T] = Query.new(self, Arel.from(@table))
   end
 
 end
+

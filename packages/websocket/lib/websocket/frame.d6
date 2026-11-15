@@ -13,7 +13,9 @@
 # so every fixed value used across more than one function here is one
 # too.
 def websocket_opcode_continuation() = 0
+## The opcode of a text message (1).
 def websocket_opcode_text() = 1
+## The opcode of a binary message (2).
 def websocket_opcode_binary() = 2
 def websocket_opcode_close() = 8
 def websocket_opcode_ping() = 9
@@ -28,6 +30,7 @@ def websocket_opcode_pong() = 10
 # chance to reject it. packages/http's own http_max_body_size is the
 # precedent for capping a length field before ever trusting it.
 def websocket_max_frame_size() = 16 * 1024 * 1024
+## The default limit on one message, 16 MiB.
 def websocket_max_message_size() = 16 * 1024 * 1024
 
 # XOR-cycles `key` (always exactly 4 bytes) over `data`, byte by byte --
@@ -171,3 +174,4 @@ def websocket_read_frame(conn)
   end
   {"fin": frame["fin"], "opcode": frame["opcode"], "payload": frame["payload"]}
 end
+

@@ -1,8 +1,12 @@
 # Sorted set commands. Reopens RedisConnection (see connection.d6).
 class RedisConnection
+  ## Runs `ZADD`.
   def zadd(key, score, member) = self.command("ZADD", key, score, member)
+  ## Runs `ZREM`.
   def zrem(key, *members) = self.command("ZREM", key, *members)
+  ## Runs `ZCARD`.
   def zcard(key) = self.command("ZCARD", key)
+  ## Runs `ZINCRBY`.
   def zincrby(key, amount, member) = self.command("ZINCRBY", key, amount, member)
 
   # Under RESP2, a String reply (Redis scores are wire-formatted as
@@ -15,6 +19,7 @@ class RedisConnection
   # crash exactly the callers RESP3 is supposed to serve better, not
   # worse. `nil` (member not in the set) is left as nil either way --
   # nil.to_f() isn't a meaningful thing to ask for.
+  ## The score of `member` as a Float, or `nil` when it is not in the set.
   def zscore(key, member)
     reply = self.command("ZSCORE", key, member)
     if reply == nil || self.resp3?() then reply else reply.to_f() end
@@ -23,6 +28,7 @@ class RedisConnection
   # Redis's own rank is 0-indexed by ascending score, ties broken by
   # member name -- nil if `member` isn't in the set (matching zscore's
   # own "not present" contract) rather than raising.
+  ## Runs `ZRANK`.
   def zrank(key, member) = self.command("ZRANK", key, member)
 
   # `withscores`: true returns an Array of [member, score: Float] pairs
@@ -36,6 +42,8 @@ class RedisConnection
   # decoding) -- nothing left to rebuild, and re-pairing it anyway
   # would misread each already-Float score as if it were the next
   # member's own name.
+  ## Members by rank from `start` to `stop` (inclusive; -1 is the last). With
+  ## `withscores`, an Array of `[member, score]` pairs.
   def zrange(key, start = 0, stop = -1, withscores = false)
     if withscores
       reply = self.command("ZRANGE", key, start, stop, "WITHSCORES")
@@ -52,6 +60,8 @@ class RedisConnection
   # "-inf"/"+inf" String sentinels for an unbounded end -- passed
   # through to the command exactly as given, no translation needed
   # either way. See #zrange's own comment on `withscores`/RESP3.
+  ## Members with scores between `min` and `max` (numbers, or `"-inf"`/`"+inf"`). See
+  ## `zrange` for `withscores`.
   def zrangebyscore(key, min, max, withscores = false)
     if withscores
       reply = self.command("ZRANGEBYSCORE", key, min, max, "WITHSCORES")
@@ -78,3 +88,4 @@ class RedisConnection
 
   public
 end
+

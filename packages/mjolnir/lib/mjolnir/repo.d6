@@ -3,7 +3,9 @@ module Mjolnir
   # The only object that touches the database. Stateless apart from the
   # connection it was handed: no identity map, no unit of work, no hidden
   # flush -- every method is one visible round trip (or a transaction).
+  ## Runs queries and changesets against one database connection.
   class Repo
+    ## Uses `db`; `visitor` picks the SQL dialect (SQLite by default).
     def initialize(db, visitor = nil)
       @db = db
       @visitor = visitor
@@ -11,13 +13,16 @@ module Mjolnir
 
     def db() = @db
 
+    ## Every entity the query matches.
     def all[T](query: Query[T]) -> Array[T] = query.schema().build_all(query.arel().to_a(@db, @visitor))
 
+    ## The first entity the query matches, or `nil`.
     def one[T](query: Query[T]) -> T | Nil
       found = self.all(query.limit(1))
       if found.empty?() then nil else found[0] end
     end
 
+    ## The entity with primary key `id` (an Array for a composite key), or `nil`.
     def get[T](schema: Schema[T], id) -> T | Nil
       query = schema.query()
       schema.key_predicates(id).each() do |predicate|
@@ -26,12 +31,15 @@ module Mjolnir
       self.one(query)
     end
 
+    ## How many rows the query matches.
     def count(query: Query) -> Int = query.arel().count(@db, @visitor)
 
+    ## Whether the query matches any row.
     def exists?(query: Query) -> Bool = self.one(query) != nil
 
     # The first row whose fields equal `conditions` (a Hash, as for
     # Query#where), or nil.
+    ## The first entity whose fields equal `conditions`, or `nil`.
     def get_by[T](schema: Schema[T], conditions: Hash) -> T | Nil = self.one(schema.query().where(conditions))
 
     # Loads one association for many entities in a single query and returns
@@ -42,6 +50,9 @@ module Mjolnir
     #
     #   posts = repo.preload(users, users_list, "posts")
     #   posts[user.id()]   # Array of Post
+    ## Loads association `name` for all of `entities` in one query and returns a Hash
+    ## keyed by each entity's primary key (an Array for `has_many`, an entity or `nil` for
+    ## `belongs_to`). `scope` is an optional query on the target schema.
     def preload(schema: Schema, entities: Array, name: String, scope = nil) -> Hash
       if schema.composite?()
         raise ArgumentError.new("preload does not support the composite key of #{schema.table_name()}")
@@ -83,6 +94,8 @@ module Mjolnir
 
     # Ok(entity) with the stored row, or Err(changeset) if the changeset
     # is invalid or a declared unique constraint failed.
+    ## Inserts the changeset's row and returns `Ok(entity)`, or `Err(changeset)` when it
+    ## is invalid or a declared unique constraint fails.
     def insert(changeset: Changeset)
       unless changeset.valid?()
         return Err.new(changeset)
@@ -104,6 +117,8 @@ module Mjolnir
 
     # Writes only the changed fields of a persisted entity. A changeset
     # with no changes is Ok(entity) without a query.
+    ## Updates the loaded entity's row with the changes and returns `Ok(entity)` or
+    ## `Err(changeset)`. Raises `StaleEntryError` when the row is gone.
     def update(changeset: Changeset)
       if changeset.new_record?()
         raise ArgumentError.new("cannot update a changeset for a new record; use insert")
@@ -137,12 +152,16 @@ module Mjolnir
 
     # Like insert/update, but returns the entity and raises
     # InvalidChangesetError (or a constraint's own error) instead of Err.
+    ## Like `insert`, but returns the entity or raises `InvalidChangesetError`.
     def insert!(changeset: Changeset) = self.unwrap(self.insert(changeset))
+    ## Like `update`, but returns the entity or raises `InvalidChangesetError`.
     def update!(changeset: Changeset) = self.unwrap(self.update(changeset))
 
     # Sets `changes` (a Hash) on every row `query` matches; returns the
     # number of rows changed. Stamps updated_at on a timestamped schema.
     # Refuses a query with no condition.
+    ## Sets `changes` on every matching row and returns the count. Refuses a query with no
+    ## condition.
     def update_all(query: Query, changes: Hash)
       schema = query.schema()
       predicates = query.arel().predicates()
@@ -170,6 +189,7 @@ module Mjolnir
 
     # Removes every row `query` matches; returns the number removed.
     # Refuses a query with no condition.
+    ## Deletes every matching row and returns the count. Refuses a query with no condition.
     def delete_all(query: Query)
       schema = query.schema()
       predicates = query.arel().predicates()
@@ -184,6 +204,7 @@ module Mjolnir
     end
 
     # Rows removed.
+    ## Deletes the row with primary key `id` (an Array for a composite key).
     def delete(schema: Schema, id)
       statement = Arel.delete_from(schema.table())
       schema.key_predicates(id).each() do |predicate|
@@ -198,6 +219,8 @@ module Mjolnir
     # (BEGIN IMMEDIATE), so a read followed by a write cannot fail partway through
     # when another connection writes in between; a competing writer waits
     # for the connection's busy timeout instead.
+    ## Runs the block in a transaction and returns its value. A returned `Err` or a raised
+    ## exception rolls back; anything else commits.
     def transaction(callback: Callable[1])
       sqlite = @visitor == nil || @visitor.is_a?(Arel::SQLiteVisitor)
       @db.execute(if sqlite then "BEGIN IMMEDIATE" else "BEGIN" end)
@@ -338,3 +361,4 @@ module Mjolnir
   end
 
 end
+

@@ -1,7 +1,10 @@
 module Registry
   # One connection per worker. Call Schema.apply before constructing this service.
   # Roots and verifier executable are trusted operator configuration.
+  ## The authenticated publish transaction.
   class Publisher
+    ## `db` is an initialized SQLite connection, `store` a `BlobStore`, `staging` an
+    ## existing private directory and `verifier` the absolute path of `facet`.
     def initialize(db, store, staging: String, verifier: String)
       unless File.directory?(staging) then raise ArgumentError.new("staging directory must exist") end
       @db = db
@@ -38,6 +41,11 @@ module Registry
       end
     end
 
+    ## Verifies `bytes` as a release of cut `name` with `facet verify`, checks `token`'s
+    ## `publish:<name>` scope and ownership, then stores the blob and records the release.
+    ## Returns `{"protocol", "name", "version", "sha256", "size", "yanked", "created"}`;
+    ## uploading the same archive again returns the existing release. `key` makes retries
+    ## idempotent. Refusals raise a `Failure`.
     def publish(name: String, bytes: String, token: String, key: String = "")
       if bytes.length() == 0 || bytes.length() > 58720256 then raise PayloadTooLarge.new() end
       if key.length() > 128 then raise InvalidRequest.new() end
@@ -107,6 +115,8 @@ module Registry
 
     # Reads display details for releases published before they were recorded. A release whose
     # blob is missing or fails verification is left for the next run and counted as skipped.
+    ## Fills in display details for releases published before they were recorded, and
+    ## returns `{"recorded", "skipped"}`.
     def record_missing_details() -> Hash
       rows = @db.query("SELECT releases.id, cuts.name, releases.sha256, releases.size FROM releases JOIN cuts ON cuts.id = releases.cut_id LEFT JOIN release_details ON release_details.release_id = releases.id WHERE release_details.release_id IS NULL AND releases.takedown_reason IS NULL")
       recorded = 0
@@ -123,3 +133,4 @@ module Registry
     end
   end
 end
+

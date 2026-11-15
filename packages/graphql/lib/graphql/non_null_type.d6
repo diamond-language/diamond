@@ -8,6 +8,7 @@ module GraphQL
   # trusts its own callers (see docs/design.md's error-handling
   # philosophy); nothing in this package's execution/validation phases
   # constructs one on its own.
+  ## A non-null wrapper, `T!`; made with `type.non_null()`.
   class NonNullType < Type
     attr_reader of_type
 
@@ -20,3 +21,4 @@ module GraphQL
   end
 
 end
+

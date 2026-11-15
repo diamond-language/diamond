@@ -5,6 +5,10 @@ module ActiveRecord
     # already-loaded models. An optional target Relation supplies projections,
     # filters, ordering, and nested includes; the reflection still adds the batched
     # owner-key predicate itself.
+    ## Preloads one or more associations onto already-loaded models:
+    ## `Associations::Preloader.new(authors, ["books"]).call(db)`. The reflections come
+    ## from the first record's repository. An optional `scope` Relation is passed to
+    ## each `AssociationReflection#preload`.
     class Preloader
       attr_reader records: Array
       attr_reader associations: Array
@@ -25,6 +29,7 @@ module ActiveRecord
         @scope = scope
       end
 
+      ## Runs the preload and returns the records.
       def call(db)
         if @records.length() == 0
           return @records
@@ -46,3 +51,4 @@ module ActiveRecord
 
   end
 end
+

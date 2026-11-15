@@ -1,5 +1,6 @@
 # String commands. Reopens RedisConnection (see connection.d6).
 class RedisConnection
+  ## Runs `GET`.
   def get(key) = self.command("GET", key)
 
   # `ex`/`px` (seconds/milliseconds until expiry) and `nx`/`xx` ("only
@@ -8,6 +9,9 @@ class RedisConnection
   # unconditional SET. Returns the reply as-is: "OK" on success, or
   # `nil` specifically when `nx`/`xx` was given and the condition
   # wasn't met (Redis's own real behavior -- not an error).
+  ## Sets `key` to `value`. `ex`/`px` set an expiry in seconds/milliseconds; `nx`/`xx`
+  ## set only if the key is absent/present. Returns `"OK"`, or `nil` when the `nx`/`xx`
+  ## condition failed.
   def set(key, value, ex = nil, px = nil, nx = false, xx = false)
     args = ["SET", key, value]
     unless ex == nil
@@ -25,22 +29,32 @@ class RedisConnection
     self.command(*args)
   end
 
+  ## Runs `SETEX`.
   def setex(key, seconds, value) = self.command("SETEX", key, seconds, value)
+  ## Runs `SETNX`, returning `true` when Redis replies 1.
   def setnx(key, value) = self.command("SETNX", key, value) == 1
 
+  ## Runs `INCR`.
   def incr(key) = self.command("INCR", key)
+  ## Runs `DECR`.
   def decr(key) = self.command("DECR", key)
+  ## Runs `INCRBY`.
   def incrby(key, amount) = self.command("INCRBY", key, amount)
+  ## Runs `DECRBY`.
   def decrby(key, amount) = self.command("DECRBY", key, amount)
 
+  ## Runs `APPEND`.
   def append(key, value) = self.command("APPEND", key, value)
+  ## Runs `STRLEN`.
   def strlen(key) = self.command("STRLEN", key)
 
+  ## Runs `MGET`.
   def mget(*keys) = self.command("MGET", *keys)
 
   # MSET key1 value1 key2 value2 ... from an ordinary Diamond Hash --
   # the natural shape to hand this in as, rather than a caller having
   # to flatten it into alternating positional arguments themselves.
+  ## Sets several keys from a Hash.
   def mset(pairs: Hash)
     args = ["MSET"]
     pairs.keys().each() do |key|
@@ -49,3 +63,4 @@ class RedisConnection
     self.command(*args)
   end
 end
+

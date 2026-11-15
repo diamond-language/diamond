@@ -3,11 +3,14 @@
 # + its HMAC-SHA256 hex signature; .verify uses HMAC.verify's constant-
 # time comparison rather than plain `==`, matching how BCrypt.verify
 # already avoids a timing side-channel on its own comparison.
+## Cookie values the client can read but not change.
 class SignedCookies
+  ## `value` with an HMAC signature appended.
   def self.sign(value: String, secret: String) -> String
     "#{base64url_encode(value)}.#{HMAC.sha256(secret, value)}"
   end
 
+  ## The original value, or `nil` when the signature does not match.
   def self.verify(cookie_value: String, secret: String)
     dot = cookie_value.index_of(".")
     if dot == nil
@@ -26,3 +29,4 @@ class SignedCookies
     end
   end
 end
+

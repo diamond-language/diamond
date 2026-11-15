@@ -12,10 +12,14 @@ module GraphQL
   # too. Both are required Callable[1]s -- no default/identity fallback,
   # because a scalar's input and result semantics should remain explicit at
   # the definition site.
+  ## A leaf type. The built-ins are strict about the input they accept.
   class ScalarType < Type
     attr_reader coerce_input
     attr_reader coerce_result
 
+    ## A custom scalar. `coerce_input` turns a literal or variable into the value
+    ## resolvers receive; `coerce_result` turns a resolver's return value into the
+    ## value placed in the response. Both are required `Callable[1]`s.
     def initialize(name, coerce_input, coerce_result)
       @scalar_name = name
       @coerce_input = coerce_input
@@ -83,15 +87,22 @@ module GraphQL
       value
     end
 
+    ## The built-in `String` scalar (a new instance each call).
     def self.string() = ScalarType.new("String", ScalarType.string_input, ScalarType.primitive_result)
+    ## The built-in `Int` scalar.
     def self.int() = ScalarType.new("Int", ScalarType.int_input, ScalarType.primitive_result)
+    ## The built-in `Float` scalar; accepts an Int or Float as input.
     def self.float() = ScalarType.new("Float", ScalarType.float_input, ScalarType.primitive_result)
+    ## The built-in `Boolean` scalar.
     def self.boolean() = ScalarType.new("Boolean", ScalarType.boolean_input, ScalarType.primitive_result)
     # ID coerces exactly like String (both accept String or Int literals
     # in real GraphQL; this v1 keeps it simple and treats an ID's
     # incoming value as already-correct, same as String/Int) -- it's a
     # distinct type name for introspection/schema purposes only.
+    ## The built-in `ID` scalar; accepts a String or Int and passes it to resolvers
+    ## unchanged.
     def self.id() = ScalarType.new("ID", ScalarType.id_input, ScalarType.primitive_result)
   end
 
 end
+

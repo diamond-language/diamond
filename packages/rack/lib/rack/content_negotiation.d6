@@ -28,6 +28,7 @@
 # convention alone, usable from any Diamond web app built on this
 # package. Top-level, not namespaced under a `module Rack` -- matches
 # every other class in this package (StaticFiles, Cors, RateLimit).
+## Chooses a response format from the path's extension (`.json`) or the `Accept` header.
 class ContentNegotiation
   def self.mime_type_for(format)
     case format
@@ -79,6 +80,8 @@ class ContentNegotiation
   # format by descending q-value (default 1.0 when a range carries no
   # `;q=`). Ties keep header order -- this walks the list once, tracking
   # the best match directly, rather than sorting.
+  ## The format in `available_formats` that `accept_header` prefers (honouring `q`
+  ## weights and wildcards), or `default_format`.
   def self.negotiate(accept_header, available_formats, default_format)
     if accept_header == nil || accept_header == "" then return default_format end
     ranges = accept_header.split(",")
@@ -124,6 +127,9 @@ class ContentNegotiation
   # (path suffix or Accept header) this call has no representation for
   # at all; an absent/empty Accept header already falls back to
   # `default_format` inside #negotiate rather than reaching here.
+  ## Builds the response in the chosen format: `representations` maps a format such as
+  ## `"json"` to a callable returning the body. Answers 406 when the client asked only
+  ## for formats you do not offer, and adds `Vary: Accept`.
   def self.respond_to(request, status: Int, representations: Hash, default_format: String,
                        extra_headers: Hash = {}, strip_path_format: Bool = true)
     available = representations.keys()
@@ -140,3 +146,4 @@ class ContentNegotiation
     [status, RackHeaders.add_vary(headers, "Accept"), builder()]
   end
 end
+

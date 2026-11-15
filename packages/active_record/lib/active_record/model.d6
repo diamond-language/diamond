@@ -24,7 +24,12 @@ module ActiveRecord
   #   below live here once. A bare call from inside a class method still
   #   resolves to whichever same-named method is lexically visible at compile
   #   time, so this file always writes `self.` explicitly.
+  ## An optional Rails-style base class built on `Repository` and the association
+  ## classes. A subclass overrides `repository` and `to_attributes` as instance
+  ## methods, and `self.repository` as a class method (each subclass keeps its own
+  ## repository; see the README for the full example).
   class Model
+    ## Copies `attributes` (the caller's Hash isn't changed).
     def initialize(attributes: Hash = {})
       # Copied (via the native #dup, not aliased) so #save's create path
       # (which sets id_column once the id is known) never mutates a Hash
@@ -39,8 +44,11 @@ module ActiveRecord
       @association_cache = {}
     end
 
+    ## The attribute `name` as loaded.
     def read_attribute(name) = @attributes["#{name}"]
+    ## Whether the association `name` has been preloaded.
     def association_loaded?(name) -> Bool = @association_cache.include_key?("#{name}")
+    ## The preloaded value of association `name`.
     def preloaded_association(name) = @association_cache["#{name}"]
     def set_preloaded_association(name, value)
       @association_cache["#{name}"] = value
@@ -53,14 +61,19 @@ module ActiveRecord
     # of a Repository's own mapper function, returning this instance's
     # current field values as the same plain Hash shape
     # Repository#create/#update already write.
+    ## This model's `Repository`. Subclasses must override it.
     def repository()
       raise RuntimeError.new("Model subclass must override #repository")
     end
+    ## The record's current values as the Hash the repository writes. Subclasses must
+    ## override it.
     def to_attributes()
       raise RuntimeError.new("Model subclass must override #to_attributes")
     end
 
+    ## The primary key value, or `nil` before the first save.
     def id() = @attributes[self.repository().id_column()]
+    ## Whether the record has a primary key value.
     def persisted?() -> Bool = @attributes.include_key?(self.repository().id_column())
 
     # #as_json is the same plain Hash #to_attributes already builds -- the
@@ -69,15 +82,20 @@ module ActiveRecord
     # association) without touching #to_json itself. #to_json is just
     # JSON.stringify(#as_json()) -- the JSON module already in the prelude,
     # no new plumbing.
+    ## The Hash `to_json` serializes: `to_attributes()` unless overridden.
     def as_json() = self.to_attributes()
+    ## `JSON.stringify(as_json())`.
     def to_json() -> String = JSON.stringify(self.as_json())
 
     # Small, non-magic conveniences for writing a one-line association
     # reader on a subclass (see README.md) -- these just construct the
     # association object; #all/#get/#preload on it work exactly as
     # documented above.
+    ## A `HasMany` for writing an association reader.
     def has_many(repository: Repository, foreign_key: String) -> HasMany = HasMany.new(repository, foreign_key)
+    ## A `HasOne` for writing an association reader.
     def has_one(repository: Repository, foreign_key: String) -> HasOne = HasOne.new(repository, foreign_key)
+    ## A `BelongsTo` for writing an association reader.
     def belongs_to(repository: Repository) -> BelongsTo = BelongsTo.new(repository)
 
     # has_secure_password-style helpers, deliberately not a macro -- there
@@ -101,10 +119,13 @@ module ActiveRecord
     # self.foo() dispatch #save/#destroy/#id already rely on above to reach
     # whatever a subclass's own attr_accessor generated, not any new or
     # untested behavior around inherited @ivar auto-declaration.
+    ## Stores a BCrypt hash (cost 12) of `password` through `password_digest=`, which
+    ## the subclass provides (an untyped `attr_accessor password_digest`).
     def secure_password=(password: String)
       self.password_digest=(BCrypt.hash(password, 12))
     end
 
+    ## Whether `password` matches the stored `password_digest`.
     def authenticate(password: String) -> Bool
       digest = self.password_digest()
       digest != nil && BCrypt.verify(password, digest)
@@ -116,6 +137,9 @@ module ActiveRecord
     # expected_lock_version, so there is nothing further for a caller to
     # pass. Raises StaleObjectError exactly as Repository#update itself
     # does, on the same condition.
+    ## Inserts a new record, then remembers its id, or updates a persisted one,
+    ## passing the loaded lock version when the repository uses optimistic locking.
+    ## Raises `ValidationError` or `StaleObjectError` on failure.
     def save(db) -> Int
       if self.persisted?()
         lock_column = self.repository().lock_column()
@@ -135,6 +159,7 @@ module ActiveRecord
       end
     end
 
+    ## Deletes the record and returns the affected row count.
     def destroy(db) -> Int = self.repository().delete(db, self.id())
 
     # `!`-suffixed aliases for #save/#destroy, provided purely for
@@ -145,7 +170,9 @@ module ActiveRecord
     # above), so there is no quiet failure mode to distinguish from. Both
     # spellings behave identically; use whichever reads better at the call
     # site.
+    ## Same as `save`, which already raises on failure.
     def save!(db) -> Int = self.save(db)
+    ## Same as `destroy`.
     def destroy!(db) -> Int = self.destroy(db)
 
     # Class-level finders, shared here and inherited by every subclass --
@@ -170,23 +197,32 @@ module ActiveRecord
     def self.repository()
       raise RuntimeError.new("Model subclass must override self.repository")
     end
+    ## The record with primary key `id`, or `nil`.
     def self.find(db, id) -> Self | Nil = self.repository().find(db, id)
+    ## A lazy `Relation` over every record.
     def self.all() -> Relation = self.repository().relation()
+    ## A lazy `Relation` filtered by `conditions`.
     def self.where(conditions: Hash) -> Relation = self.repository().relation().where(conditions)
     # `where(...).first`, one line -- a single matching instance, or nil,
     # with the same "no implicit ORDER BY" caveat #first(db) already has.
+    ## The first record matching `conditions`, or `nil`; no implicit ordering.
     def self.find_by(db, conditions: Hash) -> Self | Nil =
       self.repository().relation().where(conditions).first(db)
+    ## Creates a row from `attributes` through the repository.
     def self.create(db, attributes: Hash) = self.repository().create(db, attributes)
     # See #save!/#destroy! above on why this behaves identically to
     # self.create -- self.create already raises on a validation failure.
+    ## Same as `self.create`.
     def self.create!(db, attributes: Hash) = self.create(db, attributes)
+    ## `Repository#find_each` for this model.
     def self.find_each(db, callback: Callable[1], batch_size = 1000)
       self.repository().find_each(db, callback, batch_size)
     end
+    ## `Repository#find_in_batches` for this model.
     def self.find_in_batches(db, callback: Callable[1], batch_size = 1000)
       self.repository().find_in_batches(db, callback, batch_size)
     end
   end
 
 end
+

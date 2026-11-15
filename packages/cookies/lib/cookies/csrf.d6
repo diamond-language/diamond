@@ -24,7 +24,9 @@
 # form submission needs its own page to read Csrf.token(request) into a
 # hidden field and a tiny client-side script to copy it into the header
 # instead, which is out of scope for this middleware itself.
+## CSRF protection for `CookieSession` apps.
 class Csrf
+  ## The session's CSRF token, created on first use. Put it in pages that submit forms.
   def self.token(request)
     token = request["session"]["csrf_token"]
     if token == nil
@@ -34,6 +36,7 @@ class Csrf
     token
   end
 
+  ## Whether `submitted` matches the session's token.
   def self.valid?(request, submitted)
     token = request["session"]["csrf_token"]
     if token == nil || submitted == nil
@@ -43,6 +46,8 @@ class Csrf
     end
   end
 
+  ## Middleware: lets `GET`, `HEAD` and `OPTIONS` through and answers 403 to any other
+  ## request without the session's token in an `x-csrf-token` header.
   def self.call(request, context, forward)
     Csrf.token(request)
     if ["GET", "HEAD", "OPTIONS"].include?(request["method"])
@@ -55,3 +60,4 @@ class Csrf
     end
   end
 end
+

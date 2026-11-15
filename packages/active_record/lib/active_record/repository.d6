@@ -4,6 +4,10 @@ module ActiveRecord
 
   # Explicit persistence primitives over Arel. This package deliberately does
   # not inspect schemas, infer columns, or dispatch through missing methods.
+  ## Explicit persistence for one table, built on Arel. There is no schema
+  ## inspection and no naming convention: everything is passed in. `mapper` turns a
+  ## row Hash into a `T`. Reads (`all`, `find`, `where`) run at once;
+  ## `relation` starts a lazy query.
   class Repository[T]
     # `visitor` selects the Arel dialect this repository renders through --
     # nil (the default) means Arel's own default, Arel::SQLiteVisitor. Every
@@ -63,6 +67,19 @@ module ActiveRecord
     attr_reader inheritance_column
     attr_reader association_reflections: Array
 
+    ## - `id_column`: the primary key column (default `"id"`).
+    ## - `visitor`: the Arel SQL dialect; `nil` means `Arel::SQLiteVisitor`.
+    ## - `validator`: `validator(attributes, exclude_id)` returns an Array of error
+    ##   messages; `create` and `update` raise `ValidationError` when it is not empty.
+    ##   `exclude_id` is `nil` on create and the record's id on update.
+    ## - `before_save`, `after_save`: called as `callback(db, attributes, on)` around
+    ##   `create`, `update` and `delete`, with `on` one of `:create`, `:update`,
+    ##   `:destroy`. `before_save` runs after validation and returns the attributes to
+    ##   write (its return is ignored for `delete`, whose attributes are
+    ##   `{id_column => id}`).
+    ## - `lock_column`: turns on optimistic locking for `update`.
+    ## - `column_names`: the columns `has_column?` reports.
+    ## - `association_reflections`: `AssociationReflection`s for `Relation#includes`.
     def initialize(table: Arel::Table, mapper: Callable[1, T], id_column: String = "id", visitor = nil,
                    validator = nil, before_save = nil, after_save = nil, lock_column = nil,
                    column_names: Array = [], inheritance_column = nil,
@@ -80,8 +97,11 @@ module ActiveRecord
       @association_reflections = association_reflections
     end
 
+    ## The primary key column name.
     def primary_key() -> String = @id_column
+    ## Whether `name` is in `column_names`.
     def has_column?(name) -> Bool = @column_names.include?("#{name}")
+    ## The `AssociationReflection` named `name`, or `nil`.
     def reflect_on_association(name)
       string_name = "#{name}"
       index = 0
@@ -99,6 +119,8 @@ module ActiveRecord
     # comment) so a uniqueness check can exclude the record's own
     # current row instead of always flagging it as conflicting with
     # itself the moment any field on it is saved again unchanged.
+    ## Runs the validator on `attributes`, raising `ValidationError` if it returns
+    ## errors. Does nothing when there is no validator.
     def validate!(attributes: Hash, exclude_id = nil)
       if @validator == nil
         return
@@ -109,6 +131,7 @@ module ActiveRecord
       end
     end
 
+    ## Every row, mapped.
     def all(db) -> Array[T]
       rows = Arel.from(@table).to_a(db, @visitor)
       mapped = []
@@ -120,6 +143,7 @@ module ActiveRecord
       mapped
     end
 
+    ## The row whose primary key is `id`, mapped, or `nil`.
     def find(db, id) -> T | Nil
       rows = Arel.from(@table).where(@table.column(@id_column).eq(id)).take(1).to_a(db, @visitor)
       if rows.length() == 0 then nil else @mapper(rows[0]) end
@@ -130,6 +154,8 @@ module ActiveRecord
     # a repository caller actually needs (see HasMany#all,
     # which now builds one of these instead of taking a bare column/value
     # pair).
+    ## Rows matching every `column => value` pair in `conditions` (ANDed equality),
+    ## mapped.
     def where(db, conditions: Hash) -> Array[T]
       keys = conditions.keys()
       predicate = nil
@@ -155,8 +181,12 @@ module ActiveRecord
     # see Relation below. Unlike #all/#where above (which hit the database
     # immediately), nothing here runs until a terminal call
     # (#to_a/#first/#count) on the Relation it returns.
+    ## A lazy `Relation` over the whole table, to chain `where`, `order`, `limit` and
+    ## `includes` on before `to_a`, `first` or `count` runs it.
     def relation() -> Relation[T] = Relation.new(Arel.from(@table), @mapper, @visitor, self)
 
+    ## Validates, runs `before_save`, inserts the row, runs `after_save`, and returns
+    ## the affected row count. Read the new id from `db.last_insert_row_id()`.
     def create(db, attributes: Hash) -> Int
       self.validate!(attributes)
       final_attributes = attributes
@@ -170,6 +200,11 @@ module ActiveRecord
       result
     end
 
+    ## Validates (with `id` as `exclude_id`), runs `before_save`, updates the row with
+    ## primary key `id`, runs `after_save`, and returns the affected row count. With a
+    ## `lock_column`, `expected_lock_version` is required (else `ArgumentError`): the
+    ## update only matches that version, sets it to the next one, and raises
+    ## `StaleObjectError` when nothing matched.
     def update(db, id, attributes: Hash, expected_lock_version = nil) -> Int
       self.validate!(attributes, id)
       final_attributes = attributes
@@ -198,6 +233,8 @@ module ActiveRecord
       result
     end
 
+    ## Deletes the row with primary key `id`, running the save hooks with
+    ## `on = :destroy`, and returns the affected row count.
     def delete(db, id) -> Int
       attributes = {}
       attributes[@id_column] = id
@@ -225,6 +262,9 @@ module ActiveRecord
     # doesn't have either problem, at the cost of requiring id_column to
     # be usable in an ORDER BY/> comparison (an ordinary integer primary
     # key always is).
+    ## Calls `callback` with Arrays of at most `batch_size` mapped records until the
+    ## table is exhausted. Pages by primary key (`WHERE id > last ORDER BY id LIMIT n`)
+    ## rather than OFFSET, so rows written during the walk aren't skipped or repeated.
     def find_in_batches(db, callback: Callable[1], batch_size = 1000)
       if batch_size < 1
         raise ArgumentError.new("batch_size must be at least 1")
@@ -261,6 +301,7 @@ module ActiveRecord
     # (Diamond has no anonymous closure literal, so this is the ordinary
     # named-nested-function shape everywhere else in this package already
     # uses to pass a Callable).
+    ## Like `find_in_batches`, but calls `callback` once per record.
     def find_each(db, callback: Callable[1], batch_size = 1000)
       def call_each_in_batch(batch)
         index = 0
@@ -274,3 +315,4 @@ module ActiveRecord
   end
 
 end
+

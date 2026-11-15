@@ -33,7 +33,10 @@
 # that package's own server.d6), so a literal ".." is the only way a
 # request could ever name one; there is no encoded form to also guard
 # against here.
+## Serves files from a directory.
 class StaticFiles
+  ## Options: `"root"` (required) and `"prefix"` (a URL prefix such as `"/assets"`,
+  ## default none).
   def self.configure(options)
     @@root = options["root"]
     prefix = options["prefix"]
@@ -112,6 +115,9 @@ class StaticFiles
     end
   end
 
+  ## Middleware: answers a `GET` for a readable file under the root with its contents
+  ## and a content type; anything else falls through. Paths with `..` or a segment
+  ## starting with `.` are never served.
   def self.call(request, context, forward)
     if request["method"] != "GET"
       return forward(request, context)
@@ -130,3 +136,4 @@ class StaticFiles
     [200, {"Content-Type": StaticFiles.content_type_for(relative)}, body]
   end
 end
+

@@ -2,6 +2,7 @@ module Mjolnir
 
   # Raised for programmer mistakes (a typo'd field name), never for bad
   # user input -- that is what a Changeset's errors are for.
+  ## A query or changeset named a field the schema does not have.
   class UnknownFieldError < StandardError
     def initialize(table: String, field)
       super("unknown field #{field} on #{table}")
@@ -9,15 +10,18 @@ module Mjolnir
   end
 
   # Raised by Repo#insert! / #update! when the changeset is invalid.
+  ## Raised by `insert!` and `update!` for an invalid changeset.
   class InvalidChangesetError < StandardError
     def initialize(changeset: Changeset)
       @changeset = changeset
       super("invalid changeset for #{changeset.schema().table_name()}: #{changeset.errors()}")
     end
+    ## The invalid changeset.
     def changeset() -> Changeset = @changeset
   end
 
   # An update or delete matched no row: it was removed since it was loaded.
+  ## An update found no row with the entity's primary key.
   class StaleEntryError < StandardError
     def initialize(table: String, id)
       super("no #{table} row with id #{id}")
@@ -25,3 +29,4 @@ module Mjolnir
   end
 
 end
+

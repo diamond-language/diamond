@@ -1,5 +1,10 @@
+## The cut registry's storage, publishing and HTTP layers. `applications/registry` is
+## the service built on them.
 module Registry
+  ## Credential issuance and revocation, release state changes and ownership, each
+  ## audited inside an immediate transaction.
   class Administration
+    ## Works on an initialized SQLite connection.
     def initialize(db)
       @db = db
       @records = Records.new(db)
@@ -31,11 +36,14 @@ module Registry
 
     def owner_rows(cut: Cut) -> Array = @records.owners(cut.id()).map() do |owner| owner.as_json() end
 
+    ## The owners of cut `name`; `token` must be allowed to manage it.
     def owners(name: String, token: String)
       self.authorize_owners(name, token)
       {"protocol": 1, "name": name, "owners": self.owner_rows(@records.cut!(name))}
     end
 
+    ## Adds or removes (`action` `"add"` or `"remove"`) `owner` of cut `name`, recording
+    ## `reason`. The last owner cannot be removed (`LastOwner`).
     def change_owner(name: String, owner: String, action: String, reason: String, token: String)
       self.reason!(reason)
       if owner.strip().length() == 0 || owner.length() > 256 || !["add", "remove"].include?(action)
@@ -62,6 +70,8 @@ module Registry
       end
     end
 
+    ## A page of at most `limit` (1-100) audit events after event id `after`, with
+    ## `next_after` for the next page. Needs an `admin` credential.
     def audit(token: String, after: Int = 0, limit: Int = 50)
       if after < 0 || limit < 1 || limit > 100 then raise InvalidRequest.new() end
       self.authenticate(token, "admin")
@@ -74,6 +84,8 @@ module Registry
       {"protocol": 1, "events": events.map() do |event| event.as_json() end, "next_after": next_after}
     end
 
+    ## Yanks, unyanks or takes down (`action`) a release, recording `reason`. A takedown
+    ## needs an `admin` credential; the others need `manage:<name>`.
     def change(name: String, version: String, action: String, reason: String, token: String)
       self.reason!(reason)
       unless ["yank", "unyank", "takedown"].include?(action) then raise InvalidRequest.new() end
@@ -139,6 +151,10 @@ module Registry
     end
 
     # Called only by the local operator CLI, under filesystem access control.
+    ## Creates a credential for `subject` with `scopes`, expiring at `expires` (epoch
+    ## seconds), and returns it with its raw token, which is shown only here. With
+    ## `previous`, that credential is revoked in the same transaction (a rotation). For
+    ## the local operator CLI.
     def issue(subject: String, scopes: Array, expires: Int, reason: String, operator: String, previous: Int = 0)
       self.validate_credential(subject, scopes, expires, reason, operator)
       token = SecureRandom.hex(32)
@@ -157,6 +173,7 @@ module Registry
       end
     end
 
+    ## Revokes credential `id`, recording `reason` and `operator`.
     def revoke(id: Int, reason: String, operator: String)
       self.reason!(reason)
       self.reason!(operator)
@@ -170,3 +187,4 @@ module Registry
     end
   end
 end
+

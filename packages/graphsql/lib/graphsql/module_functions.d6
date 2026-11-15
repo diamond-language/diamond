@@ -1,5 +1,9 @@
 module GraphSQL
 
+  ## Plans `relation` for the fields `lookahead` selects. Returns an
+  ## `ActiveRecord::Relation` (finish it with `to_a(db)`) when nothing nested needed
+  ## planning, or an Array of loaded records with nested associations preloaded.
+  ## `required_columns` and `required_associations` add what custom resolvers need.
   def self.resolve(relation, db, lookahead, mapping: Mapping,
                    required_associations: Array = [], required_columns: Array = [])
     Resolver.new(relation, db, lookahead, mapping,
@@ -7,3 +11,4 @@ module GraphSQL
   end
 
 end
+

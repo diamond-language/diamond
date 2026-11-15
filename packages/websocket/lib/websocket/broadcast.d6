@@ -49,6 +49,9 @@
 # not WouldBlockError -- both are treated identically here, since
 # either way the frame can't be delivered and `ws` needs to come out of
 # the caller's own membership list.
+## Sends `text` to one connection without blocking, for broadcasting to many. Returns
+## `false` when the connection is closed or cannot take the frame (it is then closed),
+## so the caller can drop it from its list; `true` when sent.
 def websocket_try_send_text(ws, text)
   if ws.closed?()
     return false
@@ -67,3 +70,4 @@ def websocket_try_send_text(ws, text)
     false
   end
 end
+

@@ -65,6 +65,8 @@ end
 # Connection header (indicating this isn't a WebSocket request at all)
 # is the check that actually matters for routing -- a handler decides
 # whether to even attempt the handshake based on this function alone.
+## Whether a request Hash asks to upgrade to WebSocket: `Upgrade: websocket`, a
+## `Connection` header containing `upgrade`, and a `Sec-WebSocket-Key`.
 def websocket_upgrade_request?(request)
   headers = request["headers"]
   upgrade = headers["upgrade"]
@@ -100,6 +102,8 @@ end
 # multipart_save_file "caller already checked" contracts), and route on
 # the result the same way an ordinary [status, headers, body] response
 # would be chosen instead.
+## Answers the upgrade on `conn` (with gremlin, `request["gremlin_connection"]`) and
+## returns a `WebSocketConnection`. The handler then returns `nil` instead of a response.
 def websocket_accept(conn, request)
   unless websocket_upgrade_request?(request)
     raise ArgumentError.new("websocket_accept called on a request that is not a WebSocket upgrade")
@@ -113,3 +117,4 @@ def websocket_accept(conn, request)
   end
   WebSocketConnection.new(conn)
 end
+
