@@ -4,7 +4,7 @@ Cooperative cancellation, monotonic deadlines, and scopes that join their tasks.
 
 ## Installation
 
-`cancellation` is not published to the registry yet. Until it is, copy `packages/cancellation` from a checkout of the [d6 repository](https://github.com/diamond-language/diamond) into your project as `cuts/cancellation/`, then load it with `require_cut "cancellation"`. `facet update` leaves hand-copied cuts in place.
+`cancellation` is not published to the registry yet. Until it is, copy `packages/cancellation` from a checkout of the [d6 repository](https://github.com/diamond-language/d6) into your project as `cuts/cancellation/`, then load it with `require_cut "cancellation"`. `facet update` leaves hand-copied cuts in place.
 
 Version 0.6.0 requires a d6 runtime with channel readiness waits and cancellation options for `IO.poll`, `TCPSocket.connect_nonblocking`, `DNS.resolve`, and `TLSSocket.start_handshake`.
 
@@ -64,7 +64,7 @@ the task boundary, while scope deadline expiry still propagates from `scope`.
 
 Use `ensure` for resource cleanup and handle cancellation before generic retry
 rescues. Scope bodies may capture locals; spawned callables must satisfy normal
-Thread transfer rules. The [design](https://github.com/diamond-language/diamond/blob/main/docs/cancellation.md) defines error
+Thread transfer rules. The [design](https://github.com/diamond-language/d6/blob/main/docs/cancellation.md) defines error
 precedence, deadline behavior, limitations, and the native wait lifetime protocol.
 
 Run `DIAMOND_BIN=/absolute/path/to/diamond bash test.sh` for interpreted and
@@ -93,7 +93,7 @@ Failed and cancelled connection attempts close their descriptors. After
 success, the caller owns the socket and closes it in `ensure`; token `read` and
 `write` helpers work as before. For numeric-only callers, `token.connect_address`
 retains the direct connection path. Use `connect_tls` below to include TLS negotiation.
-See [outbound TCP](https://github.com/diamond-language/diamond/blob/main/docs/networking.md#nonblocking-outbound-tcp) for an example.
+See [outbound TCP](https://github.com/diamond-language/d6/blob/main/docs/networking.md#nonblocking-outbound-tcp) for an example.
 
 ## Cancellable TLS handshakes
 

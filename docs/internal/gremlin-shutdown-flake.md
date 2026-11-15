@@ -6,10 +6,10 @@ a harness bug that hid stderr after a successful connection retry.
 
 ## Original evidence
 
-- [Failed job 120332146315](https://github.com/diamond-language/diamond/actions/runs/39928947356/job/120332146315),
+- [Failed job 120332146315](https://github.com/diamond-language/d6/actions/runs/39928947356/job/120332146315),
   run `39928947356`, attempt 1: `test-all (clang, test-integration, fedora, fedora:latest)`;
   source head `532c0c915011346639ab0cffde09eb5eb7ece4f0`.
-- [Diagnostic rerun 120341374653](https://github.com/diamond-language/diamond/actions/runs/39928947356/job/120341374653),
+- [Diagnostic rerun 120341374653](https://github.com/diamond-language/d6/actions/runs/39928947356/job/120341374653),
   attempt 2: same source, passed. The later documentation-only head also passed full CI.
 - Both used runner 2.338.0, Ubuntu 24.04.5 host image `20261012.334.1`,
   provisioner `20261012.601`, and Fedora image digest

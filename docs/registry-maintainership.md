@@ -2,8 +2,8 @@
 
 To publish a new cut or become a maintainer of an existing cut on
 [cuts.dilang.tech](https://cuts.dilang.tech),
-[open a maintainership request](https://github.com/diamond-language/diamond/issues/new?template=cut-maintainership.md)
-in `diamond-language/diamond`. A GitHub account is required. This is a public,
+[open a maintainership request](https://github.com/diamond-language/d6/issues/new?template=cut-maintainership.md)
+in `diamond-language/d6`. A GitHub account is required. This is a public,
 operator-reviewed request; submitting it does not grant access or reserve a name.
 
 ## What to include

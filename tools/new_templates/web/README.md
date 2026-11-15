@@ -1,8 +1,8 @@
 # {{name}}
 
 A web application written in [d6](https://rolld6.codes), served by
-[gremlin](https://github.com/diamond-language/diamond/tree/main/packages/gremlin) with
-[rack](https://github.com/diamond-language/diamond/tree/main/packages/rack) middleware.
+[gremlin](https://github.com/diamond-language/d6/tree/main/packages/gremlin) with
+[rack](https://github.com/diamond-language/d6/tree/main/packages/rack) middleware.
 
 ```sh
 facet install              # fetch gremlin, rack and minitest into cuts/

@@ -107,7 +107,7 @@ def hits(changed, prefixes)
 end
 
 deployed = nil
-host = "root@dilang.tech"
+host = "root@rolld6.codes"
 target_name = "HEAD"
 index = 0
 while index < ARGV.length()

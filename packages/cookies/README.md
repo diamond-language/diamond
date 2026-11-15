@@ -4,7 +4,7 @@ Parse and serialize cookies, and provide signed cookies, encrypted cookies, sess
 
 ## Installation
 
-From your project directory (see the [package guide](https://github.com/diamond-language/diamond/blob/main/docs/packages.md) for `facet`):
+From your project directory (see the [package guide](https://github.com/diamond-language/d6/blob/main/docs/packages.md) for `facet`):
 
 ```sh
 facet init myapp          # once, if the project has no Cutfile yet
@@ -46,7 +46,7 @@ EncryptedCookies.decrypt(hidden, ENV["COOKIE_SECRET"])   # => "user=7", or nil
 ## Sessions, CSRF tokens and flash messages in a server
 
 `CookieSession`, `Csrf`, and `Flash` are request middleware (and helpers) for the
-[`rack`](https://github.com/diamond-language/diamond/tree/main/packages/rack) cut's chains. `CookieSession.call` reads the encrypted session
+[`rack`](https://github.com/diamond-language/d6/tree/main/packages/rack) cut's chains. `CookieSession.call` reads the encrypted session
 cookie into `request["session"]`, a Hash your handlers read and write freely, and
 writes it back as `Set-Cookie` on the way out:
 

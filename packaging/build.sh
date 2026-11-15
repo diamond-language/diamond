@@ -78,7 +78,7 @@ if [[ "$format" == deb ]]; then
         printf 'Conflicts: diamond-lang\n'
         printf 'Version: %s-1\n' "$package_version"
         printf 'Architecture: %s\n' "$arch"
-        printf 'Maintainer: d6 maintainers <https://github.com/diamond-language/diamond/issues>\n'
+        printf 'Maintainer: d6 maintainers <https://github.com/diamond-language/d6/issues>\n'
         printf 'Installed-Size: %s\n' "$(du -sk "$stage/usr" | cut -f1)"
         # facet downloads cuts with curl and clones git sources with git.
         printf 'Depends: %s, curl, ca-certificates\n' "$depends"

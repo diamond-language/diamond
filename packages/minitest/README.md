@@ -6,7 +6,7 @@ and a runner that reports failures and sets the exit status.
 ## Installation
 
 Tests are a development dependency, so add it to `Cutfile.dev` (see the
-[package guide](https://github.com/diamond-language/diamond/blob/main/docs/packages.md#development-dependencies)):
+[package guide](https://github.com/diamond-language/d6/blob/main/docs/packages.md#development-dependencies)):
 
 ```sh
 facet add minitest --dev

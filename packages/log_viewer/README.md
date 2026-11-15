@@ -4,7 +4,7 @@ Format newline-delimited JSON logs as readable text.
 
 ## Installation
 
-From your project directory (see the [package guide](https://github.com/diamond-language/diamond/blob/main/docs/packages.md) for `facet`):
+From your project directory (see the [package guide](https://github.com/diamond-language/d6/blob/main/docs/packages.md) for `facet`):
 
 ```sh
 facet init myapp          # once, if the project has no Cutfile yet
@@ -23,7 +23,7 @@ DIAMOND_BIN=diamond cuts/log_viewer/bin/diamond-log logs.ndjson
 
 ## In a project
 
-Services that log with the [`logger`](https://github.com/diamond-language/diamond/tree/main/packages/logger) cut's `"json"` format (or `RequestLogging`) write one
+Services that log with the [`logger`](https://github.com/diamond-language/d6/tree/main/packages/logger) cut's `"json"` format (or `RequestLogging`) write one
 JSON object per line to standard output. Pipe that through the viewer while developing:
 
 ```sh

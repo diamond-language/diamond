@@ -5,7 +5,7 @@ title: '[Maintainership] '
 ---
 
 <!-- This issue is public. Never include credentials, tokens, private keys, or private contact details.
-Read https://github.com/diamond-language/diamond/blob/main/docs/registry-maintainership.md first. -->
+Read https://github.com/diamond-language/d6/blob/main/docs/registry-maintainership.md first. -->
 
 ### Cut name(s)
 

@@ -37,6 +37,6 @@ server {
     ssl_reject_handshake on;
 }
 
-# The marketing site (rolld6.codes, with getdiamond.codes and dilang.tech
-# redirecting to it) is /etc/nginx/conf.d/dilang.conf, kept in the marketing
+# The marketing site (rolld6.codes, with the former site domains
+# redirecting to it) is /etc/nginx/conf.d/rolld6.conf, kept in the marketing
 # repository as deploy/nginx.conf.

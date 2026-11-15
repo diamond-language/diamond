@@ -32,7 +32,7 @@ if [[ -z "${notes//[[:space:]]/}" ]]; then
 fi
 # Links relative to the repository root would resolve against the releases
 # page; point them at the tagged tree instead.
-notes="$(sed -E "s#\]\(([A-Za-z][^):]*)\)#](https://github.com/diamond-language/diamond/blob/$tag/\1)#g" <<<"$notes")"
+notes="$(sed -E "s#\]\(([A-Za-z][^):]*)\)#](https://github.com/diamond-language/d6/blob/$tag/\1)#g" <<<"$notes")"
 
 if gh release view "$tag" >/dev/null 2>&1; then
     gh release upload "$tag" "$@" --clobber

@@ -4,7 +4,7 @@ Compose request middleware around an HTTP handler.
 
 ## Installation
 
-From your project directory (see the [package guide](https://github.com/diamond-language/diamond/blob/main/docs/packages.md) for `facet`):
+From your project directory (see the [package guide](https://github.com/diamond-language/d6/blob/main/docs/packages.md) for `facet`):
 
 ```sh
 facet init myapp          # once, if the project has no Cutfile yet
@@ -56,7 +56,7 @@ such as logging, first.
 `gremlin_serve` runs each worker thread in its own VM, so build the chain inside
 the dispatch function through `RackChain.get`, which builds it once per worker and
 reuses it. This program serves a per-visitor counter using the logging and encrypted
-session middleware from the [`logger`](https://github.com/diamond-language/diamond/tree/main/packages/logger) and [`cookies`](https://github.com/diamond-language/diamond/tree/main/packages/cookies) cuts:
+session middleware from the [`logger`](https://github.com/diamond-language/d6/tree/main/packages/logger) and [`cookies`](https://github.com/diamond-language/d6/tree/main/packages/cookies) cuts:
 
 ```ruby
 # app.d6

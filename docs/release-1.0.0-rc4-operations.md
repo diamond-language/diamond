@@ -2,15 +2,15 @@
 
 Completed 2026-11-12 UTC (2026-11-11 Pacific). The release tag `v1.0.0-rc4` identifies
 `0e482f26c56854c4c41c6c82d093ad04f6569a21`, the exact reviewed head of
-[PR #549](https://github.com/diamond-language/diamond/pull/549). All 37 checks
+[PR #549](https://github.com/diamond-language/d6/pull/549). All 37 checks
 passed before merge; the tagged tree equals the green merge tree. This promotes
 the already tested `1.0` preparation without changing its source tree.
 
 ## Published packages
 
-[Release workflow 43162263306](https://github.com/diamond-language/diamond/actions/runs/43162263306)
+[Release workflow 43162263306](https://github.com/diamond-language/d6/actions/runs/43162263306)
 built, installed and smoke-tested all four packages before publishing
-[D6 1.0.0-rc4](https://github.com/diamond-language/diamond/releases/tag/v1.0.0-rc4).
+[D6 1.0.0-rc4](https://github.com/diamond-language/d6/releases/tag/v1.0.0-rc4).
 Downloaded sizes and SHA-256 values matched GitHub's release metadata:
 
 | Asset | SHA-256 |

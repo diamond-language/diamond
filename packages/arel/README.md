@@ -4,7 +4,7 @@ Build SQL queries from an immutable expression tree with dialect-specific render
 
 ## Installation
 
-From your project directory (see the [package guide](https://github.com/diamond-language/diamond/blob/main/docs/packages.md) for `facet`):
+From your project directory (see the [package guide](https://github.com/diamond-language/d6/blob/main/docs/packages.md) for `facet`):
 
 ```sh
 facet init myapp          # once, if the project has no Cutfile yet
@@ -58,11 +58,11 @@ Arel.update(people).set({"age": 37}).where(people.column("name").eq("Ada")).exec
 Arel.delete_from(people).where(people.column("age").lt(18)).execute(db)
 ```
 
-Most applications put a repository on top of this; see [`active_record`](https://github.com/diamond-language/diamond/tree/main/packages/active_record).
+Most applications put a repository on top of this; see [`active_record`](https://github.com/diamond-language/d6/tree/main/packages/active_record).
 
 ## Notes
 
-`to_sql(visitor)` returns SQL and ordered bind values. The default visitor targets SQLite; pass `PostgreSQLVisitor`, `MariaDBVisitor`, or `MySQLVisitor` for those dialects. See [VISITORS.md](https://github.com/diamond-language/diamond/blob/main/packages/arel/VISITORS.md) for the renderer protocol.
+`to_sql(visitor)` returns SQL and ordered bind values. The default visitor targets SQLite; pass `PostgreSQLVisitor`, `MariaDBVisitor`, or `MySQLVisitor` for those dialects. See [VISITORS.md](https://github.com/diamond-language/d6/blob/main/packages/arel/VISITORS.md) for the renderer protocol.
 
 ## Type contracts
 
@@ -77,4 +77,4 @@ Defaults, explicit `false`, and zero pagination remain valid. Query operands,
 visitors, expression children, bound values, and extensible query/node returns
 remain dynamic.
 The annotation audit and measurements are tracked in
-[the ORM annotation notes](https://github.com/diamond-language/diamond/blob/main/docs/internal/orm-return-annotations.md).
+[the ORM annotation notes](https://github.com/diamond-language/d6/blob/main/docs/internal/orm-return-annotations.md).

@@ -28,7 +28,7 @@ each request, so no restart was needed. The previous copies are in
 On 2026-11-14 the same two files were replaced with their main `95a7b3fd` versions (#575/#576:
 the brand written as lowercase d6 again, and the die logo with white pips turned with the
 square). No restart. The previous copies are in `/root/diamond-brand-d6-lowercase-20261114/registry/`.
-The /docs pages on getdiamond.codes got only the D6 → d6 text change applied to the live rc5
+The /docs pages got only the D6 → d6 text change applied to the live rc5
 build (not a rebuild from main, whose docs describe unreleased features); the previous /docs tree
 is in `/root/diamond-brand-d6-lowercase-20261114/docs/`. Later that day #577/#578 (main `b672d9e5`) shrank
 the logo pips for more padding; the pages were swapped again the same way, with the copies they
@@ -165,7 +165,7 @@ as `diamond-registry` with `ProtectSystem=strict` and `NoNewPrivileges=yes`.
 The droplet's other sites (the Skindicate app on skindicate.art and
 modartist.app) were checked after activation.
 
-**Always address the host as `root@dilang.tech`** in d6 tooling, scripts,
+**Always address the host as `root@rolld6.codes`** in d6 tooling, scripts,
 and docs. The droplet currently also hosts Skindicate, which is expected to move
 to its own server; d6 deployments must keep working when it does and must
 never target a Skindicate hostname.
@@ -185,7 +185,7 @@ succeeded for all four names on 2026-09-25.
 
 **Renewal readiness check, 2026-11-07:** the host now holds six certbot
 certificates: the four above, `pheint.skindicate.art` (expires 2027-01-29) and
-`getdiamond.codes` (expires 2027-01-20). An external `openssl s_client` showed each
+the former site domain (expires 2027-01-20). An external `openssl s_client` showed each
 name serving its certbot certificate (Let's Encrypt), `certbot.timer` was enabled and
 active (twice daily), its last run exited cleanly, the deploy hook was in place,
 `nginx -t` passed, and `certbot renew --dry-run --no-random-sleep-on-renew` succeeded
@@ -217,7 +217,7 @@ seed also passed local reproducibility and dependency-closure checks.
 
 ## 0.19.0 publication, 2026-10-23
 
-The [v0.19.0 release](https://github.com/diamond-language/diamond/releases/tag/v0.19.0)
+The [v0.19.0 release](https://github.com/diamond-language/d6/releases/tag/v0.19.0)
 tags `961519af64c36a27a3efccbea5d71248e7678e28`, tested by all 29 checks in
 PR #301. It updates the 19 already-public cut names, without adding another
 public name. The exact versions, dependency ranges, sizes, and SHA-256 digests
@@ -265,7 +265,7 @@ first (`tools/fetch_registry_backup.sh`, below). Then:
 
    ```sh
    # The umask inside the quotes applies on the server; the one around the ssh command is what makes the local file private.
-   (umask 077 && ssh root@dilang.tech 'cd /opt/diamond-registry/current/app && umask 077 && \
+   (umask 077 && ssh root@rolld6.codes 'cd /opt/diamond-registry/current/app && umask 077 && \
      REGISTRY_ROOT=/var/lib/diamond-registry REGISTRY_OPERATOR=<you> \
      runuser -u diamond-registry -- ../bin/diamond credentials.d6 issue \
        diamond-language 1800 "publish:<name>" "<reason>"' > credential.json)
@@ -315,15 +315,15 @@ releases on the host. Skindicate's uploads (~8.3G) are the largest real data.
 ## Proxy and certificates
 
 nginx owns ports 80 and 443 for every site on the host: skindicate.art,
-modartist.app (a redirect), rolld6.codes (static files; getdiamond.codes and dilang.tech
+modartist.app (a redirect), rolld6.codes (static files; the former site domains
 redirect to it), and cuts.dilang.tech.
 Files in `/etc/nginx/conf.d/`:
 
 - `00-common.conf` (from `nginx-host.conf.example`): TLS settings, the port-80
   server that answers ACME HTTP-01 challenges from `/var/www/letsencrypt` and
   redirects everything else to HTTPS, and a TLS default that refuses unknown names.
-- `dilang.conf` (from the marketing repository's `deploy/nginx.conf`): the static site on
-  rolld6.codes and the getdiamond.codes and dilang.tech redirects.
+- `rolld6.conf` (from the marketing repository's `deploy/nginx.conf`): the static site on
+  rolld6.codes, served from `/var/www/rolld6.codes`, and the former site domains' redirects.
 - `diamond-registry.conf` (from `nginx.conf.example`): cuts.dilang.tech with the
   upload/read/write rate limits and request buffering.
 - `skindicate.conf`: Skindicate's own sites, kept in that application's repository.
@@ -378,7 +378,7 @@ On the laptop, select a new private destination yourself and use:
 
 ```sh
 tools/fetch_registry_backup.sh /your/chosen/new-backup-directory \
-  --host root@dilang.tech \
+  --host root@rolld6.codes \
   --app /opt/diamond-registry/current/app \
   --data /var/lib/diamond-registry
 ```

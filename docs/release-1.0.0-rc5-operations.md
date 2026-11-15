@@ -2,15 +2,15 @@
 
 Completed 2026-11-14 UTC (2026-11-13 Pacific). The release tag `v1.0.0-rc5` identifies
 `e4864b4c8fa753be8e1e494fa643b51e4dab62e1`, the merge of
-[PR #562](https://github.com/diamond-language/diamond/pull/562) into `1.0`, which
+[PR #562](https://github.com/diamond-language/d6/pull/562) into `1.0`, which
 passed every check before merge. The matching preparation landed on `main` in
-[PR #563](https://github.com/diamond-language/diamond/pull/563).
+[PR #563](https://github.com/diamond-language/d6/pull/563).
 
 ## Published packages
 
-[Release workflow 43548488056](https://github.com/diamond-language/diamond/actions/runs/43548488056)
+[Release workflow 43548488056](https://github.com/diamond-language/d6/actions/runs/43548488056)
 built, installed and smoke-tested all four packages before publishing
-[D6 1.0.0-rc5](https://github.com/diamond-language/diamond/releases/tag/v1.0.0-rc5).
+[D6 1.0.0-rc5](https://github.com/diamond-language/d6/releases/tag/v1.0.0-rc5).
 Downloaded SHA-256 values matched GitHub's release metadata:
 
 | Asset | SHA-256 |

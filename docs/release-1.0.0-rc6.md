@@ -41,8 +41,8 @@ release carrying those comments; no cut's code changed.
 
 ## Other changes
 
-- The site moved to [rolld6.codes](https://rolld6.codes/); getdiamond.codes
-  and dilang.tech redirect there.
+- The site moved to [rolld6.codes](https://rolld6.codes/); the former site
+  domains redirect there.
 - The brand is written **d6** (lowercase) again, and the logo is the six face
   of a die.
 - In the REPL, a blank or comment-only line no longer prints `nil`.
