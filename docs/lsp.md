@@ -505,7 +505,7 @@ search over a real (if scoped) lexical symbol table:
   or trimmed. Returns `json_null()` rather than a guess
   when the source contains a lexer error or the tracked depth doesn't
   balance to exactly zero by EOF -- a real grammar shape this pass
-  doesn't yet model should mean no edits, not a corrupted one. No
+  doesn't model should mean no edits, not a corrupted one. No
   on-type formatting, and no reflowing a long line or reordering
   anything -- see `lsp/formatting.h`'s own doc comment for the full
   contract.
@@ -658,7 +658,7 @@ variadic, and block parameters, including singleton methods.
   `receiver.method(...)`, or for anything needing scope resolution
   beyond a single compiled program's own function/class/local tables.**
 - **Incremental sync** — `textDocumentSync` only ever advertises `Full`.
-  d6 has no incremental-recompile story at all yet (every compile is
+  d6 has no incremental recompilation (every compile is
   a fresh `diamond_compile` call over the whole combined buffer), so
   `Incremental` sync would only add bookkeeping for no benefit until that
   changes.

@@ -8,7 +8,7 @@ Version:        %{diamond_version}
 Release:        1%{?dist}
 Summary:        The d6 programming language
 License:        MIT
-URL:            https://getdiamond.codes
+URL:            https://rolld6.codes
 
 # The package was called diamond-lang until the rename; this one replaces it.
 Provides:       diamond-lang = %{version}-%{release}
