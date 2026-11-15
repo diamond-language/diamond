@@ -1,3 +1,6 @@
+## The connection a handler receives as `request["gremlin_connection"]`; reads and writes
+## suspend the handler's fiber instead of blocking the worker. Hand it to
+## `websocket_accept` to take over the connection.
 class NonblockingConnection
   def initialize(socket, limits = nil)
     @socket = socket
@@ -30,6 +33,7 @@ class NonblockingConnection
   end
   def request_id() = @request_id
   def socket() = @socket
+  ## The client's address as text, read from the socket.
   def peer_address() = @peer_address
   def closed?() = @closed
 
@@ -65,6 +69,7 @@ class NonblockingConnection
     end
   end
 
+  ## The next line, or `nil` at end of stream.
   def gets()
     loop do
       newline = @buffer.index_of("\n")
@@ -91,6 +96,7 @@ class NonblockingConnection
   # Same convention as File#read(n): reads up to n bytes and returns
   # whatever it got, including "" if the peer hit EOF with nothing left --
   # never nil (that's #gets' own EOF signal, not #read's).
+  ## `n` bytes, or fewer if the stream ends first.
   def read(n)
     while @buffer.length() < n && @eof == false
       self.fill_more()
@@ -104,6 +110,7 @@ class NonblockingConnection
     result
   end
 
+  ## Writes `value`, waiting while the socket is full.
   def write(value)
     remaining = value
     while remaining.length() > 0
@@ -121,6 +128,7 @@ class NonblockingConnection
 
   # Idempotent: another fiber (a WebSocket broadcast dropping a slow member,
   # say) may close a connection whose own fiber is still parked on it.
+  ## Closes the connection.
   def close()
     unless @closed
       @closed = true
@@ -128,3 +136,4 @@ class NonblockingConnection
     end
   end
 end
+

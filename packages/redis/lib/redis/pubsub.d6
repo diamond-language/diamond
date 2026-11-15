@@ -6,6 +6,7 @@ class RedisConnection
   # `channel` right now -- Redis pub/sub has no queueing or delivery
   # guarantee at all: a message published with nobody subscribed is
   # simply gone).
+  ## Publishes `message` on `channel` and returns how many subscribers received it.
   def publish(channel, message) = self.command("PUBLISH", channel, message)
 end
 
@@ -19,27 +20,34 @@ end
 # (packages/websocket) already does -- block for the next message,
 # `while (event = sub.receive()) != nil` -- the same shape for the same
 # reason (a long-lived push feed, not a request/response round trip).
+## A connection used only for receiving pub/sub messages (a subscribed connection
+## accepts no other commands).
 class RedisSubscriber
   def initialize(socket)
     @socket = socket
   end
 
+  ## Connects a subscriber to `host:port`.
   def self.connect(host, port = 6379, options = nil)
     RedisSubscriber.new(TCPSocket.connect(host, port, options))
   end
 
+  ## Subscribes to `channels`.
   def subscribe(*channels)
     @socket.write(redis_encode_command(["SUBSCRIBE"].concat(channels)))
   end
 
+  ## Subscribes to channels matching `patterns`.
   def psubscribe(*patterns)
     @socket.write(redis_encode_command(["PSUBSCRIBE"].concat(patterns)))
   end
 
+  ## Unsubscribes from `channels` (all when none are given).
   def unsubscribe(*channels)
     @socket.write(redis_encode_command(["UNSUBSCRIBE"].concat(channels)))
   end
 
+  ## Unsubscribes from `patterns` (all when none are given).
   def punsubscribe(*patterns)
     @socket.write(redis_encode_command(["PUNSUBSCRIBE"].concat(patterns)))
   end
@@ -53,6 +61,9 @@ class RedisSubscriber
   # -- both shapes normalize to the same Hash here, with "pattern" nil
   # for the plain (non-pattern) case rather than the caller needing to
   # branch on reply length itself.
+  ## Waits for the next event: `{"type", "pattern", "channel", "payload"}`. `type` is
+  ## `"message"`, `"pmessage"`, `"subscribe"` and so on; `pattern` is `nil` except for
+  ## pattern matches.
   def receive()
     reply = redis_read_reply(@socket)
     if reply.length() == 4
@@ -62,7 +73,9 @@ class RedisSubscriber
     end
   end
 
+  ## Closes the connection.
   def close()
     @socket.close()
   end
 end
+

@@ -1,7 +1,10 @@
 module Registry
+  ## The registry's HTTP protocol as a Rack-style handler.
   class API
     # `blob_redirect` is a proxy's internal location for blob files, such as "/_blobs/". With it,
     # the proxy sends the bytes and this service only decides whether they may be served.
+    ## Serves under the `base` path prefix. A non-empty `blob_redirect` (such as
+    ## `"/_blobs/"`) answers blob downloads with `X-Accel-Redirect` instead of the bytes.
     def initialize(db, store, publisher, base: String = "", blob_redirect: String = "")
       @db = db
       @store = store
@@ -143,6 +146,9 @@ module Registry
       self.json(200, @administration.audit(token, parameters["after"], parameters["limit"]))
     end
 
+    ## Handles one request (header names lower-cased) and returns
+    ## `[status, headers, body]`: version indexes, release metadata, blobs, publishing,
+    ## yank/unyank/takedown, owners and the audit log.
     def call(request)
       begin
         path = request["path"]
@@ -189,3 +195,4 @@ module Registry
     end
   end
 end
+

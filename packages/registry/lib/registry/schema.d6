@@ -1,4 +1,5 @@
 module Registry
+  ## The registry's SQLite schema.
   class Schema
     def self.version() = "2026092201"
 
@@ -18,6 +19,8 @@ module Registry
     # The registry keeps release metadata in SQLite and archive bytes in the
     # BlobStore. Every release points at one immutable digest; yanking changes
     # visibility without changing that digest.
+    ## Creates or migrates the tables. Run it once at startup, before workers open their
+    ## own connections.
     def self.apply(db)
       db.execute("CREATE TABLE IF NOT EXISTS schema_migrations (version TEXT PRIMARY KEY NOT NULL)")
       self.migrate(db, Schema.version(), [
@@ -43,3 +46,4 @@ module Registry
     end
   end
 end
+

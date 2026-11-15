@@ -451,6 +451,19 @@ end
 # supplied; skipping `threads` while naming `tick_interval`/`on_tick`
 # leaves a gap and fails to compile ("missing argument"), not a bug in
 # this function itself.
+## Serves HTTP on `port`, handling each connection in its own fiber. `handler` takes
+## `(request, context)` and returns `[status, headers, body]`; `context` is private to
+## its worker. Optional arguments:
+##
+## - `threads`: worker threads, each its own VM (so `handler` must not capture variables)
+## - `tick_interval`, `on_tick`: a callback every `tick_interval` seconds in each worker
+## - `limits`: `{"line_bytes", "header_bytes", "header_count", "body_bytes", "connections", "timeout_seconds"}` for bounded parsing and per-worker connection limits
+## - `return_after_shutdown`: return after draining instead of exiting (one worker)
+## - `shutdown_token`, `shutdown_timeout`: drain when a `cancellation` token is cancelled, then return
+## - `host`: listen on one address only, such as `"127.0.0.1"`
+##
+## A handler that raises gets a 500 and a logged `request.handler_failed`; the server
+## keeps running. `TERM` or `INT` drains and stops it, unless a token manages shutdown.
 def gremlin_serve(port, handler: Callable[2], threads = 1, tick_interval = nil, on_tick = nil, limits = nil, return_after_shutdown: Bool = false, shutdown_token = nil, shutdown_timeout = 10.0, host = nil)
   if shutdown_token == nil && shutdown_timeout != 10.0 && threads != 1
     raise ArgumentError.new("custom shutdown_timeout without a token requires threads = 1")
@@ -493,3 +506,4 @@ def gremlin_serve(port, handler: Callable[2], threads = 1, tick_interval = nil, 
   end
   gremlin_worker(port, handler, tick_interval, on_tick, limits, host)
 end
+

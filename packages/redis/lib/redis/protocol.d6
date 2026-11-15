@@ -37,6 +37,7 @@
 # external system" precedent (docs/databases.md) rather than trying to
 # model Redis's own informal error-code-prefix convention as distinct
 # Diamond exception types.
+## An error reply from the server; the message is the server's text.
 class RedisError < StandardError
 end
 
@@ -242,3 +243,4 @@ def redis_read_reply(conn)
     raise IOError.new("unrecognized RESP reply type '#{reply_type}'")
   end
 end
+

@@ -1,4 +1,5 @@
 module Registry
+  ## Archive bytes on disk, named by their SHA-256 digest.
   class BlobStore
     def self.validate_digest(digest: String)
       if digest.length() != 64 || digest != digest.downcase()
@@ -16,6 +17,8 @@ module Registry
     end
 
     # `shared` lets the root's group read the blobs, for a proxy that serves them directly.
+    ## Stores blobs under `root`. With `shared`, the root's group can read them (for a
+    ## proxy that serves them directly).
     def initialize(root: String, shared: Bool = false)
       if root.length() == 0 || !File.directory?(root)
         raise ArgumentError.new("blob store root must be an existing directory")
@@ -30,17 +33,22 @@ module Registry
       end
     end
 
+    ## The file for `digest`.
     def path(digest: String) -> String
       BlobStore.validate_digest(digest)
       File.join(@root, digest)
     end
 
+    ## Whether a blob for `digest` exists.
     def contains?(digest: String) -> Bool = File.exist?(self.path(digest))
 
     # Whether a stored blob still has the digest it is named for. Hashes in chunks.
+    ## Whether the stored blob still hashes to `digest`.
     def intact?(digest: String) -> Bool = self.contains?(digest) && File.sha256(self.path(digest)) == digest
 
     # Publish synchronized bytes atomically without replacing an existing blob.
+    ## Writes `bytes` under `digest` atomically and durably, keeping an existing blob, and
+    ## returns the size.
     def put(digest: String, bytes: String) -> Int
       if Digest.sha256(bytes) != digest
         raise ArgumentError.new("blob bytes do not match digest")
@@ -50,6 +58,7 @@ module Registry
       bytes.length()
     end
 
+    ## The bytes stored under `digest`.
     def read(digest: String) -> String
       file = File.open(self.path(digest), "r")
       bytes = file.read()
@@ -61,3 +70,4 @@ module Registry
     end
   end
 end
+
