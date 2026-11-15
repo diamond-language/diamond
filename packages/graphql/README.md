@@ -4,7 +4,7 @@ Define GraphQL schemas and execute queries in d6.
 
 ## Installation
 
-From your project directory (see the [package guide](https://github.com/diamond-language/diamond/blob/main/docs/packages.md) for `facet`):
+From your project directory (see the [package guide](https://github.com/diamond-language/d6/blob/main/docs/packages.md) for `facet`):
 
 ```sh
 facet init myapp          # once, if the project has no Cutfile yet
@@ -94,7 +94,7 @@ curl -d '{"query":"query($id: ID!) { author(id: $id) { name books { title } } }"
 The schema is built once per server worker and kept in the worker's `context`, because each
 `gremlin_serve` worker thread has its own VM. Replace `AUTHORS` with your database connection in
 the context Hash; every resolver receives that Hash as its third argument. To resolve straight
-from SQL tables, see [`graphsql`](https://github.com/diamond-language/diamond/tree/main/packages/graphsql).
+from SQL tables, see [`graphsql`](https://github.com/diamond-language/d6/tree/main/packages/graphsql).
 
 ## Defining a schema
 
@@ -199,7 +199,7 @@ An error without extensions has no `"extensions"` key.
 
 ### Lookahead
 
-Immediately before each field resolves, the executor sets `context["lookahead"]` to a `GraphQL::Execution::Lookahead` describing that field's sub-selections. A resolver can use it to skip work the query didn't ask for. [`graphsql`](https://github.com/diamond-language/diamond/blob/main/packages/graphsql/README.md) builds on this to select only the requested SQL columns and to preload only the requested associations.
+Immediately before each field resolves, the executor sets `context["lookahead"]` to a `GraphQL::Execution::Lookahead` describing that field's sub-selections. A resolver can use it to skip work the query didn't ask for. [`graphsql`](https://github.com/diamond-language/d6/blob/main/packages/graphsql/README.md) builds on this to select only the requested SQL columns and to preload only the requested associations.
 
 Lookahead honours `@include`/`@skip` and expands fragments, but it does not filter by a fragment's type condition. A selection that appears only under `... on OtherType` on a polymorphic field will look "selected" even if the runtime type doesn't match. It is an over-approximation, never an under-approximation.
 

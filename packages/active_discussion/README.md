@@ -4,7 +4,7 @@ Threaded comments, karma votes, and flame-signal cooldowns backed by `active_rec
 
 ## Installation
 
-`active_discussion` is not published to the registry yet. Until it is, copy `packages/active_discussion` from a checkout of the [Diamond repository](https://github.com/diamond-language/diamond) into your project as `cuts/active_discussion/`, then load it with `require_cut "active_discussion"`. `facet update` leaves hand-copied cuts in place.
+`active_discussion` is not published to the registry yet. Until it is, copy `packages/active_discussion` from a checkout of the [Diamond repository](https://github.com/diamond-language/d6) into your project as `cuts/active_discussion/`, then load it with `require_cut "active_discussion"`. `facet update` leaves hand-copied cuts in place.
 
 It depends on `active_record`, which is published. Add it with `facet`:
 

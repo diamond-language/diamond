@@ -217,7 +217,7 @@ seed also passed local reproducibility and dependency-closure checks.
 
 ## 0.19.0 publication, 2026-10-23
 
-The [v0.19.0 release](https://github.com/diamond-language/diamond/releases/tag/v0.19.0)
+The [v0.19.0 release](https://github.com/diamond-language/d6/releases/tag/v0.19.0)
 tags `961519af64c36a27a3efccbea5d71248e7678e28`, tested by all 29 checks in
 PR #301. It updates the 19 already-public cut names, without adding another
 public name. The exact versions, dependency ranges, sizes, and SHA-256 digests

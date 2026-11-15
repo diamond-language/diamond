@@ -31,7 +31,7 @@ CI is slow (about 15 minutes) because it runs two distros times two compilers ti
 - Kill a stale `./pheint-server` before `make test-integration` (it holds port 18200 and the TLS echo test then fails).
 - Write tests so they do not pin source line numbers. A few do on purpose (backtrace and parse-error positions: `tests/run.sh`, `tests/parser_diff.sh`, `tests/multifile`, `tests/parser_*`, `jit_*backtrace*`); leave those files' line layout alone.
 - `tools/test_sanitize.sh` retries the sanitizer suite once for harness flakes but fails at once on any sanitizer report. Do not weaken that.
-- Reading CI logs: `gh api --allow-escape-sequences repos/diamond-language/diamond/actions/jobs/ID/logs`. `ls` may be aliased and print a header row.
+- Reading CI logs: `gh api --allow-escape-sequences repos/diamond-language/d6/actions/jobs/ID/logs`. `ls` may be aliased and print a header row.
 - Language gotchas: calls need parentheses (a bare `obj.method` is a method reference, not a call); blocks on calls are written `.each() do |x| ... end`; there is no sleep builtin (wait with `Channel.new(1).wait_readable([], Time.monotonic() + seconds)`); a script prints only what it `puts` (the REPL and `-e` also print the last expression's value, and so does the test harness: `tests/cases` expectations include it). Methods whose whole body is one expression are written as endless defs (`def f(x) = expr`, or `def f(x) =` with the body indented below when the line would pass 120 columns), except when the return type is a union such as `-> String | Nil`: `| Nil = expr` reads poorly, so write those as a `def` ... `end` block in examples, docs and the site. `packages/` has not been converted (see below).
 
 ## Packages (cuts) and the registry

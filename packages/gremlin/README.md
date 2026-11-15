@@ -4,7 +4,7 @@ Serve concurrent HTTP requests with fiber-based connection handling.
 
 ## Installation
 
-From your project directory (see the [package guide](https://github.com/diamond-language/diamond/blob/main/docs/packages.md) for `facet`):
+From your project directory (see the [package guide](https://github.com/diamond-language/d6/blob/main/docs/packages.md) for `facet`):
 
 ```sh
 facet init myapp          # once, if the project has no Cutfile yet
@@ -118,7 +118,7 @@ ensure
 end
 ```
 
-Token mode needs the [`cancellation`](https://github.com/diamond-language/diamond/tree/main/packages/cancellation) cut, which is not yet on the
+Token mode needs the [`cancellation`](https://github.com/diamond-language/d6/tree/main/packages/cancellation) cut, which is not yet on the
 registry (copy `packages/cancellation` from a d6 checkout into `cuts/`), and a runtime
 with cancellable `IO.poll` (cancellation 0.3.0). Gremlin itself keeps its existing
 HTTP/logger dependencies; ordinary callers need no cancellation package.
@@ -126,7 +126,7 @@ HTTP/logger dependencies; ordinary callers need no cancellation package.
 Token mode supports multiple workers and always returns to its caller, regardless of
 `return_after_shutdown`. The application owns signal handling: Gremlin does not
 install or replace `Signal.trap` handlers in this mode. A handler can call
-`source.cancel()`, as the [job service](https://github.com/diamond-language/diamond/blob/main/examples/job_service/README.md) does.
+`source.cancel()`, as the [job service](https://github.com/diamond-language/d6/blob/main/examples/job_service/README.md) does.
 Cancellation from another thread, a parent source, or the token's deadline
 closes each worker's listener and starts draining. `server.shutdown_started` is logged
 after the listener closes. The grace deadline is anchored once and does not

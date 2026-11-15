@@ -2,16 +2,16 @@
 
 Completed 2026-11-11. The release tag `v1.0.0-rc3` points to
 `fdf6ab487f03fde5ece43290714a8f48b0922a16`, the exact head of
-[PR #546](https://github.com/diamond-language/diamond/pull/546). All 37 checks
+[PR #546](https://github.com/diamond-language/d6/pull/546). All 37 checks
 passed before merge; the tag's tree was checked against the green merge tree.
 The tag intentionally identifies that tested source commit rather than its
 later merge commit.
 
 ## Published packages
 
-[Release workflow 43121499272](https://github.com/diamond-language/diamond/actions/runs/43121499272)
+[Release workflow 43121499272](https://github.com/diamond-language/d6/actions/runs/43121499272)
 built, installed and smoke-tested all four native packages before publishing
-[D6 1.0.0-rc3](https://github.com/diamond-language/diamond/releases/tag/v1.0.0-rc3).
+[D6 1.0.0-rc3](https://github.com/diamond-language/d6/releases/tag/v1.0.0-rc3).
 Downloaded sizes and SHA-256 values matched GitHub's release-asset metadata:
 
 | Asset | SHA-256 |

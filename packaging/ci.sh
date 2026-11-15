@@ -66,7 +66,7 @@ else
     exit 0
 fi
 mkdir -p "$former"
-sh "$repo/tools/fetch_release_asset.sh" diamond-language/diamond v0.22.0 "$former_file" "$former/$former_file"
+sh "$repo/tools/fetch_release_asset.sh" diamond-language/d6 v0.22.0 "$former_file" "$former/$former_file"
 "$runtime" run --rm --security-opt label=disable -v "$out:/packages:ro" -v "$repo/packaging:/packaging:ro" -v "$former:/former:ro" "$image" \
     bash -c "set -e; $install_former >/dev/null; $install_package >/dev/null; $former_gone
         bash /packaging/smoke_test.sh $version; echo 'replaced diamond-lang 0.22.0'"
