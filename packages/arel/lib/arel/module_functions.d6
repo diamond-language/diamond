@@ -1,10 +1,18 @@
+## Entry points for building statements and expressions.
 module Arel
 
+  ## A `Table` named `name`.
   def self.table(name: String) -> Table = Table.new(name)
+  ## A `CteRelation` named `name`, for `Query#with`.
   def self.cte(name: String) -> CteRelation = CteRelation.new(name)
+  ## `expression AS name`.
   def self.as(expression, name: String) -> Alias = Alias.new(expression, name)
+  ## `expression ASC`.
   def self.asc(expression) -> Ordering = Ordering.new(expression, "ASC")
+  ## `expression DESC`.
   def self.desc(expression) -> Ordering = Ordering.new(expression, "DESC")
+  ## A raw SQL fragment with bind values for its `?` placeholders. It is written as
+  ## is, so never build one from user input.
   def self.sql(fragment: String, params = nil) -> RawSql
     bound = params
     if bound == nil
@@ -12,6 +20,8 @@ module Arel
     end
     RawSql.new(fragment, bound)
   end
+  ## `COUNT(expression)`. `count_distinct`, `sum`, `min`, `max`, `avg`, `lower` and
+  ## `upper` build the matching functions.
   def self.count(expression) -> Function = Function.new("COUNT", [expression])
   def self.count_distinct(expression) -> Function = Function.new("COUNT", [expression], true)
   def self.sum(expression) -> Function = Function.new("SUM", [expression])
@@ -20,41 +30,75 @@ module Arel
   def self.avg(expression) -> Function = Function.new("AVG", [expression])
   def self.lower(expression) -> Function = Function.new("LOWER", [expression])
   def self.upper(expression) -> Function = Function.new("UPPER", [expression])
+  ## A call to the SQL function `name` with `arguments`.
   def self.function(name: String, arguments: Array) -> Function = Function.new(name, arguments)
+  ## `EXISTS (query)`.
   def self.exists(query) -> Exists = Exists.new(query, false)
+  ## `NOT EXISTS (query)`.
   def self.not_exists(query) -> Exists = Exists.new(query, true)
+  ## `query` used as a single value.
   def self.scalar(query) -> ScalarSubquery = ScalarSubquery.new(query)
+  ## Marks an Arel expression as the value of an `Update#set` or upsert assignment,
+  ## so it is rendered rather than bound.
   def self.expression(expression) -> AssignmentValue = AssignmentValue.new(expression)
+  ## The value an upsert tried to insert into column `name` (`excluded.name`).
   def self.excluded(name: String) -> ExcludedAttribute = ExcludedAttribute.new(name)
+  ## An Int or Bool written into the SQL instead of bound.
   def self.literal(value) -> Literal = Literal.new(value)
+  ## `CAST(expression AS type_name)`.
   def self.cast(expression, type_name: String) -> Cast = Cast.new(expression, type_name)
+  ## `expression OP value` for the integer operators `&`, `|`, `<<` and `>>`.
   def self.integer_operator(expression, operator: String, value) -> BinaryExpression
     if operator != "&" && operator != "|" && operator != "<<" && operator != ">>"
       raise ArgumentError.new("unsupported SQL integer operator")
     end
     BinaryExpression.new(expression, operator, value)
   end
+  ## An `ON CONFLICT (columns)` target.
   def self.conflict_target(columns) -> ConflictTarget = ConflictTarget.new(arel_array(columns))
+  ## An `ON CONFLICT ON CONSTRAINT name` target (PostgreSQL only).
   def self.conflict_target_on_constraint(name: String) -> ConflictConstraintTarget = ConflictConstraintTarget.new(name)
+  ## `DEFAULT` as one column's value in an INSERT row (PostgreSQL, MariaDB and
+  ## MySQL).
   def self.column_default() -> ColumnDefault = ColumnDefault.new()
+  ## `statement.to_sql(visitor)`.
   def self.render(statement, visitor = nil) -> Array = statement.to_sql(visitor)
+  ## A readable description of an Arel node tree, for debugging and tests.
   def self.inspect(node) -> String = Inspector.new().inspect(node)
+  ## Whether two node trees are structurally equal.
   def self.same?(left, right) -> Bool = Inspector.new().same?(left, right)
+  ## The direct child nodes of `node`.
   def self.children(node) -> Array = Inspector.new().children(node)
+  ## Every node in the tree, depth first; calls `visitor.visit(node)` on each when a
+  ## visitor is given.
   def self.walk(node, visitor = nil) -> Array = Inspector.new().walk(node, visitor)
+  ## A rewritten tree: double negations removed, empty `IN` lists turned into
+  ## always-false (or always-true for `NOT IN`) conditions, and each
+  ## `[pattern, replacement]` in `rules` applied where `same?` matches. With
+  ## `report`, returns `[node, changed]`.
   def self.simplify(node, rules = [], report = false) = Inspector.new().simplify(node, rules, report)
+  ## A copy of `node` with its children replaced.
   def self.with_children(node, replacements: Array) = Inspector.new().with_children(node, replacements)
+  ## `left UNION right`.
   def self.union(left, right) -> CompoundQuery = CompoundQuery.new(left, "UNION", right)
+  ## `left UNION ALL right`.
   def self.union_all(left, right) -> CompoundQuery = CompoundQuery.new(left, "UNION ALL", right)
+  ## `left INTERSECT right`.
   def self.intersect(left, right) -> CompoundQuery = CompoundQuery.new(left, "INTERSECT", right)
+  ## `left EXCEPT right`.
   def self.except(left, right) -> CompoundQuery = CompoundQuery.new(left, "EXCEPT", right)
+  ## An `Insert` into `table`.
   def self.insert_into(table: Arel::Table) -> Insert = Insert.new(table)
+  ## An `Update` of `table`.
   def self.update(table: Arel::Table) -> Update = Update.new(table)
+  ## A `Delete` from `table`.
   def self.delete_from(table: Arel::Table) -> Delete = Delete.new(table)
+  ## A `Query` that selects from `query` as a derived table named `name`.
   def self.from_subquery(query, name: String) -> Query
     Query.new(name, [], [], nil, nil, [RawSql.new("*", [])], true, true,
       name, false, [], [], [], query)
   end
+  ## A `Query` that selects everything from `table` (a `Table` or a table name).
   def self.from(table) -> Query
     if table is Table
       Query.for_table(table)
@@ -64,3 +108,4 @@ module Arel
   end
 
 end
+

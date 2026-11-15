@@ -7,6 +7,7 @@ module Arel
     def expression() = @expression
   end
 
+  ## The columns of an `ON CONFLICT (...)` clause, from `Arel.conflict_target`.
   class ConflictTarget
     def initialize(columns: Array, predicate = nil)
       @columns = columns
@@ -14,7 +15,10 @@ module Arel
     end
     def columns() -> Array = @columns
     def predicate() = @predicate
+    ## Adds a predicate for a partial unique index (not supported by MariaDB or
+    ## MySQL).
     def where(predicate) -> ConflictTarget = ConflictTarget.new(@columns, predicate)
+    ## A column reference for use in the conflict target's predicate.
     def column(name: String) -> ConflictAttribute = ConflictAttribute.new(name)
   end
 
@@ -124,3 +128,4 @@ module Arel
   end
 
 end
+

@@ -1,5 +1,6 @@
 module Arel
 
+  ## An immutable INSERT, from `Arel.insert_into(table)`.
   class Insert
     def initialize(table: Arel::Table, rows: Array = [], returning: Array = [],
                    source_columns: Array = [], source_query = nil, conflict_target = [],
@@ -19,34 +20,43 @@ module Arel
     def ctes() -> Array = @ctes
     def structure() -> Array = [@table, @rows, @returning, @source_columns, @source_query,
       @conflict_target, @conflict_ignore, @conflict_assignments, @ctes]
+    ## Inserts one row from a Hash of `column => value`.
     def values(attributes: Hash) -> Insert
       Insert.new(@table, [attributes], @returning, [], nil, @conflict_target,
         @conflict_ignore, @conflict_assignments, @ctes)
     end
+    ## Inserts several rows, each a Hash with the same keys.
     def values_many(rows: Array) -> Insert
       Insert.new(@table, rows, @returning, [], nil, @conflict_target,
         @conflict_ignore, @conflict_assignments, @ctes)
     end
+    ## `INSERT ... DEFAULT VALUES`.
     def default_values() -> Insert
       Insert.new(@table, [DefaultValues.new()], @returning, [], nil,
         @conflict_target, @conflict_ignore, @conflict_assignments, @ctes)
     end
+    ## `INSERT INTO table (columns) SELECT ...` from `query`.
     def from_query(columns: Array, query) -> Insert
       Insert.new(@table, [], @returning, columns, query, @conflict_target,
         @conflict_ignore, @conflict_assignments, @ctes)
     end
+    ## Adds a common table expression (not supported by MariaDB or MySQL).
     def with(relation_or_name, query) -> Insert
       name = arel_cte_name(relation_or_name)
       Insert.new(@table, @rows, @returning, @source_columns, @source_query,
         @conflict_target, @conflict_ignore, @conflict_assignments,
         Arel.append_cte(@ctes, name, query))
     end
+    ## Adds a recursive common table expression.
     def with_recursive(relation_or_name, query) -> Insert
       name = arel_cte_name(relation_or_name)
       Insert.new(@table, @rows, @returning, @source_columns, @source_query,
         @conflict_target, @conflict_ignore, @conflict_assignments,
         Arel.append_cte(@ctes, name, query, true))
     end
+    ## Ignores rows that hit a conflict. `columns` is a column list, an
+    ## `Arel.conflict_target`, or an `Arel.conflict_target_on_constraint` (PostgreSQL
+    ## only).
     def on_conflict_do_nothing(columns = []) -> Insert
       target = columns
       unless columns is ConflictTarget || columns is ConflictConstraintTarget
@@ -55,6 +65,9 @@ module Arel
       Insert.new(@table, @rows, @returning, @source_columns, @source_query,
         target, true, nil, @ctes)
     end
+    ## An upsert: on a conflict at `columns`, applies `assignments`. Use
+    ## `Arel.excluded(name)` for the value the row tried to insert. The MySQL and
+    ## MariaDB visitors render `ON DUPLICATE KEY UPDATE`.
     def on_conflict_do_update(columns, assignments: Hash) -> Insert
       target = columns
       unless columns is ConflictTarget || columns is ConflictConstraintTarget
@@ -63,6 +76,7 @@ module Arel
       Insert.new(@table, @rows, @returning, @source_columns, @source_query,
         target, false, assignments, @ctes)
     end
+    ## Adds `RETURNING` expressions; run with `to_a` to read them.
     def returning(expressions) -> Insert
       Insert.new(@table, @rows, arel_array(expressions), @source_columns, @source_query,
         @conflict_target, @conflict_ignore, @conflict_assignments, @ctes)
@@ -161,6 +175,7 @@ module Arel
 
     def render_with(visitor) -> Array = visitor.render_insert(self)
 
+    ## Renders the statement as `[sql, params]`.
     def to_sql(visitor = nil) -> Array
       renderer = visitor
       if renderer == nil
@@ -169,10 +184,12 @@ module Arel
       self.render_with(renderer)
     end
 
+    ## Runs the statement on `db` and returns the affected row count.
     def execute(db, visitor = nil) -> Int
       sql, params = self.to_sql(visitor)
       PreparedStatements.for(db, sql).execute(params)
     end
+    ## Runs the statement and returns the rows from `RETURNING`.
     def to_a(db, visitor = nil) -> Array
       sql, params = self.to_sql(visitor)
       PreparedStatements.for(db, sql).query(params)
@@ -180,3 +197,4 @@ module Arel
   end
 
 end
+

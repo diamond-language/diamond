@@ -1,5 +1,7 @@
 module Arel
 
+  ## An immutable UPDATE, from `Arel.update(table)`. It needs `where` or an
+  ## explicit `all()`; rendering otherwise raises `ArgumentError`.
   class Update
     def initialize(table: Arel::Table, assignments: Hash | Nil = nil, predicates: Array = [],
                    returning: Array = [], allow_all: Bool = false, ctes: Array = [])
@@ -13,17 +15,22 @@ module Arel
 
     def ctes() -> Array = @ctes
     def structure() -> Array = [@table, @assignments, @predicates, @returning, @allow_all, @ctes]
+    ## The assignments, a Hash of `column => value`. Wrap an Arel expression in
+    ## `Arel.expression` to assign it instead of a bound value.
     def set(assignments: Hash) -> Update
       Update.new(@table, assignments, @predicates, @returning, @allow_all, @ctes)
     end
+    ## Adds a condition, ANDed with earlier ones.
     def where(predicate) -> Update
       Update.new(@table, @assignments, @predicates.concat([predicate]), @returning,
         @allow_all, @ctes)
     end
+    ## Adds `RETURNING` expressions; run with `to_a` to read them.
     def returning(expressions) -> Update
       Update.new(@table, @assignments, @predicates, arel_array(expressions), @allow_all,
         @ctes)
     end
+    ## Allows updating every row.
     def all() -> Update = Update.new(@table, @assignments, @predicates, @returning, true, @ctes)
     def with(relation_or_name, query) -> Update
       name = arel_cte_name(relation_or_name)
@@ -82,6 +89,7 @@ module Arel
 
     def render_with(visitor) -> Array = visitor.render_update(self)
 
+    ## Renders the statement as `[sql, params]`.
     def to_sql(visitor = nil) -> Array
       renderer = visitor
       if renderer == nil
@@ -90,10 +98,12 @@ module Arel
       self.render_with(renderer)
     end
 
+    ## Runs the statement on `db` and returns the affected row count.
     def execute(db, visitor = nil) -> Int
       sql, params = self.to_sql(visitor)
       PreparedStatements.for(db, sql).execute(params)
     end
+    ## Runs the statement and returns the rows from `RETURNING`.
     def to_a(db, visitor = nil) -> Array
       sql, params = self.to_sql(visitor)
       PreparedStatements.for(db, sql).query(params)
@@ -101,3 +111,4 @@ module Arel
   end
 
 end
+

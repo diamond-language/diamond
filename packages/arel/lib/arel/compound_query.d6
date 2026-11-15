@@ -1,5 +1,8 @@
 module Arel
 
+  ## `UNION`, `UNION ALL`, `INTERSECT` or `EXCEPT` of two queries, from
+  ## `Arel.union` and the rest. Supports `order`, `take`/`limit`, `skip`/`offset`,
+  ## `to_sql` and `to_a` like `Query`.
   class CompoundQuery
     def initialize(left, operator: String, right, orderings: Array = [], limit_value: Int | Nil = nil,
                    offset_value: Int | Nil = nil)
@@ -81,3 +84,4 @@ module Arel
   end
 
 end
+
