@@ -41,8 +41,9 @@ release carrying those comments; no cut's code changed.
 
 ## Other changes
 
-- The site moved to [rolld6.codes](https://rolld6.codes/); the former site
-  domains redirect there.
+- The site moved to [rolld6.codes](https://rolld6.codes/) and the registry to
+  [cuts.rolld6.codes](https://cuts.rolld6.codes), which facet now uses by default; the former
+  addresses still answer.
 - The brand is written **d6** (lowercase) again, and the logo is the six face
   of a die.
 - In the REPL, a blank or comment-only line no longer prints `nil`.

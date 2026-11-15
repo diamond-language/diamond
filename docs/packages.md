@@ -207,7 +207,7 @@ next to `Cutfile`. Its only key is `dependencies`, in the format above:
 
 ```ruby
 # Cutfile.dev
-{"dependencies": {"checker": {"registry": "https://cuts.dilang.tech", "version": "^0.1.0"}}}
+{"dependencies": {"checker": {"registry": "https://cuts.rolld6.codes", "version": "^0.1.0"}}}
 ```
 
 `facet install` and `facet update` read it only in the project they run in. A
@@ -374,7 +374,7 @@ facet add <name> [--dev] --git <url> (--tag <ref> | --branch <ref> | --commit <r
 ```
 
 Without `--git`, the dependency comes from a registry: `--registry`, or the
-public registry at `https://cuts.dilang.tech`. Without `--version`, `facet add`
+public registry at `https://cuts.rolld6.codes`. Without `--version`, `facet add`
 asks the registry for the newest release that is not yanked and writes `^` plus
 that version, so `facet update` takes compatible releases only.
 
@@ -497,7 +497,7 @@ with `facet` like any other cut. The public ones each have a page under
   refs themselves disagree.
 - **A default registry and search in `facet`**: `facet install greeter` by short
   name, or a search command, with no explicit registry. The public registry at
-  [cuts.dilang.tech](https://cuts.dilang.tech) is live, but a registry dependency
+  [cuts.rolld6.codes](https://cuts.rolld6.codes) is live, but a registry dependency
   resolves only against the explicit HTTPS source in a manifest, and `facet` has no
   built-in default and no search command.
 

@@ -9,7 +9,7 @@ Threaded comments, karma votes, and flame-signal cooldowns backed by `active_rec
 It depends on `active_record`, which is published. Add it with `facet`:
 
 ```sh
-facet add active_record --registry https://cuts.dilang.tech --version "^0.19.0"
+facet add active_record --registry https://cuts.rolld6.codes --version "^0.19.0"
 facet update
 ```
 

@@ -50,7 +50,7 @@ and [registry implementation plan](package-registry-plan.md) track the details.
 
 ## Next work
 
-The public registry and catalog are live at `https://cuts.dilang.tech` on the
+The public registry and catalog are live at `https://cuts.rolld6.codes` on the
 existing droplet. See the [production record](../applications/registry/deploy/PRODUCTION.md)
 for the installed revision, service layout, verification, and operational limits.
 The first manual laptop snapshot has passed restore verification. Automatic
@@ -143,7 +143,7 @@ The selected version is 0.7.0.
   changelog entries under the version/date heading.
 - [x] Verify the final release commit: inspect the complete CI results, run the
   QEMU registry gate (`tools/test_registry_vm.sh`), and run
-  `build/diamond tools/verify_registry_launch.d6 https://cuts.dilang.tech`.
+  `build/diamond tools/verify_registry_launch.d6 https://cuts.rolld6.codes`.
   Record the tested SHA and outcomes; earlier runs do not certify a later commit.
   Verified 2026-09-23 on `b98f27cc`: all nine CI jobs passed (run 35922577277);
   `tools/test_registry_vm.sh all` passed (seed, nginx proxy, HTTP, Caddy, systemd

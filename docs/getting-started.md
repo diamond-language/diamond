@@ -210,7 +210,7 @@ at the top of `cuts/minitest/lib/minitest.d6`.
 ## 6. Dependencies
 
 Libraries are called cuts and come from the registry at
-[cuts.dilang.tech](https://cuts.dilang.tech). Add one, fetch it, and load it
+[cuts.rolld6.codes](https://cuts.rolld6.codes). Add one, fetch it, and load it
 with `require_cut`:
 
 ```sh

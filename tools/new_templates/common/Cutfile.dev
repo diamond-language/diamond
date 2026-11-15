@@ -1,5 +1,5 @@
 {
   "dependencies": {
-    "minitest": {"registry": "https://cuts.dilang.tech", "version": "^0.1.0"}
+    "minitest": {"registry": "https://cuts.rolld6.codes", "version": "^0.1.0"}
   }
 }

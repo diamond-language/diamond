@@ -22,7 +22,7 @@
 #include <stdint.h>
 
 /* The public registry, used by `facet add` when no source is given. */
-#define FACET_DEFAULT_REGISTRY "https://cuts.dilang.tech"
+#define FACET_DEFAULT_REGISTRY "https://cuts.rolld6.codes"
 
 enum {
     FACET_MAX_NAME = 64,

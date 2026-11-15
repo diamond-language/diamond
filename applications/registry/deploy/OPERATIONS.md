@@ -48,7 +48,7 @@ To enable it on a host:
 3. Add the setting to `registry.env`, then `systemctl daemon-reload`, restart
    `diamond-registry` and restart nginx, which only picks up a new group on a restart.
    The service makes `blobs/` mode 0750 and every blob 0640 when it starts.
-4. Check it: `curl -sD- -o /tmp/blob https://cuts.dilang.tech/v1/blobs/sha256/DIGEST`
+4. Check it: `curl -sD- -o /tmp/blob https://cuts.rolld6.codes/v1/blobs/sha256/DIGEST`
    returns 200 without an `X-Accel-Redirect` header, `sha256sum /tmp/blob` matches, and
    `/_blobs/DIGEST` returns 404.
 
@@ -235,7 +235,7 @@ renewal, and external alert delivery remain deployment checks.
 
 ## Production host and manual laptop backups
 
-The selected production endpoint is `https://cuts.dilang.tech`. nginx terminates
+The selected production endpoint is `https://cuts.rolld6.codes`. nginx terminates
 TLS for every site on the host, with certbot certificates; see [production
 preparation](PRODUCTION.md). `tools/test_registry_vm.sh proxy` runs the nginx
 template against a verified local certificate with actual facet workflows and

@@ -1,4 +1,6 @@
-# cuts.dilang.tech: nginx terminates TLS directly (certbot certificate).
+# cuts.rolld6.codes: nginx terminates TLS directly (certbot certificate). The second
+# server_name keeps the registry's former address answering, so existing Cutfiles and
+# lockfiles still install; the certificate covers both names.
 # Serves REGISTRY_BASE="" on a dedicated hostname.
 # TLS protocol/session settings and the port-80 ACME server live in
 # nginx-host.conf.example; certificates come from certbot (webroot).
@@ -19,9 +21,9 @@ server {
     listen 443 ssl;
     listen [::]:443 ssl;
     http2 on;
-    server_name cuts.dilang.tech;
-    ssl_certificate /etc/letsencrypt/live/cuts.dilang.tech/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/cuts.dilang.tech/privkey.pem;
+    server_name cuts.rolld6.codes cuts.dilang.tech;
+    ssl_certificate /etc/letsencrypt/live/cuts.rolld6.codes/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/cuts.rolld6.codes/privkey.pem;
     access_log /var/log/nginx/registry-access.log registry_json;
     # nginx error logs can contain request URLs: restrict access and retention.
     error_log /var/log/nginx/registry-error.log warn;

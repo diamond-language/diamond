@@ -2,7 +2,7 @@
 
 Status: implemented wire contract. Registry resolution, locked archive
 installation, owner management, audit inspection, and the HTTP read/publish
-service are implemented. The public registry runs at `https://cuts.dilang.tech`. This
+service are implemented. The public registry runs at `https://cuts.rolld6.codes`. This
 specification defines its metadata, authentication, and artifact boundary
 without changing Git dependency behavior.
 

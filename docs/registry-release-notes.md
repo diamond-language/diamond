@@ -5,7 +5,7 @@ Release date: 2026-09-23.
 ## Diamond's public package registry is live
 
 Discover and install reusable Diamond libraries at
-[**cuts.dilang.tech**](https://cuts.dilang.tech). The launch catalog contains
+[**cuts.rolld6.codes**](https://cuts.rolld6.codes). The launch catalog contains
 18 cuts, with versions, dependency details, archive sizes, and SHA-256 digests.
 Search the catalog to find a library and copy its facet installation command.
 
@@ -16,7 +16,7 @@ directory with both executables on your PATH:
 
 ```sh
 facet init my_app
-facet add logger --registry https://cuts.dilang.tech --version '^0.4.0'
+facet add logger --registry https://cuts.rolld6.codes --version '^0.4.0'
 facet update
 diamond -e 'require_cut "logger"
 Logger.new("my_app").info("Hello from the registry")'

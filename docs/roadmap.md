@@ -21,12 +21,10 @@ a concrete application gap.
 
 ### Finish the move to the d6 name
 
-The language, commands, packages, logo and site (rolld6.codes) carry the d6 name. Left:
+The language, commands, packages, logo, site (rolld6.codes), registry (cuts.rolld6.codes) and
+the repository (diamond-language/d6) carry the d6 name. Left:
 
-- **Registry address:** `cuts.d6.codes` replaces `cuts.dilang.tech` once that name is set
-  up; facet's default registry URL, the docs and the registry pages move with it, and the
-  old name keeps redirecting.
-- **GitHub:** the org becomes `roll1d6` or `rolld6` (not yet chosen). Rename it last.
+- **GitHub:** the org (`diamond-language`) becomes `roll1d6` or `rolld6` (not yet chosen). Rename it last.
 - **Unchanged:** the **cut** and **facet** names, and `DIAMOND_` constants, environment
   variables and internal identifiers. Avoid plumbing changes whose only purpose would be
   to replace the codename.

@@ -102,9 +102,9 @@ run ssh "$host" "bash /root/upgrade.sh /root/registry-deployment.tar.gz $sha"
 echo; echo "== verify the public registry"
 if ! $dry; then
     [[ -x build/facet ]] || make -s facet >/dev/null
-    curl -fsS https://cuts.dilang.tech/health; echo
+    curl -fsS https://cuts.rolld6.codes/health; echo
 fi
-if $verify; then run build/diamond tools/verify_registry_launch.d6 https://cuts.dilang.tech
+if $verify; then run build/diamond tools/verify_registry_launch.d6 https://cuts.rolld6.codes
 else echo "skipped: --no-verify (run tools/verify_registry_launch.d6 after publishing the new versions)"; fi
 
 echo; echo "== prune: keep only the newest backup and bundle, remove uploads from the host"

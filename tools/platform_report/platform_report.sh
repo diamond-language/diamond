@@ -319,7 +319,7 @@ examples() {
     verdict="passed"
     [ "$STEP_STATUS" -ne 0 ] && verdict="FAILED"
     say "  chat (registry install + WebSockets): $verdict in ${seconds}s"
-    record "chat smoke test (facet install from cuts.dilang.tech): $verdict in ${seconds}s"
+    record "chat smoke test (facet install from cuts.rolld6.codes): $verdict in ${seconds}s"
     [ "$STEP_STATUS" -ne 0 ] && tail_of >> "$REPORT"
 }
 
