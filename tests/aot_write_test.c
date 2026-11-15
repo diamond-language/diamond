@@ -80,8 +80,20 @@ int main(void) {
             assert(fd >= 0);
             assert(close(fd) == 0);
             close_calls = 0;
-            assert(write_embed_data_file("program.bin", embed) == expected);
+            const BuildIdentity identity = {.name = "say \"hi\"", .version = "1.2.3"};
+            assert(write_embed_data_file("program.bin", embed, &identity) == expected);
             assert(close_calls == 1);
+            if (expected) {
+                /* Names and versions are escaped into the generated C file. */
+                FILE *generated = fopen(embed, "r");
+                assert(generated != nullptr);
+                char text[2048] = {0};
+                (void)fread(text, 1, sizeof text - 1, generated);
+                assert(fclose(generated) == 0);
+                assert(strstr(text, "diamond_aot_app_name(void) { return \"say \\042hi\\042\"; }") != nullptr);
+                assert(strstr(text, "diamond_aot_app_version(void) { return \"1.2.3\"; }") != nullptr);
+                assert(strstr(text, "diamond_aot_d6_version(void) { return \"") != nullptr);
+            }
             assert(unlink(embed) == 0);
         }
     }
