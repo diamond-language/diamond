@@ -1,6 +1,6 @@
 # {{name}}
 
-A line-based TCP server written in [d6](https://getdiamond.codes). Each line a
+A line-based TCP server written in [d6](https://rolld6.codes). Each line a
 client sends gets one line back.
 
 ```sh

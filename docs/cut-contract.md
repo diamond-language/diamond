@@ -14,7 +14,7 @@ the canonical name and directory, strict version spelling, summary, nonempty
 license declaration, public maintainers, data-only runtime dependency ranges, and regular
 `Cutfile`, `README.md`, `LICENSE`, and `lib/<name>.d6` files. It rejects
 unknown manifest keys. It audits the candidate runtime file tree and
-`--files` prints the sorted included file list. It does not yet verify SPDX
+`--files` prints the sorted included file list. It does not verify SPDX
 expressions. It checks statically visible literal imports
 for paths that escape the cut and `require_cut` names missing from the manifest;
 dynamic imports are outside this check. Passing this check

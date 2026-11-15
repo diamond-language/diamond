@@ -1,4 +1,4 @@
-/* Shares tokens and components with the dilang.tech marketing site. Dark-only by design. */
+/* Shares tokens and components with the rolld6.codes marketing site. Dark-only by design. */
 :root{--bg:#090c14;--bg-raised:#0e1320;--bg-card:#121729;--bg-card-hover:#161c33;--border:#232a42;--border-soft:#1a2036;--text:#eef1fa;--text-dim:#9aa3bd;--text-faint:#8890ac;--blue:#3b82f6;--blue-bright:#5b9dff;--cyan:#22d3ee;--indigo:#4f46e5;--gradient:linear-gradient(135deg,var(--indigo) 0%,var(--blue) 55%,var(--cyan) 100%);--gradient-soft:linear-gradient(135deg,rgba(79,70,229,.16),rgba(34,211,238,.10));--tok-fn:#6bc6ff;--tok-comment:#8b95b8;--warn:#f0b86e;--radius:14px;--radius-sm:8px;--shadow-lg:0 20px 60px -20px rgba(37,99,235,.35);--max-width:1120px;color-scheme:dark}
 *{box-sizing:border-box}
 html{scroll-behavior:smooth}
@@ -44,7 +44,7 @@ section{padding:92px 0}
 .raised{background:var(--bg-raised)}
 #browse{padding-top:56px;position:relative;overflow:hidden}
 #browse>.container{position:relative;z-index:1}
-/* The dilang.tech hero background: gradient glow plus faint facet lines. */
+/* The marketing site hero background: gradient glow plus a faint die outline. */
 .hero-glow{position:absolute;inset:-128px -10% auto -10%;height:640px;background:radial-gradient(45% 55% at 25% 20%,rgba(79,70,229,.30),transparent 60%),radial-gradient(35% 45% at 75% 10%,rgba(34,211,238,.22),transparent 60%),radial-gradient(30% 40% at 50% 60%,rgba(59,130,246,.18),transparent 60%);pointer-events:none;z-index:0}
 .hero-facets{position:absolute;top:-12%;right:-14%;width:min(900px,86vw);height:auto;aspect-ratio:1;opacity:.4;pointer-events:none;z-index:0;transform:rotate(8deg);animation:facet-sway 40s ease-in-out infinite alternate}
 @keyframes facet-sway{from{transform:rotate(2deg)}to{transform:rotate(14deg)}}

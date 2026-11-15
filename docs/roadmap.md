@@ -3,7 +3,7 @@
 This roadmap lists potential directions for the project. None of it is a
 promise of future functionality: an item may change, wait indefinitely or be
 dropped. What 1.x does promise is in [compatibility](compatibility.md).
-[changelog](../CHANGELOG.md), current behavior in the topic guides, and
+What has landed is in the [changelog](../CHANGELOG.md), current behavior in the topic guides, and
 implementation rationale in design documents. A section here says what is not
 done yet; when something lands, delete it (see "Completion policy").
 
@@ -19,14 +19,14 @@ background. Further JIT work is optional and measurement-driven.
 These are possible next steps, not commitments. Start with a measured need or
 a concrete application gap.
 
-### Rebrand Diamond as d6
+### Finish the move to the d6 name
 
-The user-facing name becomes **d6**, which remains a reference to Diamond. The name
-leans into the dice: rewriting in d6 is a saving throw.
+The language, commands, packages, logo and site (rolld6.codes) carry the d6 name. Left:
 
-- **Logo:** the site still uses the gem mark; a dice mark is the owner's call.
+- **Registry address:** `cuts.d6.codes` replaces `cuts.dilang.tech` once that name is set
+  up; facet's default registry URL, the docs and the registry pages move with it, and the
+  old name keeps redirecting.
 - **GitHub:** the org becomes `roll1d6` or `rolld6` (not yet chosen). Rename it last.
-- **Domain:** to be chosen later. `cuts.dilang.tech` stays as the registry address.
 - **Unchanged:** the **cut** and **facet** names, and `DIAMOND_` constants, environment
   variables and internal identifiers. Avoid plumbing changes whose only purpose would be
   to replace the codename.
@@ -233,11 +233,9 @@ Keep the self-hosted implementation at practical parity where it protects the la
 but do not duplicate every native optimization unless it advances a specific bootstrap or
 language-design goal.
 
-Every `tests/cases` program compiles and runs through it (`tools/self_host_survey.sh`).
+Every `tests/cases` program compiles and runs through it (`tools/self_host_survey.sh`,
+run weekly by the `selfhost-survey` workflow).
 
-- **Keep parity checked** -- the survey runs by hand. A scheduled CI job (not per pull
-  request: it compiles every case through the self-hosted compiler) would catch a language
-  change that leaves it behind.
 - **Bytecode differential** -- compare the bytecode both compilers emit, not just the
   programs' output, to find divergences that happen to print the same thing.
 

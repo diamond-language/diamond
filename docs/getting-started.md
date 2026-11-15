@@ -3,7 +3,7 @@
 This guide goes from installing d6 to a tested project built into a
 standalone executable. Each step links to the topic guide that covers it in
 depth. To try the language before installing anything, use the REPL at
-[getdiamond.codes](https://getdiamond.codes).
+[rolld6.codes](https://rolld6.codes).
 
 ## 1. Install
 

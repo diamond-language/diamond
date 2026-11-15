@@ -1,7 +1,7 @@
-# Host-wide nginx configuration for the dilang.tech droplet: the port-80
-# ACME/redirect server, a TLS default that refuses unknown names, and the
-# static dilang.tech site. Installed as /etc/nginx/conf.d/00-common.conf and
-# dilang.conf; the registry block is nginx.conf.example (diamond-registry.conf).
+# Host-wide nginx configuration for the droplet: the port-80 ACME/redirect
+# server and a TLS default that refuses unknown names. Installed as
+# /etc/nginx/conf.d/00-common.conf; the registry block is nginx.conf.example
+# (diamond-registry.conf).
 
 # Shared settings for every site on this host. TLS certificates come from
 # certbot (webroot /var/www/letsencrypt); renewal is certbot.timer plus
@@ -37,19 +37,6 @@ server {
     ssl_reject_handshake on;
 }
 
-server {
-    listen 443 ssl;
-    listen [::]:443 ssl;
-    http2 on;
-    server_name dilang.tech;
-    ssl_certificate /etc/letsencrypt/live/dilang.tech/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/dilang.tech/privkey.pem;
-
-    root /var/www/dilang.tech;
-    index index.html;
-    gzip on;
-    gzip_types text/css application/javascript application/json image/svg+xml text/plain text/xml;
-    location / {
-        try_files $uri $uri/ =404;
-    }
-}
+# The marketing site (rolld6.codes, with getdiamond.codes and dilang.tech
+# redirecting to it) is /etc/nginx/conf.d/dilang.conf, kept in the marketing
+# repository as deploy/nginx.conf.
