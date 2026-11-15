@@ -85,7 +85,7 @@ if [[ "$format" == deb ]]; then
         printf 'Recommends: git, gcc, libsqlite3-dev, libpq-dev, libmariadb-dev, libssl-dev, libcrypt-dev, zlib1g-dev\n'
         printf 'Section: devel\n'
         printf 'Priority: optional\n'
-        printf 'Homepage: https://getdiamond.codes\n'
+        printf 'Homepage: https://rolld6.codes\n'
         printf 'Description: The d6 programming language\n'
         sed 's/^/ /' <<<"$description"
     } > "$stage/DEBIAN/control"

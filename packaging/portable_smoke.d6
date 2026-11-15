@@ -61,9 +61,9 @@ check("postgres", connect_error(open_postgres).include?("port 1 failed"))
 
 # The network: name resolution and TLS against the host's CA certificates.
 if ENV["PORTABLE_SMOKE_OFFLINE"] != "1"
-  check("dns-remote", DNS.resolve("getdiamond.codes", [], nil).length() > 0)
-  conn = TLSSocket.connect("getdiamond.codes", 443)
-  conn.write("HEAD / HTTP/1.1\r\nHost: getdiamond.codes\r\nConnection: close\r\n\r\n")
+  check("dns-remote", DNS.resolve("rolld6.codes", [], nil).length() > 0)
+  conn = TLSSocket.connect("rolld6.codes", 443)
+  conn.write("HEAD / HTTP/1.1\r\nHost: rolld6.codes\r\nConnection: close\r\n\r\n")
   check("tls", conn.read().start_with?("HTTP/1.1 "))
   conn.close()
 end
