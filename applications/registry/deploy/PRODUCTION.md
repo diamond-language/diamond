@@ -47,6 +47,22 @@ published on 2026-11-13 UTC with a 30-minute `publish:cookies` credential for th
 and was revoked unused). The published sha256 `edf23867...` matches the reviewed inventory, and a
 fresh `facet install` resolved it. The registry itself does not load cookies, so no redeploy.
 
+On 2026-11-15 UTC, for 1.0.0-rc6, the `##` doc-comment patch releases of all 20 public cuts were
+published from `1.0` `0b310af1` after a verified snapshot
+(`~/diamond-registry-backups/cutbackup-2026-11-14-212624-pre-rc6-cuts`), with one 30-minute
+credential for `diamond-language` (id 42, a `publish:` scope for each cut, revoked afterwards):
+active_record 0.21.3 (`a8685a1f...`), arel 0.35.5 (`3897dc2f...`), cookies 0.2.5 (`c791b4e0...`),
+database_config 0.2.4 (`ffad1fc0...`), div 0.3.3 (`d7d4945d...`), graphql 0.3.5 (`085450c4...`),
+graphsql 0.2.5 (`205b589a...`), gremlin 0.5.5 (`3395164a...`), http 0.2.5 (`2ac86770...`), jobs 0.2.3
+(`721152d4...`), log_viewer 0.2.3 (`bba758a6...`), logger 0.5.4 (`e52c48cb...`), minitest 0.1.4
+(`ac9ac514...`), mjolnir 0.4.2 (`6d3d6b58...`), multipart 0.3.3 (`47eb60c5...`), network_safety 0.2.4
+(`24d60452...`), rack 0.2.4 (`11851689...`), redis 0.2.4 (`233dfdd0...`), registry 0.3.2 (`0970af32...`),
+websocket 0.2.3 (`ebe69e09...`). Every digest matched `docs/registry-launch-inventory.json`, and
+`tools/verify_registry_launch.d6` passed for all 20. The registry service was not redeployed (it
+still loads its bundled cuts from `ef4cb8f0`). The same day `catalog.html` and `cut.html` were
+replaced with their `1.0` `0b310af1` versions (links to rolld6.codes, cuts.rolld6.codes and
+diamond-language/d6); no restart, previous copies in `/root/registry-pages-rolld6-20261115/`.
+
 Previously `0e482f26c56854c4c41c6c82d093ad04f6569a21` (v1.0.0-rc4, deployed 2026-11-12 UTC (2026-11-11 Pacific)
 with `tools/deploy_registry.sh --revision=v1.0.0-rc4 --force` after its dry run).
 The fresh snapshot at
