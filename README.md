@@ -129,6 +129,8 @@ sandbox.
 
 ## Learn more
 
+- [rolld6.codes/docs](https://rolld6.codes/docs/) -- the guide and reference below as a
+  searchable site
 - [Getting started](docs/getting-started.md) -- install, the REPL, a first
   project with `facet new`, tests, dependencies and `d6 build`, then a
   reading order for the rest of `docs/`

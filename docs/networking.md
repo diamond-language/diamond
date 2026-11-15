@@ -105,7 +105,7 @@ read/write logic exists for sockets at all. Only connection
   open closes it, same safety-net role as `File`/`Fiber`.
 - `.accept()` is native `DIAMOND_OP_INVOKE` dispatch on a
   `DIAMOND_OBJECT_LISTENER` receiver (alongside `.close()`) — the only
-  genuinely new I/O *operation* in this slice. It blocks in `accept(2)`,
+  genuinely new I/O *operation* here. It blocks in `accept(2)`,
   then hands the resulting connection to the same `fdopen`-and-wrap path
   `TCPSocket.connect` uses.
 
@@ -442,7 +442,7 @@ asked this process to stop," the motivating use case (a server closing
 its listening socket and finishing in-flight work before exiting, rather
 than just dying mid-request). `SIGKILL`/`SIGSTOP` can't be caught at the
 OS level regardless; everything else (`SIGSEGV`, `SIGCHLD`, real-time
-signals, ...) is out of scope for this first slice. `name` must be a
+signals, ...) cannot be trapped. `name` must be a
 `String`, `handler` a `Callable` (a nested `def`, per the usual
 top-level-`def`-isn't-a-value rule), or a rescuable `TypeError`; an
 unrecognized name is also a `TypeError` rather than silently doing
@@ -460,20 +460,21 @@ and every pass through its dispatch loop's top, so any loop or recursion
 reaches a check promptly, and, if set, invokes the pending handler(s) via the
 same nested-`run_chunk` mechanism `DIAMOND_OP_CALL_CLOSURE` itself uses.
 But a program genuinely blocked in a native call — `TCPServer#accept`,
-`IO.poll`, `UDPSocket#receive` — might not reach "the next instruction"
+`IO.poll`, `UDPSocket#receive`, a socket `read` — might not reach "the next instruction"
 for an arbitrarily long time (an idle server with nothing connecting,
 by design, waits forever). So `Signal.trap`'s own `sigaction` call
 deliberately omits `SA_RESTART`: the signal actually interrupts the
 blocking syscall (`EINTR`) instead of the kernel silently resuming it as
-if nothing happened, and each of those three call sites has its own
+if nothing happened, and each of those call sites has its own
 small retry loop that dispatches any pending signal(s) — running the
-d6 handler — before transparently retrying the syscall. From the
-caller's own perspective, `.accept()` still either blocks until a real
-connection or raises a real error; it's just no longer *unresponsive*
-while doing so. `TCPSocket.connect` and buffered `File`/stdin reads are
-not hardened this way — a real, documented scope cut for this first
-slice, not an oversight; a signal arriving while blocked in one of those
-won't be handled until the call completes on its own.
+d6 handler — before transparently retrying the syscall. A signal that
+lands just before the wait starts is caught too: the wait runs the
+handler instead of sleeping through it. From the caller's own
+perspective, `.accept()` still either blocks until a real connection or
+raises a real error; it's just no longer *unresponsive* while doing so.
+`TCPSocket.connect` and buffered `File`/stdin reads are not hardened
+this way: a signal arriving while blocked in one of those is handled
+when the call completes on its own.
 
 A trapped handler that raises an uncaught exception propagates exactly
 like any other mid-dispatch failure (through the same `catch_exception`/

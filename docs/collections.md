@@ -40,8 +40,8 @@ or a compile error for a literal of another type) and not negative (`ArgumentErr
 instead of `nil`, so `counts = Hash.new(0)` then `counts[word] += 1` counts words.
 `hash.default()` returns it. Reading a missing key does not store it, every missing key answers
 the same `default` object (so `Hash.new([])` shares one Array, as in Ruby), and the default is fixed
-when the Hash is made. `dup` and copies into another thread keep it; methods that build a new Hash
-(`merge`, `select`, `transform_values`, ...) do not.
+when the Hash is made. `dup`, `merge` and copies into another thread keep it; other methods that
+build a new Hash (`select`, `transform_values`, ...) do not.
 
 `.push`, `.pop`, and `.length()` are native on both. Array additionally
 has `.join(separator = "")`, native and O(n) total (a `StringBuilder`-
@@ -118,7 +118,7 @@ the rest of the language having no other Unicode awareness), and
 `.strip()` (trims leading/trailing ASCII whitespace; `.lstrip()`/`.rstrip()`
 trim only one side), `.chomp()` (removes one trailing `"\n"`, `"\r\n"` or
 `"\r"`; `.chomp(suffix)` removes `suffix` instead, when the string ends
-with it), `.capitalize()` (first ASCII letter upper, the
+with it, and `.chomp("")` removes every trailing `"\n"` and `"\r\n"`), `.capitalize()` (first ASCII letter upper, the
 rest lower), `.chars()` (an `Array` of one-byte strings, so a multi-byte UTF-8
 character becomes several), and `.empty?()`
 (zero length, like Array's and Hash's own `empty?`). `.split(separator)`

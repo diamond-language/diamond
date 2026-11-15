@@ -560,7 +560,7 @@ resource-backed types are skipped rather than traversed.
 
 `respond_to?(name)` takes a `Symbol` and checks whether the receiver's
 class defines a method by that name — `false` for a private method, same
-as Ruby's own default (no `include_private` second argument yet). On a
+as Ruby's own default (there is no `include_private` second argument). On a
 `String`, `Array`, `Hash`, `Int` or `Float` it is `true` for a native method, a
 prelude method, or a program's own `string_x`/`array_x`/`hash_x`/`integer_x`/`float_x`
 extension function, and the name may be a `Symbol` or a `String`:
