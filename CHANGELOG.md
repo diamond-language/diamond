@@ -6,6 +6,18 @@ authoritative fine-grained record.
 
 ## Unreleased
 
+### Added
+
+- Binaries made by `d6 build` answer a lone `--version` with their name, version and the d6
+  that built them, for example `pheint 45f7b2915102 (d6 1.0.0-rc6)`. The name and version
+  come from the `Cutfile` next to the source, else the binary's name and the git revision;
+  `--app-name` and `--app-version` override them
+  ([deployment](docs/deployment.md#version-of-a-built-binary)).
+- `d6 --version` adds the git revision when d6 was built from a checkout other than its
+  clean release tag (`d6 1.0.0-rc6-3d8eb74cab0f`, `-dirty` for uncommitted changes), so a bug
+  report from an interim state says which one. Release packages and tarballs report the bare
+  version.
+
 ## 1.0.0-rc6 — 2026-11-14
 
 The sixth release candidate makes negative literals, Float rounding to digits,

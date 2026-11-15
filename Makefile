@@ -386,6 +386,16 @@ DIAMOND_BUILD_ID := $(shell cat src/*.c src/*.h $(PRELUDE_SOURCES) | cksum | cut
 $(BUILD_DIR)/compiled_prelude.o: CPPFLAGS += -DDIAMOND_BUILD_ID=$(DIAMOND_BUILD_ID)u
 $(BUILD_DIR)/compiled_prelude.o: $(SOURCES) $(wildcard src/*.h) $(PRELUDE_SOURCES)
 
+# `d6 --version` adds the git revision to the release version unless this is a clean checkout
+# of the release tag (tools/version_suffix.sh). The header is checked on every build and only
+# rewritten when the revision changes, which then recompiles main.c alone.
+$(BUILD_DIR)/version_suffix.h: FORCE
+	@bash tools/version_suffix.sh '$(DIAMOND_VERSION)' $@
+$(BUILD_DIR)/main.o: CPPFLAGS += -I$(BUILD_DIR)
+$(BUILD_DIR)/main.o: $(BUILD_DIR)/version_suffix.h
+.PHONY: FORCE
+FORCE:
+
 $(BUILD_DIR)/%.o: src/%.c
 	@mkdir -p $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c $< -o $@

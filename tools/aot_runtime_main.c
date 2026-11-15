@@ -10,6 +10,7 @@
  * invocation) via diamond_program_read_compiled, then runs it the same
  * way run_source.c's own run_compiled_chunk does for the ordinary CLI:
  * diamond_vm_set_argv for ARGV, and diamond_vm_run.
+ * `--version` alone prints the identity `d6 build` recorded instead.
  * Like a script run, it prints the final top-level value only when
  * DIAMOND_PRINT_RESULT is set. DIAMOND_JIT and
  * DIAMOND_TRACE_JIT share the interpreter's opt-in behavior. */
@@ -25,11 +26,27 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 const uint8_t *diamond_aot_program_data(void);
 size_t diamond_aot_program_size(void);
+const char *diamond_aot_app_name(void);
+const char *diamond_aot_app_version(void);
+const char *diamond_aot_d6_version(void);
 
 int main(int argc, char **argv) {
+    /* `--version` as the only argument names the binary instead of running it:
+     * "NAME VERSION (d6 D6_VERSION)", as recorded by `d6 build`. Any other
+     * arguments, including `--version` among others, go to the program. */
+    if (argc == 2 && strcmp(argv[1], "--version") == 0) {
+        const char *version = diamond_aot_app_version();
+        if (version[0] != '\0') {
+            printf("%s %s (d6 %s)\n", diamond_aot_app_name(), version, diamond_aot_d6_version());
+        } else {
+            printf("%s (d6 %s)\n", diamond_aot_app_name(), diamond_aot_d6_version());
+        }
+        return fflush(stdout) == 0 ? 0 : 74;
+    }
     DiamondProgram *program = calloc(1, sizeof *program);
     if (program == nullptr) {
         fprintf(stderr, "%s: out of memory\n", argv[0]);

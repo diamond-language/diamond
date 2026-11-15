@@ -99,4 +99,35 @@ status=0
 "$diamond_bin" build 2> "$test_dir/clash.err" || status=$?
 test "$status" = 64
 grep -q "output 'clash' is a directory" "$test_dir/clash.err"
+# `--version` alone names the binary: Cutfile name and version, else the binary's
+# name and the git revision, else no version; the d6 version comes last. With other
+# arguments it reaches the program like any argument.
+d6_version="$("$diamond_bin" --version | awk '{print $2}')"
+mkdir "$test_dir/versioned"
+printf '%s\n' 'puts(ARGV.join(","))' > "$test_dir/versioned/main.d6"
+printf '%s\n' '{"name": "greeter", "version": "2.3.1", "dependencies": {}}' > "$test_dir/versioned/Cutfile"
+cd "$test_dir/versioned"
+"$diamond_bin" build > /dev/null
+test "$(./versioned --version)" = "greeter 2.3.1 (d6 $d6_version)"
+test "$(./versioned --version extra)" = "--version,extra"
+"$diamond_bin" build --app-name=svc --app-version='v1 "q"' -o svc > /dev/null
+test "$(./svc --version)" = 'svc v1 "q" (d6 '"$d6_version)"
+status=0
+"$diamond_bin" build --app-version= 2> "$test_dir/empty-version.err" || status=$?
+test "$status" = 64
+mkdir "$test_dir/plain"
+cp "$test_dir/versioned/main.d6" "$test_dir/plain/main.d6"
+cd "$test_dir/plain"
+GIT_CEILING_DIRECTORIES="$test_dir" "$diamond_bin" build > /dev/null
+test "$(./plain --version)" = "plain (d6 $d6_version)"
+if command -v git > /dev/null; then
+    git init -q && git add main.d6
+    git -c user.email=test@example.invalid -c user.name=test commit -qm init
+    revision="$(git rev-parse --short=12 HEAD)"
+    "$diamond_bin" build > /dev/null
+    test "$(./plain --version)" = "plain $revision (d6 $d6_version)"
+    printf '%s\n' '# changed' >> main.d6
+    "$diamond_bin" build > /dev/null
+    test "$(./plain --version)" = "plain $revision-dirty (d6 $d6_version)"
+fi
 printf '%s\n' "build from application directory passed"

@@ -65,6 +65,8 @@ set -- CC=gcc \
     LDFLAGS_EXTRA="-static $static_libs" \
     LDLIBS_EXTRA="-lpgcommon_shlib -lpgport_shlib -lucontext" \
     CFLAGS_DEBUG="-O2 -DNDEBUG $march -static $static_libs"
+# A release tarball reports exactly its version, never a git revision (tools/version_suffix.sh).
+export D6_VERSION_SUFFIX=
 make -j"$JOBS" "$@" CFLAGS_RELEASE="-O3 -DNDEBUG $march" release
 make -j"$JOBS" "$@" facet lsp dap
 
