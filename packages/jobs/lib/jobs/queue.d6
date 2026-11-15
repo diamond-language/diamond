@@ -3,6 +3,8 @@
 # does. Every function here takes `db` explicitly, the same convention
 # ActiveRecord::Migrator and every app model already use -- this
 # package owns no connection of its own.
+## Durable background jobs stored in the application's database (the `jobs` and
+## `recurring_jobs` tables in the README).
 module Jobs
 
   # Inserts one pending row into the app's own `jobs` table (see
@@ -14,6 +16,8 @@ module Jobs
   # column type. `run_at` defaults to now (run as soon as a worker
   # polls); pass an epoch-seconds Int to delay it, or use #enqueue_in/
   # #enqueue_at below instead of computing that yourself.
+  ## Adds a job of `kind` with JSON-serializable `args` and returns its id. It runs as
+  ## soon as a worker polls, or at `run_at` (epoch seconds) when given.
   def self.enqueue(db, kind: String, args: Hash = {}, queue: String = "default", run_at = nil, max_attempts = 5)
     scheduled_at = if run_at == nil then Time.now().to_i() else run_at end
     db.execute("INSERT INTO jobs (kind, payload, queue, status, run_at, attempts, max_attempts, created_at) VALUES (?, ?, ?, 'pending', ?, 0, ?, ?)",
@@ -21,10 +25,12 @@ module Jobs
     db.last_insert_row_id()
   end
 
+  ## Adds a job that runs `seconds` from now.
   def self.enqueue_in(db, seconds, kind: String, args: Hash = {}, queue: String = "default", max_attempts = 5)
     Jobs.enqueue(db, kind: kind, args: args, queue: queue, run_at: Time.now().to_i() + seconds, max_attempts: max_attempts)
   end
 
+  ## Adds a job that runs at `epoch_seconds`.
   def self.enqueue_at(db, epoch_seconds, kind: String, args: Hash = {}, queue: String = "default", max_attempts = 5)
     Jobs.enqueue(db, kind: kind, args: args, queue: queue, run_at: epoch_seconds, max_attempts: max_attempts)
   end
@@ -38,6 +44,8 @@ module Jobs
   # expression -- see README.md's own "Explicitly out of scope" on why.
   # A worker's own poll loop enqueues a fresh `jobs` row from this
   # whenever `next_run_at` comes due (Jobs::Worker.tick_recurring).
+  ## Registers a job that a worker enqueues every `every_seconds`. Idempotent by `name`,
+  ## so call it at every boot; returns the schedule's id.
   def self.schedule_recurring(db, name: String, kind: String, every_seconds, args: Hash = {}, queue: String = "default")
     existing = db.query("SELECT id FROM recurring_jobs WHERE name = ?", [name])
     if existing.length() > 0 then return existing[0]["id"] end
@@ -47,3 +55,4 @@ module Jobs
     db.last_insert_row_id()
   end
 end
+

@@ -12,6 +12,10 @@ module Jobs
   # would let two workers both see the same pending row before either
   # claims it). SQLite serializes concurrent writers on its own; this
   # needs no extra locking beyond that.
+  ## Runs queued jobs. `handlers` maps each job kind to a callable taking the job's
+  ## `args`. A handler that raises is retried with backoff until the job's
+  ## `max_attempts`, after which the job is marked `failed` with the error in
+  ## `last_error`.
   class Worker
 
     def self.claim_next(db, queues, now)
@@ -72,6 +76,8 @@ module Jobs
     # job succeeded, failed, or was retried). `handlers` is a Hash of
     # `kind => Callable[1]` the calling app owns -- this package never
     # knows what any `kind` actually does.
+    ## Claims and runs one due job from `queues` (all queues when `nil`). Returns `false`
+    ## when nothing was due, `true` otherwise.
     def self.run_once(db, handlers: Hash, queues = nil)
       row = Worker.claim_next(db, queues, Time.now().to_i())
       if row == nil then return false end
@@ -137,6 +143,9 @@ module Jobs
       @@stop_requested = true
     end
 
+    ## Polls until the process gets `TERM` or `INT`: runs due jobs, enqueues due
+    ## recurring jobs, waits `poll_interval_seconds` when idle, and returns jobs locked
+    ## longer than `lock_timeout_seconds` (from a worker that died) to the queue.
     def self.run_forever(db, handlers: Hash, queues = nil, poll_interval_seconds = 2, lock_timeout_seconds = 3600)
       @@stop_requested = false
       def jobs_worker_stop_handler()
@@ -155,3 +164,4 @@ module Jobs
     end
   end
 end
+

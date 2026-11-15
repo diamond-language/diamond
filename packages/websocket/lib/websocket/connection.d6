@@ -2,19 +2,25 @@
 # handshake (packages/websocket/lib/websocket/handshake.d6) belongs
 # here: fragment reassembly and transparent ping/pong/close handling on
 # top of frame.d6's own single-frame encode/decode.
+## An upgraded WebSocket connection. Ping, pong and the close handshake are handled for
+## you; fragmented messages are reassembled.
 class WebSocketConnection
   # `max_message_size` bounds a whole message, fragments included; websocket_max_frame_size() alone only bounds each frame, so a peer could
   # send endless non-final fragments and grow the buffer without limit.
+  ## Wraps an upgraded connection. `max_message_size` bounds a whole message, fragments
+  ## included. `websocket_accept` returns one of these.
   def initialize(conn, max_message_size = websocket_max_message_size())
     @conn = conn
     @closed = false
     @max_message_size = max_message_size
   end
 
+  ## Sends a text message.
   def send_text(text)
     self.send_frame(websocket_opcode_text(), text)
   end
 
+  ## Sends a binary message.
   def send_binary(data)
     self.send_frame(websocket_opcode_binary(), data)
   end
@@ -26,6 +32,7 @@ class WebSocketConnection
     @conn.write(websocket_encode_frame(opcode, payload))
   end
 
+  ## Whether the connection has closed.
   def closed?() = @closed
 
   # The raw, underlying connection (gremlin's own NonblockingConnection,
@@ -68,6 +75,9 @@ class WebSocketConnection
   # below tracks message-in-progress state independently of the frame
   # loop itself for exactly that reason, rather than assuming the next
   # frame after a fragment is always its continuation.
+  ## Waits for the next message and returns `{"opcode", "data"}` (`opcode` is
+  ## `websocket_opcode_text()` or `websocket_opcode_binary()`), or `nil` once the peer has
+  ## closed the connection.
   def receive()
     message_opcode = nil
     buffer = StringBuilder.new()
@@ -142,6 +152,7 @@ class WebSocketConnection
   # here (unlike #receive) -- once this side has already sent its own
   # Close, RFC 6455 section 5.5.1 only obliges it to wait for the peer's
   # Close in return, not to keep servicing the full protocol.
+  ## Starts the close handshake with a status `code` and `reason`.
   def close(code = 1000, reason = "")
     unless @closed
       payload = "#{chr((code >> 8) & 255)}#{chr(code & 255)}#{reason}"
@@ -161,3 +172,4 @@ class WebSocketConnection
     end
   end
 end
+

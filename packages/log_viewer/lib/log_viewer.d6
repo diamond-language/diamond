@@ -1,3 +1,5 @@
+## Formats newline-delimited JSON log records (from the `logger` cut) as
+## `timestamp LEVEL [tag] message key=value ...`. The `bin/diamond-log` script wraps it.
 module LogViewer
   def self.metadata_fields() = ["timestamp", "level", "tag", "message"]
 
@@ -16,6 +18,8 @@ module LogViewer
     end
   end
 
+  ## One log record Hash as a line of text. Missing fields print as `-`, and extra fields
+  ## follow as `key=value`.
   def self.format_record(record: Hash)
     timestamp = record["timestamp"]
     level = record["level"]
@@ -45,6 +49,9 @@ module LogViewer
 
   # Invalid input remains visible so a mixed or damaged stream can be
   # diagnosed instead of silently losing lines.
+  ## Formats one line of input: `[text, true]` for a JSON record, or
+  ## `["[unparsed] " + line, false]` when the line is not JSON, so damaged input stays
+  ## visible.
   def self.format_line(line: String)
     begin
       [LogViewer.format_record(JSON.parse(line)), true]
@@ -53,3 +60,4 @@ module LogViewer
     end
   end
 end
+

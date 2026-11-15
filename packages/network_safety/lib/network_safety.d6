@@ -108,6 +108,11 @@ end
 # unsupported/missing scheme (http_parse_url's own check), embedded
 # userinfo, a literal IPv6 host, a missing host, a blocked IPv4
 # literal, or an obviously-local hostname.
+## Parses `url` and returns `{"scheme", "host", "port", "path", "default_port"}`, or
+## raises `ArgumentError` when the host is `localhost`, a `.local`/`.localhost` name,
+## a numeric form other than dotted IPv4, or an IPv4 literal in a private, loopback,
+## link-local or reserved range. It checks the URL text only: it does not resolve DNS,
+## so a public name that resolves to a private address still passes.
 def resolve_public_hostname(url)
   raw_host_and_port = network_safety_host_and_port_segment(url)
   if raw_host_and_port.index_of("@") != nil
@@ -134,3 +139,4 @@ def resolve_public_hostname(url)
   end
   parsed
 end
+

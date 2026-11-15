@@ -122,6 +122,10 @@ end
 # nil rather than partially succeeding, so a caller always gets either a
 # fully-parsed request or a clean "reject this" signal, never a
 # half-populated Hash to reason about.
+## Parses a `multipart/form-data` request Hash (from `http` or `gremlin`) into
+## `{"fields": {name => value}, "files": {name => {"filename", "content_type", "data"}}}`,
+## or returns `nil` when the request is not multipart. `filename` comes from the client:
+## never use it as a path.
 def multipart_parse(request)
   boundary = multipart_boundary(request["headers"]["content-type"])
   if boundary == nil
@@ -200,6 +204,8 @@ end
 
 # The lowercased extension of `filename` (no leading "."), or nil if it
 # has none at all -- `"a.b.ZIP"` -> `"zip"`, `"noext"` -> nil.
+## The lower-cased extension of `filename` without the dot (`"a.b.ZIP"` gives `"zip"`),
+## or `nil` when it has none.
 def multipart_file_extension(filename)
   reversed = filename.reverse()
   dot_from_end = reversed.index_of(".")
@@ -227,6 +233,9 @@ end
 # itself rejects a ".." request path for on the read side. Keep the real
 # original filename (for display/download-name purposes) in your own
 # model/database instead -- it never touches the filesystem here.
+## Writes one `multipart_parse` file entry under `directory` with a fresh random name
+## that keeps its extension, and returns that name. Returns `nil` and writes nothing
+## when `file` is `nil` or its extension is not in `allowed_extensions`.
 def multipart_save_file(file, allowed_extensions, directory)
   if file == nil
     return nil
@@ -241,3 +250,4 @@ def multipart_save_file(file, allowed_extensions, directory)
   handle.close()
   stored_name
 end
+

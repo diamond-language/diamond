@@ -53,6 +53,7 @@
 # `ensure` so it still runs even when the test failed, errored, or was
 # skipped.
 
+## Raised by a failing assertion; the runner reports it as `FAIL`.
 class AssertionError < StandardError
   attr_reader message: String
   def initialize(message: String)
@@ -64,6 +65,7 @@ end
 # failed or errored -- a separate class from AssertionError specifically
 # so `run` can tell "this assertion failed" apart from "this test asked
 # not to run" and bucket/report them differently.
+## Raised by `Minitest.skip`; the runner counts the test as skipped.
 class Skip < StandardError
   attr_reader message: String
   def initialize(message: String)
@@ -71,7 +73,10 @@ class Skip < StandardError
   end
 end
 
+## A test suite plus the assertions. Each assertion returns `true` or raises
+## `AssertionError`; the optional last `message` replaces the failure text.
 class Minitest
+  ## An empty suite.
   def initialize()
     @names = []
     @callbacks = []
@@ -90,6 +95,7 @@ class Minitest
   attr_reader skipped: Int
   attr_reader failures: Array
 
+  ## Passes when `condition` is true.
   def self.assert(condition: Bool, message: String = "assertion failed") -> Bool
     unless condition
       raise AssertionError.new(message)
@@ -97,9 +103,11 @@ class Minitest
     true
   end
 
+  ## Passes when `condition` is false.
   def self.refute(condition: Bool, message: String = "expected condition to be false") -> Bool =
     Minitest.assert(!condition, message)
 
+  ## Passes when `expected == actual`.
   def self.assert_equal(expected, actual, message: String = "") -> Bool
     if expected != actual
       prefix = if message == "" then "" else message + "\n" end
@@ -108,6 +116,7 @@ class Minitest
     true
   end
 
+  ## Passes when `expected != actual`.
   def self.refute_equal(expected, actual, message: String = "") -> Bool
     if expected == actual
       prefix = if message == "" then "" else message + "\n" end
@@ -116,11 +125,13 @@ class Minitest
     true
   end
 
+  ## Passes when `value` is `nil`.
   def self.assert_nil(value, message: String = "") -> Bool
     prefix = if message == "" then "" else message + "\n" end
     Minitest.assert(value == nil, "#{prefix}expected nil, got #{JSON.stringify(value)}")
   end
 
+  ## Passes when `value` is not `nil`.
   def self.refute_nil(value, message: String = "") -> Bool
     prefix = if message == "" then "" else message + "\n" end
     Minitest.assert(value != nil, "#{prefix}expected a non-nil value")
@@ -132,6 +143,7 @@ class Minitest
   # does it have this value?) don't share one obvious answer the way
   # Array's does. Checks with `==`, so it works for any element type
   # that itself supports equality, same as assert_equal.
+  ## Passes when `collection` includes `item`.
   def self.assert_includes(collection: Array, item, message: String = "") -> Bool
     index = 0
     found = false
@@ -146,6 +158,7 @@ class Minitest
       "#{prefix}expected #{JSON.stringify(collection)} to include #{JSON.stringify(item)}")
   end
 
+  ## Passes when `collection` does not include `item`.
   def self.refute_includes(collection: Array, item, message: String = "") -> Bool
     index = 0
     found = false
@@ -163,12 +176,14 @@ class Minitest
   # Works on Array, Hash, and String alike -- all three share `.length()`,
   # so "empty" means the same thing (zero elements/characters) for each
   # without needing a type check here.
+  ## Passes when `collection` is empty.
   def self.assert_empty(collection, message: String = "") -> Bool
     prefix = if message == "" then "" else message + "\n" end
     Minitest.assert(collection.length() == 0,
       "#{prefix}expected #{JSON.stringify(collection)} to be empty")
   end
 
+  ## Passes when `collection` is not empty.
   def self.refute_empty(collection, message: String = "") -> Bool
     prefix = if message == "" then "" else message + "\n" end
     Minitest.assert(collection.length() != 0,
@@ -181,6 +196,7 @@ class Minitest
   # dispatch of their own in Diamond (see tests/run.sh's own "Int
   # literal .abs() unexpectedly succeeded" check) -- a plain conditional
   # negation instead.
+  ## Passes when `expected` and `actual` differ by at most `delta`.
   def self.assert_in_delta(expected, actual, delta = 0.001, message: String = "") -> Bool
     difference = expected - actual
     if difference < 0
@@ -201,6 +217,8 @@ class Minitest
   # past assert_raises the same way an unmatched `rescue error: E`
   # always does, surfacing as an error rather than a clean failure.
   # The action can also be a block: `assert_raises[E]() do ... end`.
+  ## Passes when calling `action` (or the block) raises `E` or a subclass of it:
+  ## `Minitest.assert_raises[ArgumentError]() do ... end`.
   def self.assert_raises[E](action: Callable[0] | Nil = nil,
       message: String = "expected an exception to be raised", &block) -> Bool
     raised = begin
@@ -229,10 +247,12 @@ class Minitest
   # bail out of a test that depends on something not available in the
   # current environment. Unlike a failed assertion, a skip doesn't make
   # `run`/`run!` report the suite as unsuccessful.
+  ## Marks the running test skipped.
   def self.skip(reason: String = "skipped")
     raise Skip.new(reason)
   end
 
+  ## Registers a test. `callback` is usually a nested `def`.
   def test(name: String, callback: Callable[0]) -> Minitest
     @names.push(name)
     @callbacks.push(callback)
@@ -242,6 +262,7 @@ class Minitest
   # Runs before every registered test, prior to the test's own callback.
   # Calling this again replaces the previously registered hook rather
   # than adding a second one.
+  ## Registers a hook run before each test.
   def setup(callback: Callable[0]) -> Minitest
     @setup_hook = callback
     self
@@ -250,6 +271,7 @@ class Minitest
   # Runs after every registered test, via `ensure` -- so it still runs
   # even when the test failed, errored, or called Minitest.skip. Calling
   # this again replaces the previously registered hook.
+  ## Registers a hook run after each test, even a failing one.
   def teardown(callback: Callable[0]) -> Minitest
     @teardown_hook = callback
     self
@@ -259,6 +281,8 @@ class Minitest
 
   # Runs every registered test, prints a summary, and returns true only
   # if every test passed (a skip doesn't count against this).
+  ## Runs every test, prints failures and a summary line, and returns whether all of
+  ## them passed. Skips do not count as failures.
   def run() -> Bool
     index = 0
     while index < @names.length()
@@ -314,6 +338,7 @@ class Minitest
   # Same as `run`, but raises if anything failed or errored -- lets a
   # test file's own exit code (via the `diamond` CLI's uncaught-
   # exception handling) reflect pass/fail, e.g. for CI.
+  ## Like `run`, but raises when a test failed, so an uncaught failure exits nonzero.
   def run!() -> Bool
     if self.run()
       true
@@ -322,3 +347,4 @@ class Minitest
     end
   end
 end
+

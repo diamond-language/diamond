@@ -11,6 +11,7 @@ require "./compiler"
 module Div
   module_function
 
+  ## `value` as text with `&`, `<`, `>`, `"` and `'` escaped; what `<%= %>` applies.
   def escape_html(value)
     s = "#{value}"
     # Fast path: the overwhelmingly common case is a string with none of
@@ -53,6 +54,7 @@ module Div
   # `<%== Div.hidden_field_tag("csrf_token", csrf_token) %>`), and general
   # rather than CSRF-specific since the escaping it needs has nothing to
   # do with what the field holds.
+  ## An `<input type="hidden">` tag with `name` and `value` escaped, for CSRF tokens.
   def hidden_field_tag(name, value)
     "<input type=\"hidden\" name=\"#{Div.escape_html(name)}\" value=\"#{Div.escape_html(value)}\">"
   end
@@ -60,6 +62,8 @@ module Div
   # The templates under `directory` (recursively) whose compiled file in the
   # neighboring `.cache/` is missing, or was compiled from different source.
   # Empty when everything is current.
+  ## The templates under `directory` whose compiled `.cache/` file is missing or was
+  ## made from different source.
   def stale_templates(directory)
     stale = []
     Dir.entries(directory).sort().each() do |name|
@@ -82,6 +86,9 @@ module Div
   # Raises, naming the stale templates and the fix, unless every template
   # under `directory` has been compiled from its current source. Call it at
   # startup, before serving pages from a stale `.cache/`.
+  ## Raises `RuntimeError`, naming the stale templates and `command` as the fix, unless
+  ## every template under `directory` is compiled from its current source. Call it at
+  ## startup.
   def check_fresh(directory, command = "divc_all.sh " + directory)
     stale = Div.stale_templates(directory)
     if stale.length() > 0
@@ -94,8 +101,10 @@ module Div
   # packages/rack (and http_serve/gremlin_serve directly) already expect --
   # packages/rack itself stays untouched and dependency-free; div adapts to
   # its convention rather than the other way around.
+  ## `[status, headers, body]` with `Content-Type: text/html`.
   def html_response(status, body, headers = {})
     merged = headers.merge({"Content-Type": "text/html"})
     [status, merged, body]
   end
 end
+
