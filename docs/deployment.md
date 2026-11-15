@@ -141,7 +141,7 @@ the program writes, and honours `DIAMOND_PRINT_RESULT` the same way
   the machine `d6 build` ran on; see "Cross-compilation" below.
 - **The d6 build checkout is still needed at build time.** `diamond
   build` invokes its checkout's `make aot-build` target to link the binary;
-  there is no separate installed runtime library yet. The finished binary
+  there is no separate installed runtime library. The finished binary
   has no dependency on the checkout at run time and can run from any
   working directory, including on a machine with no d6 checkout.
 
@@ -304,7 +304,7 @@ cache is no longer wanted.
 
 **One more thing a cross-build must override:** the Makefile's own `release`
 target defaults `CFLAGS_RELEASE` to `-march=native` (right for the common
-case -- no distro packaging exists yet, so whoever builds d6 is
+case -- someone building d6 from source is usually
 building it for the machine they're going to run it on). A container only
 isolates the OS/libraries, not the CPU, so building inside one still runs on
 the *host's* actual CPU -- inheriting that default would bake the build

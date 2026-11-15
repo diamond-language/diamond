@@ -36,8 +36,8 @@ resolve registry versions or write a registry lockfile.
 An existing `Cutfile.lock` may pin a registry artifact with `source`, `registry`,
 `version`, `sha256`, and `size`. `facet install` uses `curl` to fetch only that
 digest-addressed HTTPS archive, validates it with the same checks as
-`facet verify`, and stages every cut before replacing installed copies. It does
-not query an index or resolve registry versions yet.
+`facet verify`, and stages every cut before replacing installed copies. With a
+lock in place it does not query the version index; `facet update` does (see below).
 
 This document covers d6's package resolution — packages are called
 **cuts**, resolved from a `cuts/` directory via `require_cut`, a require
@@ -175,7 +175,7 @@ consulting the mutable version index.
 `^1.2.3` (compatible-with, semver's own "don't change the left-most
 non-zero digit" rule), `~1.2.3` (patch-level only), `>=1.0.0 <2.0.0`
 (one or two whitespace-separated comparator terms), or an exact
-`1.2.3`. There's still no registry: a dependency's available versions
+`1.2.3`. For a git dependency the available versions
 come from `git ls-remote --tags --refs` against its own repository,
 filtered to tags that parse as semver (with or without a leading `v`).
 When two different requesters in the dependency graph constrain the
