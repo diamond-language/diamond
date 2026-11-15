@@ -5,11 +5,15 @@ The corrected A record is **142.93.192.149**. External health and catalog
 requests succeeded. Since 2026-09-25 nginx terminates TLS with certbot
 certificates (see "Proxy and certificates" below); Caddy was retired.
 
-Runtime revision: `ef4cb8f02e9c0e2dae5d0f16eb4b397eaae024ba` (main after #569, deployed 2026-11-14 UTC
-with `tools/deploy_registry.sh --force --revision=ef4cb8f0...` after its dry run; 1.0.0-rc5 plus
-the negative-literal binding and the IO.poll trapped-signal fix; no cut changed. All 20 public
-cuts passed resolve, digest, load and reinstall; the verified pre-upgrade snapshot is
-`~/diamond-registry-backups/cutbackup-2026-11-13-230532-pre-ef4cb8f0`).
+Runtime revision: `3d8eb74cab0f35accf5fbe3ac76475034b1da24e` (main after the rc6 records, deployed
+2026-11-15 UTC with `tools/deploy_registry.sh --revision=3d8eb74c...` after its dry run; the
+upgrade check reported REQUIRED because the cuts it loads, its pages and facet changed). This is
+the 1.0.0-rc6 runtime plus facet's cuts.rolld6.codes default. Health ok, `DIAMOND_JIT=1` kept, and
+all 20 public cuts passed resolve, digest, load and reinstall; the verified pre-upgrade snapshot
+is `~/diamond-registry-backups/cutbackup-2026-11-15-141503-pre-3d8eb74c`.
+
+Previous runtime revision: `ef4cb8f02e9c0e2dae5d0f16eb4b397eaae024ba` (main after #569, deployed
+2026-11-14 UTC; 1.0.0-rc5 plus the negative-literal binding and the IO.poll trapped-signal fix).
 
 Previous runtime revision: `b83d3882027ee511565aa48497940c98493a5786` (main after #550, deployed 2026-11-12 UTC
 with `tools/deploy_registry.sh --revision=b83d3882...` after its dry run; the upgrade check
@@ -49,7 +53,7 @@ fresh `facet install` resolved it. The registry itself does not load cookies, so
 
 On 2026-11-15 UTC, for 1.0.0-rc6, the `##` doc-comment patch releases of all 20 public cuts were
 published from `1.0` `0b310af1` after a verified snapshot
-(`~/diamond-registry-backups/cutbackup-2026-11-14-212624-pre-rc6-cuts`), with one 30-minute
+(`cutbackup-2026-11-14-212624-pre-rc6-cuts`, since pruned by the next registry deploy), with one 30-minute
 credential for `diamond-language` (id 42, a `publish:` scope for each cut, revoked afterwards):
 active_record 0.21.3 (`a8685a1f...`), arel 0.35.5 (`3897dc2f...`), cookies 0.2.5 (`c791b4e0...`),
 database_config 0.2.4 (`ffad1fc0...`), div 0.3.3 (`d7d4945d...`), graphql 0.3.5 (`085450c4...`),
