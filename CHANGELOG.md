@@ -6,7 +6,18 @@ authoritative fine-grained record.
 
 ## Unreleased
 
+## 1.0.0-rc6 — 2026-11-14
+
+The sixth release candidate makes negative literals, Float rounding to digits,
+`chomp("")` and `Hash#merge` defaults behave as in Ruby, runs trapped signals
+that land just before a blocking socket wait, and documents every cut. All 20
+bundled cuts get a patch release carrying their new doc comments; no cut's code
+changed. The site moved to rolld6.codes.
+
+### Changed
+
 - The brand is written **d6** (lowercase) again in the guides, READMEs, CLI help, the docs site, registry pages, the VS Code extension and GitHub release titles. The registry pages and the website use a new logo: the six face of a die, a rounded square turned 45 degrees with six white pips turned with it.
+- The website and docs moved to [rolld6.codes](https://rolld6.codes/); getdiamond.codes and dilang.tech redirect to the same page there. The registry stays at cuts.dilang.tech for now.
 - Every public cut has a page on the docs site (rolld6.codes/docs/cuts/NAME): its README plus an API reference built from `##` doc comments in its source, and an "All cuts" index. All 20 cuts get a patch release carrying those comments: active_record 0.21.3, arel 0.35.5, cookies 0.2.5, database_config 0.2.4, div 0.3.3, graphql 0.3.5, graphsql 0.2.5, gremlin 0.5.5, http 0.2.5, jobs 0.2.3, log_viewer 0.2.3, logger 0.5.4, minitest 0.1.4, mjolnir 0.4.2, multipart 0.3.3, network_safety 0.2.4, rack 0.2.4, redis 0.2.4, registry 0.3.2 and websocket 0.2.3. No code changed.
 - In the REPL (and the browser REPL), a blank or comment-only line no longer prints `nil`: the prompt just comes back, as in irb. Inside an unfinished entry such a line is still ordinary input.
 - A trapped signal that arrives just before a blocking `TCPServer#accept`, `UDPSocket#receive` or socket `read` starts waiting now runs its handler during the wait, as #569 did for `IO.poll`; a signal landing during a blocking socket `read` no longer raises "Interrupted system call".
@@ -14,9 +25,7 @@ authoritative fine-grained record.
 - `String#chomp("")` removes every trailing `"\n"` and `"\r\n"`, as in Ruby (it removed nothing). `String#insert` reports the index it was given when out of range.
 - `Hash#merge` keeps the receiver's default (`Hash.new(0).merge(other)` still reads missing keys as 0).
 - A trapped signal (`Signal.trap`) that arrives just before `IO.poll` starts waiting now runs its handler during the wait. JIT-compiled code could miss it and wait out the whole timeout, or forever with no timeout, so a server could ignore SIGTERM.
-
 - A minus written right against a number literal is now part of it, as in Ruby: `-2.5.floor()` is -3 and `-2.abs()` is 2 (both used to negate the call's result). `-2 ** 2` is still -4, and `- 2.abs()` (with a space) and `-x.abs()` still negate the whole call.
-
 - A struct's generated `==` and `to_s` now cover fields added later: a plain subclass that adds fields gets its own `==` over all of them, every plain subclass's `to_s` shows its own name and fields, and a struct whose body assigns extra fields covers those too. Hand-written or included `==`/`to_s` are kept. Also new: `Hash.new(default)` (missing keys read as `default`; `hash.default()` returns it) and `Array.new(n) do |i| ... end`.
 
 ## 1.0.0-rc5 — 2026-11-13
@@ -3395,3 +3404,4 @@ for security-sensitive use.
   benchmark documents.
 - Remove completed work from the roadmap once documentation and changelog notes
   are in place.
+
