@@ -33,8 +33,8 @@ built, installed and smoke-tested all four packages before publishing
 All 20 public cuts were published with their `##` doc-comment patch releases (see
 `applications/registry/deploy/PRODUCTION.md` for versions and digests). One 30-minute
 credential (id 42, a `publish:` scope for each of the 20) was revoked afterwards, and
-`tools/verify_registry_launch.d6` passed for all 20. The verified pre-publication snapshot
-is `~/diamond-registry-backups/cutbackup-2026-11-14-212624-pre-rc6-cuts`.
+`tools/verify_registry_launch.d6` passed for all 20. A verified snapshot was taken first; the registry
+deploy below pruned it in favour of its own, newer one.
 
 ## Site, docs and registry pages
 
@@ -50,5 +50,12 @@ The previous document root (including /docs) is in
 
 ## Production applications
 
-The registry, SkindicateV3 and Pheint still run main `ef4cb8f0`; none was redeployed for
-this release.
+On 2026-11-15 UTC all three moved from main `ef4cb8f0` to main
+`3d8eb74cab0f35accf5fbe3ac76475034b1da24e`: the rc6 runtime plus facet's cuts.rolld6.codes
+default (main and `1.0` differ only in `docs/roadmap.md`).
+
+| Target | Deployed source | Verification | Rollback |
+|---|---|---|---|
+| Registry | `tools/deploy_registry.sh --revision=3d8eb74c...` after its dry run (upgrade check: REQUIRED) | Health ok; `DIAMOND_JIT=1` kept; all 20 public cuts resolved, digest-checked, loaded and reinstalled | Verified snapshot `~/diamond-registry-backups/cutbackup-2026-11-15-141503-pre-3d8eb74c` (off-host) |
+| SkindicateV3 | App `549e6d9` (PR #21), main CI run 43769152192 bundle | Running binary SHA-256 `be5b81b4...` matched the bundle; homepage, skin, download, login and profile pages; no errors logged | `/root/skindicate-rc6-rollback` |
+| Pheint | App `45f7b29` (PR #49), built on the local VM | Running binary SHA-256 `725faa60...` matched the install; deploy script's eight outside checks passed (64 MB) | `/var/backups/pheint/20261115T224242Z` |
