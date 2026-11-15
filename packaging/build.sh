@@ -30,6 +30,9 @@ jobs="$(nproc 2>/dev/null || echo 4)"
 # diamond-dap build with CFLAGS_DEBUG, so the package overrides that too.
 march=""
 [[ "$(uname -m)" == x86_64 ]] && march="-march=x86-64-v3"
+# A package reports exactly the version it is packaged as, never a git revision
+# (tools/version_suffix.sh).
+export D6_VERSION_SUFFIX=
 make clean >/dev/null
 out="$(mkdir -p "${2:-build/packages}" && cd "${2:-build/packages}" && pwd)"
 # Two runs: `release` drives its own sub-make, which races with the tool

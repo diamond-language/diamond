@@ -5,12 +5,14 @@
 
 #include "compiled_prelude.h"
 #include "compiler.h"
+#include "manifest_literal.h"
 #include "repl.h"
 #include "run_source.h"
 #include "vm.h"
 
 #include <dirent.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <pthread.h>
 #include <signal.h>
 #include <stdint.h>
@@ -22,6 +24,26 @@
 #include <unistd.h>
 
 static constexpr char DIAMOND_VERSION[] = "1.0.0-rc6";
+
+/* A build from a git checkout reports which revision it is, so a report from an interim
+ * state is not mistaken for the release: "1.0.0-rc6-3e4554d9abcd", with "-dirty" for
+ * uncommitted changes. A clean checkout of the release tag and a tree without git say just
+ * the version (tools/version_suffix.sh writes the header; builds that skip it get no suffix).
+ * DIAMOND_VERSION stays the bare release version, which the AOT kit check compares. */
+#if __has_include("version_suffix.h")
+#include "version_suffix.h"
+#else
+#define DIAMOND_VERSION_SUFFIX ""
+#endif
+static char diamond_full_version_text[sizeof DIAMOND_VERSION + 64];
+
+static const char *diamond_full_version(void) {
+    if (diamond_full_version_text[0] == '\0') {
+        snprintf(diamond_full_version_text, sizeof diamond_full_version_text, "%s%s",
+            DIAMOND_VERSION, DIAMOND_VERSION_SUFFIX);
+    }
+    return diamond_full_version_text;
+}
 
 /* Appended to --version output. The default `make` target is an unoptimized
  * debug build (so are `make sanitize`/`make tsan`), which runs Diamond code
@@ -174,19 +196,42 @@ static bool write_compiled_program_to_temp(const DiamondProgram *program,
     return ok;
 }
 
+/* What a built binary prints for `--version`: "NAME VERSION (d6 D6_VERSION)", or
+ * "NAME (d6 D6_VERSION)" when there is no version. */
+typedef struct BuildIdentity {
+    char name[256];
+    char version[256];
+} BuildIdentity;
+
+/* Writes `text` as a C string literal, escaping quotes, backslashes and every
+ * byte outside printable ASCII, so any name or version is safe to embed. */
+static int write_c_string(FILE *file, const char *text) {
+    if (fputc('"', file) == EOF) return -1;
+    for (const unsigned char *byte = (const unsigned char *)text; *byte != '\0'; byte++) {
+        const int written = (*byte == '"' || *byte == '\\' || *byte < 0x20 || *byte >= 0x7f)
+            ? fprintf(file, "\\%03o", *byte)
+            : fputc(*byte, file);
+        if (written < 0) return -1;
+    }
+    return fputc('"', file) == EOF ? -1 : 0;
+}
+
 /* Generates a `.c` file at `embed_path` that #embeds `bin_path` and
  * exposes it via diamond_aot_program_data()/_size() -- the exact
  * accessor-function shape src/compiled_prelude_data.c already uses for
  * the prelude's own embedded bytecode, just generated per `diamond
- * build` invocation instead of once at Diamond's own build time.
- * tools/aot_runtime_main.c declares and calls these two functions. */
-static bool write_embed_data_file(const char *bin_path, const char *embed_path) {
+ * build` invocation instead of once at Diamond's own build time -- plus
+ * the binary's identity for `--version` (diamond_aot_app_name(),
+ * diamond_aot_app_version(), diamond_aot_d6_version()).
+ * tools/aot_runtime_main.c declares and calls these functions. */
+static bool write_embed_data_file(const char *bin_path, const char *embed_path,
+                                  const BuildIdentity *identity) {
     FILE *file = fopen(embed_path, "w");
     if (file == nullptr) {
         fprintf(stderr, "d6: cannot create '%s': %s\n", embed_path, strerror(errno));
         return false;
     }
-    const int written = fprintf(file,
+    bool ok = fprintf(file,
         "#include <stddef.h>\n"
         "#include <stdint.h>\n"
         "static const uint8_t DIAMOND_AOT_PROGRAM_BYTES[] = {\n"
@@ -196,11 +241,117 @@ static bool write_embed_data_file(const char *bin_path, const char *embed_path) 
             "{ return DIAMOND_AOT_PROGRAM_BYTES; }\n"
         "size_t diamond_aot_program_size(void) "
             "{ return sizeof(DIAMOND_AOT_PROGRAM_BYTES); }\n",
-        bin_path);
+        bin_path) >= 0;
+    const struct { const char *function; const char *value; } strings[] = {
+        {"diamond_aot_app_name", identity->name},
+        {"diamond_aot_app_version", identity->version},
+        {"diamond_aot_d6_version", diamond_full_version()},
+    };
+    for (size_t index = 0; ok && index < sizeof strings / sizeof *strings; index++) {
+        ok = fprintf(file, "const char *%s(void) { return ", strings[index].function) >= 0 &&
+             write_c_string(file, strings[index].value) == 0 &&
+             fputs("; }\n", file) != EOF;
+    }
     const int closed = fclose(file);
-    const bool ok = written >= 0 && closed == 0;
+    ok = ok && closed == 0;
     if (!ok) fprintf(stderr, "d6: error writing '%s'\n", embed_path);
     return ok;
+}
+
+/* Runs `args` and stores the first line of its standard output in `out`
+ * (stderr is discarded). True when the command exits 0. */
+static bool capture_first_line(char *const args[], char *out, size_t out_size) {
+    out[0] = '\0';
+    int fds[2];
+    if (pipe(fds) != 0) return false;
+    const pid_t child = fork();
+    if (child < 0) {
+        close(fds[0]);
+        close(fds[1]);
+        return false;
+    }
+    if (child == 0) {
+        dup2(fds[1], STDOUT_FILENO);
+        const int null_fd = open("/dev/null", O_WRONLY);
+        if (null_fd >= 0) dup2(null_fd, STDERR_FILENO);
+        close(fds[0]);
+        close(fds[1]);
+        execvp(args[0], args);
+        _exit(127);
+    }
+    close(fds[1]);
+    size_t length = 0;
+    char sink[512];
+    for (;;) {
+        const bool room = length + 1 < out_size;
+        const ssize_t got = room ? read(fds[0], out + length, out_size - 1 - length)
+                                 : read(fds[0], sink, sizeof sink);
+        if (got < 0 && errno == EINTR) continue;
+        if (got <= 0) break;
+        if (room) length += (size_t)got;
+    }
+    close(fds[0]);
+    out[length] = '\0';
+    out[strcspn(out, "\r\n")] = '\0';
+    int status;
+    while (waitpid(child, &status, 0) < 0) {
+        if (errno != EINTR) return false;
+    }
+    return WIFEXITED(status) && WEXITSTATUS(status) == 0;
+}
+
+/* Fills in whatever --app-name/--app-version left empty: the `name` and
+ * `version` of the Cutfile next to SOURCE, else the output file's name and
+ * the git revision SOURCE is checked out at ("-dirty" with uncommitted
+ * changes to tracked files). No version at all is fine. */
+static void resolve_build_identity(const char *source_path, const char *output_path,
+                                   BuildIdentity *identity) {
+    char directory[4096];
+    snprintf(directory, sizeof directory, "%s", source_path);
+    char *slash = strrchr(directory, '/');
+    if (slash == nullptr) snprintf(directory, sizeof directory, ".");
+    else if (slash == directory) slash[1] = '\0';
+    else *slash = '\0';
+
+    char manifest_path[4096];
+    if (diamond_cut_manifest_find(directory, manifest_path, sizeof manifest_path) ==
+        DIAMOND_CUT_MANIFEST_FOUND) {
+        char *source = read_file(manifest_path);
+        char error[256];
+        DiamondManifestValue *manifest =
+            source != nullptr ? diamond_manifest_parse(source, error, sizeof error) : nullptr;
+        if (manifest != nullptr) {
+            if (identity->name[0] == '\0') {
+                diamond_manifest_get_string(manifest, "name", identity->name,
+                    sizeof identity->name);
+            }
+            if (identity->version[0] == '\0') {
+                diamond_manifest_get_string(manifest, "version", identity->version,
+                    sizeof identity->version);
+            }
+            diamond_manifest_free(manifest);
+        }
+        free(source);
+    }
+    if (identity->name[0] == '\0') {
+        const char *base = strrchr(output_path, '/');
+        snprintf(identity->name, sizeof identity->name, "%s",
+            base != nullptr ? base + 1 : output_path);
+    }
+    if (identity->version[0] == '\0') {
+        char revision[64];
+        char *rev_parse[] = {(char *)"git", (char *)"-C", directory, (char *)"rev-parse",
+            (char *)"--short=12", (char *)"HEAD", nullptr};
+        if (capture_first_line(rev_parse, revision, sizeof revision) && revision[0] != '\0') {
+            char changes[8];
+            char *status[] = {(char *)"git", (char *)"-C", directory, (char *)"status",
+                (char *)"--porcelain", (char *)"--untracked-files=no", nullptr};
+            const bool dirty = capture_first_line(status, changes, sizeof changes) &&
+                               changes[0] != '\0';
+            snprintf(identity->version, sizeof identity->version, "%s%s", revision,
+                dirty ? "-dirty" : "");
+        }
+    }
 }
 
 static char *make_assignment(const char *name,const char *value) {
@@ -593,7 +744,8 @@ done:
     return result;
 }
 
-/* `diamond build [SOURCE] [-o OUTPUT] [--cc=COMPILER]` -- compiles SOURCE
+/* `diamond build [SOURCE] [-o OUTPUT] [--cc=COMPILER] [--app-name=NAME]
+ * [--app-version=VERSION]` -- compiles SOURCE
  * exactly the way ordinary execution would (diamond_compile_source,
  * src/run_source.h), serializes the result, generates a temp embed-data
  * file for it, and links that plus tools/aot_runtime_main.c into a
@@ -606,6 +758,7 @@ static int handle_build_command(int argc, char **argv) {
     const char *cc = nullptr;
     const char *target = nullptr;
     bool lto = false;
+    BuildIdentity identity = {0};
     for (int index = 2; index < argc; index++) {
         if (argv[index][0] != '-' && source_path == nullptr) {
             source_path = argv[index];
@@ -613,6 +766,17 @@ static int handle_build_command(int argc, char **argv) {
             output_path = argv[++index];
         } else if (strcmp(argv[index], "--lto") == 0) {
             lto = true;
+        } else if (strncmp(argv[index], "--app-name=", 11) == 0 ||
+                   strncmp(argv[index], "--app-version=", 14) == 0) {
+            const bool is_name = argv[index][6] == 'n';
+            const char *value = argv[index] + (is_name ? 11 : 14);
+            char *field = is_name ? identity.name : identity.version;
+            if (value[0] == '\0' || strlen(value) >= sizeof identity.name) {
+                fprintf(stderr, "d6: %s needs a value of 1 to %zu bytes\n",
+                    is_name ? "--app-name" : "--app-version", sizeof identity.name - 1);
+                return 64;
+            }
+            memcpy(field, value, strlen(value) + 1);
         } else if (strncmp(argv[index], "--cc=", 5) == 0) {
             cc = argv[index] + 5;
         } else if (strncmp(argv[index], "--target=", 9) == 0) {
@@ -700,7 +864,8 @@ static int handle_build_command(int argc, char **argv) {
 
     char embed_path[4104];
     (void)snprintf(embed_path, sizeof embed_path, "%s.c", bin_path);
-    if (!write_embed_data_file(bin_path, embed_path)) {
+    resolve_build_identity(source_path, output_path, &identity);
+    if (!write_embed_data_file(bin_path, embed_path, &identity)) {
         unlink(bin_path);
         free(derived_output);
         return 74;
@@ -858,6 +1023,7 @@ static void print_usage(FILE *stream) {
           "       d6 -e CODE [ARGS...]\n"
           "       d6 --dump-bytecode[=user|all] [-e CODE | FILE] [ARGS...]\n"
           "       d6 build [SOURCE] [-o OUTPUT] [--cc=COMPILER] [--target=TRIPLE] [--lto]\n"
+          "                [--app-name=NAME] [--app-version=VERSION]\n"
           "       d6 cache clear [--dry-run] [PATH...]\n"
           "       d6 cache warm SOURCE...\n"
           "\n"
@@ -878,7 +1044,10 @@ static void print_usage(FILE *stream) {
           "docs/deployment.md. Without SOURCE it builds main.d6 (or app.d6) in the\n"
           "current directory, named after that directory. It links with a C\n"
           "compiler against the installed AOT kit, or against the d6 source\n"
-          "checkout when there is no kit.\n"
+          "checkout when there is no kit. The binary answers `--version` with\n"
+          "NAME VERSION (d6 VERSION): the Cutfile's name and version next to\n"
+          "SOURCE, else the binary's name and SOURCE's git revision, unless\n"
+          "--app-name or --app-version say otherwise.\n"
           "\n"
           "'d6 cache clear' removes the bytecode caches (.d6c files) next to\n"
           "scripts: those of the given files, every one under the given\n"
@@ -905,7 +1074,7 @@ static int diamond_main(int argc, char **argv) {
     }
     if (argc == 2 && (strcmp(argv[1], "-v") == 0 ||
                       strcmp(argv[1], "--version") == 0)) {
-        printf("d6 %s%s\n", DIAMOND_VERSION, DIAMOND_BUILD_NOTE);
+        printf("d6 %s%s\n", diamond_full_version(), DIAMOND_BUILD_NOTE);
         return 0;
     }
     if (argc == 2 && (strcmp(argv[1], "-h") == 0 ||

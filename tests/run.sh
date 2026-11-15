@@ -37,11 +37,14 @@ diamond_abs="$(realpath "$diamond")"
 run_cases_abs="$(realpath ./build/run_cases)"
 
 # Debug-family builds (the default `make`, sanitize, tsan) append a note
-# saying so; a release build prints the bare version.
+# saying so; a release build prints the bare version. A build from a git
+# checkout other than the clean release tag adds its revision first
+# (tools/version_suffix.sh).
 expected_version="d6 1.0.0-rc6"
 actual="$($diamond --version)"
-[[ "$actual" == "$expected_version" ||
-   "$actual" == "$expected_version (debug build: unoptimized, much slower than \`make release\`)" ]] || {
+debug_note=" (debug build: unoptimized, much slower than \`make release\`)"
+version_part="${actual%"$debug_note"}"
+[[ "$version_part" =~ ^${expected_version//./\\.}(-[0-9a-f]{12}(-dirty)?)?$ ]] || {
     echo "unexpected version output: $actual" >&2
     exit 1
 }

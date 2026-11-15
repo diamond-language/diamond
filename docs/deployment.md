@@ -23,6 +23,7 @@ d6 build            # builds main.d6 into ./greeter
 
 ```text
 d6 build [SOURCE] [-o OUTPUT] [--cc=COMPILER] [--target=TRIPLE] [--lto]
+         [--app-name=NAME] [--app-version=VERSION]
 ```
 
 - `SOURCE` defaults to the first of `main.d6` (what `facet new` generates),
@@ -46,6 +47,9 @@ d6 build [SOURCE] [-o OUTPUT] [--cc=COMPILER] [--target=TRIPLE] [--lto]
 - `--lto` links the kit's LTO runtime (see "Optional LTO runtime" below) instead of the
   default one. It needs an installed kit built with `AOT_LTO=1`; without one it exits 74
   and says how to build it. It does not combine with the checkout's `make` path.
+- `--app-name=NAME` and `--app-version=VERSION` set what the binary reports for
+  `--version` (see "Version of a built binary" below). Each takes 1 to 255 bytes; an
+  empty value exits 64.
 - A compile error (a real syntax/type/name error in `SOURCE` or anything it
   `require`s) prints the same diagnostic `d6 program.d6` would and
   exits 65 -- the C compiler and `make` are never invoked in this case.
@@ -126,6 +130,31 @@ At the language level, the produced binary behaves exactly like
 `d6 program.d6`: it sets `ARGV` from its own command-line arguments, prints only what
 the program writes, and honours `DIAMOND_PRINT_RESULT` the same way
 ([running a program](core-syntax.md#running-a-program)).
+
+## Version of a built binary
+
+Run with `--version` as its only argument, a built binary prints its name, its version and
+the d6 that built it, then exits 0 without running the program:
+
+```text
+$ ./pheint --version
+pheint 45f7b2915102 (d6 1.0.0-rc6)
+```
+
+`d6 build` records these when it links:
+
+- The name is the `name` in the `Cutfile` next to `SOURCE`, else the binary's file name.
+- The version is that `Cutfile`'s `version`, else the git revision `SOURCE` is checked
+  out at (12 hex digits, with `-dirty` when tracked files have uncommitted changes), else
+  nothing: `tool (d6 1.0.0-rc6)`.
+- `--app-name` and `--app-version` replace either one, for builds from an export with no
+  `.git` or a version kept elsewhere.
+- The d6 version is exactly what that `d6 --version` says, including its own revision
+  when d6 was built from a git checkout other than its release tag.
+
+Only a lone `--version` is answered this way, so a built program never sees that exact
+command line. `--version` together with other arguments, and every other argument, reaches
+the program in `ARGV` as before.
 
 ## What this is not
 

@@ -74,6 +74,10 @@ Either way, check it:
 d6 --version     # d6 1.0.0-rc6
 ```
 
+Built from a git checkout other than a release tag, it adds the revision, as in
+`d6 1.0.0-rc6-3d8eb74cab0f` (and `-dirty` with uncommitted changes); include that line in
+bug reports.
+
 The [asdf-diamond](https://github.com/diamond-language/asdf-diamond) plugin
 does the same build for asdf or mise users.
 
