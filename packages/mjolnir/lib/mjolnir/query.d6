@@ -4,6 +4,7 @@ module Mjolnir
   # method returns a new Query; nothing touches the database until it is
   # handed to a Repo. `arel()` exposes the underlying Arel::Query for
   # anything this wrapper does not cover.
+  ## An immutable query over one schema. Every method returns a new query.
   class Query[T]
     def initialize(schema: Schema[T], arel)
       @schema = schema
@@ -15,6 +16,8 @@ module Mjolnir
 
     # A Hash of field => value (ANDed; nil means IS NULL, an Array means IN)
     # or an Arel predicate built from `schema.column(...)`.
+    ## Adds a condition: a Hash (equality, ANDed; `nil` is `IS NULL`, an Array is `IN`) or
+    ## an Arel predicate such as `schema.column("age").gteq(18)`.
     def where(condition) -> Query[T]
       unless condition is Hash
         return Query.new(@schema, @arel.where(condition))
@@ -30,6 +33,7 @@ module Mjolnir
 
     # A field name (with :asc or :desc), or an Arel ordering / raw
     # expression such as `Arel.sql("RANDOM()")`, passed through as is.
+    ## Orders by a field (`:asc` or `:desc`) or a raw Arel expression.
     def order_by(field, direction = :asc) -> Query[T]
       unless field is String || field is Symbol
         return Query.new(@schema, @arel.order(field))
@@ -39,9 +43,13 @@ module Mjolnir
       Query.new(@schema, @arel.order(ordering))
     end
 
+    ## At most `n` rows.
     def limit(n: Int) -> Query[T] = Query.new(@schema, @arel.take(n))
+    ## Skips `n` rows.
     def offset(n: Int) -> Query[T] = Query.new(@schema, @arel.skip(n))
+    ## `[sql, params]` for the query.
     def to_sql(visitor = nil) -> Array = @arel.to_sql(visitor)
   end
 
 end
+

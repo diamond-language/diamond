@@ -1,3 +1,5 @@
+## A stateless data mapper on Arel: schemas map tables to plain entities, queries and
+## changesets are immutable values, and a `Repo` runs them.
 module Mjolnir
 
   # Validation and change tracking as a value. `Changeset.cast` whitelists
@@ -5,6 +7,8 @@ module Mjolnir
   # changeset with errors added. Nothing here touches the database: a Repo
   # refuses an invalid changeset, and maps a database constraint failure
   # onto a field error for each `unique_constraint` declared here.
+  ## Untrusted attributes cast to a schema's field types, plus validation errors. Every
+  ## method returns a new changeset; nothing touches the database.
   class Changeset
     def initialize(schema: Schema, entity, data: Hash, changes: Hash, errors: Hash, constraints: Array)
       @schema = schema
@@ -17,6 +21,9 @@ module Mjolnir
 
     # `entity` is nil for a new row, or the loaded entity being changed.
     # Only `permitted` fields are read from `attrs`; "" casts to nil.
+    ## Keeps the `permitted` keys of `attrs`, coerced to their field types (`""` becomes
+    ## `nil`; a value that cannot be coerced is an error). `entity` is `nil` for a new row
+    ## or the loaded entity to change.
     def self.cast(schema: Schema, entity, attrs: Hash, permitted: Array) -> Changeset
       data = if entity == nil then {} else schema.dump(entity) end
       changes = {}
@@ -73,13 +80,18 @@ module Mjolnir
 
     def schema() -> Schema = @schema
     def entity() = @entity
+    ## The changed fields and their new values.
     def changes() -> Hash = @changes
+    ## Field name to an Array of error messages.
     def errors() -> Hash = @errors
     def constraints() -> Array = @constraints
+    ## Whether there are no errors.
     def valid?() -> Bool = @errors.empty?()
+    ## Whether this changeset inserts a row.
     def new_record?() -> Bool = @entity == nil
 
     # The pending value of a field: its change, else its current value.
+    ## The field's changed value, or its current value.
     def get_field(name)
       key = "#{name}"
       if @changes.has_key?(key) then @changes[key] else @data[key] end
@@ -91,8 +103,10 @@ module Mjolnir
     end
 
     # Current values with every change applied.
+    ## The entity's fields with the changes applied, as a Hash.
     def apply_changes() -> Hash = @data.merge(@changes)
 
+    ## Sets a change directly.
     def put_change(name, value) -> Changeset
       key = "#{name}"
       @schema.column(key)
@@ -102,6 +116,7 @@ module Mjolnir
       Changeset.new(@schema, @entity, @data, changes, @errors, @constraints)
     end
 
+    ## Adds an error message for field `name`.
     def add_error(name, message: String) -> Changeset
       key = "#{name}"
       existing = if @errors.has_key?(key) then @errors[key] else [] end
@@ -111,6 +126,7 @@ module Mjolnir
       Changeset.new(@schema, @entity, @data, @changes, errors, @constraints)
     end
 
+    ## An error for each of `names` that is missing or `nil`.
     def validate_required(names: Array) -> Changeset
       result = self
       names.each() do |name|
@@ -121,6 +137,7 @@ module Mjolnir
       result
     end
 
+    ## An error when the field's length is below `min` or above `max`.
     def validate_length(name, min = nil, max = nil) -> Changeset
       value = self.get_field(name)
       if value == nil then return self end
@@ -135,18 +152,21 @@ module Mjolnir
     end
 
     # `pattern` is a Regexp source string.
+    ## An error when the field does not match the regular expression `pattern`.
     def validate_format(name, pattern: String, message: String = "has invalid format") -> Changeset
       value = self.get_field(name)
       if value == nil || Regexp.new(pattern).match?(value) then return self end
       self.add_error(name, message)
     end
 
+    ## An error when the field is not in `allowed`.
     def validate_inclusion(name, allowed: Array) -> Changeset
       value = self.get_field(name)
       if value == nil || allowed.include?(value) then return self end
       self.add_error(name, "is not included in the list")
     end
 
+    ## An error when the field is below `min` or above `max`.
     def validate_number(name, min = nil, max = nil) -> Changeset
       value = self.get_field(name)
       if value == nil then return self end
@@ -165,6 +185,8 @@ module Mjolnir
     # For a UNIQUE over several columns, pass them all as `columns` (in the
     # order the index declares them); the error lands on `name`, which is
     # usually the one the user can change.
+    ## Turns a violation of the unique index on `name` (or on `columns`, in index order)
+    ## into a field error instead of an exception.
     def unique_constraint(name, constraint_name = nil, message: String = "has already been taken", columns: Array = []) -> Changeset
       @schema.column(name)
       columns.each() do |column| @schema.column(column) end
@@ -174,3 +196,4 @@ module Mjolnir
   end
 
 end
+
