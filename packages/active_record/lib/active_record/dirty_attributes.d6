@@ -20,6 +20,16 @@ module ActiveRecord
   # attribute values this is meant for, but identity equality if an attribute
   # value is itself an Array/Hash -- the same distinction Diamond's own `==`
   # already draws everywhere else.
+  ## Change tracking for a plain attributes Hash. Wrap a loaded row, change it with
+  ## `[]=`, then pass `changes()` to `Repository#update`:
+  ##
+  ## ```ruby
+  ## dirty = ActiveRecord::DirtyAttributes.new(row)
+  ## dirty["country"] = "England"
+  ## repository.update(db, row["id"], dirty.changes()) if dirty.changed?()
+  ## ```
+  ##
+  ## Values compare with `==`.
   class DirtyAttributes
     def initialize(original: Hash)
       @original = original
@@ -29,22 +39,28 @@ module ActiveRecord
       end
     end
 
+    ## The current value of `key`.
     def [](key) = @current[key]
 
+    ## Sets the current value of `key`.
     def []=(key, value)
       @current[key] = value
     end
 
+    ## Whether `key` differs from its original value.
     def attribute_changed?(key) -> Bool = @original[key] != @current[key]
 
+    ## The keys whose values changed.
     def changed_keys() -> Array
       @current.keys().select() do |key|
         self.attribute_changed?(key)
       end
     end
 
+    ## Whether anything changed.
     def changed?() -> Bool = self.changed_keys().length() > 0
 
+    ## A Hash of only the changed keys and their new values.
     def changes() -> Hash
       result = {}
       self.changed_keys().each() do |key|
@@ -53,6 +69,7 @@ module ActiveRecord
       result
     end
 
+    ## A copy of every current value.
     def to_h() -> Hash
       copy = {}
       @current.keys().each() do |key|
@@ -63,3 +80,4 @@ module ActiveRecord
   end
 
 end
+

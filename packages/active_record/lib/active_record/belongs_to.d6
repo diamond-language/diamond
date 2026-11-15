@@ -2,6 +2,8 @@ require_cut "arel"
 
 module ActiveRecord
 
+  ## The owner side of a child's foreign key: the record in `repository` whose
+  ## `owner_key` (default `"id"`) equals the value passed in.
   class BelongsTo
     def initialize(repository: Repository, owner_key: String = "id")
       @repository = repository
@@ -14,6 +16,7 @@ module ActiveRecord
     # goes through #where so an @owner_key other than the owner repository's
     # primary key still works; nil (not an empty Array) when nothing
     # matches, same "not found" shape #find already uses.
+    ## The owner record for `foreign_key_value`, or `nil`.
     def get(db, foreign_key_value)
       conditions = {}
       conditions[@owner_key] = foreign_key_value
@@ -25,6 +28,7 @@ module ActiveRecord
     # of one per child. Returns a Hash of foreign_key_value -> mapped owner
     # record or nil, the same "not found" shape #get uses, for every value
     # passed in.
+    ## One query for many values: a Hash of each value to its owner record or `nil`.
     def preload(db, foreign_key_values: Array)
       table = @repository.table()
       rows = Arel.from(table).where(
@@ -42,3 +46,4 @@ module ActiveRecord
   end
 
 end
+
