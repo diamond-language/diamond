@@ -2,6 +2,8 @@ require_cut "arel"
 
 module ActiveRecord
 
+  ## A one-to-many association: target rows whose `foreign_key` equals the owner's
+  ## `owner_key` value. The owner value is always passed in.
   class HasMany
     def initialize(repository: Repository, foreign_key: String,
                    owner_key: String = "id")
@@ -12,6 +14,7 @@ module ActiveRecord
 
     # The owner value is passed explicitly. No object introspection or naming
     # convention is involved in resolving the association.
+    ## The target records for `owner_id`.
     def all(db, owner_id)
       conditions = {}
       conditions[@foreign_key] = owner_id
@@ -23,6 +26,8 @@ module ActiveRecord
     # would produce. Returns a Hash of owner_id -> Array of mapped records;
     # every owner_id passed in gets a key (an empty Array if it has none),
     # so a caller never needs its own fallback for a missing key.
+    ## One query for many owners: a Hash of each owner id to its Array of records
+    ## (empty when it has none).
     def preload(db, owner_ids: Array)
       table = @repository.table()
       rows = Arel.from(table).where(
@@ -45,3 +50,4 @@ module ActiveRecord
   end
 
 end
+

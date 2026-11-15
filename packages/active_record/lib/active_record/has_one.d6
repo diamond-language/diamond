@@ -2,6 +2,8 @@ require_cut "arel"
 
 module ActiveRecord
 
+  ## A one-to-one association: the target row whose `foreign_key` equals the
+  ## owner's value.
   class HasOne
     def initialize(repository: Repository, foreign_key: String,
                    owner_key: String = "id")
@@ -15,6 +17,7 @@ module ActiveRecord
     # single record or nil, the same "not found" shape BelongsTo#get uses,
     # since the relationship is one-to-one on this side rather than
     # one-to-many.
+    ## The target record for `owner_id`, or `nil`.
     def get(db, owner_id)
       conditions = {}
       conditions[@foreign_key] = owner_id
@@ -28,6 +31,7 @@ module ActiveRecord
     # given owner_id (a data-integrity assumption this association doesn't
     # enforce), the last one wins -- same as #get looking at only the
     # first result, just the opposite end of an unordered result set.
+    ## One query for many owners: a Hash of each owner id to its record or `nil`.
     def preload(db, owner_ids: Array)
       table = @repository.table()
       rows = Arel.from(table).where(
@@ -45,3 +49,4 @@ module ActiveRecord
   end
 
 end
+

@@ -32,7 +32,19 @@ module ActiveRecord
   # repository.d6's own Repository#create/#update), threaded through so
   # `uniqueness` below can exclude a record's own row from its own
   # uniqueness check. Every validator except `uniqueness` ignores it.
+  ## Validator builders: each returns a function with the `validator(attributes,
+  ## exclude_id)` shape `Repository` takes. Combine them with `combine`:
+  ##
+  ## ```ruby
+  ## validator = ActiveRecord::Validators.combine([
+  ##   ActiveRecord::Validators.presence("name"),
+  ##   ActiveRecord::Validators.length("name", maximum: 100)
+  ## ])
+  ## ```
+  ##
+  ## Each takes an optional `message` that replaces the default error text.
   class Validators
+    ## Fails when the field is `nil` or `""`.
     def self.presence(field: String, message = nil)
       def check(attributes, exclude_id)
         value = attributes[field]
@@ -51,6 +63,8 @@ module ActiveRecord
     # is not itself a length failure (that's #presence's job) -- absent
     # values pass #length silently, same "one check, one concern" split
     # real ActiveRecord uses.
+    ## Fails when the field's `length()` is below `minimum` or above `maximum`. A
+    ## `nil` value passes.
     def self.length(field: String, minimum = nil, maximum = nil, message = nil)
       def check(attributes, exclude_id)
         value = attributes[field]
@@ -74,6 +88,7 @@ module ActiveRecord
     # nil fails along with every nonnumeric runtime type -- absence is
     # #presence's job, not this one's, matching ActiveRecord's default
     # (allow_nil: false).
+    ## Fails unless the field is an Int or Float (`nil` fails).
     def self.numericality(field: String, message = nil)
       def check(attributes, exclude_id)
         value = attributes[field]
@@ -91,6 +106,7 @@ module ActiveRecord
     # `pattern` is an ordinary Regexp; matched with #match? (no capture
     # allocation needed just to check a match). nil fails -- there is
     # nothing for a pattern to match against.
+    ## Fails unless the field matches the Regexp `pattern` (`nil` fails).
     def self.format(field: String, pattern, message = nil)
       def check(attributes, exclude_id)
         value = attributes[field]
@@ -104,6 +120,7 @@ module ActiveRecord
       check
     end
 
+    ## Fails unless the field is one of `values`.
     def self.inclusion(field: String, values: Array, message = nil)
       def check(attributes, exclude_id)
         value = attributes[field]
@@ -130,6 +147,8 @@ module ActiveRecord
     # itself. `id_column` defaults to "id", matching Repository's own
     # default; pass the real column name if a table's primary key is
     # named differently.
+    ## Fails when another row in `table` has the same value for the field, excluding
+    ## the record being updated (matched on `id_column`). Queries `db` on each check.
     def self.uniqueness(db, table: Arel::Table, field: String, visitor = nil, message = nil, id_column: String = "id")
       def check(attributes, exclude_id)
         value = attributes[field]
@@ -151,6 +170,7 @@ module ActiveRecord
     # Concatenates every sub-validator's own error Array into one -- the
     # combinator standing in for what multiple `validates` calls would do
     # declaratively in real ActiveRecord.
+    ## Runs every validator and returns all their errors.
     def self.combine(validators: Array)
       def check(attributes, exclude_id)
         errors = []
@@ -167,3 +187,4 @@ module ActiveRecord
   end
 
 end
+

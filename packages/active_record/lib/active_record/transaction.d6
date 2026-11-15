@@ -5,7 +5,10 @@ module ActiveRecord
   # runs through the same #execute(sql) every write in this package already
   # uses -- see docs/io.md). This is that one missing piece: run `callback`,
   # commit on a normal return, roll back and re-raise on any exception.
+  ## Runs a block in a database transaction.
   class Transaction
+    ## Runs `BEGIN`, calls the block, and runs `COMMIT`, returning the block's value.
+    ## On an exception it runs `ROLLBACK` and re-raises.
     def self.run(db, callback: Callable[0])
       db.execute("BEGIN")
       begin
@@ -44,6 +47,11 @@ module ActiveRecord
     #   end
     #   # => "Ada" is committed, "Grace" is not -- the outer transaction
     #   # itself is untouched by the inner rollback.
+    ## For use inside a transaction that is already open: runs the block in
+    ## `SAVEPOINT savepoint_name`, releasing it on success or rolling back to it (not
+    ## the whole transaction) on an exception, which is re-raised. The name must be
+    ## letters, digits and underscores, not starting with a digit, or
+    ## `ArgumentError` is raised.
     def self.run_nested(db, savepoint_name: String, callback: Callable[0])
       self.validate_savepoint_name(savepoint_name)
       db.execute("SAVEPOINT #{savepoint_name}")
@@ -93,3 +101,4 @@ module ActiveRecord
   end
 
 end
+

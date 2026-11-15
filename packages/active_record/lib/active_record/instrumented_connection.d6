@@ -2,7 +2,14 @@ module ActiveRecord
 
   # Transparent database-connection decorator for ActiveRecord/Arel execution.
   # The subscriber receives Hash events; bind values are deliberately omitted.
+  ## Wraps a database connection and reports every `query`, `execute` and prepared
+  ## statement call to `subscriber` as a Hash event. Each call fires a `"started"`
+  ## event, then `"completed"` (with `duration_ms` and `rows` or `affected`) or
+  ## `"failed"` (with `duration_ms` and `error`, after which the error is re-raised).
+  ## Events carry `query_id`, `operation`, `sql` and `bind_count`; bind values are
+  ## never included. `last_insert_row_id` and `close` pass straight through.
   class InstrumentedConnection
+    ## Wraps `connection`; `subscriber` is called with each event Hash.
     def initialize(connection, subscriber: Callable[1])
       @connection = connection
       @subscriber = subscriber
@@ -10,6 +17,7 @@ module ActiveRecord
 
     def elapsed_ms(start) = (Time.monotonic() - start) * 1000
 
+    ## Runs `connection.query(sql, params)` and reports it.
     def query(sql: String, params: Array = [])
       query_id = SecureRandom.hex(4)
       @subscriber({"phase": "started", "query_id": query_id, "operation": "query", "sql": sql, "bind_count": params.length()})
@@ -26,6 +34,7 @@ module ActiveRecord
       rows
     end
 
+    ## Runs `connection.execute(sql, params)` and reports it.
     def execute(sql: String, params: Array = [])
       query_id = SecureRandom.hex(4)
       @subscriber({"phase": "started", "query_id": query_id, "operation": "execute", "sql": sql, "bind_count": params.length()})
@@ -53,6 +62,8 @@ module ActiveRecord
     # InstrumentedStatement below so a cached call stays just as
     # observable as an uncached #query/#execute call above -- caching only
     # skips the repeat *prepare*, never the per-call event.
+    ## Prepares `sql` on the wrapped connection and returns it wrapped in an
+    ## `InstrumentedStatement`, so cached prepared statements are reported too.
     def prepare(sql: String)
       InstrumentedStatement.new(@connection.prepare(sql), @subscriber, sql)
     end
@@ -66,6 +77,8 @@ module ActiveRecord
   # it, since it's already baked in) so every event this fires still
   # carries the real SQL text, identical in shape to
   # InstrumentedConnection#query/#execute's own events.
+  ## A prepared statement from `InstrumentedConnection#prepare`. Its `query` and
+  ## `execute` report the same events as the connection's, with the statement's SQL.
   class InstrumentedStatement
     def initialize(statement, subscriber: Callable[1], sql: String)
       @statement = statement
@@ -113,3 +126,4 @@ module ActiveRecord
   end
 
 end
+

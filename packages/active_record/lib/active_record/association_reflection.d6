@@ -3,6 +3,9 @@ module ActiveRecord
   # Explicit association metadata and batch preloader. Diamond ActiveRecord
   # does not infer model names or inspect class macros; a repository registers
   # the target repository and join columns directly.
+  ## A named association registered on a `Repository` (its
+  ## `association_reflections`), used by `Relation#includes` and
+  ## `Associations::Preloader` to load related records in one query.
   class AssociationReflection
     attr_reader name: String
     attr_reader macro: String
@@ -10,6 +13,10 @@ module ActiveRecord
     attr_reader foreign_key: String
     attr_reader owner_key: String
 
+    ## `macro` is `"belongs_to"`, `"has_one"` or `"has_many"` (anything else raises
+    ## `ArgumentError`). For `belongs_to`, `foreign_key` is on the owner and matches
+    ## the target's `owner_key`; for the others, `foreign_key` is on the target and
+    ## matches the owner's `owner_key`.
     def initialize(name: String, macro: String, target_repository: Repository,
                    foreign_key: String, owner_key: String = "id")
       if macro != "belongs_to" && macro != "has_one" && macro != "has_many"
@@ -31,6 +38,10 @@ module ActiveRecord
     # `scope`, when supplied, is a Relation for the target repository. This is
     # the hook higher-level query planners use to project target columns and to
     # carry nested includes while retaining one batched association query.
+    ## Loads the association for every record in `records` with one query and stores
+    ## it on each (`Model#preloaded_association`): an Array for `has_many`, a record
+    ## or `nil` otherwise. `scope` is an optional `Relation` on the target repository
+    ## whose filters, projection and includes the query keeps.
     def preload(db, records: Array, scope = nil)
       if records.length() == 0
         return records
@@ -83,3 +94,4 @@ module ActiveRecord
   end
 
 end
+
