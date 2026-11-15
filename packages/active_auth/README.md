@@ -9,8 +9,8 @@ Account, session, password reset, email verification, and recovery-code models b
 It depends on `active_record` and `cookies`, which are published. Add them with `facet`:
 
 ```sh
-facet add active_record --registry https://cuts.dilang.tech --version "^0.19.0"
-facet add cookies --registry https://cuts.dilang.tech --version "^0.1.0"
+facet add active_record --registry https://cuts.rolld6.codes --version "^0.19.0"
+facet add cookies --registry https://cuts.rolld6.codes --version "^0.1.0"
 facet update
 ```
 

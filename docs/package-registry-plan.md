@@ -82,7 +82,7 @@ archive identity, lockfile shape, publishing boundary, and resolver rules.
 Read and publish endpoints, owner management, audit inspection, request limits,
 I/O deadlines, structured logs, backup/restore, proxy templates, and monitoring
 probes are implemented. Local QEMU staging exercises the actual nginx proxy.
-The public registry is live at https://cuts.dilang.tech with the approved 18-cut
+The public registry is live at https://cuts.rolld6.codes with the approved 18-cut
 selection. The first manual laptop backup passed restore verification. Automatic alerts are deferred by the operator;
 The registry launch shipped in Diamond 0.7.0. Automatic off-host backups are not configured; the operator
 selected manual downloads for now. See [the release checklist](registry-release-plan.md#release-checklist).

@@ -1,6 +1,6 @@
 ---
 name: Cut maintainership request
-about: Request permission to publish a new cut or maintain an existing cut on cuts.dilang.tech
+about: Request permission to publish a new cut or maintain an existing cut on cuts.rolld6.codes
 title: '[Maintainership] '
 ---
 

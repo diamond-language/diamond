@@ -1,6 +1,6 @@
-# cuts.dilang.tech production record
+# cuts.rolld6.codes production record
 
-The public registry is live at **https://cuts.dilang.tech** as of 2026-09-23.
+The public registry is live at **https://cuts.rolld6.codes** (launched 2026-09-23 under its former address, which still answers through the same nginx server block so existing Cutfiles and lockfiles keep installing; the certificate covers both names).
 The corrected A record is **142.93.192.149**. External health and catalog
 requests succeeded. Since 2026-09-25 nginx terminates TLS with certbot
 certificates (see "Proxy and certificates" below); Caddy was retired.
@@ -33,6 +33,13 @@ build (not a rebuild from main, whose docs describe unreleased features); the pr
 is in `/root/diamond-brand-d6-lowercase-20261114/docs/`. Later that day #577/#578 (main `b672d9e5`) shrank
 the logo pips for more padding; the pages were swapped again the same way, with the copies they
 replaced in `/root/diamond-brand-d6-lowercase-20261114/registry-before-small-pips/`.
+
+On 2026-11-15 UTC the registry's canonical address became cuts.rolld6.codes: certbot issued
+one certificate (`--cert-name cuts.rolld6.codes`, expires 2027-02-13) covering it and the former
+address, and `diamond-registry.conf` serves both names from the same server block (the backup
+is `/root/registry-domain-backup-20261115T043358Z`). facet does not follow redirects, so the
+former address keeps serving instead of redirecting. Health, catalog and a fresh
+`facet install` from cuts.rolld6.codes were checked externally on both names.
 
 cookies 0.2.4 (#555/#556: `Secure` session cookie under `DIAMOND_ENV=production`, `Path=/`) was
 published on 2026-11-13 UTC with a 30-minute `publish:cookies` credential for the owner subject
@@ -276,7 +283,7 @@ first (`tools/fetch_registry_backup.sh`, below). Then:
    `build/diamond tools/trim_seed_to.d6 DIR NEW_SEED CUT...`, which checks each archive against its
    inventory entry; `tools/publish_registry_seed.d6` publishes every cut in the seed it
    is given. Never publish the whole seed again: versions are immutable.
-3. Verify with `tools/verify_registry_launch.d6 https://cuts.dilang.tech`, delete
+3. Verify with `tools/verify_registry_launch.d6 https://cuts.rolld6.codes`, delete
    `credential.json`, and revoke the credential
    (`credentials.d6 revoke <id> "<reason>"`) or let it expire.
 
@@ -316,7 +323,7 @@ releases on the host. Skindicate's uploads (~8.3G) are the largest real data.
 
 nginx owns ports 80 and 443 for every site on the host: skindicate.art,
 modartist.app (a redirect), rolld6.codes (static files; the former site domains
-redirect to it), and cuts.dilang.tech.
+redirect to it), and cuts.rolld6.codes.
 Files in `/etc/nginx/conf.d/`:
 
 - `00-common.conf` (from `nginx-host.conf.example`): TLS settings, the port-80
@@ -324,7 +331,7 @@ Files in `/etc/nginx/conf.d/`:
   redirects everything else to HTTPS, and a TLS default that refuses unknown names.
 - `rolld6.conf` (from the marketing repository's `deploy/nginx.conf`): the static site on
   rolld6.codes, served from `/var/www/rolld6.codes`, and the former site domains' redirects.
-- `diamond-registry.conf` (from `nginx.conf.example`): cuts.dilang.tech with the
+- `diamond-registry.conf` (from `nginx.conf.example`): cuts.rolld6.codes with the
   upload/read/write rate limits and request buffering.
 - `skindicate.conf`: Skindicate's own sites, kept in that application's repository.
 
@@ -402,7 +409,7 @@ diamond applications/registry/backup.d6 restore \
 
 Then run the recovered registry in QEMU, inspect release and credential state,
 and perform a facet installation. Follow the service restore procedure when
-switching real traffic. Manually run `monitor.d6 https://cuts.dilang.tech` until
+switching real traffic. Manually run `monitor.d6 https://cuts.rolld6.codes` until
 external alert delivery is selected; a successful manual probe does not establish
 continuous monitoring.
 
@@ -430,6 +437,6 @@ with `credentials.d6`; revoke them after the operation and remove the private fi
 The publisher verifies archive identities and respects the live write rate limit.
 Do not reuse the original deployed 24-cut seed: use the current 18-cut selection.
 
-Run `build/d6 tools/verify_registry_launch.d6 https://cuts.dilang.tech` to resolve
+Run `build/d6 tools/verify_registry_launch.d6 https://cuts.rolld6.codes` to resolve
 all selected cuts into a temporary clean consumer, compare the lock against the
 reviewed inventory, load every cut, and reinstall from the unchanged lockfile.

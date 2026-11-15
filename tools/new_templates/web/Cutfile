@@ -1,7 +1,7 @@
 {
   "name": "{{name}}",
   "dependencies": {
-    "gremlin": {"registry": "https://cuts.dilang.tech", "version": "^0.5.1"},
-    "rack": {"registry": "https://cuts.dilang.tech", "version": "^0.2.0"}
+    "gremlin": {"registry": "https://cuts.rolld6.codes", "version": "^0.5.1"},
+    "rack": {"registry": "https://cuts.rolld6.codes", "version": "^0.2.0"}
   }
 }
