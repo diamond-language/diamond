@@ -15,8 +15,10 @@
 # back within the *same* request (no redirect in between) correctly
 # still reads back nil, matching Rails' own `flash[:notice] = "x"` (not
 # `flash.now`) behavior.
+## Messages that survive exactly one redirect, stored in the session.
 class Flash
   # nil if nothing was set for `key` on the previous request.
+  ## The value set for `key` on the previous request, or `nil`.
   def self.get(request, key)
     request["session"]["_flash"][key]
   end
@@ -24,6 +26,7 @@ class Flash
   # Every message set on the *previous* request, as a plain Hash --
   # handy for a layout that wants to render "whatever's there" without
   # knowing key names ahead of time (`for key in Flash.all(request).keys()`).
+  ## Every message set on the previous request, as a Hash.
   def self.all(request)
     request["session"]["_flash"]
   end
@@ -32,7 +35,9 @@ class Flash
   # called right before a redirect (`Flash.set(request, "notice",
   # "Skin created"); Dials::Response.redirect(...)`), the same place
   # Rails' `redirect_to path, notice: "..."` shorthand would sit.
+  ## Stores `value` under `key` for the next request only.
   def self.set(request, key, value)
     request["session"]["_flash_next"][key] = value
   end
 end
+

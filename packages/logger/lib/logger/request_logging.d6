@@ -14,7 +14,12 @@
 # fully independent VM/heap, so this has to be looked up per-request,
 # not built once at startup and captured), reused by every log call
 # within a request instead of constructing a fresh Logger per call.
+## `rack` middleware that gives each request a `request_id` and logs
+## `request.started`, then `request.completed` (with `status` and `duration_ms`) or
+## `request.failed` before re-raising.
 class RequestLogging
+  ## Sets up the worker's logger, with the same arguments as `Logger.new`. Call it inside
+  ## the per-worker chain builder, since each `gremlin_serve` worker has its own VM.
   def self.configure(tag: String, level: String = "info", output = nil, format: String = "text")
     @@tag = tag
     @@level = level
@@ -41,8 +46,12 @@ class RequestLogging
     fields.merge({"request_id": request["request_id"], "method": request["method"], "path": request["path"]})
   end
 
+  ## Logs `event` at debug level with `fields`, adding the request's `request_id`,
+  ## `method` and `path`.
   def self.debug(request, context, event, fields: Hash = {}) = RequestLogging.get(context).debug(event, RequestLogging.fields(request, fields))
+  ## Logs `event` at info level; see `debug`.
   def self.info(request, context, event, fields: Hash = {}) = RequestLogging.get(context).info(event, RequestLogging.fields(request, fields))
+  ## Logs `event` at warn level; see `debug`.
   def self.warn(request, context, event, fields: Hash = {}) = RequestLogging.get(context).warn(event, RequestLogging.fields(request, fields))
 
   # The correlation Hash the current request's own `.call` (below)
@@ -65,6 +74,8 @@ class RequestLogging
   # cross this middleware with no record of it. Put this outermost in
   # your rack_compose chain so its timing covers every other
   # middleware's own work too, not just the route handler's.
+  ## The middleware itself: put it first in `rack_compose` so its timing covers the rest
+  ## of the chain.
   def self.call(request, context, forward)
     request["request_id"] = SecureRandom.hex(8)
     context["log_context"] = RequestLogging.fields(request)
@@ -95,3 +106,4 @@ class RequestLogging
     end
   end
 end
+

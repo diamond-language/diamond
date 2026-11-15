@@ -41,7 +41,12 @@
 # request-defined answer to "which headers does this request need."
 # An ordinary request calls `forward` and adds
 # `Access-Control-Allow-Origin`/`-Credentials` onto whatever it returns.
+## Cross-origin resource sharing headers. It never rejects a request; a disallowed
+## origin just gets no `Access-Control-Allow-*` headers.
 class Cors
+  ## Options: `"origins"` (`"*"` or an Array of exact origins), `"methods"`,
+  ## `"credentials"` (requires an explicit `"origins"` list) and `"max_age"`. Call it in
+  ## the per-worker chain builder.
   def self.configure(options = {})
     # Credentials with the wildcard origin would answer every site's request with Access-Control-Allow-Credentials: true and that site's own
     # origin, so any page a user visits could read their authenticated responses. Credentials need an explicit list.
@@ -97,6 +102,8 @@ class Cors
     [204, headers, ""]
   end
 
+  ## Middleware: answers preflight `OPTIONS` requests with 204 and adds CORS headers to
+  ## other responses.
   def self.call(request, context, forward)
     allowed = Cors.allowed_origin(request["headers"]["origin"])
     is_preflight = request["method"] == "OPTIONS" &&
@@ -128,3 +135,4 @@ class Cors
     [status, merged, body]
   end
 end
+

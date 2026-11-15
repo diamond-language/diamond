@@ -41,11 +41,16 @@
 # controlled are removed from every modern browser, and enabling it on
 # the browsers that still had it introduced real cross-site leak
 # vulnerabilities of its own.
+## Adds defensive response headers the handler did not set itself.
 class SecurityHeaders
+  ## Options: `"frame_options"` (default `"SAMEORIGIN"`, `false` to omit),
+  ## `"content_type_options"` (`false` to omit `nosniff`), `"referrer_policy"`,
+  ## `"content_security_policy"` and `"hsts"` (`true` for a one-year policy). Optional.
   def self.configure(options = {})
     @@options = options
   end
 
+  ## Middleware: adds the configured headers to every response.
   def self.call(request, context, forward)
     response = forward(request, context)
     # `nil` means a handler already fully took over the connection
@@ -87,3 +92,4 @@ class SecurityHeaders
     [status, RackHeaders.add_missing(headers, security), body]
   end
 end
+

@@ -40,7 +40,11 @@
 # Buckets of finished windows are dropped once more than "max_keys" (default
 # 100000) distinct keys are held, so the table is bounded by the keys seen in
 # one window rather than by every key the worker has ever seen.
+## Fixed-window rate limiting, counted separately in each worker.
 class RateLimit
+  ## Options: `"limit"` requests per `"window"` seconds for each `"key"` (a callable
+  ## taking the request and returning who to count), all required; `"max_keys"` (default
+  ## 100000) bounds memory.
   def self.configure(options)
     @@limit = options["limit"]
     @@window = options["window"]
@@ -67,6 +71,7 @@ class RateLimit
     nil
   end
 
+  ## Middleware: answers 429 with `Retry-After` once a key is over its limit.
   def self.call(request, context, forward)
     key = @@key(request)
     now = Time.monotonic()
@@ -84,3 +89,4 @@ class RateLimit
     end
   end
 end
+
