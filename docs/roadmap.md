@@ -94,7 +94,7 @@ New package work should be driven by a concrete application or interoperability 
 - Grow Mjolnir from application needs; deepen ActiveRecord and Arel only where
   applications expose a missing query, association, migration, or dialect feature.
 - Add another SQL dialect only with a live server for verification.
-- Improve package documentation, examples, and compatibility tests.
+- Add package examples and compatibility tests.
 - Avoid framework magic that hides database access or weakens d6's type and error
   contracts.
 

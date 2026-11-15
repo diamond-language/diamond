@@ -102,6 +102,23 @@ can require sibling components with ordinary relative paths from that
 `lib/` subdirectory) as a compatibility fallback for cuts that have not
 migrated yet.
 
+### Documenting a cut
+
+Write a `##` comment directly above each public `class`, `module`, `struct` or
+`def`. The text is Markdown:
+
+```ruby
+## Sends a GET request and returns the response Hash.
+def http_get(url: String, options: Hash = {}) -> Hash
+```
+
+A blank line or any other line between the comment and the declaration
+detaches it, and ordinary `#` comments are never read, so internal notes stay
+out of the reference. For the cuts in this repository, the docs site
+([All cuts](https://rolld6.codes/docs/cuts/index.html)) shows each cut's README
+followed by an API reference built from these comments, listing only what is
+documented.
+
 ## Manifests
 
 ```ruby
@@ -421,7 +438,8 @@ the first place.
 ## Packages in this repository
 
 Each lives in `packages/NAME` with its own `Cutfile`, README and tests, and installs
-with `facet` like any other cut.
+with `facet` like any other cut. The public ones each have a page under
+[All cuts](https://rolld6.codes/docs/cuts/index.html).
 
 | Package | What it is |
 | --- | --- |

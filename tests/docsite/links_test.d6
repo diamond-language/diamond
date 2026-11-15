@@ -23,7 +23,7 @@ end
 
 root = ARGV.length() > 0 ? ARGV[0] : "build/docsite"
 pages = []
-["guide", "reference"].each() do |dir|
+["guide", "reference", "cuts"].each() do |dir|
   Dir.entries("#{root}/#{dir}").sort().each() do |entry|
     pages.push("#{dir}/#{entry}") if entry.end_with?(".html")
   end
