@@ -30,7 +30,9 @@ the brand written as lowercase d6 again, and the die logo with white pips turned
 square). No restart. The previous copies are in `/root/diamond-brand-d6-lowercase-20261114/registry/`.
 The /docs pages on getdiamond.codes got only the D6 → d6 text change applied to the live rc5
 build (not a rebuild from main, whose docs describe unreleased features); the previous /docs tree
-is in `/root/diamond-brand-d6-lowercase-20261114/docs/`.
+is in `/root/diamond-brand-d6-lowercase-20261114/docs/`. Later that day #577/#578 (main `b672d9e5`) shrank
+the logo pips for more padding; the pages were swapped again the same way, with the copies they
+replaced in `/root/diamond-brand-d6-lowercase-20261114/registry-before-small-pips/`.
 
 cookies 0.2.4 (#555/#556: `Secure` session cookie under `DIAMOND_ENV=production`, `Path=/`) was
 published on 2026-11-13 UTC with a 30-minute `publish:cookies` credential for the owner subject
