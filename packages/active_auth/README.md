@@ -4,7 +4,7 @@ Account, session, password reset, email verification, and recovery-code models b
 
 ## Installation
 
-`active_auth` is not published to the registry yet. Until it is, copy `packages/active_auth` from a checkout of the [Diamond repository](https://github.com/diamond-language/diamond) into your project as `cuts/active_auth/`, then load it with `require_cut "active_auth"`. `facet update` leaves hand-copied cuts in place.
+`active_auth` is not published to the registry yet. Until it is, copy `packages/active_auth` from a checkout of the [Diamond repository](https://github.com/diamond-language/d6) into your project as `cuts/active_auth/`, then load it with `require_cut "active_auth"`. `facet update` leaves hand-copied cuts in place.
 
 It depends on `active_record` and `cookies`, which are published. Add them with `facet`:
 

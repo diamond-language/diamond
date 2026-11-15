@@ -1,10 +1,10 @@
 # mjolnir
 
-A stateless data mapper on [Arel](https://github.com/diamond-language/diamond/tree/main/packages/arel). Entities are plain structs, queries are immutable values, validation is a value too, and one `Repo` object does all the I/O.
+A stateless data mapper on [Arel](https://github.com/diamond-language/d6/tree/main/packages/arel). Entities are plain structs, queries are immutable values, validation is a value too, and one `Repo` object does all the I/O.
 
 ## Installation
 
-From your project directory (see the [package guide](https://github.com/diamond-language/diamond/blob/main/docs/packages.md) for `facet`):
+From your project directory (see the [package guide](https://github.com/diamond-language/d6/blob/main/docs/packages.md) for `facet`):
 
 ```sh
 facet init myapp          # once, if the project has no Cutfile yet

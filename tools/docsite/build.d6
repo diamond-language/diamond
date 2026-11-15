@@ -17,7 +17,7 @@ require "markdown"
 require "highlight"
 require "cutdoc"
 
-REPOSITORY = "https://github.com/diamond-language/diamond"
+REPOSITORY = "https://github.com/diamond-language/d6"
 
 struct Page(source: String, url: String, section: String, title: String, html: String, headings: Array)
 end

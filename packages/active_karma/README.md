@@ -4,7 +4,7 @@ Project trust signals into a persona state with write and visibility decisions.
 
 ## Installation
 
-`active_karma` is not published to the registry yet. Until it is, copy `packages/active_karma` from a checkout of the [Diamond repository](https://github.com/diamond-language/diamond) into your project as `cuts/active_karma/`, then load it with `require_cut "active_karma"`. `facet update` leaves hand-copied cuts in place.
+`active_karma` is not published to the registry yet. Until it is, copy `packages/active_karma` from a checkout of the [Diamond repository](https://github.com/diamond-language/d6) into your project as `cuts/active_karma/`, then load it with `require_cut "active_karma"`. `facet update` leaves hand-copied cuts in place.
 
 ## Usage
 

@@ -4,7 +4,7 @@ Write leveled text or structured JSON logs.
 
 ## Installation
 
-From your project directory (see the [package guide](https://github.com/diamond-language/diamond/blob/main/docs/packages.md) for `facet`):
+From your project directory (see the [package guide](https://github.com/diamond-language/d6/blob/main/docs/packages.md) for `facet`):
 
 ```sh
 facet init myapp          # once, if the project has no Cutfile yet
@@ -32,11 +32,11 @@ json.info("started", {"port": 8080})
 
 `Logger.new(tag, level = "info", output = nil, format = "text")`. Levels are `debug`,
 `info`, `warn`, `error`, and `off`; `"json"` writes one JSON object per line, which the
-[`log_viewer`](https://github.com/diamond-language/diamond/tree/main/packages/log_viewer) cut formats for reading.
+[`log_viewer`](https://github.com/diamond-language/d6/tree/main/packages/log_viewer) cut formats for reading.
 
 ## Logging every request in a server
 
-`RequestLogging` is a [`rack`](https://github.com/diamond-language/diamond/tree/main/packages/rack) middleware that gives each request a
+`RequestLogging` is a [`rack`](https://github.com/diamond-language/d6/tree/main/packages/rack) middleware that gives each request a
 `request_id` and logs `request.started`, `request.completed` (with status and
 `duration_ms`), or `request.failed` before re-raising. Put it first in the chain so its
 timing covers the other middleware, and configure it inside the per-worker chain builder:

@@ -21,7 +21,7 @@ Open **Terminal** (press Cmd-Space, type "Terminal", press Return), then paste
 these three lines and press Return:
 
 ```sh
-git clone https://github.com/diamond-language/diamond.git ~/diamond
+git clone https://github.com/diamond-language/d6.git ~/diamond
 cd ~/diamond
 caffeinate -i bash tools/platform_report/platform_report.sh
 ```

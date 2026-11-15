@@ -4,7 +4,7 @@ Store and query follower relationships using `active_record`.
 
 ## Installation
 
-`active_social` is not published to the registry yet. Until it is, copy `packages/active_social` from a checkout of the [Diamond repository](https://github.com/diamond-language/diamond) into your project as `cuts/active_social/`, then load it with `require_cut "active_social"`. `facet update` leaves hand-copied cuts in place.
+`active_social` is not published to the registry yet. Until it is, copy `packages/active_social` from a checkout of the [Diamond repository](https://github.com/diamond-language/d6) into your project as `cuts/active_social/`, then load it with `require_cut "active_social"`. `facet update` leaves hand-copied cuts in place.
 
 It depends on `active_record`, which is published. Add it with `facet`:
 

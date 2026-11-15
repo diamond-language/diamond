@@ -9,12 +9,12 @@ depth. To try the language before installing anything, use the REPL at
 
 ### From a package
 
-Each [release](https://github.com/diamond-language/diamond/releases) has a
+Each [release](https://github.com/diamond-language/d6/releases) has a
 `.deb` for Ubuntu 26.04 and an `.rpm` for Fedora 44, for x86-64 CPUs with
 AVX2 (x86-64-v3: Intel Haswell, AMD Excavator and later) and for any 64-bit
 ARM CPU (`arm64` and `aarch64` in the file names). Download the one for your
 system from the
-[latest release](https://github.com/diamond-language/diamond/releases/latest)
+[latest release](https://github.com/diamond-language/d6/releases/latest)
 and install it:
 
 ```sh
@@ -58,7 +58,7 @@ Build and install the interpreter, the package manager (`facet`), the language
 server and the debug adapter:
 
 ```sh
-git clone https://github.com/diamond-language/diamond.git
+git clone https://github.com/diamond-language/d6.git
 cd diamond
 make release facet lsp dap
 make install PREFIX=$HOME/.local
@@ -354,7 +354,7 @@ it at the binary over stdio. The VS Code extension isn't in the packages, so
 clone the repository and link it from there:
 
 ```sh
-git clone https://github.com/diamond-language/diamond.git
+git clone https://github.com/diamond-language/d6.git
 ln -s "$PWD/diamond/editors/vscode" ~/.vscode/extensions/diamond-language
 ```
 
@@ -395,5 +395,5 @@ In roughly this order:
    [runtime reference](runtime-reference.md).
 
 The runnable sample applications under `examples/` and `applications/` in
-[the repository](https://github.com/diamond-language/diamond) show larger
+[the repository](https://github.com/diamond-language/d6) show larger
 programs; [the README](../README.md#repository-layout) lists them.

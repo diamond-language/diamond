@@ -4,7 +4,7 @@ Select GraphQL-requested columns and preload associations through `active_record
 
 ## Installation
 
-From your project directory (see the [package guide](https://github.com/diamond-language/diamond/blob/main/docs/packages.md) for `facet`):
+From your project directory (see the [package guide](https://github.com/diamond-language/d6/blob/main/docs/packages.md) for `facet`):
 
 ```sh
 facet init myapp          # once, if the project has no Cutfile yet
@@ -16,7 +16,7 @@ This installs the cut into `cuts/graphsql/`; load it with `require_cut "graphsql
 
 ## Usage
 
-GraphSQL sits between a [`graphql`](https://github.com/diamond-language/diamond/tree/main/packages/graphql) resolver and an [`active_record`](https://github.com/diamond-language/diamond/tree/main/packages/active_record)
+GraphSQL sits between a [`graphql`](https://github.com/diamond-language/d6/tree/main/packages/graphql) resolver and an [`active_record`](https://github.com/diamond-language/d6/tree/main/packages/active_record)
 relation. Describe how GraphQL fields map to columns and associations once, then hand each
 resolver's lookahead to `GraphSQL.resolve`. This complete program wires an in-memory SQLite
 database, two models, a schema, and a query:
@@ -203,4 +203,4 @@ end
 
 - Selecting the same association under two different GraphQL field names in one query raises `GraphSQL::AliasedAssociationError`, because both would map to a single preload.
 - Polymorphic and `has_many :through` associations are preloaded through the plain `includes` path instead of nested column selection.
-- Lookahead over-approximates on polymorphic fields (see the [graphql README](https://github.com/diamond-language/diamond/blob/main/packages/graphql/README.md#lookahead)), so GraphSQL may select a column or preload an association a runtime type never uses. It never selects too little.
+- Lookahead over-approximates on polymorphic fields (see the [graphql README](https://github.com/diamond-language/d6/blob/main/packages/graphql/README.md#lookahead)), so GraphSQL may select a column or preload an association a runtime type never uses. It never selects too little.

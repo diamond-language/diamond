@@ -4,7 +4,7 @@ Repositories, associations, validation, migrations, and an optional model layer 
 
 ## Installation
 
-From your project directory (see the [package guide](https://github.com/diamond-language/diamond/blob/main/docs/packages.md) for `facet`):
+From your project directory (see the [package guide](https://github.com/diamond-language/d6/blob/main/docs/packages.md) for `facet`):
 
 ```sh
 facet init myapp          # once, if the project has no Cutfile yet
@@ -18,7 +18,7 @@ This installs the cut into `cuts/active_record/`; load it with `require_cut "act
 
 A small program that connects, migrates, defines a model, validates and queries. Run it
 from the project directory with `diamond app.d6`; it reads `config/database.json` (the
-[`database_config`](https://github.com/diamond-language/diamond/tree/main/packages/database_config) cut's format) and creates `app.db` the first time.
+[`database_config`](https://github.com/diamond-language/d6/tree/main/packages/database_config) cut's format) and creates `app.db` the first time.
 
 ```json
 {"development": {"adapter": "sqlite", "database": "app.db"}}

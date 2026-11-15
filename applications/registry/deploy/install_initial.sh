@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Initial registry installation on the dilang.tech nginx host. Never an upgrade.
+# Initial registry installation on the nginx host (root@rolld6.codes). Never an upgrade.
 # nginx owns ports 80/443 (nginx-host.conf.example installed as
 # /etc/nginx/conf.d/00-common.conf) and certbot has issued the cuts.dilang.tech
 # certificate through the /var/www/letsencrypt webroot.

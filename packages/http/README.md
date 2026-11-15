@@ -4,7 +4,7 @@ Serve HTTP/1.1 requests and make outbound HTTP requests.
 
 ## Installation
 
-From your project directory (see the [package guide](https://github.com/diamond-language/diamond/blob/main/docs/packages.md) for `facet`):
+From your project directory (see the [package guide](https://github.com/diamond-language/d6/blob/main/docs/packages.md) for `facet`):
 
 ```sh
 facet init myapp          # once, if the project has no Cutfile yet
@@ -49,7 +49,7 @@ posted = http_post("http://127.0.0.1:8080/items", "name=widget",
 
 `http_request(method, url, headers = {}, body = "", options = {})` is the general form.
 `https://` URLs are supported. To fetch a URL a user supplied, check it first with the
-[`network_safety`](https://github.com/diamond-language/diamond/tree/main/packages/network_safety) cut.
+[`network_safety`](https://github.com/diamond-language/d6/tree/main/packages/network_safety) cut.
 
 ## Notes
 
