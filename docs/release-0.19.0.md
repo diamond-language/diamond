@@ -13,10 +13,10 @@ since 0.18.0.
 - The registry runs that revision and starts `app.d6`. Its 19-cut publication
   matches the frozen inventory, and legacy immutable artifacts remain usable.
   Credential 29 was revoked and its secret file removed.
-- `getdiamond.codes` serves marketing revision
+- The site serves marketing revision
   `e1ff744d1dd5f39b98231b0d268343a431034a37`, including the `.d6` examples and
   Mjolnir `^0.3.1` installation. `/wasm/` redirects to `/#repl`;
-  `dilang.tech` retains its path/query redirect. Live page, script, stylesheet,
+  the old domain retains its path/query redirect. Live page, script, stylesheet,
   image, and WASM bytes match the merged source. All nine REPL checks passed
   against the downloaded live assets. The WASM SHA-256 remains
   `d7fa1e3f8c2f94522be70cab40fb1353c74bef08e2bac24ca32ddaa227fc0bc5`.
@@ -116,8 +116,8 @@ The documentation and website review covers links and anchors, source/cache
 suffixes, installation commands, registry availability, package commands,
 runtime claims, keyboard accessibility, and REPL examples. Live HTTP checks
 found `/wasm/` returned 403; the marketing nginx candidate redirects it to
-`/#repl`. The canonical root and WASM asset were available, and `dilang.tech`
-preserved paths and queries when redirecting to `getdiamond.codes`.
+`/#repl`. The canonical root and WASM asset were available, and the old domain
+preserved paths and queries when redirecting to the canonical one.
 No browser surface was available in this session, so visual and interactive
 browser verification remains an explicit pre-deployment check.
 

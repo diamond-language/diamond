@@ -31,7 +31,7 @@ cd "$repo"
 # The upgrade check, the backup restore check and the launch verification all run these binaries, so they must match this checkout (make is a no-op when they do).
 make -s
 make -s facet >/dev/null
-host=${REGISTRY_HOST:-root@dilang.tech}
+host=${REGISTRY_HOST:-root@rolld6.codes}
 backups=${REGISTRY_BACKUP_DIR:-$HOME/diamond-registry-backups}
 vm_port=${REGISTRY_VM_PORT:-2222}
 known_hosts=${REGISTRY_VM_KNOWN_HOSTS:-$repo/../.vm-build/known_hosts}

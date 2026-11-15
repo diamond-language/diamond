@@ -362,7 +362,7 @@ array stores and Int ops with a constant operand (loop and sieve now beat YJIT).
 ### Added
 
 - **A documentation site.** `tools/docsite/build.d6` (written in D6) turns `docs/` into the site
-  served at getdiamond.codes/docs: a new beginner-friendly guide in `docs/guide/` for people who
+  served at rolld6.codes/docs: a new beginner-friendly guide in `docs/guide/` for people who
   already know another language, followed by the existing reference pages, with a sidebar,
   an on-this-page panel and D6 syntax highlighting. Guide examples have a Run button that runs
   them in the browser with the homepage's WebAssembly build, and every `# =>` claim in the guide
@@ -1306,7 +1306,7 @@ record**. The deterministic launch inventory selects 18 cuts. The withdrawn
   in Git history.
 
 - The interpreter builds for WebAssembly (`wasm/build.sh`, needs only a wasi-sdk) and runs a REPL in
-  the browser at dilang.tech. SQLite works there (in-memory databases), as do `Digest`, `HMAC`,
+  the browser at rolld6.codes. SQLite works there (in-memory databases), as do `Digest`, `HMAC`,
   `Base64` and `SecureRandom`; fibers, threads, sockets, subprocesses, the other databases and TLS
   are not available and fail with ordinary errors. A `test-wasm` CI job builds the module and drives it through the site's JavaScript.
 - Optional native libraries: `make NO_SQLITE=1`, `NO_POSTGRES=1`, `NO_MYSQL=1`, `NO_ZLIB=1`,
