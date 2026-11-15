@@ -4,7 +4,7 @@ Normalize tag names and manage tags on records using `active_record`.
 
 ## Installation
 
-`active_tagging` is not published to the registry yet. Until it is, copy `packages/active_tagging` from a checkout of the [Diamond repository](https://github.com/diamond-language/diamond) into your project as `cuts/active_tagging/`, then load it with `require_cut "active_tagging"`. `facet update` leaves hand-copied cuts in place.
+`active_tagging` is not published to the registry yet. Until it is, copy `packages/active_tagging` from a checkout of the [Diamond repository](https://github.com/diamond-language/d6) into your project as `cuts/active_tagging/`, then load it with `require_cut "active_tagging"`. `facet update` leaves hand-copied cuts in place.
 
 It depends on `active_record`, which is published. Add it with `facet`:
 

@@ -4,7 +4,7 @@ Route requests to controllers and construct HTTP responses.
 
 ## Installation
 
-`dials` is not published to the registry yet. Until it is, copy `packages/dials` from a checkout of the [Diamond repository](https://github.com/diamond-language/diamond) into your project as `cuts/dials/`, then load it with `require_cut "dials"`. `facet update` leaves hand-copied cuts in place.
+`dials` is not published to the registry yet. Until it is, copy `packages/dials` from a checkout of the [Diamond repository](https://github.com/diamond-language/d6) into your project as `cuts/dials/`, then load it with `require_cut "dials"`. `facet update` leaves hand-copied cuts in place.
 
 ## Usage
 
@@ -71,7 +71,7 @@ checks.
 `Dials::Response` builds the three common triples: `text(status, body)`,
 `redirect(location, body)` (status 302), and `not_found(path)`. A handler can return
 any `[status, headers, body]` array, such as `Div.html_response(200, html)` from the
-[`div`](https://github.com/diamond-language/diamond/tree/main/packages/div) cut.
+[`div`](https://github.com/diamond-language/d6/tree/main/packages/div) cut.
 
 ## Notes
 

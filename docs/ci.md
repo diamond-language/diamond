@@ -59,7 +59,7 @@ number), inspect it, and force-cancel that specific run:
 ```sh
 gh run list --workflow ci.yml
 gh run view RUN_ID
-gh api --method POST repos/diamond-language/diamond/actions/runs/RUN_ID/force-cancel
+gh api --method POST repos/diamond-language/d6/actions/runs/RUN_ID/force-cancel
 gh run view RUN_ID
 ```
 

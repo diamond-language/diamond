@@ -4,7 +4,7 @@ Load JSON database configuration and open a native SQLite, PostgreSQL, or MySQL-
 
 ## Installation
 
-From your project directory (see the [package guide](https://github.com/diamond-language/diamond/blob/main/docs/packages.md) for `facet`):
+From your project directory (see the [package guide](https://github.com/diamond-language/d6/blob/main/docs/packages.md) for `facet`):
 
 ```sh
 facet init myapp          # once, if the project has no Cutfile yet
@@ -50,7 +50,7 @@ config = DatabaseConfig.load("config/database.json", ENV["DIAMOND_ENV"] || "deve
 db = DatabaseConfig.open(config)    # an open SQLite3/PostgreSQL/MariaDB connection
 ```
 
-`db` is the connection every [`active_record`](https://github.com/diamond-language/diamond/tree/main/packages/active_record) repository and `arel`
+`db` is the connection every [`active_record`](https://github.com/diamond-language/d6/tree/main/packages/active_record) repository and `arel`
 query takes; see that README's Quick start for a complete program. For a PostgreSQL or
 MySQL entry, pass the matching Arel visitor to your repositories (`PostgreSQLVisitor`,
 `MySQLVisitor`, or `MariaDBVisitor`).
