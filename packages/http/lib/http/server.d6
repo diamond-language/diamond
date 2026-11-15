@@ -1,3 +1,5 @@
+## Raised by the bounded request parser for a malformed or oversized request. Its
+## message is the HTTP status to answer with: `"400"`, `"413"`, `"417"` or `"431"`.
 class HttpRequestError < StandardError
 end
 
@@ -70,6 +72,11 @@ def http_parse_bounded_request(conn, limits)
   {"method": pieces[0], "path": pieces[1], "headers": headers, "body": body}
 end
 
+## Reads one request from `conn` and returns `{"method", "path", "headers", "body"}`
+## (header names lower-cased), or `nil` when the peer closed before sending a request
+## line. With a `limits` Hash (`line_bytes`, `header_bytes`, `header_count`,
+## `body_bytes`) parsing is bounded and strict, and a bad request raises
+## `HttpRequestError`.
 def http_parse_request(conn, limits = nil)
   if limits != nil then return http_parse_bounded_request(conn, limits) end
   request_line = conn.gets()
@@ -118,6 +125,9 @@ def http_parse_request(conn, limits = nil)
   {"method": method, "path": path, "headers": headers, "body": body}
 end
 
+## Writes `[status, headers, body]` to `conn` as an HTTP/1.1 response with a
+## `Content-Length`. A header whose value is an Array is written once per element
+## (for `Set-Cookie`).
 def http_write_response(conn, response)
   [status, headers, body] = response
   conn.write("HTTP/1.1 #{status} #{http_status_text(status)}\r\n")
@@ -147,6 +157,9 @@ def http_write_response(conn, response)
   conn.write(body)
 end
 
+## Accepts connections on `port` forever, one at a time. Each request Hash is passed
+## to `handler`, which returns `[status, headers, body]`; the connection is closed
+## after the response. No keep-alive or chunked responses.
 def http_serve(port, handler: Callable[1])
   server = TCPServer.listen(port)
   loop do
@@ -159,3 +172,4 @@ def http_serve(port, handler: Callable[1])
     conn.close()
   end
 end
+

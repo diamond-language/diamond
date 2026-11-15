@@ -15,6 +15,7 @@
 
 require "markdown"
 require "highlight"
+require "cutdoc"
 
 REPOSITORY = "https://github.com/diamond-language/diamond"
 
@@ -42,6 +43,8 @@ end
 
 # Pages in a "Guide" section are published under guide/, the rest under reference/.
 def url_for(source: String, section: String) -> String
+  return "cuts/#{source.slice(4, source.length() - 4)}.html" if source.start_with?("cut:")
+  return "cuts/index.html" if source == "cuts:index"
   name = File.basename(source, ".md")
   section.start_with?("Guide") ? "guide/#{name}.html" : "reference/#{name}.html"
 end
@@ -104,8 +107,15 @@ def neighbour(page, rel: String, label: String) -> String
   "<a class=\"pager-#{rel}\" href=\"../#{page.url()}\" rel=\"#{rel}\"><span>#{label}</span>#{escape(page.title())}</a>"
 end
 
+# The file on GitHub that a page is made from.
+def edit_path(source: String) -> String
+  return "packages/#{source.slice(4, source.length() - 4)}/README.md" if source.start_with?("cut:")
+  return "tools/docsite/cutdoc.d6" if source == "cuts:index"
+  "docs/#{source}"
+end
+
 def layout(page: Page, nav: String, previous, following) -> String
-  edit = "#{REPOSITORY}/edit/main/docs/#{page.source()}"
+  edit = "#{REPOSITORY}/edit/main/#{edit_path(page.source())}"
   [
     "<!doctype html>",
     "<html lang=\"en\">",
@@ -159,12 +169,29 @@ output = ARGV.length() > 0 ? File.expand_path(ARGV[0]) : root + "/build/docsite"
 sections = contents(docs + "/docsite.txt")
 files = markdown_files(docs)
 
+# "@cuts" stands for the Cuts landing page and one page per public cut (the
+# ones the registry launch inventory publishes from packages/).
+cut_names = JSON.parse(File.read("#{root}/applications/registry/launch-cuts.json")).keys().sort()
+sections = sections.map() do |section|
+  sources = []
+  section.sources().each() do |source|
+    if source == "@cuts"
+      sources.push("cuts:index")
+      cut_names.each() do |name| sources.push("cut:#{name}") end
+    else
+      sources.push(source)
+    end
+  end
+  Section.new(section.name(), sources)
+end
+
 published = {}
 order = []
 sections.each() do |section|
   section.sources().each() do |source|
     raise "docs/docsite.txt: #{source} is listed twice" if published.include_key?(source)
-    raise "docs/docsite.txt: docs/#{source} does not exist" unless File.exist?("#{docs}/#{source}")
+    generated = source.start_with?("cut:") || source == "cuts:index"
+    raise "docs/docsite.txt: docs/#{source} does not exist" unless generated || File.exist?("#{docs}/#{source}")
     published[source] = url_for(source, section.name())
     order.push([source, section.name()])
   end
@@ -173,16 +200,24 @@ end
 pages = {}
 order.each() do |pair|
   source = pair[0]
-  folder = File.dirname(source) == "." ? "docs/" : "docs/#{File.dirname(source)}/"
-  fallback = "#{REPOSITORY}/blob/main/#{folder}"
-  rendered = Markdown.new(links_for(source, files, published), fallback).render(File.read("#{docs}/#{source}"))
+  if source.start_with?("cut:")
+    name = source.slice(4, source.length() - 4)
+    markdown = Markdown.new({}, "#{REPOSITORY}/blob/main/packages/#{name}/")
+    rendered = markdown.render(cut_page_markdown(root, name, REPOSITORY))
+  elsif source == "cuts:index"
+    rendered = Markdown.new({}, "").render(cut_index_markdown(root, cut_names))
+  else
+    folder = File.dirname(source) == "." ? "docs/" : "docs/#{File.dirname(source)}/"
+    fallback = "#{REPOSITORY}/blob/main/#{folder}"
+    rendered = Markdown.new(links_for(source, files, published), fallback).render(File.read("#{docs}/#{source}"))
+  end
   title = rendered.title() == "" ? File.basename(source, ".md") : rendered.title()
   pages[source] = Page.new(source, published[source], pair[1], title, highlight_code_blocks(rendered.html()), rendered.headings())
 end
 
 # Start from empty directories, so a page removed from the contents file is
 # removed from the site too.
-["guide", "reference", "assets"].each() do |dir|
+["guide", "reference", "cuts", "assets"].each() do |dir|
   Process.run(["rm", "-rf", "#{output}/#{dir}"])
   Dir.mkdir_p("#{output}/#{dir}")
 end
