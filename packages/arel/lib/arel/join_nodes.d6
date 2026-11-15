@@ -11,6 +11,7 @@ module Arel
     def kind() -> String = @kind
   end
 
+  ## `EXISTS (subquery)` or `NOT EXISTS`; from `Arel.exists` and `Arel.not_exists`.
   class Exists
     def initialize(query, negated: Bool)
       @query = query
@@ -23,6 +24,8 @@ module Arel
     def not_() -> Exists = Exists.new(@query, !@negated)
   end
 
+  ## A subquery used as a value, from `Arel.scalar`; compare it with `eq`, `gt` and
+  ## the rest.
   class ScalarSubquery
     def initialize(query)
       @query = query
@@ -48,3 +51,4 @@ module Arel
   end
 
 end
+

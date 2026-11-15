@@ -1,5 +1,7 @@
 module Arel
 
+  ## A column of a table, from `Table#column`. Its methods build predicates,
+  ## orderings and expressions; plain values on the right are bound as parameters.
   class Attribute
     def initialize(table, name: String)
       @table = table
@@ -7,30 +9,54 @@ module Arel
     end
     def table() = @table
     def name() -> String = @name
+    ## `column = value`.
     def eq(value) -> Predicate = Predicate.new(self, "=", value)
+    ## `column != value`.
     def not_eq(value) -> Predicate = Predicate.new(self, "!=", value)
+    ## `column < value`.
     def lt(value) -> Predicate = Predicate.new(self, "<", value)
+    ## `column <= value`.
     def lteq(value) -> Predicate = Predicate.new(self, "<=", value)
+    ## `column > value`.
     def gt(value) -> Predicate = Predicate.new(self, ">", value)
+    ## `column >= value`.
     def gteq(value) -> Predicate = Predicate.new(self, ">=", value)
+    ## `column LIKE pattern`.
     def like(pattern: String) -> Predicate = Predicate.new(self, "LIKE", pattern)
+    ## `column NOT LIKE pattern`.
     def not_like(pattern: String) -> Predicate = Predicate.new(self, "NOT LIKE", pattern)
+    ## `column IN (...)` over an Array of values.
     def in_list(values: Array) -> Membership = Membership.new(self, values, false)
+    ## `column NOT IN (...)`.
     def not_in(values: Array) -> Membership = Membership.new(self, values, true)
+    ## `column IN (subquery)`.
     def in_subquery(query) -> Membership = Membership.new(self, query, false)
+    ## `column NOT IN (subquery)`.
     def not_in_subquery(query) -> Membership = Membership.new(self, query, true)
+    ## `column BETWEEN lower AND upper`.
     def between(lower, upper) -> Between = Between.new(self, lower, upper, false)
+    ## `column NOT BETWEEN lower AND upper`.
     def not_between(lower, upper) -> Between = Between.new(self, lower, upper, true)
+    ## Ascending ordering.
     def asc() -> Ordering = Ordering.new(self, "ASC")
+    ## Descending ordering.
     def desc() -> Ordering = Ordering.new(self, "DESC")
+    ## `column AS name`.
     def as(name: String) -> Alias = Alias.new(self, name)
+    ## `column COLLATE name`.
     def collate(name: String) -> Collation = Collation.new(self, name)
+    ## `column + value`, with `value` bound. `subtract`, `multiply`, `divide`,
+    ## `concat` (`||`) and `modulo` work the same way.
     def add(value) -> BinaryExpression = BinaryExpression.new(self, "+", value)
     def subtract(value) -> BinaryExpression = BinaryExpression.new(self, "-", value)
     def multiply(value) -> BinaryExpression = BinaryExpression.new(self, "*", value)
     def divide(value) -> BinaryExpression = BinaryExpression.new(self, "/", value)
     def concat(value) -> BinaryExpression = BinaryExpression.new(self, "||", value)
     def modulo(value) -> BinaryExpression = BinaryExpression.new(self, "%", value)
+    ## `column + expression`, with an Arel expression (such as another column) on the
+    ## right instead of a bound value. `subtract_expression`, `multiply_expression`,
+    ## `divide_expression`, `concat_expression` and `modulo_expression` work the same
+    ## way.
     def add_expression(expression) -> BinaryExpression = BinaryExpression.new(self, "+", expression, false)
     def subtract_expression(expression) -> BinaryExpression = BinaryExpression.new(self, "-", expression, false)
     def multiply_expression(expression) -> BinaryExpression = BinaryExpression.new(self, "*", expression, false)
@@ -46,6 +72,7 @@ module Arel
     def table() = @table
   end
 
+  ## A table, from `Arel.table(name)`.
   class Table
     def initialize(name: String, table_alias = nil)
       @name = name
@@ -60,11 +87,16 @@ module Arel
         @table_alias
       end
     end
+    ## This table under an alias, for self-joins and correlated subqueries.
     def as(name: String) -> Table = Table.new(@name, name)
+    ## The column `name`, qualified by the table (or its alias).
     def column(name: String) -> Attribute = Attribute.new(self, name)
+    ## `table.*`.
     def star() -> QualifiedStar = QualifiedStar.new(self)
   end
 
+  ## A SQL fragment with its own bind values, from `Arel.sql`. It is written as is,
+  ## so never build one from user input.
   class RawSql
     def initialize(sql: String, params: Array)
       @sql = sql
@@ -95,3 +127,4 @@ module Arel
   end
 
 end
+

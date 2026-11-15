@@ -1,6 +1,10 @@
 module Arel
 
+  ## A named common table expression, from `Arel.cte(name)`. It is a `Table`, so
+  ## its columns can be selected and joined.
   class CteRelation < Table
+    ## `anchor UNION ALL recursive_branch`, the body of a recursive CTE. The anchor
+    ## must not read the CTE; the recursive branch must.
     def recursive_body(anchor, recursive_branch)
       if anchor.base_reference_name().downcase() == self.name().downcase()
         raise ArgumentError.new("recursive CTE anchor cannot reference itself")
@@ -13,3 +17,4 @@ module Arel
   end
 
 end
+

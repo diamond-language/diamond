@@ -8,8 +8,9 @@
 #   ## Sends a GET request and returns the response Hash.
 #   def http_get(url: String, options: Hash = {}) -> Hash
 #
-# The text is Markdown. A method belongs to the closest class, module or
-# struct above it with less indentation, so nesting follows the source layout.
+# The text is Markdown. Classes and modules are listed by name. A method
+# belongs to the closest class, module or struct above it with less
+# indentation, so nesting follows the source layout.
 
 struct ApiItem(kind: String, name: String, signature: String, doc: String, container: String)
 end
@@ -224,7 +225,7 @@ end
 def cut_api_markdown(dir: String, name: String) -> String
   api = cut_api(dir, name)
   functions = api[0]
-  containers = api[1]
+  containers = api[1].sort_by() do |container| container.name() end
   return "" if functions.length() == 0 && containers.length() == 0
   parts = ["## API reference"]
   containers.each() do |container|

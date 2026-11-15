@@ -1,5 +1,6 @@
 module Arel
 
+  ## Renders SQLite SQL. The default when no visitor is passed.
   class SQLiteVisitor < Visitor
     def visitor_name() -> String = "SQLite"
     def quote_identifier(name: String) -> String = arel_quote_identifier(name)
@@ -36,3 +37,4 @@ module Arel
   end
 
 end
+

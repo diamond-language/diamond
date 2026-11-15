@@ -1,5 +1,6 @@
 module Arel
 
+  ## `NOT expression`; made with `not_()` on a predicate.
   class Not
     def initialize(expression)
       @expression = expression
@@ -7,6 +8,7 @@ module Arel
     def expression() = @expression
   end
 
+  ## `left AND right` or `left OR right`; made with `and_also` and `or_else`.
   class Logical
     def initialize(left, operator: String, right)
       @left = left
@@ -16,11 +18,18 @@ module Arel
     def left() = @left
     def operator() -> String = @operator
     def right() = @right
+    ## This condition `AND other`.
     def and_also(other) -> Logical = Logical.new(self, "AND", other)
+    ## This condition `OR other`.
     def or_else(other) -> Logical = Logical.new(self, "OR", other)
+    ## `NOT` this condition.
     def not_() -> Not = Not.new(self)
   end
 
+  ## A comparison such as `column = ?`, from `Attribute#eq`, `#lt` and the rest. The
+  ## right side is bound as a parameter unless it is a column or `Arel.literal`;
+  ## `eq(nil)` and `not_eq(nil)` render `IS NULL` and `IS NOT NULL`. Combine with
+  ## `and_also`, `or_else` and `not_`.
   class Predicate
     def initialize(left, operator: String, right)
       @left = left
@@ -35,6 +44,7 @@ module Arel
     def not_() -> Not = Not.new(self)
   end
 
+  ## `IN (...)` or `NOT IN (...)` over a list of values or a subquery.
   class Membership
     def initialize(left, values, negated: Bool)
       @left = left
@@ -49,6 +59,7 @@ module Arel
     def not_() -> Not = Not.new(self)
   end
 
+  ## `BETWEEN lower AND upper`, or its negation.
   class Between
     def initialize(left, lower, upper, negated: Bool)
       @left = left
@@ -66,3 +77,4 @@ module Arel
   end
 
 end
+

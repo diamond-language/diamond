@@ -1,5 +1,7 @@
 module Arel
 
+  ## An immutable DELETE, from `Arel.delete_from(table)`. It needs `where` or an
+  ## explicit `all()`; rendering otherwise raises `ArgumentError`.
   class Delete
     def initialize(table: Arel::Table, predicates: Array = [], returning: Array = [],
                    allow_all: Bool = false, ctes: Array = [])
@@ -12,13 +14,16 @@ module Arel
 
     def ctes() -> Array = @ctes
     def structure() -> Array = [@table, @predicates, @returning, @allow_all, @ctes]
+    ## Adds a condition, ANDed with earlier ones.
     def where(predicate) -> Delete
       Delete.new(@table, @predicates.concat([predicate]), @returning, @allow_all,
         @ctes)
     end
+    ## Adds `RETURNING` expressions; run with `to_a` to read them.
     def returning(expressions) -> Delete
       Delete.new(@table, @predicates, arel_array(expressions), @allow_all, @ctes)
     end
+    ## Allows deleting every row.
     def all() -> Delete = Delete.new(@table, @predicates, @returning, true, @ctes)
     def with(relation_or_name, query) -> Delete
       name = arel_cte_name(relation_or_name)
@@ -60,6 +65,7 @@ module Arel
 
     def render_with(visitor) -> Array = visitor.render_delete(self)
 
+    ## Renders the statement as `[sql, params]`.
     def to_sql(visitor = nil) -> Array
       renderer = visitor
       if renderer == nil
@@ -68,10 +74,12 @@ module Arel
       self.render_with(renderer)
     end
 
+    ## Runs the statement on `db` and returns the affected row count.
     def execute(db, visitor = nil) -> Int
       sql, params = self.to_sql(visitor)
       PreparedStatements.for(db, sql).execute(params)
     end
+    ## Runs the statement and returns the rows from `RETURNING`.
     def to_a(db, visitor = nil) -> Array
       sql, params = self.to_sql(visitor)
       PreparedStatements.for(db, sql).query(params)
@@ -79,3 +87,4 @@ module Arel
   end
 
 end
+
