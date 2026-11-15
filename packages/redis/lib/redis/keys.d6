@@ -5,28 +5,35 @@
 class RedisConnection
   # DEL key [key ...] -> number of keys actually removed (a key that
   # didn't exist doesn't count).
+  ## Runs `DEL`.
   def del(*keys) = self.command("DEL", *keys)
 
   # EXISTS key [key ...] -> how many of the given keys exist (which can
   # exceed 1 if a key is passed more than once) -- kept as the real
   # Redis Int reply rather than collapsed to Bool, since it's genuinely
   # count-shaped once more than one key is involved.
+  ## Runs `EXISTS`.
   def exists(*keys) = self.command("EXISTS", *keys)
 
   # The single-key ergonomic case EXISTS itself doesn't distinguish
   # from "exists twice" -- true/false, matching what a caller almost
   # always actually wants to ask.
+  ## Whether `key` exists.
   def exists?(key) = self.exists(key) > 0
 
+  ## Runs `EXPIRE`, returning `true` when Redis replies 1.
   def expire(key, seconds) = self.command("EXPIRE", key, seconds) == 1
+  ## Runs `PERSIST`, returning `true` when Redis replies 1.
   def persist(key) = self.command("PERSIST", key) == 1
 
   # -1: the key exists but has no expiry set. -2: the key doesn't exist
   # at all. Both are real, distinct TTL replies, not error conditions --
   # returned as plain Ints, not nil, so a caller can tell them apart.
+  ## Runs `TTL`.
   def ttl(key) = self.command("TTL", key)
 
   # "string" | "list" | "set" | "zset" | "hash" | "none" (no such key).
+  ## Runs `TYPE`.
   def type(key) = self.command("TYPE", key)
 
   # Real Redis's own docs warn KEYS can be slow on a large keyspace (an
@@ -35,8 +42,10 @@ class RedisConnection
   # reached-for way to list matching keys when that cost is acceptable
   # (a small keyspace, an offline/maintenance script, ...). #scan_each
   # below is the safe alternative for a large keyspace.
+  ## Runs `KEYS`.
   def keys(pattern) = self.command("KEYS", pattern)
 
+  ## Runs `RENAME`.
   def rename(key, new_key) = self.command("RENAME", key, new_key)
 
   # One SCAN step: `cursor` is "0" to start a fresh iteration, or
@@ -51,6 +60,8 @@ class RedisConnection
   # complete -- not "no keys matched this step", which SCAN can
   # legitimately return uncompleted (`keys: []` with a non-"0" cursor
   # is normal mid-scan, not an error or an early "done").
+  ## One `SCAN` step from `cursor` (`"0"` to start). Returns `{"cursor", "keys"}`; a
+  ## returned cursor of `"0"` means the scan is complete.
   def scan(cursor, match = nil, count = nil)
     args = ["SCAN", cursor]
     unless match == nil
@@ -70,6 +81,7 @@ class RedisConnection
   # is this method's own job, not SCAN's). Safe for a large keyspace,
   # unlike #keys -- each step is O(COUNT), not O(N), so the single-
   # threaded server stays responsive to other clients between steps.
+  ## Runs `SCAN` to completion and calls the block once for each matching key.
   def scan_each(match = nil, count = nil, &block: Callable[1])
     seen = {}
     cursor = "0"
@@ -99,3 +111,4 @@ class RedisConnection
     end
   end
 end
+

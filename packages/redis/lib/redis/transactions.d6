@@ -20,6 +20,9 @@ class RedisConnection
   # partway through queueing doesn't leave this connection stuck
   # inside an open MULTI forever) and re-raises, rather than
   # attempting EXEC on a possibly-incomplete queue.
+  ## Runs the block's commands as one `MULTI`/`EXEC` transaction and returns `EXEC`'s
+  ## Array of replies. Commands inside the block return `"QUEUED"`. A block that raises
+  ## discards the transaction and re-raises.
   def multi(&block: Callable[1])
     self.command("MULTI")
     begin
@@ -31,3 +34,4 @@ class RedisConnection
     self.command("EXEC")
   end
 end
+

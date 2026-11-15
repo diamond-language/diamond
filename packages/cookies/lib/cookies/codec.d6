@@ -4,6 +4,7 @@
 # No percent-decoding: every value this package itself produces is
 # base64url (already cookie-safe, nothing to unescape); decoding a
 # third-party cookie's percent-encoded value is out of scope here.
+## Parses a `Cookie` request header into a Hash of name to value (empty for `nil`).
 def cookie_parse(header)
   cookies = {}
   if header == nil || header == ""
@@ -30,6 +31,9 @@ end
 # (default false -- left for the caller to opt into explicitly, since
 # defaulting it on would silently break a plain http_serve local dev
 # setup with no TLS).
+## One `Set-Cookie` header value. `options`: `"path"`, `"domain"`, `"max_age"`,
+## `"expires"`, `"http_only"` (default `true`), `"same_site"` (default `"Lax"`) and
+## `"secure"` (default `false`).
 def cookie_serialize(name, value, options = {})
   parts = ["#{name}=#{value}"]
   path = options["path"]
@@ -173,7 +177,9 @@ end
 # already CRYPTO_memcmp underneath. `key` only has to be *consistent*
 # between the two calls, not secret -- it's not standing in for a real
 # HMAC key here, just reusing the primitive's own constant-time compare.
+## Compares two strings in time that does not depend on where they differ.
 def constant_time_equal(a, b)
   key = "cookies.constant_time_equal"
   HMAC.verify(a, key, HMAC.sha256(key, b))
 end
+

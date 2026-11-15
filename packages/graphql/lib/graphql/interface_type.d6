@@ -7,6 +7,7 @@ module GraphQL
   # all (unlike ObjectType#field); internally each Field is still built
   # with Field.new's full positional shape, just with `nil` passed for
   # resolve.
+  ## An interface: fields that implementing object types must resolve.
   class InterfaceType < Type
     def initialize(name)
       @interface_name = name
@@ -18,6 +19,7 @@ module GraphQL
     def name() = @interface_name
     def kind() = "INTERFACE"
 
+    ## Adds a field (no resolver; implementing types resolve it) and returns the type.
     def field(name, type, arguments = [], description = nil)
       @fields << Field.new(name, type, nil, arguments, description)
       self
@@ -48,6 +50,9 @@ module GraphQL
     # no way to guess which implementing type a plain Diamond value
     # belongs to otherwise, same "explicit Callable, no magic" reasoning
     # as Field#resolve). Chainable, matching #field/#implements.
+    ## Sets `callable(object, context)`, which returns the name of the concrete
+    ## object type for a value. Required for any interface-typed field that is
+    ## resolved. Returns the type.
     def resolve_type(callable)
       @type_resolver = callable
       self
@@ -63,3 +68,4 @@ module GraphQL
   end
 
 end
+

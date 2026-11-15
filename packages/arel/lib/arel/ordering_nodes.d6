@@ -9,6 +9,7 @@ module Arel
     def name() -> String = @name
   end
 
+  ## An `ORDER BY` term, from `asc()`/`desc()` on a column or expression.
   class Ordering
     def initialize(expression, direction: String, nulls: String | Nil = nil)
       @expression = expression
@@ -18,10 +19,14 @@ module Arel
     def expression() = @expression
     def direction() -> String = @direction
     def nulls() -> String | Nil = @nulls
+    ## This ordering with `NULLS FIRST` (not supported by the MariaDB and MySQL
+    ## visitors).
     def nulls_first() -> Ordering = Ordering.new(@expression, @direction, "FIRST")
+    ## This ordering with `NULLS LAST`.
     def nulls_last() -> Ordering = Ordering.new(@expression, @direction, "LAST")
   end
 
+  ## `expression AS name`, from `as(name)`.
   class Alias
     def initialize(expression, name: String)
       @expression = expression
@@ -32,3 +37,4 @@ module Arel
   end
 
 end
+

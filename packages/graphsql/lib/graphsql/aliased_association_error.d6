@@ -1,5 +1,8 @@
+## Plans `active_record` loads from a GraphQL query: selects only the requested columns
+## and preloads requested associations in one query each.
 module GraphSQL
 
+  ## Raised when one query selects the same association under two field names.
   class AliasedAssociationError < StandardError
     def self.for_duplicate(type_name, association, fields)
       joined_fields = fields.join(", ")
@@ -10,3 +13,4 @@ module GraphSQL
   end
 
 end
+

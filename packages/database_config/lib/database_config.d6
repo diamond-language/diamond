@@ -3,6 +3,8 @@
 # A file may contain one connection object directly, or a Hash of named
 # environments. DatabaseConfig.load(path, "production") selects one named
 # object; DatabaseConfig.open(config) opens the corresponding native handle.
+## Reads connection settings from a JSON file and opens a SQLite, PostgreSQL or
+## MySQL/MariaDB connection.
 class DatabaseConfig
   def self.read_file(path: String) -> String = File.read(path)
 
@@ -48,6 +50,9 @@ class DatabaseConfig
     end
   end
 
+  ## Checks that `config` names a supported adapter (`sqlite`/`sqlite3`,
+  ## `postgres`/`postgresql`, `mysql`/`mariadb`) and has the keys it needs. Raises
+  ## `ArgumentError` for a missing or malformed value; returns `true` otherwise.
   def self.validate(config: Hash) -> Bool
     adapter = DatabaseConfig.adapter(config)
     if adapter == "sqlite" || adapter == "sqlite3"
@@ -74,6 +79,8 @@ class DatabaseConfig
     true
   end
 
+  ## Reads the JSON file at `path` and returns the entry called `name` (or the whole
+  ## file when `name` is `nil`), validated.
   def self.load(path: String, name = nil) -> Hash
     document = JSON.parse(DatabaseConfig.read_file(path))
     if !(document is Hash)
@@ -119,6 +126,9 @@ class DatabaseConfig
     end
   end
 
+  ## Opens a connection for the config Hash (validating it first): `SQLite3.open`,
+  ## `PostgreSQL.open` or `MySQL.open`. A `password_env` key reads the password from that environment
+  ## variable.
   def self.open(config: Hash)
     DatabaseConfig.validate(config)
     adapter = DatabaseConfig.adapter(config)
@@ -135,3 +145,4 @@ class DatabaseConfig
     end
   end
 end
+

@@ -2,25 +2,32 @@ module Mjolnir
 
   # What Repo writes return: Ok(entity) or Err(changeset). Sealed, so a
   # `case` over a result is checked for exhaustiveness at compile time.
+  ## The outcome of `Repo#insert` and `Repo#update`: `Ok` or `Err`. It is sealed, so a
+  ## `case` over it is checked for exhaustiveness.
   sealed class Result
   end
 
+  ## Success.
   class Ok < Result
     def initialize(value)
       @value = value
     end
+    ## The written entity.
     def value() = @value
     def ok?() -> Bool = true
     def err?() -> Bool = false
   end
 
+  ## Failure.
   class Err < Result
     def initialize(error)
       @error = error
     end
+    ## The changeset, with its errors.
     def error() = @error
     def ok?() -> Bool = false
     def err?() -> Bool = true
   end
 
 end
+

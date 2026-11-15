@@ -1,11 +1,20 @@
 # Set commands. Reopens RedisConnection (see connection.d6).
 class RedisConnection
+  ## Runs `SADD`.
   def sadd(key, *members) = self.command("SADD", key, *members)
+  ## Runs `SREM`.
   def srem(key, *members) = self.command("SREM", key, *members)
+  ## Runs `SMEMBERS`.
   def smembers(key) = self.command("SMEMBERS", key)
+  ## Runs `SISMEMBER`, returning `true` when Redis replies 1.
   def sismember(key, member) = self.command("SISMEMBER", key, member) == 1
+  ## Runs `SCARD`.
   def scard(key) = self.command("SCARD", key)
+  ## Runs `SUNION`.
   def sunion(*keys) = self.command("SUNION", *keys)
+  ## Runs `SINTER`.
   def sinter(*keys) = self.command("SINTER", *keys)
+  ## Runs `SDIFF`.
   def sdiff(*keys) = self.command("SDIFF", *keys)
 end
+

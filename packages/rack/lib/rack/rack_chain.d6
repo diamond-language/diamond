@@ -9,7 +9,9 @@
 # (not the common case this is built for) should write its own small
 # memoizing class following this same two-line pattern, keyed however
 # it needs -- RackChain itself only ever holds one.
+## One composed chain per worker VM.
 class RackChain
+  ## The chain `builder` returns, built once per worker and reused after that.
   def self.get(builder: Callable[0])
     if @@instance == nil
       @@instance = builder()
@@ -17,3 +19,4 @@ class RackChain
     @@instance
   end
 end
+

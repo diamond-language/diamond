@@ -1,0 +1,242 @@
+# API reference for a cut, from its `##` doc comments.
+#
+# A doc comment is a run of `##` lines directly above a `class`, `module`,
+# `struct` or `def` in the cut's lib/ files; a blank line or any other line in
+# between detaches it. Only documented items appear, so a cut's internal
+# helpers stay out of its reference. Ordinary `#` comments are never read.
+#
+#   ## Sends a GET request and returns the response Hash.
+#   def http_get(url: String, options: Hash = {}) -> Hash
+#
+# The text is Markdown. Classes and modules are listed by name. A method
+# belongs to the closest class, module or struct above it with less
+# indentation, so nesting follows the source layout.
+
+struct ApiItem(kind: String, name: String, signature: String, doc: String, container: String)
+end
+
+struct ApiContainer(name: String, signature: String, doc: String, items: Array)
+end
+
+# The lib/ files of a cut: lib/<name>.d6 first, then the rest in sorted order.
+def cut_sources(dir: String, name: String) -> Array
+  main = "#{dir}/lib/#{name}.d6"
+  files = File.exist?(main) ? [main] : []
+  collect_sources("#{dir}/lib", files)
+  files
+end
+
+def collect_sources(dir: String, files: Array)
+  Dir.entries(dir).sort().each() do |entry|
+    next if entry == "." || entry == ".."
+    path = "#{dir}/#{entry}"
+    if File.directory?(path)
+      collect_sources(path, files)
+    elsif (entry.end_with?(".d6") || entry.end_with?(".di")) && !files.include?(path)
+      files.push(path)
+    end
+  end
+end
+
+def indent_of(line: String) -> Int = line.length() - line.lstrip().length()
+
+def paren_balance(text: String) -> Int
+  depth = 0
+  text.chars().each() do |c|
+    depth += 1 if c == "("
+    depth -= 1 if c == ")"
+  end
+  depth
+end
+
+# `sealed class Foo < Bar` -> ["class", "Foo"]; nil when the line declares nothing.
+def declaration(stripped: String)
+  text = stripped
+  ["sealed ", "abstract "].each() do |prefix|
+    text = text.slice(prefix.length(), text.length() - prefix.length()) if text.start_with?(prefix)
+  end
+  ["def", "class", "module", "struct"].each() do |kind|
+    next unless text.start_with?("#{kind} ")
+    rest = text.slice(kind.length() + 1, text.length() - kind.length() - 1).lstrip()
+    name = ""
+    rest.chars().each() do |c|
+      break if c == "(" || c == " "
+      break if kind != "def" && (c == "[" || c == "<")
+      name += c
+    end
+    return [kind, name]
+  end
+  nil
+end
+
+# The declaration without an endless body: `def f(x) = x + 1` -> `def f(x)`.
+def without_body(signature: String) -> String
+  open = signature.index("(")
+  start = 0
+  if open != nil
+    depth = 0
+    index = open
+    while index < signature.length()
+      c = signature[index]
+      depth += 1 if c == "("
+      depth -= 1 if c == ")"
+      if depth == 0
+        start = index + 1
+        break
+      end
+      index += 1
+    end
+  else
+    space = signature.index(" ")
+    start = space == nil ? signature.length() : signature.index(" ", space + 1) || signature.length()
+  end
+  cut = signature.index(" =", start)
+  return signature if cut == nil
+  signature.slice(0, cut).rstrip()
+end
+
+def doc_line(stripped: String)
+  return nil unless stripped.start_with?("##")
+  text = stripped.slice(2, stripped.length() - 2)
+  text.start_with?(" ") ? text.slice(1, text.length() - 1) : text
+end
+
+# Every documented item in the cut, grouped: [top-level functions, containers].
+def cut_api(dir: String, name: String) -> Array
+  functions = []
+  containers = []
+  by_name = {}
+  cut_sources(dir, name).each() do |path|
+    lines = File.read(path).split("\n")
+    doc = []
+    stack = []
+    index = 0
+    while index < lines.length()
+      line = lines[index]
+      stripped = line.strip()
+      text = doc_line(stripped)
+      if text != nil
+        doc.push(text)
+        index += 1
+        next
+      end
+      decl = stripped == "" ? nil : declaration(stripped)
+      if decl == nil
+        doc = []
+        index += 1
+        next
+      end
+      signature = stripped
+      while paren_balance(signature) > 0 && index + 1 < lines.length()
+        index += 1
+        signature += " " + lines[index].strip()
+      end
+      indent = indent_of(line)
+      while stack.length() > 0 && stack[stack.length() - 1][0] >= indent
+        stack.pop()
+      end
+      kind = decl[0]
+      parent = stack.length() > 0 ? stack[stack.length() - 1][1] : ""
+      text = doc.join("\n")
+      if kind == "def"
+        item = ApiItem.new(kind, decl[1], without_body(signature), text, parent)
+        if parent == ""
+          functions.push(item) if text != ""
+        elsif text != ""
+          container_for(parent, "", "", containers, by_name).items().push(item)
+        end
+      else
+        full = parent == "" ? decl[1] : "#{parent}::#{decl[1]}"
+        stack.push([indent, full])
+        container_for(full, signature, text, containers, by_name) if text != ""
+      end
+      doc = []
+      index += 1
+    end
+  end
+  [functions, containers]
+end
+
+# The container named `name`, created on first use; a later documented
+# declaration fills in a signature or doc text the first one lacked.
+def container_for(name: String, signature: String, doc: String, containers: Array, by_name: Hash)
+  unless by_name.include_key?(name)
+    container = ApiContainer.new(name, signature, doc, [])
+    by_name[name] = container
+    containers.push(container)
+    return container
+  end
+  found = by_name[name]
+  return found if signature == "" && doc == ""
+  replaced = ApiContainer.new(name, found.signature() == "" ? signature : found.signature(),
+    found.doc() == "" ? doc : found.doc(), found.items())
+  by_name[name] = replaced
+  containers.each_with_index() do |container, i|
+    containers[i] = replaced if container.name() == name
+  end
+  replaced
+end
+
+# A documented `initialize` is shown the way it is called: `Name.new(...)`.
+def item_markdown(item: ApiItem) -> String
+  signature = item.signature()
+  if item.name() == "initialize" && item.container() != ""
+    owner = item.container().split("::").last()
+    signature = "#{owner}.new" + signature.slice("def initialize".length(), signature.length() - "def initialize".length())
+  end
+  "```ruby\n#{signature}\n```\n\n#{item.doc()}\n"
+end
+
+REGISTRY = "https://cuts.dilang.tech"
+
+# The page source for one cut: its README with a version and links line under
+# the title, then the API reference.
+def cut_page_markdown(root: String, name: String, repository: String) -> String
+  dir = "#{root}/packages/#{name}"
+  manifest = JSON.parse(File.read("#{dir}/Cutfile"))
+  meta = "**Version #{manifest["version"]}** · [registry page](#{REGISTRY}/cuts/#{name}) · " +
+    "[source](#{repository}/tree/main/packages/#{name})"
+  lines = File.read("#{dir}/README.md").split("\n")
+  title = lines.find_index() do |line| line.start_with?("# ") end
+  if title == nil
+    lines = ["# #{name}", "", meta, ""].concat(lines)
+  else
+    lines.insert(title + 1, meta)
+    lines.insert(title + 1, "")
+  end
+  api = cut_api_markdown(dir, name)
+  lines.join("\n") + "\n\n" + api
+end
+
+# The Cuts landing page: every public cut with its summary and version.
+def cut_index_markdown(root: String, names: Array) -> String
+  rows = names.map() do |name|
+    manifest = JSON.parse(File.read("#{root}/packages/#{name}/Cutfile"))
+    "| [#{name}](#{name}.html) | #{manifest["summary"]} | #{manifest["version"]} |"
+  end
+  ["# All cuts", "",
+    "Cuts are d6 packages. These are the ones published from this repository to the " +
+    "[registry](#{REGISTRY}); each page has the cut's README and its API reference. " +
+    "[Packages](../reference/packages.html) explains how to install and publish them.", "",
+    "| Cut | Summary | Version |", "|---|---|---|"].concat(rows).join("\n") + "\n"
+end
+
+# The "API reference" Markdown for a cut, or "" when nothing is documented.
+def cut_api_markdown(dir: String, name: String) -> String
+  api = cut_api(dir, name)
+  functions = api[0]
+  containers = api[1].sort_by() do |container| container.name() end
+  return "" if functions.length() == 0 && containers.length() == 0
+  parts = ["## API reference"]
+  containers.each() do |container|
+    parts.push("### #{container.name()}")
+    parts.push("```ruby\n#{container.signature()}\n```") if container.signature() != ""
+    parts.push(container.doc()) if container.doc() != ""
+    container.items().each() do |item| parts.push(item_markdown(item)) end
+  end
+  if functions.length() > 0
+    parts.push("### Functions")
+    functions.each() do |item| parts.push(item_markdown(item)) end
+  end
+  parts.join("\n\n") + "\n"
+end

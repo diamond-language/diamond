@@ -35,6 +35,9 @@ module Arel
   #   keeps using the older `VALUES(col)` form, the only thing that actually
   #   works there. See @mysql_insert_uses_row_alias's own comment below for
   #   how the two forms are chosen per render.
+  ## Renders MySQL 8 SQL: backtick quoting and `ON DUPLICATE KEY UPDATE` upserts.
+  ## No `RETURNING`, `NULLS FIRST`/`LAST`, conflict-target predicates,
+  ## named-constraint targets or write CTEs.
   class MySQLVisitor < Visitor
     def visitor_name() -> String = "MySQL"
     def quote_identifier(name: String) -> String = arel_quote_identifier_backtick(name)
@@ -304,3 +307,4 @@ module Arel
   end
 
 end
+

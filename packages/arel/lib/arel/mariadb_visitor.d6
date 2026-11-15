@@ -48,6 +48,9 @@ module Arel
   # the recursive check). Quoting, per-column `DEFAULT` in a multi-row
   # `VALUES` list, and integer bitwise operators all match SQLite/PostgreSQL
   # exactly.
+  ## Renders MariaDB SQL: backtick quoting and `ON DUPLICATE KEY UPDATE` upserts. No
+  ## `NULLS FIRST`/`LAST`, conflict-target predicates, named-constraint targets or
+  ## write CTEs, and no `RETURNING` on UPDATE.
   class MariaDBVisitor < Visitor
     def visitor_name() -> String = "MariaDB"
     def quote_identifier(name: String) -> String = arel_quote_identifier_backtick(name)
@@ -296,3 +299,4 @@ module Arel
   end
 
 end
+

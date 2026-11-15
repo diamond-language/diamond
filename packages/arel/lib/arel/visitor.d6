@@ -1,5 +1,7 @@
 module Arel
 
+  ## The base class of the SQL dialect renderers. A visitor turns a statement into
+  ## `[sql, params]`; see `VISITORS.md` for writing one.
   class Visitor
     def require_extension(name: String)
       unless self.supports_extension?(name)
@@ -387,3 +389,4 @@ module Arel
   end
 
 end
+

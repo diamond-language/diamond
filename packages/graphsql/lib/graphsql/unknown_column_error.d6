@@ -1,5 +1,6 @@
 module GraphSQL
 
+  ## Raised when a mapped or required column is not in the repository's `column_names`.
   class UnknownColumnError < StandardError
     def self.for_mapped_column(type_name, field, column, model_name)
       UnknownColumnError.new(
@@ -13,3 +14,4 @@ module GraphSQL
   end
 
 end
+

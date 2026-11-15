@@ -3,6 +3,7 @@ module GraphQL
   # Wraps `of_type` -- e.g. `GraphQL::ListType.of(STRING_TYPE)` renders as
   # `[String]`. Subclasses Type so `.non_null()`/`.list()` compose (a
   # `[String!]!` is `STRING.non_null().list().non_null()`).
+  ## A list wrapper, `[T]`.
   class ListType < Type
     attr_reader of_type
 
@@ -10,6 +11,7 @@ module GraphQL
       @of_type = of_type
     end
 
+    ## `of_type` as a list: same as `of_type.list()`.
     def self.of(of_type) = GraphQL::ListType.new(of_type)
 
     def name() = "[#{@of_type.name()}]"
@@ -17,3 +19,4 @@ module GraphQL
   end
 
 end
+

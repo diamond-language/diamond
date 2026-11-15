@@ -1,5 +1,7 @@
 module ActiveRecord
 
+  ## Raised by `Relation#to_a` and `Associations::Preloader#call` when an included
+  ## association name has no `AssociationReflection` on the repository.
   class AssociationNotFoundError < StandardError
     def initialize(name)
       super("unknown association '#{name}'")
@@ -7,3 +9,4 @@ module ActiveRecord
   end
 
 end
+

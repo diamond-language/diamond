@@ -28,6 +28,7 @@
 # stdout via the ordinary `puts` builtin; `.write` itself never appends
 # its own trailing newline (matching File/TCPSocket), so a real
 # destination gets one added explicitly here instead.
+## A tagged logger that writes lines at or above its level.
 class Logger
   def self.level_rank(name: String) -> Int
     if name == "debug"
@@ -45,6 +46,10 @@ class Logger
     end
   end
 
+  ## `level` is `"debug"`, `"info"`, `"warn"`, `"error"` or `"off"`. `output` is an open
+  ## file (standard output when `nil`). `format` is `"text"`
+  ## (`[time] LEVEL tag: message`) or `"json"` (one object per line, with `fields` merged
+  ## in).
   def initialize(tag: String, level: String = "info", output = nil, format: String = "text")
     @tag = tag
     @level = Logger.level_rank(level)
@@ -55,9 +60,13 @@ class Logger
     @format = format
   end
 
+  ## Logs `message` at debug level, with optional extra `fields`.
   def debug(message, fields: Hash = {}) = self.emit("DEBUG", 0, message, fields)
+  ## Logs `message` at info level.
   def info(message, fields: Hash = {}) = self.emit("INFO", 1, message, fields)
+  ## Logs `message` at warn level.
   def warn(message, fields: Hash = {}) = self.emit("WARN", 2, message, fields)
+  ## Logs `message` at error level.
   def error(message, fields: Hash = {}) = self.emit("ERROR", 3, message, fields)
 
   private
@@ -78,3 +87,4 @@ class Logger
     end
   end
 end
+

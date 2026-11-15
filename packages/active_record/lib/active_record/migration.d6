@@ -59,6 +59,10 @@ module ActiveRecord
   # patch-factory form, unrelated to this -- but `closure` (needed here
   # only for the loop-redeclaration behavior, not for any actual self/
   # ivar capture -- neither callback below reads `self`) works correctly.
+  ## Applies versioned schema changes recorded in a `schema_migrations` table. A
+  ## migration is a Hash `{"version": String, "up": fn(db), "down": fn(db)}` with an
+  ## optional `"down"`; versions must be unique. The order of the Array you pass is
+  ## the only order used.
   class Migrator
     def self.migrations_table() = Arel.table("schema_migrations")
 
@@ -107,6 +111,9 @@ module ActiveRecord
     # leaves every prior migration committed and correctly excluded from
     # the next #run. Safe to call repeatedly: already-applied migrations
     # are skipped, not re-run.
+    ## Applies every migration not yet recorded, in order, each in its own
+    ## transaction. A failure rolls back that migration only and re-raises; earlier
+    ## ones stay applied. Safe to call repeatedly.
     def self.run(db, migrations: Array, visitor = nil)
       Migrator.ensure_schema_migrations_table(db)
       Migrator.check_no_duplicate_versions(migrations)
@@ -135,6 +142,8 @@ module ActiveRecord
     # A migration with no "down" entry raises rather than being silently
     # skipped -- same "fail loud, no implicit magic" stance the rest of
     # this package already takes for a missing optional hook.
+    ## Reverses the last `steps` applied migrations (walking the Array backwards),
+    ## each in its own transaction. A migration without `"down"` raises.
     def self.rollback(db, migrations: Array, steps: Int = 1, visitor = nil)
       if steps < 1
         raise ArgumentError.new("steps must be at least 1")
@@ -169,6 +178,7 @@ module ActiveRecord
 
     # migrations not yet recorded in schema_migrations, in the given
     # Array's own order.
+    ## The migrations not yet applied, in order.
     def self.pending(db, migrations: Array, visitor = nil)
       Migrator.ensure_schema_migrations_table(db)
       applied = Migrator.applied_versions(db, visitor)
@@ -186,6 +196,7 @@ module ActiveRecord
 
     # migrations from `migrations` that are already recorded in
     # schema_migrations, in the given Array's own order.
+    ## The migrations already applied, in order.
     def self.applied(db, migrations: Array, visitor = nil)
       Migrator.ensure_schema_migrations_table(db)
       applied_versions = Migrator.applied_versions(db, visitor)
@@ -203,3 +214,4 @@ module ActiveRecord
   end
 
 end
+

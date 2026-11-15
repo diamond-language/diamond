@@ -8,15 +8,19 @@
 # KDF (PBKDF2/HKDF) -- adequate for deriving one key from one long-lived
 # app secret, not a substitute for one if this ever needs to derive
 # multiple independent keys from the same secret.
+## Cookie values that the client can neither read nor change.
 class EncryptedCookies
   def self.key_from_secret(secret: String) -> String
     hex_decode(Digest.sha256(secret))
   end
 
+  ## Encrypts and authenticates `value` with a key derived from `secret`.
   def self.encrypt(value: String, secret: String) -> String
     base64url_encode(Cipher.encrypt(EncryptedCookies.key_from_secret(secret), value))
   end
 
+  ## The original value, or `nil` when `cookie_value` was altered or made with another
+  ## secret.
   def self.decrypt(cookie_value: String, secret: String)
     blob = base64url_decode(cookie_value)
     if blob == nil
@@ -25,3 +29,4 @@ class EncryptedCookies
     Cipher.decrypt(EncryptedCookies.key_from_secret(secret), blob)
   end
 end
+

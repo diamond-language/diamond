@@ -1,3 +1,4 @@
+## The reason phrase for an HTTP status code: `http_status_text(404)` is `"Not Found"`.
 def http_status_text(status)
   if status == 200
     "OK"
@@ -57,6 +58,9 @@ end
 # connection at a time, not a fleet of them). Still a flat, hardcoded
 # cap -- no per-route override exists, or is planned; an app needing a
 # different limit changes this one shared value.
+## The largest request or response body, in bytes, that this cut reads (25 MiB). A
+## larger body is refused rather than buffered.
 def http_max_body_size()
   26214400
 end
+

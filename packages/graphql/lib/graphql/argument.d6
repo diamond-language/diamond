@@ -18,12 +18,16 @@ module GraphQL
   # against docs/syntax.md's own note on this), so every builder class in
   # this package takes required fields first, then optional ones with
   # defaults, in this same style.
+  ## A field argument or input object field.
   class Argument
     attr_reader name
     attr_reader type
     attr_reader default_value
     attr_reader description
 
+    ## `has_default` is separate from `default_value` because GraphQL tells "the
+    ## default is null" apart from "no default": to give a default, pass both
+    ## (`Argument.new("limit", ScalarType.int(), 20, true)`).
     def initialize(name, type, default_value = nil, has_default = false, description = nil)
       @name = name
       @type = type
@@ -36,3 +40,4 @@ module GraphQL
   end
 
 end
+

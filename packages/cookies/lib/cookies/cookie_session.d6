@@ -44,15 +44,21 @@ end
 #   def rack_app(request, context)
 #     rack_run_chain(RackChain.get(build_chain), 0, request, context)
 #   end
+## A session Hash kept in an encrypted cookie.
 class CookieSession
   # The cookie carries Secure under DIAMOND_ENV=production (the same default as active_auth);
   # pass `secure: false` for a production deployment that serves plain HTTP with no TLS proxy.
+  ## Sets the secret, cookie name and `Secure` flag for this worker. Call it inside the
+  ## per-worker chain builder. `secure` defaults to `true` when `DIAMOND_ENV` is
+  ## `production`.
   def self.configure(secret: String, cookie_name: String = "_session", secure: Bool = ENV["DIAMOND_ENV"] == "production")
     @@secret = secret
     @@cookie_name = cookie_name
     @@secure = secure
   end
 
+  ## Middleware: decrypts the cookie into `request["session"]` (a Hash handlers may
+  ## change), then writes it back as a `Set-Cookie` header on the response.
   def self.call(request, context, forward)
     cookie_name = @@cookie_name
     cookies = cookie_parse(request["headers"]["cookie"])
@@ -88,3 +94,4 @@ class CookieSession
     [status, headers.merge({"Set-Cookie": merged}), body]
   end
 end
+

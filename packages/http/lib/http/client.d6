@@ -410,6 +410,16 @@ def http_next_request_for_redirect(status, method, body, original_host, target_h
   end
 end
 
+## Sends one request and returns `{"status", "headers", "body"}` (header names
+## lower-cased). `http://` and `https://` URLs both work. `options`:
+##
+## - `connect_timeout_ms`, `read_timeout_ms`, `write_timeout_ms`
+## - `ca_file`, `ca_path`, `cert`, `key`: TLS trust store and client certificate
+## - `gzip` (default `true`): ask for and decode gzip/deflate responses
+## - `basic_auth: {"user", "password"}` or `bearer_token`: an `Authorization` header
+## - `json`: send this value as a JSON body
+## - `multipart_fields`, `multipart_files`: send a `multipart/form-data` body
+## - `follow_redirects` (default `false`) and `max_redirects` (default 5)
 def http_request(method, url, headers = {}, body = "", options = {})
   parsed = http_parse_url(url)
   prepared = http_prepare_headers_and_body(headers, body, options)
@@ -447,30 +457,37 @@ def http_request(method, url, headers = {}, body = "", options = {})
   response
 end
 
+## `GET url`; see `http_request` for the response and `options`.
 def http_get(url, headers = {}, options = {})
   http_request("GET", url, headers, "", options)
 end
 
+## `POST url` with `body`; see `http_request`.
 def http_post(url, body = "", headers = {}, options = {})
   http_request("POST", url, headers, body, options)
 end
 
+## `PUT url` with `body`; see `http_request`.
 def http_put(url, body = "", headers = {}, options = {})
   http_request("PUT", url, headers, body, options)
 end
 
+## `PATCH url` with `body`; see `http_request`.
 def http_patch(url, body = "", headers = {}, options = {})
   http_request("PATCH", url, headers, body, options)
 end
 
+## `DELETE url`; see `http_request`.
 def http_delete(url, headers = {}, options = {})
   http_request("DELETE", url, headers, "", options)
 end
 
+## `HEAD url`; the response body is empty. See `http_request`.
 def http_head(url, headers = {}, options = {})
   http_request("HEAD", url, headers, "", options)
 end
 
+## `OPTIONS url`; see `http_request`.
 def http_options(url, headers = {}, options = {})
   http_request("OPTIONS", url, headers, "", options)
 end
@@ -498,6 +515,10 @@ end
 # close, an idle timeout, ...). A server that already closed an idle
 # connection makes the first attempt fail with an ordinary IOError; the
 # retry is indistinguishable from a first attempt on a cold connection.
+## Several requests against the same servers: keeps one open connection per
+## scheme, host and port (reopened and retried once if it went stale) and a cookie
+## jar keyed by exact host. Cookies have no Domain or Path scoping or expiry.
+## `options` are the `http_request` options, applied to every request.
 class HttpSession
   def initialize(options = {})
     @options = options
@@ -557,6 +578,8 @@ class HttpSession
   end
 
   # redirects_left and drop_credentials carry state across the hops of one redirect chain.
+  ## Sends a request through the session, storing any `Set-Cookie` it returns and
+  ## sending stored cookies for the host. Returns the response Hash.
   def request(method, url, headers = {}, body = "", redirects_left = nil, drop_credentials = false)
     options = @options
     if drop_credentials
@@ -614,26 +637,32 @@ class HttpSession
     response
   end
 
+  ## `GET url` through the session.
   def get(url, headers = {})
     self.request("GET", url, headers, "")
   end
 
+  ## `POST url` with `body` through the session.
   def post(url, body = "", headers = {})
     self.request("POST", url, headers, body)
   end
 
+  ## `PUT url` with `body` through the session.
   def put(url, body = "", headers = {})
     self.request("PUT", url, headers, body)
   end
 
+  ## `PATCH url` with `body` through the session.
   def patch(url, body = "", headers = {})
     self.request("PATCH", url, headers, body)
   end
 
+  ## `DELETE url` through the session.
   def delete(url, headers = {})
     self.request("DELETE", url, headers, "")
   end
 
+  ## Closes every cached connection.
   def close()
     def close_one(key, conn)
       conn.close()
@@ -642,3 +671,4 @@ class HttpSession
     @connections = {}
   end
 end
+

@@ -37,6 +37,8 @@
 # unaffected and still collides the old way -- not a namespacing system
 # on its own, just what divc_all.sh's own root-relative path buys for
 # free once it's passed through.
+## Compiles `.html.div` templates into plain d6 functions and helps render them. Most
+## projects compile with `bin/divc_all.sh` and call only the runtime helpers.
 module Div
   module_function
 
@@ -273,6 +275,7 @@ module Div
     ]
   end
 
+  ## d6 source defining `function_name`, compiled from template text `source`.
   def compile_source(source, function_name)
     escape_fn_name = "div_escape_html__#{function_name}"
     tokens = Div.scan(source)
@@ -308,6 +311,8 @@ module Div
   # either function would give a path with no "/" in it. Omitted (the
   # default), this is exactly the old behavior: name derived from
   # `input_path`'s own basename only.
+  ## Compiles the template at `input_path` into `output_path`, naming the function after
+  ## `name_path` (the input path when `nil`).
   def compile_file(input_path, output_path, name_path = nil)
     input = File.open(input_path, "r")
     source = input.read()
@@ -319,3 +324,4 @@ module Div
     output.close()
   end
 end
+
