@@ -5,6 +5,7 @@ module GraphQL
   # internal Array, `Router#get`/`#post`'s own shape
   # (packages/dials/lib/dials/router.d6), not a class-body macro (Diamond
   # has none).
+  ## An object type, built by chaining `field` calls.
   class ObjectType < Type
     def initialize(name)
       @object_name = name
@@ -15,11 +16,16 @@ module GraphQL
     def name() = @object_name
     def kind() = "OBJECT"
 
+    ## Adds a field and returns the type. `resolve` is a `Callable[3]` called as
+    ## `(object, args, context)`; when it is omitted, the executor calls the public
+    ## zero-argument method with the field's name on the parent object. `arguments`
+    ## is an Array of `Argument`.
     def field(name, type, resolve = nil, arguments = [], description = nil)
       @fields << Field.new(name, type, resolve, arguments, description)
       self
     end
 
+    ## Declares that this type implements `interface_type` and returns the type.
     def implements(interface_type)
       @interfaces << interface_type
       interface_type.register_implementor(self)
@@ -31,6 +37,7 @@ module GraphQL
 
     # nil if this type has no field by that name -- the executor's own
     # field-lookup-by-selection-name uses this.
+    ## The field called `field_name`, or `nil`.
     def field_named(field_name)
       @fields.find() do |field|
         field.name() == field_name
@@ -39,3 +46,4 @@ module GraphQL
   end
 
 end
+

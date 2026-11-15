@@ -4,6 +4,7 @@ module GraphQL
   # exactly what Argument already models (name/type/default/description),
   # so this reuses it directly rather than inventing a near-duplicate
   # class.
+  ## An input object type for structured arguments.
   class InputObjectType < Type
     def initialize(name)
       @input_name = name
@@ -13,6 +14,7 @@ module GraphQL
     def name() = @input_name
     def kind() = "INPUT_OBJECT"
 
+    ## Adds an input field (same parameters as `Argument.new`) and returns the type.
     def argument(name, type, default_value = nil, has_default = false, description = nil)
       @arguments << Argument.new(name, type, default_value, has_default, description)
       self
@@ -28,3 +30,4 @@ module GraphQL
   end
 
 end
+

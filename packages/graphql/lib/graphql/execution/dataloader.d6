@@ -37,6 +37,9 @@
 module GraphQL
   module Execution
 
+    ## Batches repeated loads to avoid N+1 queries. Each request gets one in
+    ## `context["dataloader"]`. Loads are batched among siblings resolved together (a
+    ## list's items, or one selection set's fields), not across the whole query.
     class Dataloader
       def initialize()
         @loaders = {}
@@ -49,6 +52,9 @@ module GraphQL
       # ignoring its own `batch_fn` argument. Every call site for the "same"
       # loader name is expected to pass an equivalent batch_fn -- see
       # README.md's own "Dataloader" section.
+      ## The `Loader` named `name`, created with `batch_fn` on first use. Later calls
+      ## with the same name return the same loader and ignore `batch_fn`.
+      ## `batch_fn(keys, context)` returns a Hash of key to value.
       def with(name, batch_fn)
         if @loaders.include_key?(name)
           @loaders[name]
@@ -112,6 +118,7 @@ module GraphQL
       end
     end
 
+    ## One named batch loader, from `Dataloader#with`.
     class Loader
       def initialize(batch_fn, dataloader)
         @batch_fn = batch_fn
@@ -121,6 +128,8 @@ module GraphQL
         @pending = []
       end
 
+      ## Waits until this key's batch has run and returns its value. If `batch_fn`
+      ## raised, the field fails with an `ExecutionError` carrying that message.
       def load(key)
         if @cache.include_key?(key)
           return @cache[key]
@@ -172,3 +181,4 @@ module GraphQL
 
   end
 end
+
