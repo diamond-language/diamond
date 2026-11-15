@@ -315,13 +315,15 @@ releases on the host. Skindicate's uploads (~8.3G) are the largest real data.
 ## Proxy and certificates
 
 nginx owns ports 80 and 443 for every site on the host: skindicate.art,
-modartist.app (a redirect), dilang.tech (static files), and cuts.dilang.tech.
+modartist.app (a redirect), rolld6.codes (static files; getdiamond.codes and dilang.tech
+redirect to it), and cuts.dilang.tech.
 Files in `/etc/nginx/conf.d/`:
 
 - `00-common.conf` (from `nginx-host.conf.example`): TLS settings, the port-80
   server that answers ACME HTTP-01 challenges from `/var/www/letsencrypt` and
   redirects everything else to HTTPS, and a TLS default that refuses unknown names.
-- `dilang.conf` (also in `nginx-host.conf.example`): the static dilang.tech site.
+- `dilang.conf` (from the marketing repository's `deploy/nginx.conf`): the static site on
+  rolld6.codes and the getdiamond.codes and dilang.tech redirects.
 - `diamond-registry.conf` (from `nginx.conf.example`): cuts.dilang.tech with the
   upload/read/write rate limits and request buffering.
 - `skindicate.conf`: Skindicate's own sites, kept in that application's repository.

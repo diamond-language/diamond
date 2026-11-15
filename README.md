@@ -6,7 +6,7 @@
 d6, formerly Diamond, is an object-oriented language with gradual, checked static typing,
 compiled to a register-bytecode VM written in C23 (with an optional x86-64
 JIT). It builds to one standalone executable, and runs in your browser at
-[getdiamond.codes](https://getdiamond.codes).
+[rolld6.codes](https://rolld6.codes).
 
 ```ruby
 class Counter
@@ -92,7 +92,7 @@ builds):
 ./app
 ```
 
-Try it without installing anything: the REPL at [getdiamond.codes](https://getdiamond.codes)
+Try it without installing anything: the REPL at [rolld6.codes](https://rolld6.codes)
 runs the interpreter as WebAssembly (`wasm/build.sh`, see
 [docs/internal/wasm.md](docs/internal/wasm.md)).
 
