@@ -224,6 +224,21 @@ What 1.x promises is in [compatibility](compatibility.md). Left open:
 
 ## Tooling and distribution
 
+### The REPL on the website
+
+The homepage REPL (marketing repo, `js/repl.js`, running the WebAssembly build) is the first
+d6 most visitors see. Today Enter always submits the line, the REPL starts empty, and the
+example chips type a script in one line at a time, with comment lines as the explanation.
+
+- **Multi-line input** -- Shift+Enter adds a line instead of submitting, so a whole method
+  or block can be written and edited before it runs.
+- **Narrated examples** -- an example types out line by line, with a bubble beside each step
+  explaining what that line does, in place of the `#` comment lines.
+- **Start with an example loaded** -- open on a types demonstration: the same small program
+  untyped and typed, showing the error the typed version catches before it runs. The
+  explanation: annotations take a little more thought and groundwork up front, but once they
+  are in, they are a contract you no longer have to negotiate.
+
 ### Self-hosted frontend
 
 The d6-written lexer and compiler are useful differential oracles and can bootstrap
