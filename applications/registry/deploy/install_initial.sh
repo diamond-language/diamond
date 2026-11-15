@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Initial registry installation on the nginx host (root@rolld6.codes). Never an upgrade.
 # nginx owns ports 80/443 (nginx-host.conf.example installed as
-# /etc/nginx/conf.d/00-common.conf) and certbot has issued the cuts.dilang.tech
+# /etc/nginx/conf.d/00-common.conf) and certbot has issued the cuts.rolld6.codes
 # certificate through the /var/www/letsencrypt webroot.
 set -euo pipefail
 [[ $EUID == 0 && $# == 2 && "$2" =~ ^[0-9a-f]{64}$ ]] || {
@@ -18,8 +18,8 @@ systemctl is-active --quiet nginx
 [[ -f /etc/nginx/conf.d/00-common.conf ]] || {
     echo 'Install nginx-host.conf.example as /etc/nginx/conf.d/00-common.conf first' >&2; exit 1;
 }
-[[ -f /etc/letsencrypt/live/cuts.dilang.tech/fullchain.pem ]] || {
-    echo 'Issue the certificate first: certbot certonly --webroot -w /var/www/letsencrypt -d cuts.dilang.tech' >&2; exit 1;
+[[ -f /etc/letsencrypt/live/cuts.rolld6.codes/fullchain.pem ]] || {
+    echo 'Issue the certificate first: certbot certonly --webroot -w /var/www/letsencrypt --cert-name cuts.rolld6.codes -d cuts.rolld6.codes -d cuts.dilang.tech' >&2; exit 1;
 }
 staging=$(mktemp -d /opt/.registry-install.XXXXXXXX)
 trap 'rm -rf -- "$staging"' EXIT
@@ -66,6 +66,6 @@ if ! nginx -t || ! systemctl reload nginx; then
     systemctl reload nginx
     exit 1
 fi
-curl -fsS --resolve cuts.dilang.tech:443:127.0.0.1 https://cuts.dilang.tech/health
+curl -fsS --resolve cuts.rolld6.codes:443:127.0.0.1 https://cuts.rolld6.codes/health
 printf '\nInstalled registry revision %s.\n' "$revision"
 printf 'Verify external HTTPS and existing sites before seeding. No packages have been published.\n'

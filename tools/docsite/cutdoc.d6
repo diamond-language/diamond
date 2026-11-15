@@ -187,7 +187,7 @@ def item_markdown(item: ApiItem) -> String
   "```ruby\n#{signature}\n```\n\n#{item.doc()}\n"
 end
 
-REGISTRY = "https://cuts.dilang.tech"
+REGISTRY = "https://cuts.rolld6.codes"
 
 # The page source for one cut: its README with a version and links line under
 # the title, then the API reference.

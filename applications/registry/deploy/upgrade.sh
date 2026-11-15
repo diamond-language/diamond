@@ -66,7 +66,7 @@ if ! install -m 644 "$unit_work/diamond-registry.service" "$unit" ||
     mv -- "$release" "$release.failed-$(date +%s)"
     exit 1
 fi
-curl -fsS --resolve cuts.dilang.tech:443:127.0.0.1 https://cuts.dilang.tech/health
+curl -fsS --resolve cuts.rolld6.codes:443:127.0.0.1 https://cuts.rolld6.codes/health
 for old in "$base"/releases/*; do
     [[ "$old" == "$release" ]] || rm -rf -- "$old"
 done

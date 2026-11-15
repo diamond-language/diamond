@@ -684,7 +684,7 @@ mkdir project21_latest
     "$facet" add greeter --registry https://cuts.example/api >/dev/null &&
     "$facet" add logger >/dev/null)
 [[ "$(cd project21_latest && DIAMOND_PRINT_RESULT=1 "$diamond" Cutfile)" == \
-    "{name: myapp, dependencies: {greeter: {registry: https://cuts.example/api, version: ^1.3.0}, logger: {registry: https://cuts.dilang.tech, version: ^1.0.0}}}" ]]
+    "{name: myapp, dependencies: {greeter: {registry: https://cuts.example/api, version: ^1.3.0}, logger: {registry: https://cuts.rolld6.codes, version: ^1.0.0}}}" ]]
 
 # facet install re-resolves when Cutfile asks for something Cutfile.lock does not
 # hold, keeping locked versions that still fit: logger is added, greeter stays at

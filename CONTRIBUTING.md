@@ -172,7 +172,7 @@ need them: `gcc` and the development packages only `d6 build`.
 `packaging/ci.sh deb|rpm` builds in an `ubuntu:26.04` or `fedora:44` container,
 installs the package into a fresh container of the same image, and runs
 `packaging/smoke_test.sh` there: `-e`, a script, a `facet new cli` project (its
-`facet install` from cuts.dilang.tech, then its tests), and `d6 build`. `CONTAINER=podman` uses podman instead of docker. CI runs both in the
+`facet install` from cuts.rolld6.codes, then its tests), and `d6 build`. `CONTAINER=podman` uses podman instead of docker. CI runs both in the
 `test-packages` job.
 
 Self-hosting is in minimal-compat maintenance mode (see docs/roadmap.md):

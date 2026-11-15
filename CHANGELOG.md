@@ -17,7 +17,7 @@ changed. The site moved to rolld6.codes.
 ### Changed
 
 - The brand is written **d6** (lowercase) again in the guides, READMEs, CLI help, the docs site, registry pages, the VS Code extension and GitHub release titles. The registry pages and the website use a new logo: the six face of a die, a rounded square turned 45 degrees with six white pips turned with it.
-- The website and docs moved to [rolld6.codes](https://rolld6.codes/); the former site domains redirect to the same page there. The registry stays at cuts.dilang.tech for now.
+- The website and docs moved to [rolld6.codes](https://rolld6.codes/); the former site domains redirect to the same page there. The package registry moved to [cuts.rolld6.codes](https://cuts.rolld6.codes) and facet uses it by default; its old address keeps answering, so existing Cutfiles and lockfiles still install.
 - Every public cut has a page on the docs site (rolld6.codes/docs/cuts/NAME): its README plus an API reference built from `##` doc comments in its source, and an "All cuts" index. All 20 cuts get a patch release carrying those comments: active_record 0.21.3, arel 0.35.5, cookies 0.2.5, database_config 0.2.4, div 0.3.3, graphql 0.3.5, graphsql 0.2.5, gremlin 0.5.5, http 0.2.5, jobs 0.2.3, log_viewer 0.2.3, logger 0.5.4, minitest 0.1.4, mjolnir 0.4.2, multipart 0.3.3, network_safety 0.2.4, rack 0.2.4, redis 0.2.4, registry 0.3.2 and websocket 0.2.3. No code changed.
 - In the REPL (and the browser REPL), a blank or comment-only line no longer prints `nil`: the prompt just comes back, as in irb. Inside an unfinished entry such a line is still ordinary input.
 - A trapped signal that arrives just before a blocking `TCPServer#accept`, `UDPSocket#receive` or socket `read` starts waiting now runs its handler during the wait, as #569 did for `IO.poll`; a signal landing during a blocking socket `read` no longer raises "Interrupted system call".
@@ -2327,7 +2327,7 @@ for security-sensitive use.
 ### Upgrade note
 
 - facet 0.7.0 rejects the `maintainers` field that every current cut on
-  cuts.dilang.tech declares, and the launch versions it could read have been
+  cuts.rolld6.codes declares, and the launch versions it could read have been
   taken down. Upgrade to facet 0.8.0 to install cuts from the registry.
 
 ### Runtime
@@ -2371,8 +2371,8 @@ for security-sensitive use.
 - All bundled cuts name Chad 'Matrix9180' Ingram as maintainer. The 18
   published cuts have new patch versions carrying it, and the seed inventory
   now lists them. The launch versions, which predate the field, were taken
-  down on cuts.dilang.tech.
-- The cuts.dilang.tech catalog matches the website's design, lists one card
+  down on cuts.rolld6.codes.
+- The cuts.rolld6.codes catalog matches the website's design, lists one card
   per cut (its newest unyanked release), and shows package sizes in KB/MB.
 - `upgrade.sh` upgrades an installed registry in place and keeps only the
   current release on the host.
@@ -2406,14 +2406,14 @@ for security-sensitive use.
 - Added a GitHub issue template and developer guide for requesting public-registry
   maintainership, including ownership review and private scoped-credential delivery.
 
-- Launched the public package registry at https://cuts.dilang.tech with 18 selected
+- Launched the public package registry at https://cuts.rolld6.codes with 18 selected
   cuts. Unpublished Dials and the auth, discussion, karma, social, and tagging
   cuts at the operator's request and excluded them from future launch seeds.
   Added QEMU release bundles, initial deployment, scoped seed publication, and
   public installation verification tools.
 
 - Added a live, searchable public cut catalog with bounded pagination, release
-  status and digest details, and facet onboarding for cuts.dilang.tech. Added
+  status and digest details, and facet onboarding for cuts.rolld6.codes. Added
   preparation and a QEMU gate for the existing droplet's Caddy HTTPS and
   loopback nginx policy, plus a manual verified snapshot-download helper.
 

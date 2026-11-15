@@ -88,9 +88,9 @@ class Drill
     [
       ["    listen 443 ssl;\n", "    listen 127.0.0.1:#{@proxy_port} ssl;\n"],
       ["    listen [::]:443 ssl;\n", ""],
-      ["/etc/letsencrypt/live/cuts.dilang.tech/fullchain.pem", @cert],
-      ["/etc/letsencrypt/live/cuts.dilang.tech/privkey.pem", @work + "/key.pem"],
-      ["cuts.dilang.tech", "localhost"],
+      ["/etc/letsencrypt/live/cuts.rolld6.codes/fullchain.pem", @cert],
+      ["/etc/letsencrypt/live/cuts.rolld6.codes/privkey.pem", @work + "/key.pem"],
+      ["cuts.rolld6.codes", "localhost"],
       ["/var/log/nginx/registry-access.log", @work + "/access.log"],
       ["/var/log/nginx/registry-error.log", @work + "/error.log"],
       ["127.0.0.1:18120", "127.0.0.1:#{@backend_port}"],

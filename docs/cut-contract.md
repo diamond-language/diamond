@@ -5,7 +5,7 @@ audit `.di` sources and entry points for existing, immutable releases; the
 current layout below describes newly built cuts.
 
 Status: artifact validation, publishing, and the HTTP read/publish service are
-implemented. The public registry runs at `https://cuts.dilang.tech`. Current behavior is in
+implemented. The public registry runs at `https://cuts.rolld6.codes`. Current behavior is in
 [packages.md](packages.md); the wire API
 is in [registry-protocol.md](registry-protocol.md).
 

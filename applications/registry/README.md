@@ -216,7 +216,7 @@ Templates require host-specific configuration and validation before deployment.
 
 ## Public catalog and onboarding
 
-The intended public endpoint is `https://cuts.dilang.tech`. The application root
+The intended public endpoint is `https://cuts.rolld6.codes`. The application root
 serves a searchable release catalog and getting-started instructions. The browser
 loads live metadata from `catalog.json`; taken-down releases are excluded and
 yanked versions are marked. The catalog lists one row per cut: its newest
@@ -232,7 +232,7 @@ Keep `catalog.d6`, `catalog.html`, `catalog.js`, `catalog.css`, `cut.html`, and
 `cut.js`, and `markdown.js` beside `app.d6` when deploying. `/cuts/<name>` is a cut's show page
 (README, install command, and version history), backed by `catalog/<name>.json`.
 `REGISTRY_BASE` prefixes the catalog and its assets as well as the API. Install
-commands use the catalog's origin/base; the public quickstart uses cuts.dilang.tech.
+commands use the catalog's origin/base; the public quickstart uses cuts.rolld6.codes.
 See [production preparation](deploy/PRODUCTION.md) for the nginx host
 integration and unresolved launch inputs. Providing the hostname in docs does not
 mean the public service is deployed.
