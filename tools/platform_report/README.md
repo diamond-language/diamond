@@ -51,7 +51,7 @@ Send that file back. That's everything.
 - It works in a temporary copy that it deletes afterwards. The `~/diamond`
   folder can be deleted when you're done (`rm -rf ~/diamond`).
 - It uses the network to download d6, the Homebrew packages, and one
-  package from d6's registry, cuts.dilang.tech, for an example app.
+  package from d6's registry, cuts.rolld6.codes, for an example app.
 - The threaded-stress step runs one busy background process per core for a few
   minutes so the fans may spin up; they are stopped when it finishes.
 - The report contains your Mac's model, chip, core count, memory size, and
