@@ -34,8 +34,17 @@ fi
 # page; point them at the tagged tree instead.
 notes="$(sed -E "s#\]\(([A-Za-z][^):]*)\)#](https://github.com/diamond-language/d6/blob/$tag/\1)#g" <<<"$notes")"
 
+# A version with a pre-release suffix (1.0.0-rc7, 1.1.0-beta1) is published as a
+# GitHub pre-release, so "Latest" (releases/latest, and mise's default version) always
+# names an actual release; a plain X.Y.Z becomes Latest.
+if [[ "$version" == *-* ]]; then
+    channel=(--prerelease --latest=false)
+else
+    channel=(--latest)
+fi
+
 if gh release view "$tag" >/dev/null 2>&1; then
     gh release upload "$tag" "$@" --clobber
 else
-    gh release create "$tag" "$@" --verify-tag --title "d6 $version" --notes "$notes"
+    gh release create "$tag" "$@" --verify-tag --title "d6 $version" --notes "$notes" "${channel[@]}"
 fi
