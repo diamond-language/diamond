@@ -1,19 +1,32 @@
 {
-  "name": "diamond-language",
+  "name": "d6",
   "displayName": "d6",
-  "description": "Syntax highlighting and language server diagnostics/hover/go-to-definition/outline for the d6 programming language",
-  "version": "0.7.0",
+  "description": "d6 language support: highlighting, diagnostics, hover, go-to-definition, completion and debugging",
+  "version": "0.8.0",
+  "publisher": "rolld6",
+  "license": "MIT",
+  "icon": "icon.png",
+  "homepage": "https://rolld6.codes",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/diamond-language/d6.git",
+    "directory": "editors/vscode"
+  },
+  "bugs": {
+    "url": "https://github.com/diamond-language/d6/issues"
+  },
+  "keywords": ["d6", "language server", "lsp", "debugger"],
   "engines": {
     "vscode": "^1.75.0"
   },
-  "categories": ["Programming Languages"],
+  "categories": ["Programming Languages", "Debuggers"],
   "main": "./extension.js",
   "activationEvents": ["onLanguage:diamond", "onLanguage:diamond-template"],
   "contributes": {
     "languages": [
       {
         "id": "diamond",
-        "aliases": ["d6", "d6", "diamond"],
+        "aliases": ["d6", "diamond"],
         "extensions": [".d6"],
         "configuration": "./language-configuration.json"
       },
@@ -44,12 +57,12 @@
         "diamond.languageServerPath": {
           "type": "string",
           "default": "d6-lsp",
-          "description": "Path to the d6-lsp binary (built via `make lsp`). Defaults to looking it up on PATH."
+          "description": "Path to the d6-lsp language server, which every d6 install includes. Defaults to looking it up on PATH."
         },
         "diamond.debugAdapterPath": {
           "type": "string",
           "default": "d6-dap",
-          "description": "Path to the d6-dap binary (built via `make dap`). Defaults to looking it up on PATH."
+          "description": "Path to the d6-dap debug adapter, which every d6 install includes. Defaults to looking it up on PATH."
         }
       }
     },

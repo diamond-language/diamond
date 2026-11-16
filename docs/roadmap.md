@@ -14,6 +14,24 @@ Broader reliability work waits for usage beyond the current two users; existing 
 remains required. Package development prioritizes Mjolnir, with ActiveRecord in the
 background. Further JIT work is optional and measurement-driven.
 
+## Before 1.0.0
+
+Release work the owner wants done for 1.0.0:
+
+- **VS Code extension in the stores.** `editors/vscode` packages as `rolld6.d6`, and the
+  release workflow attaches the `.vsix` and publishes it to the Visual Studio Marketplace
+  and Open VSX once the `VSCE_PAT` and `OVSX_PAT` repository secrets exist. Left: the owner
+  creates the `rolld6` Marketplace publisher and Open VSX namespace and adds those secrets;
+  then the first tagged release publishes it, and the getting-started guide and site can
+  point at the store listing.
+- **mise installs from release binaries.** mise's registry only takes widely used tools
+  (thousands of stars), so `mise use d6` is out of reach; `mise use
+  github:diamond-language/d6` needs no registry, only release assets. Left: attach
+  glibc tarballs (`d6-VERSION-linux-x86_64.tar.gz`, `-aarch64`) laid out as an install
+  prefix (`bin/`, `lib/diamond/aot`), built like the packages, with libxcrypt linked
+  statically (its soname differs between Fedora and Ubuntu), smoke-tested on the
+  supported distros, and documented as an install path.
+
 ## Candidate work
 
 These are possible next steps, not commitments. Start with a measured need or

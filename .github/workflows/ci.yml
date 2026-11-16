@@ -224,6 +224,23 @@ jobs:
       - name: Test the module
         run: node tests/wasm_repl_test.mjs
 
+  # The VS Code extension packages without warnings (vsce refuses a broken manifest), as the
+  # release job will package it.
+  test-vscode-extension:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 1
+      - name: Package the extension
+        working-directory: editors/vscode
+        run: npx --yes @vscode/vsce@3.9.2 package --out /tmp/d6-vscode.vsix
+      - name: Check its contents
+        run: |
+          unzip -l /tmp/d6-vscode.vsix | grep -q extension/extension.js
+          ! unzip -l /tmp/d6-vscode.vsix | grep -q DEVELOPMENT.md
+
   # A build with every optional native library compiled out, on a machine that does not have
   # their headers: proves MINIMAL=1 really drops them (SQLite, PostgreSQL, MySQL/MariaDB, zlib,
   # OpenSSL).
