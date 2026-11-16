@@ -35,6 +35,21 @@ only `d6 build` needs. apt and dnf install recommendations by default, but
 skip any that would need an installed package upgraded, so upgrade first. If you
 didn't, `d6 build` prints the commands that install what it's missing.
 
+### With mise, or unpacked anywhere
+
+Each release also has `d6-VERSION-linux-x86_64.tar.gz` and `d6-VERSION-linux-aarch64.tar.gz`:
+the same programs as the packages, for the same CPUs, in a directory you can unpack anywhere.
+They run on current glibc distributions (Ubuntu 26.04, Fedora 44 and Arch are tested) with
+OpenSSL 3, SQLite, libpq, MariaDB Connector/C and zlib installed. [mise](https://mise.jdx.dev)
+installs d6 from them, with no plugin and no compiler:
+
+```sh
+mise use -g github:diamond-language/d6
+```
+
+Without mise, unpack the tarball and put its `bin/` on your `PATH`. Either way, `d6 build`
+still needs `gcc` and the development packages listed under "From source" below.
+
 ### From source
 
 On other systems, or for an unreleased version, build from source. You need GCC 15+ or Clang 19+ (d6 is C23),
@@ -59,7 +74,7 @@ server and the debug adapter:
 
 ```sh
 git clone https://github.com/diamond-language/d6.git
-cd diamond
+cd d6
 make release facet lsp dap
 make install PREFIX=$HOME/.local
 ```
