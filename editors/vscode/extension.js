@@ -334,7 +334,7 @@ function startServer() {
     spawned.on('error', (err) => {
         vscode.window.showErrorMessage(
             `d6: language server '${serverPath}' failed to start: ${err.message}. ` +
-            'Build it with `make lsp`, or set "diamond.languageServerPath" to the built binary.',
+            'Install d6 (it includes d6-lsp, see https://rolld6.codes/docs/guide/getting-started.html), or set "diamond.languageServerPath" to its path.',
         );
         if (child === spawned) child = null;
     });

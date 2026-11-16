@@ -1,141 +1,53 @@
 # d6 for VS Code
 
-The extension associates `.d6` with d6. It leaves `.di` files to D;
-legacy d6 sources can still be assigned the d6 language manually.
+Language support for [d6](https://rolld6.codes), a gradually typed, object-oriented
+language with a bytecode VM:
 
-Syntax highlighting for `.d6` files — a TextMate grammar (`syntaxes/diamond.tmLanguage.json`)
-built directly from `src/lexer.h`/`src/lexer.c`'s own token list, not derived
-from or dependent on any other language's grammar — plus live diagnostics
-from `d6-lsp` (`lsp/`, `docs/lsp.md`) and gutter-breakpoint debugging
-via `d6-dap` (`dap/`, `docs/debugging.md`). No compiled code, no
-`node_modules`, no build step: `package.json` + `language-configuration.json`
-+ the grammar file + `extension.js` are the entire extension. `extension.js`
-is a small hand-rolled LSP client (spawns `d6-lsp`, frames
-`Content-Length` JSON-RPC over its stdio, republishes diagnostics) rather
-than a dependency on `vscode-languageclient` — matching `lsp/`'s own
-from-scratch, zero-external-dependency convention, and meaning there's
-nothing to `npm install` on either side: VS Code's extension host already
-bundles Node. The debugger integration needs even less of its own code:
-`d6-dap` already speaks real DAP, so the extension only registers a
-`DebugAdapterDescriptorFactory` telling VS Code which binary to spawn —
-VS Code's own built-in debug UI and protocol handling do the rest.
+- Syntax highlighting for `.d6` files and `.div` templates.
+- Diagnostics as you type, from the d6 language server.
+- Hover, go-to-definition, the Outline view, completion and workspace symbol search
+  for functions and classes.
+- Debugging with breakpoints and stepping, through VS Code's Run and Debug view.
 
-## Diagnostics, hover, go-to-definition, outline, completion, and
-## workspace symbol search
+## Requirements
 
-1. Build the language server: `make lsp` (from the repo root). This
-   produces `build/d6-lsp`.
-2. Either put that binary on your `PATH` under the name `d6-lsp`, or
-   point the extension at it directly: open VS Code settings and set
-   `diamond.languageServerPath` to the built binary's absolute path (e.g.
-   `/path/to/diamond/build/d6-lsp`).
-3. Open a `.d6` file. The extension activates on the `d6` language,
-   spawns the server, and diagnostics appear as you type (d6's
-   compiler stops at the first error, so at most one diagnostic per file
-   at a time). A top-level function name or a class name — at its own
-   declaration or anywhere it's used, including across a `require` —
-   supports hover (shows its signature), go-to-definition (jumps to the
-   declaration, in whichever file it's actually in), and shows up in the
-   file's Outline/breadcrumbs view. Only those two identifier kinds
-   resolve for hover/definition/outline — see `docs/lsp.md` for exactly
-   what is and isn't covered, e.g. none of the three on a method reached
-   through `receiver.method(...)`.
-4. Completion suggests every top-level function/class in the compiled
-   program plus every local variable/parameter actually in scope at the
-   cursor (real lexical scoping — a `rescue`-bound name only appears
-   inside its own clause, and an outer function's own locals stay
-   visible inside a nested closure). Ctrl+T/Cmd+T (Go to Symbol in
-   Workspace) searches every top-level function/class across every
-   `.d6` file under the open folder, not just open documents.
+The extension runs the language server (`d6-lsp`) and debug adapter (`d6-dap`) that come
+with d6, so install d6 first:
+[getting started](https://rolld6.codes/docs/guide/getting-started.html) has packages for Debian,
+Ubuntu and Fedora, a mise install, and building from source. Every install puts `d6-lsp`
+and `d6-dap` next to `d6`.
 
-If the server fails to start (wrong path, not built yet), VS Code shows an
-error notification with the attempted path; server stderr and lifecycle
-events are logged to the "d6 Language Server" output channel. The
-`d6: Restart Language Server` command restarts it without reloading
-the whole window — useful after rebuilding `d6-lsp`.
+If they are not on your `PATH`, point the extension at them:
 
-## Debugging (`dap/`)
+| Setting | Default | Meaning |
+|---|---|---|
+| `diamond.languageServerPath` | `d6-lsp` | The language server |
+| `diamond.debugAdapterPath` | `d6-dap` | The debug adapter |
 
-1. Build the debug adapter: `make dap` (from the repo root). This produces
-   `build/d6-dap`, plus make sure `build/d6` itself (or whatever
-   `d6` binary you want debuggee programs actually run under) is
-   built and either on `PATH` or set via `DIAMOND_BIN` in your own shell
-   profile -- `d6-dap` execvp's it to run each debuggee.
-2. Either put `d6-dap` on your `PATH`, or set `diamond.debugAdapterPath`
-   in VS Code settings to its absolute path, the same way
-   `diamond.languageServerPath` works for the language server above.
-3. Open a `.d6` file, set a gutter breakpoint on any line with a real
-   statement on it, then Run & Debug ("Debug d6 File" from the
-   dropdown, or F5). Breakpoints can be added or removed during the session.
-   Continue, Step Over, Step Into, and Step Out are supported (see
-   [debugging details](../../docs/debugging.md) for limitations).
-   The Debug Console shows the debuggee's own stdout/stderr; the Variables
-   pane shows locals only for the innermost, currently-paused frame (an
-   outer call-stack frame shows no locals in v1).
-4. A `launch.json` entry needs `"type": "diamond"`, `"request": "launch"`,
-   and `"program"` (an absolute path, `${file}` for whichever `.d6` file is
-   focused); `"args"` and `"cwd"` are optional. The debug adapter fills in
-   a minimal one via `initialConfigurations` if you Run & Debug with no
-   `launch.json` at all yet.
+## Debugging
 
-## `.div` templates (`packages/div`)
+Open a `.d6` file, set a breakpoint in the gutter and press F5 ("Debug d6 File"). Continue,
+step over, step into and step out are supported; the Variables pane shows the paused
+frame's locals. A `launch.json` entry looks like:
 
-A `.div` file (see `packages/div/README.md` for the tag grammar) gets its
-own `diamond-template` language id, separate from `d6` — highlighted
-via `syntaxes/diamond-template.tmLanguage.json`, an ERB-style embedded
-grammar: everything outside `<% %>` is plain HTML (VS Code's own built-in
-`text.html.basic` grammar, not bundled here), everything inside a tag is
-real d6 source (the same `source.diamond` grammar a `.d6` file gets),
-and `<%# ... %>` is a comment either way. Diagnostics work the same way
-they do for a `.d6` file (`lsp/div.c` translates the template and maps
-errors back to their real template position — see `docs/lsp.md`'s own
-`.div` section for what is and isn't covered, e.g. a call to another
-template's own partial reports a false "undefined function"); hover,
-go-to-definition, completion, and workspace symbol search don't — those
-providers stay registered against `d6` alone.
-
-## Trying it locally
-
-VS Code loads any folder under its extensions directory that has a
-`package.json` with a `contributes` section — no packaging or marketplace
-publish needed to try it:
-
-```sh
-ln -s "$(pwd)/editors/vscode" ~/.vscode/extensions/diamond-language
+```json
+{
+  "type": "diamond",
+  "request": "launch",
+  "name": "Debug d6 File",
+  "program": "${file}",
+  "args": [],
+  "cwd": "${workspaceFolder}"
+}
 ```
 
-then reload the VS Code window (`Developer: Reload Window` from the command
-palette). Opening any `.d6` file should now be highlighted.
+## Troubleshooting
 
-If VS Code is a **Flatpak** install (`flatpak list | grep visualstudio`),
-it's sandboxed and never reads `~/.vscode/extensions` at all — symlink into
-`~/.var/app/com.visualstudio.code/data/vscode/extensions/diamond-language`
-instead, then fully quit and reopen the app (not just reload the window,
-since it needs to rescan its extensions directory).
+If the language server cannot start, VS Code says which path it tried. Its output and
+errors are in the "d6 Language Server" output channel, and `d6: Restart Language Server`
+restarts it without reloading the window.
 
-Alternatively, without touching your real extensions directory:
-
-```sh
-code --extensionDevelopmentPath="$(pwd)/editors/vscode" .
-```
-
-opens a new VS Code window with the extension loaded for that session only.
-
-## What's covered
-
-Keywords (control flow, declarations, visibility/attribute modifiers,
-`self`/`super`, `and`/`or`/`not`/`is`), `def`/`class`/`module`/`interface`
-names (including operator-overload defs like `def +`/`def ==` and `def
-self.name`), string literals with `#{...}` interpolation (including nested
-strings inside an interpolation, matching `src/lexer.c`'s own handling),
-symbol literals (disambiguated from type-annotation and hash-literal colons
-the same way the real lexer does — a colon only starts a symbol when it
-isn't glued onto a preceding identifier/`)`/`]`/`}`/`"`), instance
-variables, numbers with digit separators, and the builtin type names
-(`Int`/`Float`/`String`/`Bool`/`Nil`/`Array`/`Hash`/`Callable`/`Sized`/`Symbol`).
-
-## What isn't
-
-Semantic highlighting (anything that would need actual name resolution —
-that's `lsp/`'s job, not a regex grammar's), and no attempt to package or
-publish to the VS Code Marketplace.
+What the language server covers is in the
+[language server reference](https://rolld6.codes/docs/reference/lsp.html), and the debugger's
+limits are in [debugging](https://rolld6.codes/docs/reference/debugging.html). Report problems
+at [github.com/diamond-language/d6/issues](https://github.com/diamond-language/d6/issues).

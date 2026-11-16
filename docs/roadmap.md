@@ -14,6 +14,21 @@ Broader reliability work waits for usage beyond the current two users; existing 
 remains required. Package development prioritizes Mjolnir, with ActiveRecord in the
 background. Further JIT work is optional and measurement-driven.
 
+## Before 1.0.0
+
+Release work the owner wants done for 1.0.0:
+
+- **VS Code extension in the stores.** `editors/vscode` packages as `rolld6.d6`, and the
+  release workflow attaches the `.vsix` and publishes it to the Visual Studio Marketplace
+  and Open VSX once the `VSCE_PAT` and `OVSX_PAT` repository secrets exist. Left: the owner
+  creates the `rolld6` Marketplace publisher and Open VSX namespace and adds those secrets;
+  then the first tagged release publishes it, and the getting-started guide and site can
+  point at the store listing.
+- **mise installs from release binaries.** The release workflow attaches glibc tarballs
+  (`d6-VERSION-linux-x86_64.tar.gz`, `-aarch64`) that `mise use -g
+  github:diamond-language/d6` installs; CI smoke-tests them on Ubuntu 26.04 and Fedora 44.
+  Left: run that mise command against the first tagged release that has them.
+
 ## Candidate work
 
 These are possible next steps, not commitments. Start with a measured need or
@@ -269,6 +284,13 @@ built and tested in CI but no longer attached to releases.
 - **Shipping the portable build again** -- it was attached to v0.29.0 and then withdrawn
   until its caveats are worked out: no JIT, baseline x86-64 ISA, no `d6 build`. The two
   items below are the main ones.
+
+- **Release tarballs for OpenSSL 4 distributions** -- the glibc tarballs link
+  `libssl.so.3`, so Arch and Fedora 45 need their OpenSSL 3 compatibility package, and `d6
+  build` there links the kit against OpenSSL 4. Linking OpenSSL and the other libraries
+  statically into the tarball and its build kit would fix both. It would also have to find
+  the CA bundle wherever the host keeps it, because the compiled-in OPENSSLDIR
+  (`/usr/lib/ssl` on Ubuntu) doesn't exist elsewhere.
 
 - **More distros and releases** -- Debian stable, Ubuntu LTS, older Fedora, openSUSE, Arch and
   Alpine. The obstacle is the compiler, not the package format. GCC 15 is needed only for

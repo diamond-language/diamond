@@ -643,7 +643,7 @@ variadic, and block parameters, including singleton methods.
 `editors/vscode/extension.js` wires all three up client-side too, via
 `vscode.languages.registerHoverProvider`/`registerDefinitionProvider`/
 `registerDocumentSymbolProvider` — see its own file and
-`editors/vscode/README.md`.
+`editors/vscode/DEVELOPMENT.md`.
 
 ## What's deliberately out of scope so far
 
