@@ -51,30 +51,36 @@ jobs:
 
   vscode:
     # The VS Code extension (editors/vscode) as a .vsix attached to the release, and published
-    # to the Visual Studio Marketplace and Open VSX when their tokens are configured. The
+    # to the Visual Studio Marketplace, and to Open VSX when OVSX_PAT is configured. The
+    # Marketplace step authenticates by trusted publishing (GitHub OIDC): the rolld6 publisher
+    # has a policy for this repository and release.yml, so there is no token to store. The
     # extension is versioned on its own (editors/vscode/package.json), so a release that does
     # not bump it skips the stores (--skip-duplicate) and only attaches the file.
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write
     env:
-      VSCE_PAT: ${{ secrets.VSCE_PAT }}
       OVSX_PAT: ${{ secrets.OVSX_PAT }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: refs/tags/${{ inputs.tag || github.ref_name }}
           fetch-depth: 1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24 # vsce 4 needs Node 22 or later
       - name: Package the extension
         working-directory: editors/vscode
-        run: npx --yes @vscode/vsce@3.9.2 package --out ../../d6-vscode.vsix
+        run: npx --yes @vscode/vsce@4.1.0 package --out ../../d6-vscode.vsix
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: vscode
           path: d6-vscode.vsix
           if-no-files-found: error
       - name: Publish to the Visual Studio Marketplace
-        if: ${{ env.VSCE_PAT != '' }}
-        run: npx --yes @vscode/vsce@3.9.2 publish --packagePath d6-vscode.vsix --skip-duplicate
+        run: npx --yes @vscode/vsce@4.1.0 publish --oidc --packagePath d6-vscode.vsix --skip-duplicate
       - name: Publish to Open VSX
         if: ${{ env.OVSX_PAT != '' }}
         run: npx --yes ovsx@1.3.0 publish d6-vscode.vsix --pat "$OVSX_PAT" --skip-duplicate

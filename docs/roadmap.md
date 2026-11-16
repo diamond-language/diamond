@@ -18,12 +18,11 @@ background. Further JIT work is optional and measurement-driven.
 
 Release work the owner wants done for 1.0.0:
 
-- **VS Code extension in the stores.** `editors/vscode` packages as `rolld6.d6`, and the
+- **VS Code extension in the Marketplace.** `editors/vscode` packages as `rolld6.d6`; the
   release workflow attaches the `.vsix` and publishes it to the Visual Studio Marketplace
-  and Open VSX once the `VSCE_PAT` and `OVSX_PAT` repository secrets exist. Left: the owner
-  creates the `rolld6` Marketplace publisher and Open VSX namespace and adds those secrets;
-  then the first tagged release publishes it, and the getting-started guide and site can
-  point at the store listing.
+  by trusted publishing (the `rolld6` publisher and its policy for `release.yml` exist).
+  Left: the first tagged release publishes it; then point the getting-started guide and
+  the site at the store listing.
 - **mise installs from release binaries.** The release workflow attaches glibc tarballs
   (`d6-VERSION-linux-x86_64.tar.gz`, `-aarch64`) that `mise use -g
   github:diamond-language/d6` installs; CI smoke-tests them on Ubuntu 26.04 and Fedora 44.
@@ -259,6 +258,14 @@ example chips type a script in one line at a time, with comment lines as the exp
   untyped and typed, showing the error the typed version catches before it runs. The
   explanation: annotations take a little more thought and groundwork up front, but once they
   are in, they are a contract you no longer have to negotiate.
+
+### The VS Code extension on Open VSX
+
+VSCodium, Cursor, Windsurf, Gitpod and code-server install from Open VSX, not the
+Microsoft Marketplace. The release workflow already publishes there once an `OVSX_PAT`
+secret exists. Left: an Eclipse account linked to the publishing GitHub account, the
+signed Open VSX Publisher Agreement, an access token stored as `OVSX_PAT`, and the
+`rolld6` namespace (`npx ovsx create-namespace rolld6 -p TOKEN`).
 
 ### Self-hosted frontend
 
