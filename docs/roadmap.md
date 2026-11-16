@@ -222,6 +222,14 @@ What 1.x promises is in [compatibility](compatibility.md). Left open:
 
 ## Tooling and distribution
 
+### `facet install` progress output
+
+`facet install` prints nothing until package hash validation, and it takes long enough to
+get there that it looks hung. Unknown yet: whether that time is the network, or facet
+fetching every package before it reports anything. Find out where the time goes, then
+report each resolve and download step as it happens (and the size or progress of slow
+downloads), so a slow install still visibly moves.
+
 ### The REPL on the website
 
 The homepage REPL (marketing repo, `js/repl.js`, running the WebAssembly build) is the first
