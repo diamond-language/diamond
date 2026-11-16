@@ -39,9 +39,13 @@ didn't, `d6 build` prints the commands that install what it's missing.
 
 Each release also has `d6-VERSION-linux-x86_64.tar.gz` and `d6-VERSION-linux-aarch64.tar.gz`:
 the same programs as the packages, for the same CPUs, in a directory you can unpack anywhere.
-They run on current glibc distributions (Ubuntu 26.04, Fedora 44 and Arch are tested) with
-OpenSSL 3, SQLite, libpq, MariaDB Connector/C and zlib installed. [mise](https://mise.jdx.dev)
-installs d6 from them, with no plugin and no compiler:
+They run on current glibc distributions (Ubuntu 26.04 and Fedora 44 are tested) with
+OpenSSL 3 (`libssl.so.3`), SQLite, libpq, MariaDB Connector/C and zlib installed.
+Distributions that have moved to OpenSSL 4, such as Arch and Fedora 45, can run `d6` once
+their OpenSSL 3 compatibility package is installed (`openssl-3` on Arch, `openssl3-libs` on
+Fedora), but `d6 build` there links against OpenSSL 4 and isn't supported yet; build from
+source on those systems instead. [mise](https://mise.jdx.dev) installs d6 from the
+tarballs, with no plugin and no compiler:
 
 ```sh
 mise use -g github:diamond-language/d6
