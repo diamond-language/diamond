@@ -18,15 +18,9 @@ background. Further JIT work is optional and measurement-driven.
 
 Release work the owner wants done for 1.0.0:
 
-- **VS Code extension in the Marketplace.** `editors/vscode` packages as `rolld6.d6`; the
-  release workflow attaches the `.vsix` and publishes it to the Visual Studio Marketplace
-  by trusted publishing (the `rolld6` publisher and its policy for `release.yml` exist).
-  Left: the first tagged release publishes it; then point the getting-started guide and
-  the site at the store listing.
-- **mise installs from release binaries.** The release workflow attaches glibc tarballs
-  (`d6-VERSION-linux-x86_64.tar.gz`, `-aarch64`) that `mise use -g
-  github:diamond-language/d6` installs; CI smoke-tests them on Ubuntu 26.04 and Fedora 44.
-  Left: run that mise command against the first tagged release that has them.
+- **The site links the Marketplace extension.** rc7 published `rolld6.d6` and the guide
+  points at it; the website (marketing repository) should link the listing too, deployed
+  with 1.0.0.
 
 ## Candidate work
 
