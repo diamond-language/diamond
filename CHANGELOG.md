@@ -18,6 +18,16 @@ authoritative fine-grained record.
   report from an interim state says which one. Release packages and tarballs report the bare
   version.
 
+## 1.0.0-rc7 — 2026-11-16
+
+The seventh release candidate leaves the language and runtime as they were in rc6. It
+adds two ways to install d6 and is the first run of the full 1.0.0 release process.
+
+### Added
+
+- Each release attaches `d6-VERSION-linux-x86_64.tar.gz` and `-aarch64.tar.gz`: the packaged programs in a directory that can be unpacked anywhere, for glibc distributions with OpenSSL 3. `mise use -g github:diamond-language/d6` installs from them ([getting started](docs/getting-started.md#with-mise-or-unpacked-anywhere)).
+- The VS Code extension is published to the Visual Studio Marketplace as `rolld6.d6`, and each release attaches its `.vsix`.
+
 ## 1.0.0-rc6 — 2026-11-14
 
 The sixth release candidate makes negative literals, Float rounding to digits,

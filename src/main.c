@@ -23,7 +23,7 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
-static constexpr char DIAMOND_VERSION[] = "1.0.0-rc6";
+static constexpr char DIAMOND_VERSION[] = "1.0.0-rc7";
 
 /* A build from a git checkout reports which revision it is, so a report from an interim
  * state is not mistaken for the release: "1.0.0-rc6-3e4554d9abcd", with "-dirty" for
