@@ -12,7 +12,7 @@
 #   bash packaging/ci.sh tar
 #
 # `tar` builds the release tarball in ubuntu:26.04 like the .deb, then unpacks it in clean
-# Ubuntu, Fedora and Arch containers that have only the runtime libraries and what `d6
+# Ubuntu and Fedora containers that have only the runtime libraries and what `d6
 # build` needs, and runs packaging/tarball_smoke.sh there.
 #
 # Defaults: ubuntu:26.04 for deb, fedora:44 for rpm. CONTAINER selects the
@@ -52,13 +52,11 @@ mkdir -p "$out"
 
 if [[ "$format" == tar ]]; then
     images="ubuntu:26.04 fedora:44"
-    # Arch Linux publishes x86-64 images only.
-    [[ "$(uname -m)" == x86_64 ]] && images+=" archlinux:latest"
+    # Not Arch: it moved to OpenSSL 4 (libssl.so.4), and the tarball links libssl.so.3.
     for smoke_image in $images; do
         case "$smoke_image" in
             ubuntu:*) setup='apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y ca-certificates curl git gcc libc6-dev libssl-dev libsqlite3-dev libpq-dev libmariadb-dev libcrypt-dev zlib1g-dev' ;;
             fedora:*) setup='dnf install -y curl git gcc glibc-devel openssl-devel sqlite-devel libpq-devel mariadb-connector-c-devel libxcrypt-devel zlib-devel' ;;
-            archlinux:*) setup='pacman -Syu --noconfirm curl git gcc openssl sqlite postgresql-libs mariadb-libs libxcrypt zlib' ;;
         esac
         "$runtime" run --rm --security-opt label=disable -v "$out:/packages:ro" -v "$repo/packaging:/packaging:ro" \
             -v "$repo/packaging/portable_smoke.d6:/smoke.d6:ro" "$smoke_image" \

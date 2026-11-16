@@ -24,13 +24,10 @@ Release work the owner wants done for 1.0.0:
   creates the `rolld6` Marketplace publisher and Open VSX namespace and adds those secrets;
   then the first tagged release publishes it, and the getting-started guide and site can
   point at the store listing.
-- **mise installs from release binaries.** mise's registry only takes widely used tools
-  (thousands of stars), so `mise use d6` is out of reach; `mise use
-  github:diamond-language/d6` needs no registry, only release assets. Left: attach
-  glibc tarballs (`d6-VERSION-linux-x86_64.tar.gz`, `-aarch64`) laid out as an install
-  prefix (`bin/`, `lib/diamond/aot`), built like the packages, with libxcrypt linked
-  statically (its soname differs between Fedora and Ubuntu), smoke-tested on the
-  supported distros, and documented as an install path.
+- **mise installs from release binaries.** The release workflow attaches glibc tarballs
+  (`d6-VERSION-linux-x86_64.tar.gz`, `-aarch64`) that `mise use -g
+  github:diamond-language/d6` installs; CI smoke-tests them on Ubuntu 26.04 and Fedora 44.
+  Left: run that mise command against the first tagged release that has them.
 
 ## Candidate work
 
@@ -310,6 +307,13 @@ built and tested in CI but no longer attached to releases.
 - **Shipping the portable build again** -- it was attached to v0.29.0 and then withdrawn
   until its caveats are worked out: no JIT, baseline x86-64 ISA, no `d6 build`. The two
   items below are the main ones.
+
+- **Release tarballs for OpenSSL 4 distributions** -- the glibc tarballs link
+  `libssl.so.3`, so Arch and Fedora 45 need their OpenSSL 3 compatibility package, and `d6
+  build` there links the kit against OpenSSL 4. Linking OpenSSL and the other libraries
+  statically into the tarball and its build kit would fix both. It would also have to find
+  the CA bundle wherever the host keeps it, because the compiled-in OPENSSLDIR
+  (`/usr/lib/ssl` on Ubuntu) doesn't exist elsewhere.
 
 - **More distros and releases** -- Debian stable, Ubuntu LTS, older Fedora, openSUSE, Arch and
   Alpine. The obstacle is the compiler, not the package format. GCC 15 is needed only for
