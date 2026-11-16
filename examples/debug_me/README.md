@@ -48,7 +48,7 @@ build/d6 examples/debug_me/debug_me.d6 </dev/null
 ## Editor walkthrough
 
 Build the adapter with `make dap` and follow the
-[VS Code debugger setup](../../editors/vscode/README.md#debugging-dap).
+[VS Code debugger setup](../../editors/vscode/DEVELOPMENT.md#debugging-dap).
 Ensure the editor inherits `DIAMOND_BIN` pointing to the absolute path of
 `build/d6`, or has `d6` on its PATH. Set `diamond.debugAdapterPath`
 to the absolute path of `build/d6-dap`.

@@ -9,6 +9,11 @@
 # an image lags behind its updates.
 #
 #   bash packaging/ci.sh deb|rpm [IMAGE]
+#   bash packaging/ci.sh tar
+#
+# `tar` builds the release tarball in ubuntu:26.04 like the .deb, then unpacks it in clean
+# Ubuntu and Fedora containers that have only the runtime libraries and what `d6
+# build` needs, and runs packaging/tarball_smoke.sh there.
 #
 # Defaults: ubuntu:26.04 for deb, fedora:44 for rpm. CONTAINER selects the
 # runtime (default docker; podman works). Packages land in build/packages/FORMAT
@@ -20,13 +25,14 @@ format="${1:-}"
 case "$format" in
     deb) image="${2:-ubuntu:26.04}" ;;
     rpm) image="${2:-fedora:44}" ;;
-    *) echo "usage: packaging/ci.sh deb|rpm [IMAGE]" >&2; exit 64 ;;
+    tar) image=ubuntu:26.04 ;;
+    *) echo "usage: packaging/ci.sh deb|rpm [IMAGE] | tar" >&2; exit 64 ;;
 esac
 runtime="${CONTAINER:-docker}"
 repo="$(cd "$(dirname "$0")/.." && pwd)"
 version="$(sed -n 's/.*DIAMOND_VERSION\[\] = "\(.*\)";/\1/p' "$repo/src/main.c")"
 
-if [[ "$format" == deb ]]; then
+if [[ "$format" == deb || "$format" == tar ]]; then
     build_deps='apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y gcc make git dpkg-dev libssl-dev libsqlite3-dev libpq-dev zlib1g-dev libmariadb-dev libcrypt-dev'
     install_package='apt-get update && DEBIAN_FRONTEND=noninteractive apt-get upgrade -y && DEBIAN_FRONTEND=noninteractive apt-get install -y --install-recommends /packages/d6-lang_*.deb'
 else
@@ -43,6 +49,22 @@ mkdir -p "$out"
     bash -c "set -e; $build_deps >/dev/null; mkdir /work
         tar -C /src --exclude=./build --exclude='./reginold/*.o' --exclude='./reginold/*.a' -cf - . | tar -C /work -xf -
         bash /work/packaging/build.sh $format /out"
+
+if [[ "$format" == tar ]]; then
+    images="ubuntu:26.04 fedora:44"
+    # Not Arch: it moved to OpenSSL 4 (libssl.so.4), and the tarball links libssl.so.3.
+    for smoke_image in $images; do
+        case "$smoke_image" in
+            ubuntu:*) setup='apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y ca-certificates curl git gcc libc6-dev libssl-dev libsqlite3-dev libpq-dev libmariadb-dev libcrypt-dev zlib1g-dev' ;;
+            fedora:*) setup='dnf install -y curl git gcc glibc-devel openssl-devel sqlite-devel libpq-devel mariadb-connector-c-devel libxcrypt-devel zlib-devel' ;;
+        esac
+        "$runtime" run --rm --security-opt label=disable -v "$out:/packages:ro" -v "$repo/packaging:/packaging:ro" \
+            -v "$repo/packaging/portable_smoke.d6:/smoke.d6:ro" "$smoke_image" \
+            bash -c "set -e; $setup >/dev/null; sh /packaging/tarball_smoke.sh $version"
+        echo "tarball smoke passed on $smoke_image"
+    done
+    exit 0
+fi
 "$runtime" run --rm --security-opt label=disable -v "$out:/packages:ro" -v "$repo/packaging:/packaging:ro" "$image" \
     bash -c "set -e; $install_package >/dev/null; bash /packaging/smoke_test.sh $version"
 
