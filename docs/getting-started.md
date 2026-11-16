@@ -369,13 +369,11 @@ connections are in [databases](databases.md).
 
 `d6-lsp` gives diagnostics as you type, hover, go-to-definition,
 completion and formatting in any editor with a language-server client; point
-it at the binary over stdio. The VS Code extension isn't in the packages, so
-clone the repository and link it from there:
-
-```sh
-git clone https://github.com/diamond-language/d6.git
-ln -s "$PWD/diamond/editors/vscode" ~/.vscode/extensions/diamond-language
-```
+it at the binary over stdio. For VS Code, install the
+[d6 extension](https://marketplace.visualstudio.com/items?itemName=rolld6.d6) from the
+Marketplace (search for "d6" in the Extensions view, or run
+`code --install-extension rolld6.d6`). Each release also attaches it as `d6-vscode.vsix`,
+for editors that install from a file.
 
 [Language server](lsp.md), [the VS Code extension](../editors/vscode/README.md),
 and [debugging](debugging.md) with breakpoints through `d6-dap`.
