@@ -73,10 +73,12 @@ if [[ "$format" == tar ]]; then
     cp LICENSE README.md "$work/$root/"
     mapfile -t binaries < <(find "$work/$root/bin" -type f)
     strip --strip-unneeded "${binaries[@]}"
-    if readelf -d "${binaries[@]}" | grep -q "NEEDED.*libcrypt"; then
-        echo "packaging: the tarball's programs must not need a shared libcrypt" >&2
-        exit 1
-    fi
+    for binary in "${binaries[@]}"; do
+        if readelf -d "$binary" | grep -q "NEEDED.*\[libcrypt\.so"; then
+            echo "packaging: $binary needs a shared libcrypt; the tarball links it statically" >&2
+            exit 1
+        fi
+    done
     tar -C "$work" --owner=0 --group=0 -czf "$out/$root.tar.gz" "$root"
     echo "$out/$root.tar.gz"
 elif [[ "$format" == deb ]]; then
