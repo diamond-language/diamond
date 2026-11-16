@@ -11,8 +11,8 @@ set -euo pipefail
 
 format="${1:-}"
 case "$format" in
-    deb|rpm) ;;
-    *) echo "usage: packaging/build.sh deb|rpm [OUTPUT_DIR]" >&2; exit 64 ;;
+    deb|rpm|tar) ;;
+    *) echo "usage: packaging/build.sh deb|rpm|tar [OUTPUT_DIR]" >&2; exit 64 ;;
 esac
 repo="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$repo"
@@ -38,8 +38,13 @@ out="$(mkdir -p "${2:-build/packages}" && cd "${2:-build/packages}" && pwd)"
 # Two runs: `release` drives its own sub-make, which races with the tool
 # targets for shared generated files when both run in one parallel make.
 tools_flags="-O2 -g -DNDEBUG $march"
-make -j"$jobs" CC=gcc CFLAGS_RELEASE="-O3 -DNDEBUG $march" CFLAGS_DEBUG="$tools_flags" release
-make -j"$jobs" CC=gcc CFLAGS_DEBUG="$tools_flags" facet lsp dap
+# The tarball runs on distributions whose libcrypt sonames differ (libcrypt.so.1 on Debian
+# and Ubuntu, .so.2 on Fedora), so its programs link libxcrypt statically. The kit `make
+# install` copies still says -lcrypt: `d6 build` links against the machine it runs on.
+link_overrides=()
+[[ "$format" == tar ]] && link_overrides=(LDLIBS_CRYPT=-l:libcrypt.a)
+make -j"$jobs" CC=gcc CFLAGS_RELEASE="-O3 -DNDEBUG $march" CFLAGS_DEBUG="$tools_flags" "${link_overrides[@]}" release
+make -j"$jobs" CC=gcc CFLAGS_DEBUG="$tools_flags" "${link_overrides[@]}" facet lsp dap
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 stage="$work/stage"
@@ -58,7 +63,23 @@ package manager, the d6-lsp language server, the d6-dap debug adapter, and the
 runtime kit d6 build links standalone executables against. The former diamond,
 diamond-lsp and diamond-dap commands remain as links to them."
 
-if [[ "$format" == deb ]]; then
+if [[ "$format" == tar ]]; then
+    # An install prefix (bin/, lib/diamond/aot) under one top-level directory, for
+    # `mise use github:diamond-language/d6` or unpacking anywhere: d6 finds its kit relative
+    # to its own executable.
+    root="d6-${version}-linux-$(uname -m)"
+    mkdir "$work/$root"
+    cp -a "$stage/usr/." "$work/$root/"
+    cp LICENSE README.md "$work/$root/"
+    mapfile -t binaries < <(find "$work/$root/bin" -type f)
+    strip --strip-unneeded "${binaries[@]}"
+    if readelf -d "${binaries[@]}" | grep -q "NEEDED.*libcrypt"; then
+        echo "packaging: the tarball's programs must not need a shared libcrypt" >&2
+        exit 1
+    fi
+    tar -C "$work" --owner=0 --group=0 -czf "$out/$root.tar.gz" "$root"
+    echo "$out/$root.tar.gz"
+elif [[ "$format" == deb ]]; then
     doc="$stage/usr/share/doc/d6-lang"
     mkdir -p "$doc"
     cp LICENSE "$doc/copyright"
