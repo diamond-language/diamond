@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
-# Builds a .deb or .rpm holding diamond, facet, diamond-lsp, diamond-dap and the
-# AOT kit `diamond build` links against, installed under /usr.
+# Builds a .deb or .rpm holding d6, facet, d6-lsp, d6-dap and the AOT kit `d6
+# build` links against, installed under /usr, or a tarball with the same files
+# under one relocatable directory (bin/, lib/diamond/aot).
 #
-#   bash packaging/build.sh deb|rpm [OUTPUT_DIR]
+#   bash packaging/build.sh deb|rpm|tar [OUTPUT_DIR]
 #
 # Run it on the distribution the package is for: Ubuntu (with dpkg-dev) for a
-# .deb, Fedora (with rpm-build) for a .rpm. packaging/ci.sh does both in
-# containers. The build is a clean one: it runs `make clean` first.
+# .deb or the tarball, Fedora (with rpm-build) for a .rpm. packaging/ci.sh does
+# all three in containers. The build is a clean one: it runs `make clean` first.
 set -euo pipefail
 
 format="${1:-}"
