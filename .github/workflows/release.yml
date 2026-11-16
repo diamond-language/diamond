@@ -30,7 +30,7 @@ jobs:
   package:
     strategy:
       matrix:
-        format: [deb, rpm]
+        format: [deb, rpm, tar]
         runner: [ubuntu-latest, ubuntu-24.04-arm]
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
@@ -46,7 +46,7 @@ jobs:
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: ${{ matrix.format }}-${{ matrix.runner }}
-          path: build/packages/${{ matrix.format }}/*.${{ matrix.format }}
+          path: build/packages/${{ matrix.format }}/*.${{ matrix.format == 'tar' && 'tar.gz' || matrix.format }}
           if-no-files-found: error
 
   vscode:
@@ -100,4 +100,4 @@ jobs:
       - name: Create the release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: bash packaging/publish_release.sh "$TAG" packages/*.deb packages/*.rpm packages/*.vsix
+        run: bash packaging/publish_release.sh "$TAG" packages/*.deb packages/*.rpm packages/*.tar.gz packages/*.vsix
