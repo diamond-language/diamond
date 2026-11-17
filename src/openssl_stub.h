@@ -136,6 +136,8 @@ static inline SSL_SESSION *d2i_SSL_SESSION(SSL_SESSION **session, const unsigned
 }
 
 static inline void X509_free(X509 *certificate) { (void)certificate; }
+static inline const char *X509_get_default_cert_file(void) { return ""; }
+static inline const char *X509_get_default_cert_dir(void) { return ""; }
 static inline X509_NAME *X509_get_subject_name(const X509 *certificate) { (void)certificate; return nullptr; }
 static inline const char *X509_verify_cert_error_string(long code) { (void)code; return "TLS is not compiled into this build"; }
 static inline int X509_digest(const X509 *certificate, const EVP_MD *type, unsigned char *md,
