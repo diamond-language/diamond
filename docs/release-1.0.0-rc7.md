@@ -16,7 +16,7 @@ you can unpack anywhere, and run on current glibc distributions with OpenSSL 3.
 mise use -g github:diamond-language/d6
 ```
 
-[Getting started](getting-started.md#with-mise-or-unpacked-anywhere) lists what the
+[Getting started](getting-started.md#with-mise) lists what the
 tarballs need, and what to do on distributions that have moved to OpenSSL 4.
 
 ## The VS Code extension in the Marketplace

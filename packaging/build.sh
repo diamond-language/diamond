@@ -42,8 +42,16 @@ tools_flags="-O2 -g -DNDEBUG $march"
 # The tarball runs on distributions whose libcrypt sonames differ (libcrypt.so.1 on Debian
 # and Ubuntu, .so.2 on Fedora), so its programs link libxcrypt statically. The kit `make
 # install` copies still says -lcrypt: `d6 build` links against the machine it runs on.
+# OpenSSL is static too: Fedora 45 and Arch have moved to OpenSSL 4 (libssl.so.4) and
+# have no libssl.so.3. --exclude-libs keeps its symbols out of the dynamic symbol table:
+# libpq and libmariadb on the host load the host's own OpenSSL, and an exported SSL_*
+# definition in d6 would capture their calls. Ubuntu's libcrypto.a also needs libjitterentropy
+# and libzstd (`pkg-config --static --libs libcrypto`), which are linked statically with it.
+openssl_archives=(libssl.a libcrypto.a libjitterentropy.a libzstd.a)
+exclude_libs="-Wl,--exclude-libs,$(IFS=:; echo "${openssl_archives[*]}")"
+static_openssl="$exclude_libs ${openssl_archives[*]/#/-l:}"
 link_overrides=()
-[[ "$format" == tar ]] && link_overrides=(LDLIBS_CRYPT=-l:libcrypt.a)
+[[ "$format" == tar ]] && link_overrides=(LDLIBS_CRYPT=-l:libcrypt.a "OPENSSL_LIBS=$static_openssl")
 make -j"$jobs" CC=gcc CFLAGS_RELEASE="-O3 -DNDEBUG $march" CFLAGS_DEBUG="$tools_flags" "${link_overrides[@]}" release
 make -j"$jobs" CC=gcc CFLAGS_DEBUG="$tools_flags" "${link_overrides[@]}" facet lsp dap
 work="$(mktemp -d)"
@@ -72,11 +80,34 @@ if [[ "$format" == tar ]]; then
     mkdir "$work/$root"
     cp -a "$stage/usr/." "$work/$root/"
     cp LICENSE README.md "$work/$root/"
+    # `d6 build` links programs against the same static OpenSSL: the archives go in the kit,
+    # and link.args names them relative to it ({kit}/, expanded by d6), so building needs
+    # no OpenSSL development package and works on OpenSSL 4 systems.
+    kit="$work/$root/lib/diamond/aot"
+    kit_archives=""
+    for archive in "${openssl_archives[@]}"; do
+        cp "$(gcc -print-file-name="$archive")" "$kit/"
+        kit_archives+="\\n{kit}/$archive"
+    done
+    # -lssl and -lcrypto are adjacent lines; the first becomes the whole static set.
+    sed -i -e "s|^-lssl\$|$exclude_libs$kit_archives|" -e '/^-lcrypto$/d' "$kit/link.args"
+    grep -qx '{kit}/libcrypto.a' "$kit/link.args" && ! grep -qxE -- '-l(ssl|crypto)' "$kit/link.args" || {
+        echo "packaging: the kit's link.args does not name the static OpenSSL archives" >&2
+        exit 1
+    }
     mapfile -t binaries < <(find "$work/$root/bin" -type f)
     strip --strip-unneeded "${binaries[@]}"
     for binary in "${binaries[@]}"; do
         if readelf -d "$binary" | grep -q "NEEDED.*\[libcrypt\.so"; then
             echo "packaging: $binary needs a shared libcrypt; the tarball links it statically" >&2
+            exit 1
+        fi
+        if readelf -d "$binary" | grep -qE "NEEDED.*\[lib(ssl|crypto)\.so"; then
+            echo "packaging: $binary needs a shared OpenSSL; the tarball links it statically" >&2
+            exit 1
+        fi
+        if nm -D --defined-only "$binary" | grep -qE " (SSL|EVP|OPENSSL|CRYPTO|ZSTD|jent)_"; then
+            echo "packaging: $binary exports OpenSSL symbols" >&2
             exit 1
         fi
     done
