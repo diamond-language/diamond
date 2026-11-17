@@ -1,8 +1,8 @@
 # Changelog
 
-d6 is currently pre-release. This file records user-visible capability
-milestones rather than every implementation step; the Git history remains the
-authoritative fine-grained record.
+This file records user-visible capability milestones rather than every
+implementation step; the Git history remains the authoritative fine-grained
+record. From 1.0.0, releases follow the [1.x compatibility policy](docs/compatibility.md).
 
 ## Unreleased
 
@@ -17,6 +17,19 @@ authoritative fine-grained record.
   clean release tag (`d6 1.0.0-rc6-3d8eb74cab0f`, `-dirty` for uncommitted changes), so a bug
   report from an interim state says which one. Release packages and tarballs report the bare
   version.
+
+## 1.0.0 — 2026-11-16
+
+d6 1.0. The language, runtime and tools are those of 1.0.0-rc7, unchanged; what changes
+is the promise. From here on releases follow semantic versioning: patch releases carry
+only bug fixes and performance work, minor releases may add features, and nothing in 1.x
+breaks a program, project or cut that works on an earlier 1.x release
+([compatibility](docs/compatibility.md)).
+
+### Changed
+
+- Release candidates and betas are published as GitHub pre-releases, so the release marked
+  Latest, and the `latest` version for mise and asdf, is always an actual release.
 
 ## 1.0.0-rc7 — 2026-11-16
 
