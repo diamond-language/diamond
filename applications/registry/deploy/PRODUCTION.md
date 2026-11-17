@@ -5,7 +5,15 @@ The corrected A record is **142.93.192.149**. External health and catalog
 requests succeeded. Since 2026-09-25 nginx terminates TLS with certbot
 certificates (see "Proxy and certificates" below); Caddy was retired.
 
-Runtime revision: `3d8eb74cab0f35accf5fbe3ac76475034b1da24e` (main after the rc6 records, deployed
+Runtime revision: `91fdb43a2457d5c6d32947d7b271003d45a6a1bb` (tag v1.0.0 on `1.0`, deployed
+2026-11-17 UTC with `tools/deploy_registry.sh --force --revision=v1.0.0` after its dry run; the
+upgrade check reported OPTIONAL because only `src/main.c`, the version string, changed, and it
+was forced so production runs the release). Health ok, `DIAMOND_JIT=1` kept, and all 20 public
+cuts passed resolve, digest, load and reinstall; the verified pre-upgrade snapshot is
+`~/diamond-registry-backups/cutbackup-2026-11-16-174019-pre-91fdb43a`. No cut changed in 1.0.0,
+so none was published.
+
+Previous runtime revision: `3d8eb74cab0f35accf5fbe3ac76475034b1da24e` (main after the rc6 records, deployed
 2026-11-15 UTC with `tools/deploy_registry.sh --revision=3d8eb74c...` after its dry run; the
 upgrade check reported REQUIRED because the cuts it loads, its pages and facet changed). This is
 the 1.0.0-rc6 runtime plus facet's cuts.rolld6.codes default. Health ok, `DIAMOND_JIT=1` kept, and
