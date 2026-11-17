@@ -12,11 +12,12 @@
 #   bash packaging/ci.sh tar
 #
 # `tar` builds the release tarball in ubuntu:26.04 like the .deb, then unpacks it in clean
-# Ubuntu, Fedora (44 with OpenSSL 3, 45 with OpenSSL 4) and Arch containers that have only
+# Ubuntu, Fedora (44 with OpenSSL 3, 45 with OpenSSL 4) and Arch (x86-64 only) containers that have only
 # the runtime libraries and what `d6 build` needs, and runs packaging/tarball_smoke.sh there.
 # None of them has OpenSSL's development package: the tarball and its kit carry OpenSSL.
 #
-# Defaults: ubuntu:26.04 for deb, fedora:44 for rpm (the release also builds one in fedora:45). CONTAINER selects the
+# Defaults: ubuntu:26.04 for deb, fedora:44 for rpm (the release also builds one in
+# fedora:45). CONTAINER selects the
 # runtime (default docker; podman works). Packages land in build/packages/FORMAT
 # (one directory each: on a CI runner the container writes them as root, so a
 # later run in the same job could not clear the other format's files).
@@ -52,7 +53,9 @@ mkdir -p "$out"
         bash /work/packaging/build.sh $format /out"
 
 if [[ "$format" == tar ]]; then
-    images="ubuntu:26.04 fedora:44 fedora:45 archlinux:latest"
+    images="ubuntu:26.04 fedora:44 fedora:45"
+    # Arch publishes no arm64 image, so it is checked on x86-64 only.
+    [[ "$(uname -m)" == x86_64 ]] && images="$images archlinux:latest"
     for smoke_image in $images; do
         case "$smoke_image" in
             ubuntu:*) setup='apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y ca-certificates curl git gcc libc6-dev libsqlite3-dev libpq-dev libmariadb-dev libcrypt-dev zlib1g-dev' ;;

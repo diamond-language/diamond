@@ -78,18 +78,18 @@ A failed run means a native compiler change was not ported to
 
 ## Releases
 
-A release is a `vX.Y.Z` tag on `main`, pushed once the PR run for that exact tree
-passed; the version in `src/main.c` and a `## X.Y.Z` section in `CHANGELOG.md`
-must already match it. The push starts the `release` workflow. It builds the
-`.deb`, the Fedora 44 and 45 `.rpm`s and the tarball from the tagged tree on an x86-64 and an
-arm64 runner, installs each into a clean container of its distribution (the tarball into
-Ubuntu 26.04, Fedora 44, Fedora 45 and Arch) and runs the smoke test (`packaging/ci.sh`).
-Once all eight pass, `packaging/publish_release.sh` creates the GitHub release with every
-package attached and that changelog
-section as its notes. Only that last job has `contents: write`. It does not rerun the test matrix. To retry a failed run, use
-the workflow's manual dispatch with the tag; the release is updated in place,
-replacing files of the same name. Tags before 0.20 have no `packaging/` and
-cannot be published this way.
+A release is a `vX.Y.Z` tag, pushed once the PR run for that exact tree passed. It goes on
+`main`, or for a 1.0.x patch release on the `1.0` release branch. The version in
+`src/main.c` and a `## X.Y.Z` section in `CHANGELOG.md` must already match it. The push
+starts the `release` workflow. It builds the `.deb`, the Fedora 44 and 45 `.rpm`s and the
+tarball from the tagged tree on an x86-64 and an arm64 runner, installs each into a clean
+container of its distribution (the tarball into Ubuntu 26.04, Fedora 44 and Fedora 45, plus
+Arch on x86-64) and runs the smoke test (`packaging/ci.sh`). Once all eight jobs pass,
+`packaging/publish_release.sh` creates the GitHub release with every package attached and
+that changelog section as its notes. Only that last job has `contents: write`, and the
+workflow doesn't rerun the test matrix. To retry a failed run, use the workflow's manual
+dispatch with the tag; the release is updated in place, replacing files of the same name.
+Tags before 0.20 have no `packaging/` and can't be published this way.
 
 Between releases `main` carries the next minor version with a `-dev` suffix: right
 after tagging `vX.Y.0`, `src/main.c` (and the version `tests/run.sh` expects) moves

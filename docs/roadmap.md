@@ -293,9 +293,10 @@ Current coverage and the full inventory of checked platform assumptions:
 ### Cross-distro builds
 
 Current packages: [packaging](../packaging/) builds a `.deb` on Ubuntu 26.04 and an `.rpm` each
-on Fedora 44 and 45, for x86-64 and arm64. Each runs only on the distro release it was built
-on: Fedora 45 moved to OpenSSL 4, so the Fedora 44 package does not install there. The
-tarballs link OpenSSL statically and cover other glibc distributions. The portable static build ([deployment](deployment.md#the-portable-d6)) is
+on Fedora 44 and 45, for x86-64 and arm64. Each package runs only on the distro release it
+was built on: Fedora 45 moved to OpenSSL 4, so the Fedora 44 package doesn't install there.
+The tarballs link OpenSSL statically and cover other glibc distributions. The portable static
+build ([deployment](deployment.md#the-portable-d6)) is
 built and tested in CI but no longer attached to releases.
 
 - **Shipping the portable build again** -- it was attached to v0.29.0 and then withdrawn
