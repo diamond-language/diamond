@@ -56,8 +56,8 @@ These may change in any release:
   VM's native entry points are the implementation, not a library interface.
   No release installs a header or a shared library to embed.
 - **Tuning and diagnostic variables,** such as `DIAMOND_JIT_THRESHOLD`,
-  `DIAMOND_STRESS_GC` and the `DIAMOND_TRACE_*` family. `DIAMOND_JIT=1`, which
-  turns the JIT on, is stable.
+  `DIAMOND_STRESS_GC` and the `DIAMOND_TRACE_*` family. The one exception is
+  `DIAMOND_JIT=1`, which turns the JIT on: that variable is stable.
 - **The self-hosted compiler** under `selfhost/`. It is a test oracle for the
   native compiler, not a supported frontend.
 - **The debugger and language server protocols** beyond what their editors use:

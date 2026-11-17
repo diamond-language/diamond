@@ -12,10 +12,12 @@
 #   bash packaging/ci.sh tar
 #
 # `tar` builds the release tarball in ubuntu:26.04 like the .deb, then unpacks it in clean
-# Ubuntu and Fedora containers that have only the runtime libraries and what `d6
-# build` needs, and runs packaging/tarball_smoke.sh there.
+# Ubuntu, Fedora (44 with OpenSSL 3, 45 with OpenSSL 4) and Arch (x86-64 only) containers that have only
+# the runtime libraries and what `d6 build` needs, and runs packaging/tarball_smoke.sh there.
+# None of them has OpenSSL's development package: the tarball and its kit carry OpenSSL.
 #
-# Defaults: ubuntu:26.04 for deb, fedora:44 for rpm. CONTAINER selects the
+# Defaults: ubuntu:26.04 for deb, fedora:44 for rpm (the release also builds one in
+# fedora:45). CONTAINER selects the
 # runtime (default docker; podman works). Packages land in build/packages/FORMAT
 # (one directory each: on a CI runner the container writes them as root, so a
 # later run in the same job could not clear the other format's files).
@@ -33,7 +35,7 @@ repo="$(cd "$(dirname "$0")/.." && pwd)"
 version="$(sed -n 's/.*DIAMOND_VERSION\[\] = "\(.*\)";/\1/p' "$repo/src/main.c")"
 
 if [[ "$format" == deb || "$format" == tar ]]; then
-    build_deps='apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y gcc make git dpkg-dev libssl-dev libsqlite3-dev libpq-dev zlib1g-dev libmariadb-dev libcrypt-dev'
+    build_deps='apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y gcc make git dpkg-dev libssl-dev libsqlite3-dev libpq-dev zlib1g-dev libmariadb-dev libcrypt-dev libzstd-dev libjitterentropy3-dev'
     install_package='apt-get update && DEBIAN_FRONTEND=noninteractive apt-get upgrade -y && DEBIAN_FRONTEND=noninteractive apt-get install -y --install-recommends /packages/d6-lang_*.deb'
 else
     build_deps='dnf install -y gcc make git rpm-build openssl-devel sqlite-devel libpq-devel mariadb-connector-c-devel libxcrypt-devel zlib-devel'
@@ -51,12 +53,14 @@ mkdir -p "$out"
         bash /work/packaging/build.sh $format /out"
 
 if [[ "$format" == tar ]]; then
-    images="ubuntu:26.04 fedora:44"
-    # Not Arch: it moved to OpenSSL 4 (libssl.so.4), and the tarball links libssl.so.3.
+    images="ubuntu:26.04 fedora:44 fedora:45"
+    # Arch publishes no arm64 image, so it is checked on x86-64 only.
+    [[ "$(uname -m)" == x86_64 ]] && images="$images archlinux:latest"
     for smoke_image in $images; do
         case "$smoke_image" in
-            ubuntu:*) setup='apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y ca-certificates curl git gcc libc6-dev libssl-dev libsqlite3-dev libpq-dev libmariadb-dev libcrypt-dev zlib1g-dev' ;;
-            fedora:*) setup='dnf install -y curl git gcc glibc-devel openssl-devel sqlite-devel libpq-devel mariadb-connector-c-devel libxcrypt-devel zlib-devel' ;;
+            ubuntu:*) setup='apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y ca-certificates curl git gcc libc6-dev libsqlite3-dev libpq-dev libmariadb-dev libcrypt-dev zlib1g-dev' ;;
+            fedora:*) setup='dnf install -y curl git gcc glibc-devel sqlite-devel libpq-devel mariadb-connector-c-devel libxcrypt-devel zlib-devel' ;;
+            archlinux:*) setup='pacman -Syu --noconfirm curl git gcc sqlite postgresql-libs mariadb-libs libxcrypt zlib' ;;
         esac
         "$runtime" run --rm --security-opt label=disable -v "$out:/packages:ro" -v "$repo/packaging:/packaging:ro" \
             -v "$repo/packaging/portable_smoke.d6:/smoke.d6:ro" "$smoke_image" \

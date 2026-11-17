@@ -7,58 +7,120 @@ depth. To try the language before installing anything, use the REPL at
 
 ## 1. Install
 
+There are four ways to install d6, and each gives you the same four programs: `d6`, `facet`,
+`d6-lsp` and `d6-dap`. They differ in where they run, what they need and how you upgrade.
+
+|                     | Package (.rpm, .deb)             | mise, prebuilt                   | mise, asdf plugin             | From source                   |
+|---------------------|----------------------------------|----------------------------------|-------------------------------|-------------------------------|
+| Runs on             | Fedora 44 and 45, Ubuntu 26.04   | Linux with glibc 2.38 or later   | wherever d6 builds            | Linux, macOS, FreeBSD, Alpine |
+| Installs            | system-wide, as root             | per user                         | per user                      | in a prefix of your choice    |
+| Libraries           | installed by apt or dnf          | four shared libraries (below)    | development packages (below)  | development packages (below)  |
+| C compiler          | only for `d6 build`              | only for `d6 build`              | GCC 15+ or Clang 19+          | GCC 15+ or Clang 19+          |
+| New release         | when you download it             | 24 hours after it's published    | as soon as it's tagged        | as soon as it's tagged        |
+| Several versions    | no, one per system               | yes, pinned per project          | yes, plus `main`              | one per checkout              |
+| Upgrade             | install the next release's package | `mise upgrade`                 | `mise upgrade` (rebuilds)     | `git pull` and rebuild        |
+| Machine code        | x86-64-v3, or any 64-bit ARM     | x86-64-v3, or any 64-bit ARM     | tuned to your CPU             | tuned to your CPU             |
+
+A package is the simplest choice on Fedora and Ubuntu. Use mise to install without root, to
+keep several versions, or to pin a version per project. Build from source on other systems
+or for an unreleased version.
+
 ### From a package
 
-Each [release](https://github.com/diamond-language/d6/releases) has a
-`.deb` for Ubuntu 26.04 and an `.rpm` for Fedora 44, for x86-64 CPUs with
-AVX2 (x86-64-v3: Intel Haswell, AMD Excavator and later) and for any 64-bit
-ARM CPU (`arm64` and `aarch64` in the file names). Download the one for your
-system from the
-[latest release](https://github.com/diamond-language/d6/releases/latest)
-and install it:
+Each [release](https://github.com/diamond-language/d6/releases) has a `.deb` for Ubuntu
+26.04 and an `.rpm` each for Fedora 44 and Fedora 45 (`fc44` and `fc45` in the file names).
+Each is built for x86-64 CPUs with AVX2 (x86-64-v3: Intel Haswell, AMD Excavator and later)
+and for any 64-bit ARM CPU (`arm64` and `aarch64` in the file names). Download the one for your
+system from the [latest release](https://github.com/diamond-language/d6/releases/latest) and
+install it:
 
 ```sh
 # Ubuntu 26.04
 sudo apt update && sudo apt upgrade
-sudo apt install ~/Downloads/d6-lang_1.0.0-1_amd64.deb
-sudo apt install ~/Downloads/d6-lang_1.0.0-1_arm64.deb     # 64-bit ARM
+sudo apt install ~/Downloads/d6-lang_1.0.1-1_amd64.deb
+sudo apt install ~/Downloads/d6-lang_1.0.1-1_arm64.deb     # 64-bit ARM
 
-# Fedora 44
+# Fedora 45 (for Fedora 44, the fc44 file)
 sudo dnf upgrade
-sudo dnf install ~/Downloads/d6-lang-1.0.0-1.fc44.x86_64.rpm
-sudo dnf install ~/Downloads/d6-lang-1.0.0-1.fc44.aarch64.rpm   # 64-bit ARM
+sudo dnf install ~/Downloads/d6-lang-1.0.1-1.fc45.x86_64.rpm
+sudo dnf install ~/Downloads/d6-lang-1.0.1-1.fc45.aarch64.rpm   # 64-bit ARM
 ```
 
-The package puts `d6`, `facet`, `d6-lsp` and `d6-dap` in
-`/usr/bin`. It recommends `gcc` and the libraries' development packages, which
-only `d6 build` needs. apt and dnf install recommendations by default, but
-skip any that would need an installed package upgraded, so upgrade first. If you
-didn't, `d6 build` prints the commands that install what it's missing.
+The package puts `d6`, `facet`, `d6-lsp` and `d6-dap` in `/usr/bin`, and apt or dnf
+installs the libraries they use. It recommends `gcc` and the libraries' development packages,
+which only `d6 build` needs. apt and dnf install recommendations by default, but skip any that
+would need an installed package upgraded, so upgrade first. If you didn't, `d6 build` prints
+the commands that install what it's missing.
 
-### With mise, or unpacked anywhere
+Each package is built for one distribution release and links that release's libraries, so it
+isn't supported on other releases, newer ones included; use mise or a source build there.
+There is no apt or dnf repository yet, so you upgrade by installing the next release's
+package.
 
-Each release also has `d6-VERSION-linux-x86_64.tar.gz` and `d6-VERSION-linux-aarch64.tar.gz`:
-the same programs as the packages, for the same CPUs, in a directory you can unpack anywhere.
-They run on current glibc distributions (Ubuntu 26.04 and Fedora 44 are tested) with
-OpenSSL 3 (`libssl.so.3`), SQLite, libpq, MariaDB Connector/C and zlib installed.
-Distributions that have moved to OpenSSL 4, such as Arch and Fedora 45, can run `d6` once
-their OpenSSL 3 compatibility package is installed (`openssl-3` on Arch, `openssl3-libs` on
-Fedora), but `d6 build` there links against OpenSSL 4 and isn't supported yet; build from
-source on those systems instead. [mise](https://mise.jdx.dev) installs d6 from the
-tarballs, with no plugin and no compiler:
+### With mise
+
+[mise](https://mise.jdx.dev) installs d6 per user, keeps several versions side by side, and
+can pin one per project in a `mise.toml`. It can install d6 two ways.
+
+**Prebuilt.** mise downloads the release tarball for your CPU. There is no plugin to add, and
+nothing is compiled:
 
 ```sh
 mise use -g github:diamond-language/d6
 ```
 
-Without mise, unpack the tarball and put its `bin/` on your `PATH`. Either way, `d6 build`
-still needs `gcc` and the development packages listed under "From source" below.
+It needs Linux on x86-64 (x86-64-v3, as for the packages) or 64-bit ARM, glibc 2.38 or
+later (Ubuntu 24.04, Fedora 39, Debian 13 and later), and four shared libraries: SQLite,
+libpq, MariaDB Connector/C and zlib:
+
+```sh
+sudo dnf install sqlite-libs libpq mariadb-connector-c zlib-ng-compat   # Fedora
+sudo apt install libsqlite3-0 libpq5 libmariadb3 zlib1g                 # Ubuntu
+sudo pacman -S sqlite postgresql-libs mariadb-libs zlib                 # Arch
+```
+
+OpenSSL and libcrypt are built into the programs, so the tarball works the same on
+distributions with OpenSSL 3 and with OpenSSL 4 (Fedora 45, Arch). Every release is tested
+on Ubuntu 26.04, Fedora 44 and Fedora 45, and on Arch for x86-64.
+
+Things to know about the prebuilt route:
+
+- mise holds back any version published less than 24 hours ago (its `minimum_release_age`
+  setting), so `latest` gives the previous release for the first day. Name the version to get
+  it at once (`mise use -g github:diamond-language/d6@1.0.1`), or set
+  `MISE_MINIMUM_RELEASE_AGE=0` for one command.
+- `latest` is never a release candidate. Ask for one by its full version.
+- `d6 build` compiles and links your program with `gcc`, so it needs `gcc` and the development
+  packages of SQLite, libpq, MariaDB Connector/C, libcrypt and zlib: the "From source" list
+  below without OpenSSL, which the tarball carries.
+
+**asdf plugin.** The [asdf-diamond](https://github.com/diamond-language/asdf-diamond) plugin
+builds the release from source on your machine:
+
+```sh
+mise plugins install d6 https://github.com/diamond-language/asdf-diamond.git
+mise use -g d6@latest
+```
+
+It needs everything "From source" lists below, plus `curl` and `tar`, and each install compiles
+for a few minutes. In return it works wherever d6 builds, including systems the tarball doesn't
+cover. It has a release as soon as the tag exists, and the programs it builds are tuned to your
+CPU (the release build uses `-march=native`). `mise install d6@ref:main` builds the current `main` beside
+the releases. `mise upgrade` skips `ref:` installs, so refresh one with
+`mise install -f d6@ref:main`.
+
+### Unpacked anywhere
+
+The prebuilt route installs the release's `d6-VERSION-linux-x86_64.tar.gz` or
+`d6-VERSION-linux-aarch64.tar.gz`. Without mise, download the one for your CPU, unpack it
+anywhere and put its `bin/` on your `PATH`. It has the requirements listed above, and `d6`
+finds the rest of the tarball relative to itself.
 
 ### From source
 
-On other systems, or for an unreleased version, build from source. You need GCC 15+ or Clang 19+ (d6 is C23),
-`make`, `git`, and the development headers for OpenSSL, SQLite, PostgreSQL
-(libpq), MariaDB Connector/C, zlib and libcrypt. On Fedora and Ubuntu:
+On other systems, or for an unreleased version, build from source. You need GCC 15+ or
+Clang 19+ (d6 is C23), `make`, `git`, and the development headers for OpenSSL (3 or 4),
+SQLite, PostgreSQL (libpq), MariaDB Connector/C, zlib and libcrypt. On Fedora and Ubuntu:
 
 ```sh
 # Fedora
@@ -87,14 +149,11 @@ This puts `d6`, `facet`, `d6-lsp` and `d6-dap` in
 `~/.local/bin` (add it to your `PATH` if it is not there already), plus the kit
 `d6 build` links executables with in `~/.local/lib/diamond`.
 
-Either way, check it:
+However you installed it, check it:
 
 ```sh
-d6 --version     # d6 1.0.0
+d6 --version     # d6 1.0.1
 ```
-
-The [asdf-diamond](https://github.com/diamond-language/asdf-diamond) plugin
-does the same build for asdf or mise users.
 
 ## 2. The REPL
 
