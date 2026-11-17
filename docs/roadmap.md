@@ -14,14 +14,6 @@ Broader reliability work waits for usage beyond the current two users; existing 
 remains required. Package development prioritizes Mjolnir, with ActiveRecord in the
 background. Further JIT work is optional and measurement-driven.
 
-## Before 1.0.0
-
-Release work the owner wants done for 1.0.0:
-
-- **The site links the Marketplace extension.** rc7 published `rolld6.d6` and the guide
-  points at it; the website (marketing repository) should link the listing too, deployed
-  with 1.0.0.
-
 ## Candidate work
 
 These are possible next steps, not commitments. Start with a measured need or
