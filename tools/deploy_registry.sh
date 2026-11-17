@@ -5,7 +5,8 @@
 #
 #   tools/deploy_registry.sh [--force] [--dry-run] [--no-verify] [--revision=REF]
 #
-# --revision=REF deploys a tag or commit already on origin/main (a release tag, say) instead
+# --revision=REF deploys a tag or commit already on origin/main or a release branch such as
+# origin/1.0 (a release tag, say) instead
 # of HEAD; this script, the VM build flags and upgrade.sh still come from this checkout.
 # By default it stops when tools/registry_needs_upgrade.d6 says NONE or OPTIONAL;
 # --force upgrades anyway. --dry-run prints every mutating command instead of
@@ -44,9 +45,14 @@ vm() {
 }
 
 git diff --quiet && git diff --cached --quiet || { echo "commit or stash tracked changes first" >&2; exit 1; }
-git fetch -q origin main
+git fetch -q origin
 revision=$(git rev-parse --verify "$ref^{commit}") || { echo "unknown revision $ref" >&2; exit 64; }
-git merge-base --is-ancestor "$revision" origin/main || { echo "$ref is not on origin/main; deploy merged code only" >&2; exit 1; }
+# Merged code only: main, or a release branch such as 1.0 (where release tags live).
+merged=
+for branch in $(git for-each-ref --format='%(refname)' refs/remotes/origin/main 'refs/remotes/origin/[0-9]*'); do
+    git merge-base --is-ancestor "$revision" "$branch" && { merged=$branch; break; }
+done
+[[ -n $merged ]] || { echo "$ref is not on origin/main or a release branch; deploy merged code only" >&2; exit 1; }
 short=${revision:0:8}
 
 echo "== is an upgrade needed?"
