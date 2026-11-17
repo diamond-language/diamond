@@ -269,21 +269,15 @@ Current coverage and the full inventory of checked platform assumptions:
 
 ### Cross-distro builds
 
-Current packages: [packaging](../packaging/) builds one `.deb` on Ubuntu 26.04 and one `.rpm`
-on Fedora 44, for x86-64 and arm64. Each runs only on the distro release it was built on, or
-newer. The portable static build ([deployment](deployment.md#the-portable-d6)) is
+Current packages: [packaging](../packaging/) builds a `.deb` on Ubuntu 26.04 and an `.rpm` each
+on Fedora 44 and 45, for x86-64 and arm64. Each runs only on the distro release it was built
+on: Fedora 45 moved to OpenSSL 4, so the Fedora 44 package does not install there. The
+tarballs link OpenSSL statically and cover other glibc distributions. The portable static build ([deployment](deployment.md#the-portable-d6)) is
 built and tested in CI but no longer attached to releases.
 
 - **Shipping the portable build again** -- it was attached to v0.29.0 and then withdrawn
   until its caveats are worked out: no JIT, baseline x86-64 ISA, no `d6 build`. The two
   items below are the main ones.
-
-- **Release tarballs for OpenSSL 4 distributions** -- the glibc tarballs link
-  `libssl.so.3`, so Arch and Fedora 45 need their OpenSSL 3 compatibility package, and `d6
-  build` there links the kit against OpenSSL 4. Linking OpenSSL and the other libraries
-  statically into the tarball and its build kit would fix both. It would also have to find
-  the CA bundle wherever the host keeps it, because the compiled-in OPENSSLDIR
-  (`/usr/lib/ssl` on Ubuntu) doesn't exist elsewhere.
 
 - **More distros and releases** -- Debian stable, Ubuntu LTS, older Fedora, openSUSE, Arch and
   Alpine. The obstacle is the compiler, not the package format. GCC 15 is needed only for

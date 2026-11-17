@@ -1,8 +1,8 @@
 name: release
 
-# Pushing a vX.Y.Z tag builds the .deb and .rpm from the tagged tree on x86-64
-# and on arm64 hardware, installs each into a clean container and smoke-tests it
-# (packaging/ci.sh). Then it creates the GitHub release with all four packages
+# Pushing a vX.Y.Z tag builds the .deb, the .rpms (Fedora 44 and 45) and the tarball from
+# the tagged tree on x86-64 and on arm64 hardware, installs each into a clean container and
+# smoke-tests it (packaging/ci.sh). Then it creates the GitHub release with every package
 # attached and the changelog section as its notes. Nothing is published unless
 # every package passed. The portable static tools (tools/build_portable.sh) are
 # built and tested by ci.yml but not attached until their limits are resolved. A
@@ -30,8 +30,12 @@ jobs:
   package:
     strategy:
       matrix:
-        format: [deb, rpm, tar]
         runner: [ubuntu-latest, ubuntu-24.04-arm]
+        package:
+          - {format: deb, image: 'ubuntu:26.04', name: deb}
+          - {format: rpm, image: 'fedora:44', name: rpm-fc44}
+          - {format: rpm, image: 'fedora:45', name: rpm-fc45}
+          - {format: tar, image: '', name: tar}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
     steps:
@@ -39,14 +43,14 @@ jobs:
         with:
           ref: refs/tags/${{ inputs.tag || github.ref_name }}
           fetch-depth: 1
-      - name: Build, install and smoke-test the ${{ matrix.format }}
+      - name: Build, install and smoke-test the ${{ matrix.package.name }}
         env:
           GH_TOKEN: ${{ github.token }}
-        run: bash packaging/ci.sh ${{ matrix.format }}
+        run: bash packaging/ci.sh ${{ matrix.package.format }} ${{ matrix.package.image }}
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
-          name: ${{ matrix.format }}-${{ matrix.runner }}
-          path: build/packages/${{ matrix.format }}/*.${{ matrix.format == 'tar' && 'tar.gz' || matrix.format }}
+          name: ${{ matrix.package.name }}-${{ matrix.runner }}
+          path: build/packages/${{ matrix.package.format }}/*.${{ matrix.package.format == 'tar' && 'tar.gz' || matrix.package.format }}
           if-no-files-found: error
 
   vscode:

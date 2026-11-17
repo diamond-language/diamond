@@ -81,10 +81,11 @@ A failed run means a native compiler change was not ported to
 A release is a `vX.Y.Z` tag on `main`, pushed once the PR run for that exact tree
 passed; the version in `src/main.c` and a `## X.Y.Z` section in `CHANGELOG.md`
 must already match it. The push starts the `release` workflow. It builds the
-`.deb` and `.rpm` from the tagged tree on an x86-64 and an arm64 runner, installs
-each into a clean Ubuntu 26.04 or Fedora 44 container and runs the package smoke
-test (`packaging/ci.sh`). Once all four pass, `packaging/publish_release.sh`
-creates the GitHub release with the four packages attached and that changelog
+`.deb`, the Fedora 44 and 45 `.rpm`s and the tarball from the tagged tree on an x86-64 and an
+arm64 runner, installs each into a clean container of its distribution (the tarball into
+Ubuntu 26.04, Fedora 44, Fedora 45 and Arch) and runs the smoke test (`packaging/ci.sh`).
+Once all eight pass, `packaging/publish_release.sh` creates the GitHub release with every
+package attached and that changelog
 section as its notes. Only that last job has `contents: write`. It does not rerun the test matrix. To retry a failed run, use
 the workflow's manual dispatch with the tag; the release is updated in place,
 replacing files of the same name. Tags before 0.20 have no `packaging/` and

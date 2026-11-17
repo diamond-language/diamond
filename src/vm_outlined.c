@@ -112,6 +112,30 @@ static void *mysql_connect_thread(void *argument) {
 #define HELPER_DONE do { *ip_ref=ip; return DIAMOND_VM_OK; } while (false)
 
 
+/* OpenSSL finds the system trust store under the OPENSSLDIR it was built with. The release
+ * tarball links a static OpenSSL built on Ubuntu (/usr/lib/ssl), a directory Fedora, Arch and
+ * openSUSE do not have. When neither the compiled-in bundle nor directory exists and
+ * $SSL_CERT_FILE/$SSL_CERT_DIR are unset, this loads the first bundle a distribution keeps
+ * (the list Go's crypto/x509 checks). A build linked against the system OpenSSL never gets
+ * past the first checks. */
+static void tls_load_host_trust_store(SSL_CTX *context) {
+    if(getenv("SSL_CERT_FILE")!=nullptr||getenv("SSL_CERT_DIR")!=nullptr) return;
+    if(access(X509_get_default_cert_file(),R_OK)==0||access(X509_get_default_cert_dir(),X_OK)==0) return;
+    static const char *const bundles[]={
+        "/etc/ssl/certs/ca-certificates.crt",                /* Debian, Ubuntu, Arch, Gentoo */
+        "/etc/pki/tls/certs/ca-bundle.crt",                  /* Fedora, RHEL */
+        "/etc/ssl/ca-bundle.pem",                            /* openSUSE */
+        "/etc/pki/tls/cacert.pem",                           /* OpenELEC */
+        "/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem", /* CentOS, RHEL 7 */
+        "/etc/ssl/cert.pem",                                 /* Alpine */
+    };
+    for(size_t i=0;i<sizeof bundles/sizeof bundles[0];i++) {
+        if(access(bundles[i],R_OK)!=0) continue;
+        if(SSL_CTX_load_verify_locations(context,bundles[i],nullptr)==1) return;
+        ERR_clear_error();
+    }
+}
+
 /* Creates and configures TLSSocket.connect's client SSL_CTX from its options: peer verification
  * against the system or a custom trust store, an optional client certificate, ALPN and client-side
  * session caching. On failure frees the context and returns the status. Part of
@@ -153,6 +177,8 @@ static DiamondVmStatus tls_client_context_helper(DiamondVm *vm,const DiamondSock
             "cannot load system TLS trust store: %s",detail);
         SSL_CTX_free(context);
         VM_RETURN(DIAMOND_VM_IO_ERROR);
+    } else {
+        tls_load_host_trust_store(context);
     }
     /* Mutual TLS: a client certificate/key pair presented to
      * a server that requests one (RECOMMENDED: only offered

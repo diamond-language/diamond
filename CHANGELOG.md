@@ -6,6 +6,25 @@ record. From 1.0.0, releases follow the [1.x compatibility policy](docs/compatib
 
 ## Unreleased
 
+## 1.0.1 — 2026-11-17
+
+Installation fixes for distributions on OpenSSL 4, such as Fedora 45 and Arch. The language
+is unchanged ([release notes](docs/release-1.0.1.md)).
+
+### Fixed
+
+- Each release has an `.rpm` for Fedora 45 as well as Fedora 44. The Fedora 44 package
+  needs `libssl.so.3`, which Fedora 45 doesn't have.
+- The Linux tarballs, and so `mise use -g github:diamond-language/d6`, link OpenSSL
+  statically and run on OpenSSL 4 distributions. `d6 build` from a tarball links the same
+  static OpenSSL and no longer needs OpenSSL's development package.
+- `TLSSocket.connect` finds the system CA bundle on distributions other than the one d6's
+  OpenSSL was built on (the usual bundle paths, when OpenSSL's compiled-in directory doesn't
+  exist and `$SSL_CERT_FILE`/`$SSL_CERT_DIR` are unset).
+- [Getting started](docs/getting-started.md#1-install) lists exactly what each way of
+  installing needs (package, mise prebuilt, mise with the asdf plugin, source) and how they
+  compare.
+
 ## 1.0.0 — 2026-11-16
 
 d6 1.0. The language, runtime and tools are those of 1.0.0-rc7, unchanged; what changes
@@ -26,7 +45,7 @@ adds two ways to install d6 and is the first run of the full 1.0.0 release proce
 
 ### Added
 
-- Each release attaches `d6-VERSION-linux-x86_64.tar.gz` and `-aarch64.tar.gz`: the packaged programs in a directory that can be unpacked anywhere, for glibc distributions with OpenSSL 3. `mise use -g github:diamond-language/d6` installs from them ([getting started](docs/getting-started.md#with-mise-or-unpacked-anywhere)).
+- Each release attaches `d6-VERSION-linux-x86_64.tar.gz` and `-aarch64.tar.gz`: the packaged programs in a directory that can be unpacked anywhere, for glibc distributions with OpenSSL 3. `mise use -g github:diamond-language/d6` installs from them ([getting started](docs/getting-started.md#with-mise)).
 - The VS Code extension is published to the Visual Studio Marketplace as `rolld6.d6`, and each release attaches its `.vsix`.
 
 ## 1.0.0-rc6 — 2026-11-14

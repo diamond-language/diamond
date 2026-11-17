@@ -21,7 +21,7 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
-static constexpr char DIAMOND_VERSION[] = "1.0.0";
+static constexpr char DIAMOND_VERSION[] = "1.0.1";
 
 /* Appended to --version output. The default `make` target is an unoptimized
  * debug build (so are `make sanitize`/`make tsan`), which runs Diamond code
@@ -538,6 +538,10 @@ static int run_kit_aot_build(const char *kit, const char *embed_path,
     char *args[MAX_ARGS];
     size_t count = 0;
     char *cc_text = nullptr, *compile_text = nullptr, *link_text = nullptr;
+    /* link.args lines that start with {kit}/ name a file inside the kit (the release tarball
+     * ships static OpenSSL archives there); each becomes an allocated absolute path. */
+    char *kit_files[MAX_ARGS];
+    size_t kit_file_count = 0;
     /* --lto links the kit's second runtime (fat LTO objects at -O3, `make aot-kit AOT_LTO=1`),
      * compiled with its own flags; the compiler then optimises runtime and program together. */
     char *runtime = kit_path(kit, lto ? "libdiamond-aot-lto.a" : "libdiamond-aot.a");
@@ -564,9 +568,17 @@ static int run_kit_aot_build(const char *kit, const char *embed_path,
     args[count++] = (char *)embed_path;
     args[count++] = runtime;
     args[count++] = reginold;
+    const size_t link_start = count;
     if (!append_kit_lines(kit, "link.args", args, &count, MAX_ARGS - 2, &link_text)) {
         fprintf(stderr, "d6: AOT kit '%s' is incomplete\n", kit);
         goto done;
+    }
+    for (size_t i = link_start; i < count; i++) {
+        if (strncmp(args[i], "{kit}/", 6) != 0) continue;
+        char *path = kit_path(kit, args[i] + 6);
+        if (path == nullptr) goto done;
+        kit_files[kit_file_count++] = path;
+        args[i] = path;
     }
     args[count++] = (char *)"-o";
     args[count++] = (char *)output_path;
@@ -588,6 +600,7 @@ done:
     free(cc_text);
     free(compile_text);
     free(link_text);
+    for (size_t i = 0; i < kit_file_count; i++) free(kit_files[i]);
     free(runtime);
     free(reginold);
     return result;
