@@ -71,5 +71,11 @@ first=$(git -C "$repo" rev-parse HEAD)
 expect "revision on main" "$(deploy 20 --dry-run --revision="$first")" 0 "+ tools/build_registry_vm.sh $work/backups/registry-bundle-${first:0:12} $first"
 expect "HEAD not on main" "$(deploy 20 --dry-run)" 1 "HEAD is not on origin/main"
 expect "unknown revision" "$(deploy 20 --dry-run --revision=no-such-ref)" 64 "unknown revision no-such-ref"
+# A commit on a release branch (origin/1.0, where release tags live) is merged code too.
+(cd "$repo" && git branch -q 1.0 main && git switch -q 1.0 && git commit -q --allow-empty -m release \
+    && git push -q origin 1.0 && git switch -q main)
+release=$(git -C "$repo" rev-parse 1.0)
+expect "revision on a release branch" "$(deploy 20 --dry-run --revision="$release")" 0 \
+    "+ tools/build_registry_vm.sh $work/backups/registry-bundle-${release:0:12} $release"
 
 echo "deploy_registry tests passed"
