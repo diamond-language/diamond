@@ -1,6 +1,6 @@
-# D6 1.0.0-rc5
+# d6 1.0.0-rc5
 
-The fifth release candidate for D6 1.0 fills in the argument shapes everyday
+The fifth release candidate for d6 1.0 fills in the argument shapes everyday
 collection and String code reaches for, and makes JIT-compiled code
 substantially faster.
 
@@ -41,7 +41,7 @@ With the JIT on (`DIAMOND_JIT=1`):
   blocks as native loops, as `each` and `map` already did, and `map` and
   `select` push into their results without calling C per element.
 
-On the local D6-versus-Ruby benchmark pairs, D6 with its JIT is now at least
+On the local d6-versus-Ruby benchmark pairs, d6 with its JIT is now at least
 even with Ruby's YJIT on all 21. These are workstation measurements; the
 interpreter, the default, is unchanged by this work.
 

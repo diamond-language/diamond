@@ -8,12 +8,12 @@ record. From 1.0.0, releases follow the [1.x compatibility policy](docs/compatib
 
 ## 1.0.1 — 2026-11-17
 
-Installation fixes for distributions on OpenSSL 4, such as Fedora 45 and Arch. The language
-is unchanged ([release notes](docs/release-1.0.1.md)).
+1.0.1 fixes installing d6 on distributions that have moved to OpenSSL 4, such as Fedora 45
+and Arch. The language is the same as in 1.0.0 ([release notes](docs/release-1.0.1.md)).
 
 ### Fixed
 
-- Each release has an `.rpm` for Fedora 45 as well as Fedora 44. The Fedora 44 package
+- Each release has an `.rpm` for Fedora 45 as well as for Fedora 44. The Fedora 44 package
   needs `libssl.so.3`, which Fedora 45 doesn't have.
 - The Linux tarballs, and so `mise use -g github:diamond-language/d6`, link OpenSSL
   statically and run on OpenSSL 4 distributions. `d6 build` from a tarball links the same
@@ -21,6 +21,9 @@ is unchanged ([release notes](docs/release-1.0.1.md)).
 - `TLSSocket.connect` finds the system CA bundle on distributions other than the one d6's
   OpenSSL was built on (the usual bundle paths, when OpenSSL's compiled-in directory doesn't
   exist and `$SSL_CERT_FILE`/`$SSL_CERT_DIR` are unset).
+
+### Changed
+
 - [Getting started](docs/getting-started.md#1-install) lists exactly what each way of
   installing needs (package, mise prebuilt, mise with the asdf plugin, source) and how they
   compare.
