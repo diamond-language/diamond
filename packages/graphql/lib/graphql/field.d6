@@ -11,13 +11,29 @@ module GraphQL
     attr_reader resolve
     attr_reader arguments
     attr_reader description
+    # AppliedDirective values from SDL (`@auth(as: PLAYER)`), in source order.
+    attr_reader directives
 
-    def initialize(name, type, resolve = nil, arguments = [], description = nil)
+    def initialize(name, type, resolve = nil, arguments = [], description = nil, directives = [])
       @name = name
       @type = type
       @resolve = resolve
       @arguments = arguments
       @description = description
+      @directives = directives
+    end
+
+    # Replaces the resolver (GraphQL::App installs one on every field it builds) and returns the field.
+    def bind(resolve)
+      @resolve = resolve
+      self
+    end
+
+    # The applied directive called `directive_name`, or nil.
+    def directive(directive_name)
+      @directives.find() do |candidate|
+        candidate.name() == directive_name
+      end
     end
 
     # nil if this field has no argument by that name.

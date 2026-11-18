@@ -22,6 +22,36 @@ module GraphQL
     end
   end
 
+  ## Errors with a machine-readable code, so a client branches on the code and never on
+  ## the message: `GraphQL::Fail.signal("NOT_FOUND", "no such board")` reaches the client
+  ## as `{"message": "no such board", "extensions": {"code": "NOT_FOUND"}}`.
+  module Fail
+    ## Raises an `ExecutionError` carrying `code` in its extensions.
+    def self.signal(code, message)
+      raise GraphQL::ExecutionError.new(message, {"code": code})
+    end
+
+    ## The code an `ExecutionError` carries, or `"INTERNAL"` when it has none.
+    def self.code(error) = error.extensions()["code"] || "INTERNAL"
+
+    ## Gives every error in an `execute` result a code and returns the result: errors
+    ## raised through `signal` keep theirs, others get `"INTERNAL"`, or `"BAD_REQUEST"`
+    ## when the whole request was rejected (the result has no `"data"`).
+    def self.annotate(result)
+      errors = result["errors"]
+      if errors == nil then return result end
+      request_level = !result.key?("data")
+      result["errors"] = errors.map() do |error|
+        if error.key?("extensions")
+          error
+        else
+          error.merge({"extensions": {"code": if request_level then "BAD_REQUEST" else "INTERNAL" end}})
+        end
+      end
+      result
+    end
+  end
+
   # Raised for a request-level problem the executor can't attribute to
   # one field -- an unparseable document, an unknown operation name, a
   # missing required variable, a variable/argument that doesn't coerce

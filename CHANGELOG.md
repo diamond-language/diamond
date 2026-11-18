@@ -29,6 +29,20 @@ record. From 1.0.0, releases follow the [1.x compatibility policy](docs/compatib
   file invalidates the bytecode cache, and files up to 16 MiB work (string literals stop at
   4,095 bytes). `--sandbox` refuses it unless `filesystem` is allowed
   ([local I/O](docs/local-io.md#files-compiled-in-fileembed)).
+- graphql 0.3.6: `GraphQL::Schema.from_sdl(text)` builds a schema from a `.graphql` file. It
+  reads all six kinds of type, a `schema { }` block, descriptions, directive definitions, and
+  directives applied to fields, which code reads with `field.directives()`. Errors name the
+  problem and its line. Types can now carry a description (`describe`), which introspection
+  and `to_sdl` show, and whatever `to_sdl` prints reads back unchanged. `GraphQL::App` builds on
+  it: it binds a resolvers object to each type that needs one, and a field without a resolver
+  method reads the parent's method or Hash key of the same name. An Int for an `ID` comes out as a
+  String, and `int_booleans` turns 0/1 into booleans. Interfaces and unions find the concrete type
+  from the class name, and `build()` lists every missing resolver at once. An application's own
+  context class can `include GraphQL::Context`. `.directive("auth", function)` makes a directive
+  wrap every field it is applied to, so access checks or result transforms live in one function
+  and run in the order written. `GraphQL::Fail.signal(code, message)` raises an error with a code,
+  and `Fail.annotate` gives every error in a result a code. These are the first steps of
+  [schema-first GraphQL apps](docs/internal/graphql-app-plan.md).
 
 ## 1.0.1 — 2026-11-17
 

@@ -1,0 +1,14 @@
+{"data":{"hello":"HI","me":"ann"}}
+{"data":{"me":null},"errors":[{"message":"sign in first","path":["me"],"extensions":{"code":"UNAUTHENTICATED"}}]}
+{"data":null,"errors":[{"message":"admins only","path":["secrets"],"extensions":{"code":"FORBIDDEN"}}]}
+{"data":{"secrets":["a","b"]}}
+[secrets]
+{"data":{"board":{"slug":"MAIN"}}}
+[outer, inner]
+{"errors":[{"message":"field \"nope\" does not exist on type \"Query\"","extensions":{"code":"BAD_REQUEST"}}]}
+the GraphQL app is not ready:
+- a function is registered for @cache, which the schema does not define
+- @auth has no function (it is used on Query.me, Query.secrets): register one with .directive("auth", function)
+- @trace has no function (it is used on Board.slug, Query.secrets): register one with .directive("trace", function)
+CONFLICT
+INTERNAL

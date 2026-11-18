@@ -1,0 +1,107 @@
+# GraphQL::App: resolvers bound by type name, everything else by convention.
+lines = [
+  "type Query {",
+  "  board(slug: String!): Board",
+  "  search(term: String!): [Result!]!",
+  "  me: Account",
+  "}",
+  "",
+  "type Mutation {",
+  "  rename(name: String!): Account!",
+  "}",
+  "",
+  "type Board {",
+  "  id: ID!",
+  "  slug: String!",
+  "  trustedOnly: Boolean!",
+  "  topScores(limit: Int = 2): [Int!]!",
+  "  memberIds: [ID!]!",
+  "}",
+  "",
+  "type Account {",
+  "  id: ID!",
+  "  handle: String!",
+  "  createdAt: Int!",
+  "}",
+  "",
+  "union Result = Board | Account",
+  ""
+]
+
+# A struct row: fields become zero-argument methods, which plain fields read.
+struct Board(id: Int, slug: String, trusted_only: Int, member_ids: Array)
+end
+
+class QueryResolvers
+  def board(_, args, ctx) = Board.new(7, args["slug"], 1, [1, 2])
+  def search(_, args, ctx) = [Board.new(1, "b", 0, []), {"__typename": "Account", "id": 3, "handle": "ann", "createdAt": 5}]
+  def me(_, args, ctx) = {"id": 9, "handle": ctx.user(), "created_at": 100}
+end
+
+class MutationResolvers
+  def rename(_, args, ctx) = {"id": 9, "handle": args["name"], "created_at": 100}
+end
+
+# Only the field that needs work has a resolver; the rest come from the struct.
+class BoardResolvers
+  def top_scores(board, args, ctx) = [30, 20, 10].first(args["limit"])
+end
+
+class RequestContext
+  include GraphQL::Context
+  def initialize(user)
+    @user = user
+  end
+  def user() = @user
+end
+
+schema = GraphQL::App.new(lines.join("\n"))
+  .resolvers("Query", QueryResolvers.new())
+  .resolvers("Mutation", MutationResolvers.new())
+  .resolvers("Board", BoardResolvers.new())
+  .int_booleans()
+  .build()
+ctx = RequestContext.new("zed")
+puts(JSON.stringify(schema.execute("{ board(slug: \"main\") { id slug trustedOnly topScores memberIds } }", {}, ctx)))
+puts(schema.execute("{ board(slug: \"x\") { topScores(limit: 3) } }", {}, ctx))
+puts(schema.execute("{ me { id handle createdAt } }", {}, ctx))
+puts(schema.execute("mutation { rename(name: \"bo\") { handle } }", {}, ctx))
+puts(schema.execute("{ search(term: \"a\") { ... on Board { slug } ... on Account { handle createdAt } } }", {}, ctx))
+
+# Without int_booleans, a 0/1 column comes out as the number.
+plain = GraphQL::App.new(lines.join("\n"))
+  .resolvers("Query", QueryResolvers.new()).resolvers("Mutation", MutationResolvers.new())
+  .resolvers("Board", BoardResolvers.new()).build()
+puts(JSON.stringify(plain.execute("{ board(slug: \"m\") { trustedOnly } }", {}, ctx)))
+
+# A Hash without the key is null for a nullable field. For a non-null one, the error names the type,
+# the field and what was missing.
+missing = GraphQL::App.new("type Query {\n  me: Account\n}\n\ntype Account {\n  nick: String!\n  bio: String\n}\n")
+  .resolvers("Query", QueryResolvers.new()).build()
+puts(JSON.stringify(missing.execute("{ me { bio } }", {}, ctx)))
+puts(missing.execute("{ me { nick } }", {}, ctx)["errors"][0]["message"])
+
+# An explicit resolve_type wins over the class name.
+def always_board(value, context) = "Board"
+picked = GraphQL::App.new(lines.join("\n"))
+  .resolvers("Query", QueryResolvers.new()).resolvers("Mutation", MutationResolvers.new())
+  .resolvers("Board", BoardResolvers.new()).int_booleans()
+  .resolve_type("Result", always_board).build()
+puts(picked.execute("{ search(term: \"a\") { __typename } }", {}, ctx))
+
+# build() lists every problem at once.
+class Empty
+end
+begin
+  GraphQL::App.new(lines.join("\n"))
+    .resolvers("Query", Empty.new())
+    .resolvers("Nope", Empty.new())
+    .resolvers("Result", Empty.new())
+    .resolve_type("Board", always_board)
+    .build()
+rescue e: GraphQL::SchemaError
+  puts(e.message())
+end
+
+puts([GraphQL::App.snake_case("trustedOnly"), GraphQL::App.snake_case("sha256"), GraphQL::App.snake_case("URLPath"),
+      GraphQL::App.snake_case("userID"), GraphQL::App.snake_case("id")])

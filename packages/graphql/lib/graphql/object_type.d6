@@ -19,9 +19,9 @@ module GraphQL
     ## Adds a field and returns the type. `resolve` is a `Callable[3]` called as
     ## `(object, args, context)`; when it is omitted, the executor calls the public
     ## zero-argument method with the field's name on the parent object. `arguments`
-    ## is an Array of `Argument`.
-    def field(name, type, resolve = nil, arguments = [], description = nil)
-      @fields << Field.new(name, type, resolve, arguments, description)
+    ## is an Array of `Argument`; `directives` is an Array of `AppliedDirective`.
+    def field(name, type, resolve = nil, arguments = [], description = nil, directives = [])
+      @fields << Field.new(name, type, resolve, arguments, description, directives)
       self
     end
 

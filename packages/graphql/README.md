@@ -197,6 +197,19 @@ raise GraphQL::ExecutionError.new("invalid email or password", {"code": "UNAUTHE
 
 An error without extensions has no `"extensions"` key.
 
+`GraphQL::Fail` is shorthand for errors with a code, so a client can branch on the code and never
+on the message text:
+
+```ruby
+GraphQL::Fail.signal("NOT_FOUND", "no such board")   # raises the ExecutionError above, with that code
+GraphQL::Fail.code(error)                            # its code, or "INTERNAL"
+GraphQL::Fail.annotate(schema.execute(query))        # gives every error a code
+```
+
+`annotate` leaves an error that already has extensions alone. Any other field error gets
+`"INTERNAL"`, and an error that rejected the whole request (no `"data"` in the result) gets
+`"BAD_REQUEST"`.
+
 ### Lookahead
 
 Immediately before each field resolves, the executor sets `context["lookahead"]` to a `GraphQL::Execution::Lookahead` describing that field's sub-selections. A resolver can use it to skip work the query didn't ask for. [`graphsql`](https://github.com/diamond-language/d6/blob/main/packages/graphsql/README.md) builds on this to select only the requested SQL columns and to preload only the requested associations.
@@ -216,12 +229,155 @@ Batching is local to a group of siblings (one list's items, or one selection set
 ## SDL
 
 `schema.to_sdl()` returns the schema as GraphQL SDL text, for client codegen and review. Types are in name order,
-the built-in scalars are omitted, and field and argument descriptions are printed as block strings. Resolvers and
+the built-in scalars are omitted, and descriptions are printed as block strings. Resolvers and
 `resolve_type` callables are not part of SDL. A server can serve it directly:
 
 ```ruby
 [200, {"Content-Type": "text/plain; charset=utf-8"}, schema.to_sdl()]
 ```
+
+`GraphQL::Schema.from_sdl(text)` goes the other way. It builds a schema from SDL: object, interface, union, enum,
+input and scalar types, a `schema { query: ... mutation: ... }` block, descriptions, directive definitions, and
+directives applied to field definitions:
+
+```ruby
+schema = GraphQL::Schema.from_sdl(File.read("schema.graphql"))
+schema.query_type().field_named("books").directive("auth").arguments()   # {"as": "ANY"}
+```
+
+```graphql
+directive @auth(as: Principal!) on FIELD_DEFINITION
+
+enum Principal {
+  ANY
+  EDITOR
+}
+
+type Query {
+  books(first: Int = 10): [Book!]! @auth(as: ANY)
+}
+
+type Book {
+  id: ID!
+  title: String!
+}
+```
+
+The fields have no resolvers, so each resolves to the parent object's public method of the same name. A custom
+`scalar` passes values through unchanged. An applied directive's `arguments()` include the definition's defaults.
+Directives do nothing by themselves; code that reads `field.directives()` decides what they mean.
+
+`from_sdl` raises `GraphQL::SchemaError` with the problem and its line, for example
+`unknown type Bok in Query.books (line 9)`. It also reports what the type system can't represent:
+- `extend` and subscriptions
+- an interface implementing another interface
+- a directive anywhere other than a field definition
+- a type that no root type, field or directive leads to (it would vanish from introspection)
+
+A schema printed by `to_sdl()` reads back into one that prints the same text.
+
+## Apps: SDL plus resolvers bound by name
+
+`GraphQL::App` builds a schema from SDL and binds resolvers to it by name. A resolvers object is
+bound to an object type, and its method named after a field resolves that field. Only fields that
+need work need a method:
+
+```ruby
+class QueryResolvers
+  def board(_, args, ctx) = Boards.find(ctx.repo(), args["slug"])
+end
+
+class BoardResolvers
+  def top_scores(board, args, ctx) = Scores.top(ctx.repo(), board, args["limit"])
+end
+
+schema = GraphQL::App.new(File.read("schema.graphql"))
+  .resolvers("Query", QueryResolvers.new())
+  .resolvers("Board", BoardResolvers.new())
+  .int_booleans()
+  .build()
+```
+
+A field gets its value from the first of these that exists:
+
+1. the bound resolvers' method with the field's snake_case name (`topScores` -> `top_scores`),
+   called as `(object, args, context)`
+2. the parent object's zero-argument method of that name, such as a `struct` field
+3. a key on a parent Hash, snake_case first and then the field's own name. A Hash with neither
+   key gives null for a nullable field and an error naming the key for a non-null one
+
+`Query` and `Mutation` fields, and any field that takes arguments, need a resolver method. A value
+for an `ID` that is an Int becomes a String. With `int_booleans`, a `Boolean` field also turns 0 and
+1 into `false` and `true`, for SQLite rows.
+
+An interface or union finds a value's concrete type from its class name (the last `::` segment), or
+from a Hash's `"__typename"` key. `.resolve_type("Result", callable)` overrides that: `callable` gets
+`(value, context)` and returns a type name.
+
+`build()` returns the `Schema`. If anything is missing, it raises one `SchemaError` that lists every
+problem:
+
+```text
+the GraphQL app is not ready:
+- resolvers are bound to Nope, which the schema does not define
+- Board.topScores takes arguments, so it needs top_scores(object, args, context) on BoardResolvers
+- Query.board has no resolver: define board(object, args, context) on QueryResolvers
+```
+
+The executor stores `"dataloader"` and `"lookahead"` in the context. A Hash context works as is. To
+pass your own object, `include GraphQL::Context` in its class:
+
+```ruby
+class RequestContext
+  include GraphQL::Context
+  def initialize(repo)
+    @repo = repo
+  end
+  def repo() = @repo
+end
+
+schema.execute(query, variables, RequestContext.new(repo))
+```
+
+### Directives as middleware
+
+A directive applied to fields in SDL does whatever function `.directive(name, function)`
+registers for it. The function wraps each such field's resolver and is called as
+`(directive_args, object, args, context, resolve)`:
+- `directive_args` holds the directive's arguments, with the defaults filled in.
+- `resolve(object, args, context)` runs the field.
+
+A guard raises to deny, or returns `resolve(...)`:
+
+```graphql
+directive @auth(as: Role = USER) on FIELD_DEFINITION
+
+type Query {
+  me: Account @auth
+  auditLog: [Entry!]! @auth(as: ADMIN)
+}
+```
+
+```ruby
+def auth(directive, object, args, context, resolve)
+  user = context["user"]
+  if user == nil then GraphQL::Fail.signal("UNAUTHENTICATED", "sign in first") end
+  if directive["as"] == "ADMIN" && !user.admin?() then GraphQL::Fail.signal("FORBIDDEN", "admins only") end
+  resolve(object, args, context)
+end
+
+schema = GraphQL::App.new(File.read("schema.graphql"))
+  .resolvers("Query", QueryResolvers.new())
+  .directive("auth", auth)
+  .build()
+```
+
+A function can also change the result: `def upper(d, o, a, c, resolve) = resolve(o, a, c).upcase()`.
+On a field with several directives, the first one written runs outermost. Directives wrap plain
+fields too, not only fields with resolver methods. `build()` reports any directive used on a field
+with no function registered, and any function registered for a directive the schema doesn't
+define. Directives on interface fields don't run, because interface fields are never resolved
+directly; put them on the implementing types' fields.
 
 ## Introspection
 

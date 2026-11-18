@@ -12,11 +12,7 @@
 # whose fields use ordinary default resolution where their names already
 # match those values' public methods.
 #
-# Not ported: description tracking on types themselves (Field/Argument
-# already carry a description; ObjectType/InterfaceType/UnionType/
-# EnumType/InputObjectType/ScalarType don't yet -- #type_description
-# below always returns nil, a documented v1 gap, see ROADMAP.md),
-# deprecation (isDeprecated/deprecationReason always false/nil -- no
+# Not ported: deprecation (isDeprecated/deprecationReason always false/nil -- no
 # deprecation-marking mechanism exists anywhere in this package yet),
 # and a real directive registry (@include/@skip/@deprecated are handled
 # structurally by the executor but were never modeled as introspectable
@@ -31,7 +27,7 @@ module GraphQL
   # (everything they need arrives via `object`/`args`), so there was
   # never a reason to nest them in the first place.
   class IntrospectionResolvers
-    def self.type_description(object, args, context) = nil
+    def self.type_description(object, args, context) = object.description()
 
     def self.type_fields(object, args, context)
       if object.kind() == "OBJECT" || object.kind() == "INTERFACE"

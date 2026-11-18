@@ -1,6 +1,6 @@
 # Hand-written recursive descent over Lexer's own token Array, producing
-# a Document (nodes.d6). Query-document grammar only -- see nodes.d6's
-# own header for why there's no SDL support here.
+# a Document (nodes.d6). Query-document grammar; SchemaParser (schema_parser.d6)
+# subclasses it to read SDL.
 module GraphQL
   module Language
 

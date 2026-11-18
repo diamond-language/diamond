@@ -1,0 +1,263 @@
+module GraphQL
+
+  ## Lets an application's own context object carry the executor's per-request
+  ## values (`"dataloader"`, `"lookahead"`): `include GraphQL::Context` in its class
+  ## and pass an instance to `schema.execute`. A Hash works as a context unchanged.
+  module Context
+    def [](key)
+      if @graphql_slots == nil then return nil end
+      @graphql_slots[key]
+    end
+
+    def []=(key, value)
+      if @graphql_slots == nil then @graphql_slots = {} end
+      @graphql_slots[key] = value
+    end
+  end
+
+  ## A schema from SDL with resolvers bound by name:
+  ##
+  ##     schema = GraphQL::App.new(File.read("schema.graphql"))
+  ##       .resolvers("Query", QueryResolvers.new())
+  ##       .resolvers("Leaderboard", LeaderboardResolvers.new())
+  ##       .build()
+  ##
+  ## A field gets its value from, in order: the method with its snake_case name
+  ## (`trustedOnly` -> `trusted_only`) on the resolvers bound to its type, called as
+  ## `(object, args, context)`; else that zero-argument method on the parent object;
+  ## else that key on a parent Hash (snake_case first, then the field's own name; a missing key is
+  ## null for a nullable field).
+  ## Query and Mutation fields, and fields that take arguments, need a resolver
+  ## method. An Int returned for an `ID` becomes a String.
+  class App
+    def initialize(source: String)
+      @schema = GraphQL::Schema.from_sdl(source)
+      @bindings = {}
+      @type_resolvers = {}
+      @int_booleans = false
+      @directive_functions = {}
+    end
+
+    ## Binds `resolvers` (any object) to the object type `type_name` and returns the app.
+    def resolvers(type_name, resolvers)
+      @bindings[type_name] = resolvers
+      self
+    end
+
+    ## Sets how the interface or union `type_name` finds a value's concrete type and
+    ## returns the app. `callable` is called as `(value, context)` and returns a type
+    ## name. Without one, the value's class name is used (its last `::` segment), or
+    ## a Hash's `"__typename"`.
+    def resolve_type(type_name, callable)
+      @type_resolvers[type_name] = callable
+      self
+    end
+
+    ## Registers the function that runs `@name` wherever SDL applies it to a field, and
+    ## returns the app. The function wraps the field's resolver and is called as
+    ## `(directive_args, object, args, context, resolve)`: `directive_args` holds the
+    ## directive's arguments (defaults included), and `resolve(object, args, context)`
+    ## runs the field. A guard raises to deny (see `Fail.signal`) or returns
+    ## `resolve(...)`; it may also change the result. On a field with several
+    ## directives, the first one written runs outermost.
+    def directive(name, function)
+      @directive_functions[name] = function
+      self
+    end
+
+    ## With `true`, a `Boolean` field also accepts 0 and 1 (as SQLite stores booleans)
+    ## and returns the app.
+    def int_booleans(flag = true)
+      @int_booleans = flag
+      self
+    end
+
+    ## `trustedOnly` -> `trusted_only`, `sha256` -> `sha256`, `URLPath` -> `url_path`.
+    def self.snake_case(name)
+      out = ""
+      index = 0
+      while index < name.length()
+        ch = name[index]
+        upper = ch != ch.downcase()
+        if upper && index > 0
+          previous = name[index - 1]
+          following = if index + 1 < name.length() then name[index + 1] else "" end
+          previous_lower = previous == previous.downcase() && previous != previous.upcase()
+          previous_digit = previous >= "0" && previous <= "9"
+          acronym_end = previous != previous.downcase() && following != "" && following != following.upcase()
+          if previous_lower || previous_digit || acronym_end then out = out + "_" end
+        end
+        out = out + ch.downcase()
+        index += 1
+      end
+      out
+    end
+
+    # Whether values for `type` ever need App.coerce: an ID, or a Boolean with int_booleans, at any depth of lists.
+    def self.needs_coercion?(type, int_booleans)
+      named = GraphQL::Schema.unwrap(type)
+      named.kind() == "SCALAR" && (named.name() == "ID" || (int_booleans && named.name() == "Boolean"))
+    end
+
+    def self.coerce(value, type, int_booleans)
+      if value == nil then return nil end
+      kind = type.kind()
+      if kind == "NON_NULL"
+        App.coerce(value, type.of_type(), int_booleans)
+      elsif kind == "LIST"
+        if value is Array
+          value.map() do |item| App.coerce(item, type.of_type(), int_booleans) end
+        else
+          value
+        end
+      elsif type.name() == "ID" && value is Int
+        value.to_s()
+      elsif type.name() == "Boolean" && int_booleans && value is Int && (value == 0 || value == 1)
+        value == 1
+      else
+        value
+      end
+    end
+
+    # A resolver calling `method` on the bound resolvers object.
+    def self.method_resolver(bound, method, type, int_booleans)
+      coerce = App.needs_coercion?(type, int_booleans)
+      def resolve(object, args, context)
+        value = bound.public_send(method, object, args, context)
+        if coerce then App.coerce(value, type, int_booleans) else value end
+      end
+      resolve
+    end
+
+    # A resolver reading the parent's method, or its Hash key, named after the field. A Hash without the key
+    # reads as null for a nullable field and raises for a non-null one, where null would be an error anyway.
+    def self.property_resolver(owner, method, field_name, type, int_booleans)
+      coerce = App.needs_coercion?(type, int_booleans)
+      required = type.kind() == "NON_NULL"
+      symbol = method.to_sym()
+      def resolve(object, args, context)
+        value = if object is Hash
+          if object.key?(method)
+            object[method]
+          elsif object.key?(field_name)
+            object[field_name]
+          elsif !required
+            nil
+          else
+            keys = if method == field_name then "no \"#{method}\" key" else "neither a \"#{method}\" nor a \"#{field_name}\" key" end
+            raise GraphQL::ExecutionError.new("#{owner}.#{field_name}: the Hash has #{keys}")
+          end
+        elsif object.respond_to?(symbol)
+          object.public_send(method)
+        else
+          raise GraphQL::ExecutionError.new("#{owner}.#{field_name}: #{object.class()} has no #{method} method")
+        end
+        if coerce then App.coerce(value, type, int_booleans) else value end
+      end
+      resolve
+    end
+
+    # `resolve` wrapped in one applied directive's function.
+    def self.wrap(resolve, applied, function)
+      arguments = applied.arguments()
+      def wrapped(object, args, context)
+        function(arguments, object, args, context, resolve)
+      end
+      wrapped
+    end
+
+    def self.default_type_resolver(value, context)
+      if value is Hash then return value["__typename"] end
+      name = value.class()
+      parts = name.split("::")
+      parts[parts.length() - 1]
+    end
+
+    ## Binds every field and returns the `Schema`. Raises `SchemaError` listing every
+    ## problem at once: resolvers bound to a missing or non-object type, a
+    ## `resolve_type` for something not an interface or union, each field that needs
+    ## a resolver method and has none, a directive used on a field with no registered
+    ## function, and a function registered for a directive the schema does not define.
+    def build()
+      types = @schema.type_map()
+      problems = []
+      @bindings.keys().sort().each() do |name|
+        type = types[name]
+        if type == nil
+          problems.push("resolvers are bound to #{name}, which the schema does not define")
+        elsif type.kind() != "OBJECT"
+          problems.push("resolvers are bound to #{name}, which is not an object type")
+        end
+      end
+      @type_resolvers.keys().sort().each() do |name|
+        type = types[name]
+        if type == nil || (type.kind() != "INTERFACE" && type.kind() != "UNION")
+          problems.push("resolve_type is set for #{name}, which is not an interface or union in the schema")
+        end
+      end
+      @directive_functions.keys().sort().each() do |name|
+        if @schema.directive_named(name) == nil
+          problems.push("a function is registered for @#{name}, which the schema does not define")
+        end
+      end
+      @unhandled = {}
+      roots = [@schema.query_type().name()]
+      if @schema.mutation_type() != nil then roots.push(@schema.mutation_type().name()) end
+      types.keys().sort().each() do |name|
+        type = types[name]
+        kind = type.kind()
+        if kind == "OBJECT"
+          self.bind_fields(type, roots.include?(name), problems)
+        elsif kind == "INTERFACE" || kind == "UNION"
+          resolver = @type_resolvers[name]
+          type.resolve_type(if resolver == nil then App.default_type_resolver else resolver end)
+        end
+      end
+      @unhandled.keys().sort().each() do |name|
+        problems.push("@#{name} has no function (it is used on #{@unhandled[name].join(", ")}): register one with .directive(\"#{name}\", function)")
+      end
+      if problems.length() > 0
+        raise GraphQL::SchemaError.new("the GraphQL app is not ready:\n- " + problems.join("\n- "))
+      end
+      @schema
+    end
+
+    # Wraps from the last directive written to the first, so the first runs outermost. A directive with no
+    # registered function is recorded for build()'s problem list.
+    def wrap_directives(resolve, field, type_name)
+      wrapped = resolve
+      field.directives().reverse().each() do |applied|
+        function = @directive_functions[applied.name()]
+        if function == nil
+          if @unhandled[applied.name()] == nil then @unhandled[applied.name()] = [] end
+          place = "#{type_name}.#{field.name()}"
+          unless @unhandled[applied.name()].include?(place) then @unhandled[applied.name()].push(place) end
+        else
+          wrapped = App.wrap(wrapped, applied, function)
+        end
+      end
+      wrapped
+    end
+
+    def bind_fields(type, root, problems)
+      name = type.name()
+      bound = @bindings[name]
+      holder = if bound == nil then "a resolvers object bound to #{name}" else bound.class() end
+      type.fields().each() do |field|
+        method = App.snake_case(field.name())
+        resolve = nil
+        if bound != nil && bound.respond_to?(method.to_sym())
+          resolve = App.method_resolver(bound, method, field.type(), @int_booleans)
+        elsif root
+          problems.push("#{name}.#{field.name()} has no resolver: define #{method}(object, args, context) on #{holder}")
+        elsif field.arguments().length() > 0
+          problems.push("#{name}.#{field.name()} takes arguments, so it needs #{method}(object, args, context) on #{holder}")
+        else
+          resolve = App.property_resolver(name, method, field.name(), field.type(), @int_booleans)
+        end
+        if resolve != nil then field.bind(self.wrap_directives(resolve, field, name)) end
+      end
+    end
+  end
+
+end

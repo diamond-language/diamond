@@ -1,0 +1,613 @@
+module GraphQL
+
+  ## Raised by `Schema.from_sdl` for SDL it cannot build. The message names the
+  ## problem and its line.
+  class SchemaError < StandardError
+    attr_reader message: String
+    def initialize(message: String)
+      @message = message
+    end
+  end
+
+  ## A directive applied to a field definition, as in `@auth(as: PLAYER)`.
+  ## `arguments` maps each argument name to its value, with the definition's
+  ## defaults filled in; an enum value is its name as a String.
+  class AppliedDirective
+    attr_reader name
+    attr_reader arguments
+    # The argument names the SDL spelled out, in order; Schema#to_sdl prints only these.
+    attr_reader written
+
+    def initialize(name, arguments = {}, written = nil)
+      @name = name
+      @arguments = arguments
+      @written = if written == nil then arguments.keys() else written end
+    end
+  end
+
+  ## A `directive @name(...) on FIELD_DEFINITION | ...` definition.
+  class DirectiveDefinition
+    attr_reader name
+    attr_reader arguments
+    attr_reader locations
+    attr_reader description
+
+    def initialize(name, arguments = [], locations = ["FIELD_DEFINITION"], description = nil, repeatable = false)
+      @name = name
+      @arguments = arguments
+      @locations = locations
+      @description = description
+      @repeatable = repeatable
+    end
+
+    def repeatable?() = @repeatable
+
+    ## The argument called `arg_name`, or `nil`.
+    def argument(arg_name)
+      @arguments.find() do |candidate|
+        candidate.name() == arg_name
+      end
+    end
+  end
+
+  # Reads SDL into plain records, one Hash per definition, for SchemaBuilder. It reuses the query parser's
+  # token handling, type references, values and directives. What the type system cannot represent yet
+  # (extensions, subscriptions, interfaces implementing interfaces, directives anywhere but on a field
+  # definition) is an error rather than something silently dropped.
+  class SchemaParser < GraphQL::Language::Parser
+    def self.locations()
+      ["QUERY", "MUTATION", "SUBSCRIPTION", "FIELD", "FRAGMENT_DEFINITION", "FRAGMENT_SPREAD",
+       "INLINE_FRAGMENT", "VARIABLE_DEFINITION", "SCHEMA", "SCALAR", "OBJECT", "FIELD_DEFINITION",
+       "ARGUMENT_DEFINITION", "INTERFACE", "UNION", "ENUM", "ENUM_VALUE", "INPUT_OBJECT",
+       "INPUT_FIELD_DEFINITION"]
+    end
+
+    def self.build(source: String)
+      definitions = []
+      begin
+        definitions = SchemaParser.new(GraphQL::Language::Lexer.tokenize(source)).parse_definitions()
+      rescue e: GraphQL::Language::ParseError
+        raise SchemaError.new(e.message())
+      rescue e: GraphQL::Language::LexError
+        raise SchemaError.new(e.message())
+      end
+      SchemaBuilder.new(definitions).build()
+    end
+
+    def unsupported(message, line)
+      raise GraphQL::Language::ParseError.new("#{message} (line #{line})")
+    end
+
+    def parse_definitions()
+      definitions = []
+      while self.peek_kind() != "EOF"
+        definitions.push(self.parse_definition_record())
+      end
+      definitions
+    end
+
+    def parse_description()
+      if self.peek_kind() == "STRING" then self.advance().value() else nil end
+    end
+
+    def name_with_line()
+      line = self.current().line()
+      [self.expect_name(), line]
+    end
+
+    def reject_directives(where)
+      line = self.current().line()
+      if self.parse_directives().length() > 0
+        self.unsupported("directives are only supported on field definitions, not on #{where}", line)
+      end
+    end
+
+    def parse_definition_record()
+      description = self.parse_description()
+      line = self.current().line()
+      if self.at_name("type")
+        self.parse_object_record("OBJECT", description, line)
+      elsif self.at_name("interface")
+        self.parse_object_record("INTERFACE", description, line)
+      elsif self.at_name("union")
+        self.parse_union_record(description, line)
+      elsif self.at_name("enum")
+        self.parse_enum_record(description, line)
+      elsif self.at_name("input")
+        self.parse_input_record(description, line)
+      elsif self.at_name("scalar")
+        self.advance()
+        name = self.expect_name()
+        self.reject_directives("scalar #{name}")
+        {"kind": "SCALAR", "name": name, "description": description, "line": line}
+      elsif self.at_name("directive")
+        self.parse_directive_record(description, line)
+      elsif self.at_name("schema")
+        self.parse_schema_record(line)
+      elsif self.at_name("extend")
+        self.unsupported("extend is not supported; put every field in the type's own definition", line)
+      else
+        self.fail_expected("a type, interface, union, enum, input, scalar, directive or schema definition")
+      end
+    end
+
+    # `type` and `interface` share a grammar; only an object may implement interfaces.
+    def parse_object_record(kind, description, line)
+      self.advance()
+      name = self.expect_name()
+      interfaces = []
+      if self.at_name("implements")
+        if kind == "INTERFACE" then self.unsupported("an interface implementing another interface is not supported", line) end
+        self.advance()
+        if self.at_punct("&") then self.advance() end
+        interfaces.push(self.name_with_line())
+        while self.at_punct("&")
+          self.advance()
+          interfaces.push(self.name_with_line())
+        end
+      end
+      self.reject_directives("type #{name}")
+      fields = if self.at_punct("{") then self.parse_field_records() else [] end
+      {"kind": kind, "name": name, "description": description, "line": line, "interfaces": interfaces, "fields": fields}
+    end
+
+    def parse_field_records()
+      self.expect_punct("{")
+      fields = []
+      while !self.at_punct("}")
+        description = self.parse_description()
+        line = self.current().line()
+        name = self.expect_name()
+        arguments = if self.at_punct("(") then self.parse_argument_records() else [] end
+        self.expect_punct(":")
+        type = self.parse_type_reference()
+        directives = self.parse_directives()
+        fields.push({"name": name, "description": description, "line": line, "arguments": arguments,
+                     "type": type, "directives": directives})
+      end
+      self.expect_punct("}")
+      fields
+    end
+
+    def parse_argument_records()
+      self.expect_punct("(")
+      arguments = []
+      while !self.at_punct(")")
+        arguments.push(self.parse_input_value_record("argument"))
+      end
+      self.expect_punct(")")
+      arguments
+    end
+
+    # An argument or an input field: `"description" name: Type = default`.
+    def parse_input_value_record(where)
+      description = self.parse_description()
+      line = self.current().line()
+      name = self.expect_name()
+      self.expect_punct(":")
+      type = self.parse_type_reference()
+      has_default = false
+      default = nil
+      if self.at_punct("=")
+        self.advance()
+        has_default = true
+        default = self.parse_value()
+      end
+      self.reject_directives("#{where} #{name}")
+      {"name": name, "description": description, "line": line, "type": type, "has_default": has_default, "default": default}
+    end
+
+    def parse_union_record(description, line)
+      self.advance()
+      name = self.expect_name()
+      self.reject_directives("union #{name}")
+      members = []
+      if self.at_punct("=")
+        self.advance()
+        if self.at_punct("|") then self.advance() end
+        members.push(self.name_with_line())
+        while self.at_punct("|")
+          self.advance()
+          members.push(self.name_with_line())
+        end
+      end
+      {"kind": "UNION", "name": name, "description": description, "line": line, "members": members}
+    end
+
+    def parse_enum_record(description, line)
+      self.advance()
+      name = self.expect_name()
+      self.reject_directives("enum #{name}")
+      self.expect_punct("{")
+      values = []
+      while !self.at_punct("}")
+        value_description = self.parse_description()
+        value_line = self.current().line()
+        value = self.expect_name()
+        if value == "true" || value == "false" || value == "null"
+          self.unsupported("#{value} cannot be an enum value", value_line)
+        end
+        self.reject_directives("enum value #{value}")
+        values.push({"name": value, "description": value_description, "line": value_line})
+      end
+      self.expect_punct("}")
+      {"kind": "ENUM", "name": name, "description": description, "line": line, "values": values}
+    end
+
+    def parse_input_record(description, line)
+      self.advance()
+      name = self.expect_name()
+      self.reject_directives("input #{name}")
+      self.expect_punct("{")
+      fields = []
+      while !self.at_punct("}")
+        fields.push(self.parse_input_value_record("input field"))
+      end
+      self.expect_punct("}")
+      {"kind": "INPUT_OBJECT", "name": name, "description": description, "line": line, "fields": fields}
+    end
+
+    def parse_directive_record(description, line)
+      self.advance()
+      self.expect_punct("@")
+      name = self.expect_name()
+      arguments = if self.at_punct("(") then self.parse_argument_records() else [] end
+      repeatable = false
+      if self.at_name("repeatable")
+        self.advance()
+        repeatable = true
+      end
+      self.expect_keyword("on")
+      if self.at_punct("|") then self.advance() end
+      locations = [self.parse_location()]
+      while self.at_punct("|")
+        self.advance()
+        locations.push(self.parse_location())
+      end
+      {"kind": "DIRECTIVE", "name": name, "description": description, "line": line, "arguments": arguments,
+       "repeatable": repeatable, "locations": locations}
+    end
+
+    def parse_location()
+      line = self.current().line()
+      location = self.expect_name()
+      unless SchemaParser.locations().include?(location)
+        self.unsupported("unknown directive location #{location}", line)
+      end
+      location
+    end
+
+    def parse_schema_record(line)
+      self.advance()
+      self.reject_directives("the schema")
+      self.expect_punct("{")
+      roots = {}
+      while !self.at_punct("}")
+        root_line = self.current().line()
+        operation = self.expect_name()
+        unless operation == "query" || operation == "mutation" || operation == "subscription"
+          self.unsupported("expected query, mutation or subscription in the schema definition, found #{operation}", root_line)
+        end
+        self.expect_punct(":")
+        roots[operation] = self.name_with_line()
+      end
+      self.expect_punct("}")
+      {"kind": "SCHEMA", "line": line, "roots": roots}
+    end
+  end
+
+  # Turns SchemaParser's records into a Schema in passes: declare every named type (so a field may name a type
+  # defined further down), build directive definitions, fill in fields and members, then check interfaces,
+  # roots and that every type is reachable.
+  class SchemaBuilder
+    def self.builtin_names() = ["String", "Int", "Float", "Boolean", "ID"]
+
+    def initialize(definitions)
+      @definitions = definitions
+      @types = {"String": GraphQL::ScalarType.string(), "Int": GraphQL::ScalarType.int(),
+                "Float": GraphQL::ScalarType.float(), "Boolean": GraphQL::ScalarType.boolean(),
+                "ID": GraphQL::ScalarType.id()}
+      @directive_records = {}
+      @directive_definitions = {}
+      @directive_order = []
+      @schema_record = nil
+    end
+
+    def error(message)
+      raise SchemaError.new(message)
+    end
+
+    def build()
+      @definitions.each() do |definition| self.declare(definition) end
+      # Enum values first: a default or directive argument anywhere may name one.
+      @definitions.each() do |definition|
+        if definition["kind"] == "ENUM" then self.fill_enum(definition) end
+      end
+      @directive_order.each() do |name| self.define_directive(@directive_records[name]) end
+      @definitions.each() do |definition| self.fill(definition) end
+      @definitions.each() do |definition| self.check_interfaces(definition) end
+      schema = self.roots()
+      @directive_order.each() do |name| schema.directive(@directive_definitions[name]) end
+      self.check_reachable(schema)
+      schema
+    end
+
+    def declare(definition)
+      kind = definition["kind"]
+      line = definition["line"]
+      if kind == "SCHEMA"
+        if @schema_record != nil then self.error("the schema is defined twice (line #{line})") end
+        @schema_record = definition
+        return nil
+      end
+      name = definition["name"]
+      if name.start_with?("__") then self.error("#{name}: names starting with __ are reserved (line #{line})") end
+      if kind == "DIRECTIVE"
+        if @directive_records[name] != nil then self.error("directive @#{name} is defined twice (line #{line})") end
+        @directive_records[name] = definition
+        @directive_order.push(name)
+        return nil
+      end
+      if SchemaBuilder.builtin_names().include?(name)
+        self.error("#{name} is a built-in scalar and cannot be redefined (line #{line})")
+      end
+      if @types[name] != nil then self.error("type #{name} is defined twice (line #{line})") end
+      type = if kind == "OBJECT"
+        GraphQL::ObjectType.new(name)
+      elsif kind == "INTERFACE"
+        GraphQL::InterfaceType.new(name)
+      elsif kind == "UNION"
+        GraphQL::UnionType.new(name)
+      elsif kind == "ENUM"
+        GraphQL::EnumType.new(name)
+      elsif kind == "INPUT_OBJECT"
+        GraphQL::InputObjectType.new(name)
+      else
+        GraphQL::ScalarType.new(name, GraphQL::ScalarType.identity, GraphQL::ScalarType.identity)
+      end
+      @types[name] = type.describe(definition["description"])
+      nil
+    end
+
+    def type_of(node, line, where)
+      if node is GraphQL::Language::NonNullType
+        self.type_of(node.of_type(), line, where).non_null()
+      elsif node is GraphQL::Language::ListType
+        self.type_of(node.of_type(), line, where).list()
+      else
+        type = @types[node.name()]
+        if type == nil then self.error("unknown type #{node.name()} in #{where} (line #{line})") end
+        type
+      end
+    end
+
+    def input_type?(type)
+      kind = GraphQL::Schema.unwrap(type).kind()
+      kind == "SCALAR" || kind == "ENUM" || kind == "INPUT_OBJECT"
+    end
+
+    # A literal from the document as a plain value: an enum value becomes its name, null becomes nil.
+    def value_of(node, line, where)
+      if node is GraphQL::Language::Variable
+        self.error("#{where} uses the variable $#{node.name()}; a schema can only use literal values (line #{line})")
+      elsif node is GraphQL::Language::NullValue
+        nil
+      elsif node is GraphQL::Language::EnumValue
+        node.name()
+      elsif node is GraphQL::Language::ListValue
+        node.values().map() do |item| self.value_of(item, line, where) end
+      elsif node is GraphQL::Language::ObjectValue
+        result = {}
+        node.fields().each() do |field| result[field.name()] = self.value_of(field.value(), line, where) end
+        result
+      else
+        node
+      end
+    end
+
+    def check_enum_value(type, value, line, where)
+      named = GraphQL::Schema.unwrap(type)
+      if named.kind() == "ENUM" && value is String && !named.value_named?(value)
+        self.error("#{where}: #{value} is not a value of enum #{named.name()} (line #{line})")
+      end
+    end
+
+    def input_values(records, where)
+      seen = {}
+      records.map() do |record|
+        name = record["name"]
+        line = record["line"]
+        if seen[name] != nil then self.error("#{where} declares #{name} twice (line #{line})") end
+        seen[name] = true
+        type = self.type_of(record["type"], line, "#{where}(#{name})")
+        unless self.input_type?(type)
+          self.error("#{where}(#{name}) has the output type #{type.name()}; an argument or input field needs a scalar, enum or input type (line #{line})")
+        end
+        default = nil
+        if record["has_default"]
+          default = self.value_of(record["default"], line, "#{where}(#{name})")
+          self.check_enum_value(type, default, line, "#{where}(#{name})")
+        end
+        GraphQL::Argument.new(name, type, default, record["has_default"], record["description"])
+      end
+    end
+
+    def define_directive(record)
+      name = record["name"]
+      arguments = self.input_values(record["arguments"], "@#{name}")
+      @directive_definitions[name] = GraphQL::DirectiveDefinition.new(name, arguments, record["locations"],
+        record["description"], record["repeatable"])
+    end
+
+    def applied_directives(nodes, line, where)
+      applied = []
+      nodes.each() do |node|
+        name = node.name()
+        definition = @directive_definitions[name]
+        if definition == nil then self.error("unknown directive @#{name} on #{where} (line #{line})") end
+        unless definition.locations().include?("FIELD_DEFINITION")
+          self.error("@#{name} is not declared for FIELD_DEFINITION, so it cannot be used on #{where} (line #{line})")
+        end
+        repeated = applied.any?() do |earlier| earlier.name() == name end
+        if repeated && !definition.repeatable?()
+          self.error("@#{name} is used twice on #{where} but is not repeatable (line #{line})")
+        end
+        values = {}
+        written = []
+        node.arguments().each() do |argument|
+          spec = definition.argument(argument.name())
+          if spec == nil then self.error("@#{name} has no argument #{argument.name()} (#{where}, line #{line})") end
+          value = self.value_of(argument.value(), line, where)
+          self.check_enum_value(spec.type(), value, line, "@#{name} on #{where}")
+          values[argument.name()] = value
+          written.push(argument.name())
+        end
+        definition.arguments().each() do |spec|
+          unless values.key?(spec.name())
+            if spec.has_default?()
+              values[spec.name()] = spec.default_value()
+            elsif spec.type().kind() == "NON_NULL"
+              self.error("@#{name} on #{where} needs the argument #{spec.name()} (line #{line})")
+            end
+          end
+        end
+        applied.push(GraphQL::AppliedDirective.new(name, values, written))
+      end
+      applied
+    end
+
+    def fill(definition)
+      kind = definition["kind"]
+      if kind == "OBJECT" || kind == "INTERFACE"
+        self.fill_fields(definition)
+      elsif kind == "UNION"
+        self.fill_union(definition)
+      elsif kind == "INPUT_OBJECT"
+        name = definition["name"]
+        if definition["fields"].length() == 0 then self.error("input #{name} has no fields (line #{definition["line"]})") end
+        type = @types[name]
+        self.input_values(definition["fields"], name).each() do |argument|
+          type.argument(argument.name(), argument.type(), argument.default_value(), argument.has_default?(), argument.description())
+        end
+      end
+      nil
+    end
+
+    def fill_fields(definition)
+      name = definition["name"]
+      type = @types[name]
+      definition["interfaces"].each() do |entry|
+        iface = @types[entry[0]]
+        if iface == nil then self.error("type #{name} implements unknown interface #{entry[0]} (line #{entry[1]})") end
+        if iface.kind() != "INTERFACE" then self.error("type #{name} implements #{entry[0]}, which is not an interface (line #{entry[1]})") end
+        type.implements(iface)
+      end
+      seen = {}
+      definition["fields"].each() do |field|
+        field_name = field["name"]
+        line = field["line"]
+        where = "#{name}.#{field_name}"
+        if seen[field_name] != nil then self.error("#{name} declares the field #{field_name} twice (line #{line})") end
+        seen[field_name] = true
+        field_type = self.type_of(field["type"], line, where)
+        if GraphQL::Schema.unwrap(field_type).kind() == "INPUT_OBJECT"
+          self.error("#{where} returns the input type #{field_type.name()}; a field needs an output type (line #{line})")
+        end
+        arguments = self.input_values(field["arguments"], where)
+        directives = self.applied_directives(field["directives"], line, where)
+        if definition["kind"] == "OBJECT"
+          type.field(field_name, field_type, nil, arguments, field["description"], directives)
+        else
+          type.field(field_name, field_type, arguments, field["description"], directives)
+        end
+      end
+    end
+
+    def fill_union(definition)
+      name = definition["name"]
+      if definition["members"].length() == 0 then self.error("union #{name} has no members (line #{definition["line"]})") end
+      type = @types[name]
+      definition["members"].each() do |entry|
+        member = @types[entry[0]]
+        if member == nil then self.error("union #{name} names unknown type #{entry[0]} (line #{entry[1]})") end
+        if member.kind() != "OBJECT" then self.error("union #{name} names #{entry[0]}, which is not an object type (line #{entry[1]})") end
+        type.possible_type(member)
+      end
+    end
+
+    def fill_enum(definition)
+      name = definition["name"]
+      if definition["values"].length() == 0 then self.error("enum #{name} has no values (line #{definition["line"]})") end
+      type = @types[name]
+      definition["values"].each() do |value|
+        if type.value_named?(value["name"]) then self.error("enum #{name} declares #{value["name"]} twice (line #{value["line"]})") end
+        type.value(value["name"], value["description"])
+      end
+    end
+
+    def check_interfaces(definition)
+      if definition["kind"] != "OBJECT" then return nil end
+      type = @types[definition["name"]]
+      type.interfaces().each() do |iface|
+        iface.fields().each() do |field|
+          if type.field_named(field.name()) == nil
+            self.error("type #{type.name()} implements #{iface.name()} but has no field #{field.name()} (line #{definition["line"]})")
+          end
+        end
+      end
+      nil
+    end
+
+    def root_type(name, line, required)
+      type = @types[name]
+      if type == nil
+        if required then self.error("the schema has no #{name} type" + (if line == nil then "" else " (line #{line})" end)) end
+        return nil
+      end
+      if type.kind() != "OBJECT" then self.error("the root type #{name} must be an object type" + (if line == nil then "" else " (line #{line})" end)) end
+      type
+    end
+
+    def roots()
+      query_name = "Query"
+      mutation_name = "Mutation"
+      query_line = nil
+      mutation_line = nil
+      mutation_required = false
+      if @schema_record != nil
+        roots = @schema_record["roots"]
+        if roots["subscription"] != nil then self.error("subscriptions are not supported (line #{roots["subscription"][1]})") end
+        if roots["query"] == nil then self.error("the schema definition names no query type (line #{@schema_record["line"]})") end
+        query_name = roots["query"][0]
+        query_line = roots["query"][1]
+        mutation_name = if roots["mutation"] == nil then nil else roots["mutation"][0] end
+        if roots["mutation"] != nil
+          mutation_line = roots["mutation"][1]
+          mutation_required = true
+        end
+      elsif @types["Subscription"] != nil
+        self.error("subscriptions are not supported (type Subscription)")
+      end
+      schema = GraphQL::Schema.new().query(self.root_type(query_name, query_line, true))
+      if mutation_name != nil
+        mutation = self.root_type(mutation_name, mutation_line, mutation_required)
+        if mutation != nil then schema.mutation(mutation) end
+      end
+      schema
+    end
+
+    # A type nothing can reach would vanish from introspection and from to_sdl, so it is reported instead.
+    def check_reachable(schema)
+      reachable = schema.type_map()
+      @definitions.each() do |definition|
+        kind = definition["kind"]
+        name = definition["name"]
+        if kind != "SCHEMA" && kind != "DIRECTIVE" && reachable[name] == nil
+          self.error("type #{name} is not used by the query or mutation type, any field they lead to, or a directive (line #{definition["line"]})")
+        end
+      end
+      nil
+    end
+  end
+
+end
