@@ -1,4 +1,5 @@
-#define _XOPEN_SOURCE 700
+/* POSIX 2008 (O_CLOEXEC) on glibc; unlike _XOPEN_SOURCE it keeps the BSD types FreeBSD's headers need. */
+#define _GNU_SOURCE
 #include "embed.h"
 #include "tls_crypto.h"
 #include "vm.h"
