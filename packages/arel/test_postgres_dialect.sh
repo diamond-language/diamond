@@ -21,7 +21,6 @@ if ! command -v podman >/dev/null 2>&1; then
 fi
 
 container_name="diamond-arel-postgres-dialect-test"
-port=55433
 
 cleanup() {
     podman stop "$container_name" >/dev/null 2>&1 || true
@@ -32,8 +31,10 @@ podman rm -f "$container_name" >/dev/null 2>&1 || true
 podman run --rm -d --name "$container_name" \
     -e POSTGRES_PASSWORD=diamondtest \
     -e POSTGRES_DB=diamond_arel_test \
-    -p "127.0.0.1:${port}:5432" \
+    -p "127.0.0.1::5432" \
     docker.io/library/postgres:16-alpine >/dev/null
+# The runtime picks a free host port: a fixed one can collide with a client socket from the ephemeral range.
+port="$(podman port "$container_name" 5432/tcp | head -n1 | sed "s/.*://")"
 
 ready=0
 for _ in $(seq 1 30); do

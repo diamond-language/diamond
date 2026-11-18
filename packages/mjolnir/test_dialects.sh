@@ -37,6 +37,9 @@ wait_for() { # command...
 
 container_gone() { ! podman container inspect "$container"; }
 
+# The runtime picks a free host port: a fixed one can collide with a client socket from the ephemeral range.
+published_port() { podman port "$container" "$1/tcp" | head -n1 | sed "s/.*://"; }
+
 for dialect in "${wanted[@]}"; do
     cleanup
     podman rm -f "$container" >/dev/null 2>&1 || true
@@ -44,20 +47,20 @@ for dialect in "${wanted[@]}"; do
     wait_for container_gone || { echo "container $container was not removed" >&2; exit 1; }
     case "$dialect" in
         mariadb|mysql)
-            port=33071
             if [[ "$dialect" == mariadb ]]; then image=docker.io/library/mariadb:11; client=mariadb; else image=docker.io/library/mysql:8.4; client=mysql; fi
             podman run --rm -d --name "$container" -e MARIADB_ROOT_PASSWORD=diamondtest -e MYSQL_ROOT_PASSWORD=diamondtest \
                 -e MARIADB_DATABASE=diamond_mjolnir_test -e MYSQL_DATABASE=diamond_mjolnir_test \
-                -p "127.0.0.1:${port}:3306" "$image" >/dev/null
+                -p "127.0.0.1::3306" "$image" >/dev/null
+            port="$(published_port 3306)"
             wait_for podman exec "$container" "$client" -uroot -pdiamondtest -h127.0.0.1 diamond_mjolnir_test -e "SELECT 1" \
                 || { echo "$dialect did not become ready" >&2; exit 1; }
             export DIAMOND_MYSQL_TEST_HOST=127.0.0.1 DIAMOND_MYSQL_TEST_USER=root DIAMOND_MYSQL_TEST_PASSWORD=diamondtest
             export DIAMOND_MYSQL_TEST_DATABASE=diamond_mjolnir_test DIAMOND_MYSQL_TEST_PORT="$port"
             ;;
         postgres)
-            port=33072
             podman run --rm -d --name "$container" -e POSTGRES_PASSWORD=diamondtest -e POSTGRES_DB=diamond_mjolnir_test \
-                -p "127.0.0.1:${port}:5432" docker.io/library/postgres:16-alpine >/dev/null
+                -p "127.0.0.1::5432" docker.io/library/postgres:16-alpine >/dev/null
+            port="$(published_port 5432)"
             wait_for podman exec "$container" psql -h 127.0.0.1 -U postgres -d diamond_mjolnir_test -c "SELECT 1" \
                 || { echo "postgres did not become ready" >&2; exit 1; }
             sleep 2

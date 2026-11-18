@@ -11,5 +11,14 @@ DEBIAN_FRONTEND=noninteractive apt-get install -y -qq gcc make git diffutils fin
 ln -s "$(command -v docker)" /usr/local/bin/podman
 cp -r /src /work
 cd /work
+# Pull the database images up front, with retries: a Docker Hub token or registry timeout otherwise fails the whole job.
+for image in mariadb:11 mysql:8 mysql:8.4 postgres:16-alpine; do
+  for attempt in 1 2 3 4; do
+    docker pull -q "docker.io/library/$image" >/dev/null && break
+    [ "$attempt" -lt 4 ] || { echo "could not pull $image" >&2; exit 1; }
+    echo "pull of $image failed (attempt $attempt); retrying" >&2
+    sleep $((attempt * 10))
+  done
+done
 make test-database-dialects
 '
