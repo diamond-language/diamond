@@ -1,0 +1,848 @@
+module TOML
+  ## Raised for text that isn't valid TOML 1.0. The message starts with the
+  ## line and column; `line()` and `column()` are 1-based.
+  class ParseError < StandardError
+    attr_reader message: String
+    attr_reader line: Int
+    attr_reader column: Int
+    def initialize(message: String, line: Int, column: Int)
+      @message = "line #{line}, column #{column}: #{message}"
+      @line = line
+      @column = column
+    end
+  end
+
+  # Reads one TOML document. Values go into plain Hashes and Arrays; a
+  # parallel tree of "meta" Hashes records how each table was made, which is
+  # what decides whether a later header or dotted key may add to it:
+  #
+  #   implicit  made as a prefix of a header ([a.b] makes a); one later [a] may define it
+  #   header    defined by its own [header]
+  #   dotted    made by a dotted key (a.b = 1 makes a)
+  #   inline    an inline table, closed to any later addition
+  #   value     any other value, including an array written with [ ]
+  #   aot       an array of tables, whose "items" are the meta of each table
+  class Parser
+    def initialize(text: String)
+      @text = text
+      @length = text.length()
+      @pos = 0
+      @line = 1
+      @line_start = 0
+    end
+
+    def fail(message: String)
+      raise TOML::ParseError.new(message, @line, @pos - @line_start + 1)
+    end
+
+    def peek() -> Int
+      if @pos < @length then @text.getbyte(@pos) else -1 end
+    end
+
+    def peek_at(offset: Int) -> Int
+      at = @pos + offset
+      if at < @length then @text.getbyte(at) else -1 end
+    end
+
+    def at?(literal: String) -> Bool
+      @pos + literal.length() <= @length && @text.slice(@pos, literal.length()) == literal
+    end
+
+    def describe(byte: Int) -> String
+      return "end of input" if byte < 0
+      return "a newline" if byte == 10 || byte == 13
+      return "byte #{byte}" if byte < 32 || byte == 127
+      @text.slice(@pos, 1).inspect()
+    end
+
+    def new_meta(kind: String) -> Hash
+      {"kind": kind, "children": {}, "items": []}
+    end
+
+    # TOML documents must be valid UTF-8: no stray continuation bytes, overlong
+    # forms, surrogates or code points past U+10FFFF.
+    def check_utf8()
+      text = @text
+      length = @length
+      at = 0
+      while at < length
+        byte = text.getbyte(at)
+        if byte < 0x80
+          at += 1
+        else
+          count = 0
+          low = 0x80
+          high = 0xBF
+          if byte >= 0xC2 && byte <= 0xDF
+            count = 1
+          elsif byte >= 0xE0 && byte <= 0xEF
+            count = 2
+            low = 0xA0 if byte == 0xE0
+            high = 0x9F if byte == 0xED
+          elsif byte >= 0xF0 && byte <= 0xF4
+            count = 3
+            low = 0x90 if byte == 0xF0
+            high = 0x8F if byte == 0xF4
+          end
+          valid = count > 0 && at + count < length + 1
+          index = 1
+          while valid && index <= count
+            next_byte = if at + index < length then text.getbyte(at + index) else -1 end
+            limit_low = if index == 1 then low else 0x80 end
+            limit_high = if index == 1 then high else 0xBF end
+            valid = false if next_byte < limit_low || next_byte > limit_high
+            index += 1
+          end
+          unless valid
+            @pos = at
+            self.locate()
+            self.fail("invalid UTF-8")
+          end
+          at += count + 1
+        end
+      end
+    end
+
+    # Sets @line and @line_start for @pos, for an error found out of order.
+    def locate()
+      @line = 1
+      @line_start = 0
+      at = 0
+      while at < @pos
+        if @text.getbyte(at) == 10
+          @line += 1
+          @line_start = at + 1
+        end
+        at += 1
+      end
+    end
+
+    # ---- whitespace, comments and line ends ----
+
+    def skip_spaces()
+      while @pos < @length
+        byte = @text.getbyte(@pos)
+        break unless byte == 32 || byte == 9
+        @pos += 1
+      end
+    end
+
+    def skip_comment()
+      return unless self.peek() == 35
+      @pos += 1
+      while @pos < @length
+        byte = @text.getbyte(@pos)
+        break if byte == 10 || (byte == 13 && self.peek_at(1) == 10)
+        self.fail("control character (byte #{byte}) in a comment") if (byte < 32 && byte != 9) || byte == 127
+        @pos += 1
+      end
+    end
+
+    # Consumes one line ending. Returns false when there isn't one here.
+    def take_newline() -> Bool
+      byte = self.peek()
+      if byte == 10
+        @pos += 1
+      elsif byte == 13 && self.peek_at(1) == 10
+        @pos += 2
+      else
+        return false
+      end
+      @line += 1
+      @line_start = @pos
+      true
+    end
+
+    # Spaces, comments and line breaks, as allowed between array elements.
+    def skip_blank()
+      while true
+        self.skip_spaces()
+        self.skip_comment()
+        break unless self.take_newline()
+      end
+    end
+
+    # After a key/value pair or a header: optional comment, then a line end or the end.
+    def finish_line()
+      self.skip_spaces()
+      self.skip_comment()
+      return if @pos >= @length
+      self.fail("expected the end of the line, found #{self.describe(self.peek())}") unless self.take_newline()
+    end
+
+    # ---- the document ----
+
+    def parse_document() -> Hash
+      # A UTF-8 byte-order mark isn't part of the document.
+      @pos = 3 if @text.start_with?("\xEF\xBB\xBF")
+      self.check_utf8()
+      root = {}
+      root_meta = self.new_meta("header")
+      table = root
+      meta = root_meta
+      while true
+        self.skip_blank()
+        break if @pos >= @length
+        if self.peek() == 91
+          if self.peek_at(1) == 91
+            @pos += 2
+            path = self.parse_key()
+            self.fail("expected ]] to close the table array header") unless self.at?("]]")
+            @pos += 2
+            found = self.open_array_table(root, root_meta, path)
+          else
+            @pos += 1
+            path = self.parse_key()
+            self.fail("expected ] to close the table header") unless self.peek() == 93
+            @pos += 1
+            found = self.open_table(root, root_meta, path)
+          end
+          table = found[0]
+          meta = found[1]
+        else
+          self.parse_pair(table, meta)
+        end
+        self.finish_line()
+      end
+      root
+    end
+
+    # Walks a header's path up to its last key. Missing tables are made
+    # implicit; an array of tables leads into its last table.
+    def walk_header(root: Hash, root_meta: Hash, path: Array) -> Array
+      table = root
+      meta = root_meta
+      index = 0
+      while index < path.length() - 1
+        key = path[index]
+        children = meta["children"]
+        if !table.include_key?(key)
+          table[key] = {}
+          children[key] = self.new_meta("implicit")
+        end
+        child = children[key]
+        kind = child["kind"]
+        if kind == "aot"
+          table = table[key][table[key].length() - 1]
+          meta = child["items"][child["items"].length() - 1]
+        elsif kind == "implicit" || kind == "header" || kind == "dotted"
+          table = table[key]
+          meta = child
+        else
+          self.fail("#{TOML.display_path(path.slice(0, index + 1))} is already a value, not a table")
+        end
+        index += 1
+      end
+      [table, meta]
+    end
+
+    def open_table(root: Hash, root_meta: Hash, path: Array) -> Array
+      parent = self.walk_header(root, root_meta, path)
+      table = parent[0]
+      children = parent[1]["children"]
+      key = path[path.length() - 1]
+      name = TOML.display_path(path)
+      if !table.include_key?(key)
+        table[key] = {}
+        children[key] = self.new_meta("header")
+        return [table[key], children[key]]
+      end
+      child = children[key]
+      if child["kind"] == "implicit"
+        child["kind"] = "header"
+        return [table[key], child]
+      end
+      self.fail("table [#{name}] is defined twice") if child["kind"] == "header"
+      self.fail("[#{name}] adds to a table that dotted keys already defined") if child["kind"] == "dotted"
+      self.fail("[#{name}] is already an array of tables") if child["kind"] == "aot"
+      self.fail("#{name} is already a value, not a table")
+    end
+
+    def open_array_table(root: Hash, root_meta: Hash, path: Array) -> Array
+      parent = self.walk_header(root, root_meta, path)
+      table = parent[0]
+      children = parent[1]["children"]
+      key = path[path.length() - 1]
+      if !table.include_key?(key)
+        table[key] = []
+        children[key] = self.new_meta("aot")
+      end
+      child = children[key]
+      self.fail("[[#{TOML.display_path(path)}]] names something that isn't an array of tables") unless child["kind"] == "aot"
+      item = {}
+      item_meta = self.new_meta("header")
+      table[key].push(item)
+      child["items"].push(item_meta)
+      [item, item_meta]
+    end
+
+    # key = value, with a dotted key making (or adding to) dotted tables.
+    def parse_pair(table: Hash, meta: Hash)
+      key_pos = @pos
+      path = self.parse_key()
+      self.skip_spaces()
+      self.fail("expected = after the key") unless self.peek() == 61
+      @pos += 1
+      self.skip_spaces()
+      index = 0
+      while index < path.length() - 1
+        key = path[index]
+        children = meta["children"]
+        if !table.include_key?(key)
+          table[key] = {}
+          children[key] = self.new_meta("dotted")
+        end
+        child = children[key]
+        unless child["kind"] == "dotted"
+          @pos = key_pos
+          self.fail("#{TOML.display_path(path.slice(0, index + 1))} can't be extended with a dotted key")
+        end
+        table = table[key]
+        meta = child
+        index += 1
+      end
+      key = path[path.length() - 1]
+      if table.include_key?(key)
+        @pos = key_pos
+        self.fail("#{TOML.display_path(path)} is defined twice")
+      end
+      found = self.parse_value()
+      table[key] = found[0]
+      meta["children"][key] = self.new_meta(found[1])
+    end
+
+    # ---- keys ----
+
+    def parse_key() -> Array
+      path = []
+      while true
+        self.skip_spaces()
+        path.push(self.parse_simple_key())
+        self.skip_spaces()
+        break unless self.peek() == 46
+        @pos += 1
+      end
+      path
+    end
+
+    def parse_simple_key() -> String
+      byte = self.peek()
+      if byte == 34
+        self.fail("a key can't be a multi-line string") if self.at?("\"\"\"")
+        return self.parse_basic_string()
+      end
+      if byte == 39
+        self.fail("a key can't be a multi-line string") if self.at?("'''")
+        return self.parse_literal_string()
+      end
+      start = @pos
+      while @pos < @length && TOML.bare_key_byte?(@text.getbyte(@pos))
+        @pos += 1
+      end
+      self.fail("expected a key, found #{self.describe(byte)}") if @pos == start
+      @text.slice(start, @pos - start)
+    end
+
+    # ---- values: each returns [value, meta kind] ----
+
+    def parse_value() -> Array
+      byte = self.peek()
+      if byte == 34
+        text = if self.at?("\"\"\"") then self.parse_multiline_basic_string() else self.parse_basic_string() end
+        return [text, "value"]
+      end
+      if byte == 39
+        text = if self.at?("'''") then self.parse_multiline_literal_string() else self.parse_literal_string() end
+        return [text, "value"]
+      end
+      return [self.parse_array(), "value"] if byte == 91
+      return [self.parse_inline_table(), "inline"] if byte == 123
+      if self.at?("true") && !TOML.bare_key_byte?(self.peek_at(4))
+        @pos += 4
+        return [true, "value"]
+      end
+      if self.at?("false") && !TOML.bare_key_byte?(self.peek_at(5))
+        @pos += 5
+        return [false, "value"]
+      end
+      [self.parse_number_or_date(), "value"]
+    end
+
+    def parse_array() -> Array
+      @pos += 1
+      items = []
+      while true
+        self.skip_blank()
+        if self.peek() == 93
+          @pos += 1
+          return items
+        end
+        items.push(self.parse_value()[0])
+        self.skip_blank()
+        byte = self.peek()
+        if byte == 44
+          @pos += 1
+        elsif byte == 93
+          @pos += 1
+          return items
+        else
+          self.fail("expected , or ] in an array, found #{self.describe(byte)}")
+        end
+      end
+    end
+
+    # TOML 1.0 inline tables stay on one line and have no trailing comma.
+    def parse_inline_table() -> Hash
+      @pos += 1
+      table = {}
+      meta = self.new_meta("inline")
+      self.skip_spaces()
+      if self.peek() == 125
+        @pos += 1
+        return table
+      end
+      while true
+        self.parse_pair(table, meta)
+        self.skip_spaces()
+        byte = self.peek()
+        if byte == 125
+          @pos += 1
+          return table
+        end
+        self.fail("expected , or } in an inline table, found #{self.describe(byte)}") unless byte == 44
+        @pos += 1
+        self.skip_spaces()
+        self.fail("an inline table can't end with a comma") if self.peek() == 125
+      end
+    end
+
+    # ---- strings ----
+
+    def check_string_byte(byte: Int, multiline: Bool)
+      return if byte == 9 || byte >= 32 && byte != 127
+      return if multiline && (byte == 10 || byte == 13)
+      self.fail("#{self.describe(byte)} isn't allowed in a string")
+    end
+
+    def parse_basic_string() -> String
+      @pos += 1
+      out = StringBuilder.new()
+      segment = @pos
+      while true
+        self.fail("string never closes") if @pos >= @length
+        byte = @text.getbyte(@pos)
+        if byte == 34
+          out.append(@text.slice(segment, @pos - segment))
+          @pos += 1
+          return out.to_s()
+        elsif byte == 92
+          out.append(@text.slice(segment, @pos - segment))
+          self.parse_escape(out)
+          segment = @pos
+        else
+          self.check_string_byte(byte, false)
+          @pos += 1
+        end
+      end
+    end
+
+    def parse_multiline_basic_string() -> String
+      @pos += 3
+      self.take_newline()
+      out = StringBuilder.new()
+      segment = @pos
+      while true
+        self.fail("multi-line string never closes") if @pos >= @length
+        byte = @text.getbyte(@pos)
+        if byte == 34 && self.at?("\"\"\"")
+          # Up to two more quotes right before the closing three belong to the string.
+          extra = 0
+          while extra < 2 && self.peek_at(3 + extra) == 34
+            extra += 1
+          end
+          out.append(@text.slice(segment, @pos + extra - segment))
+          @pos += 3 + extra
+          return out.to_s()
+        elsif byte == 92
+          out.append(@text.slice(segment, @pos - segment))
+          if self.line_ending_backslash?()
+            # A backslash at the end of a line trims the line break and the
+            # whitespace that follows it.
+            @pos += 1
+            while true
+              self.skip_spaces()
+              break unless self.take_newline()
+            end
+          else
+            self.parse_escape(out)
+          end
+          segment = @pos
+        elsif byte == 10 || byte == 13
+          self.fail("bare carriage return in a string") unless self.take_newline()
+        else
+          self.check_string_byte(byte, true)
+          @pos += 1
+        end
+      end
+    end
+
+    # True when the backslash at @pos is followed only by spaces up to a line break.
+    def line_ending_backslash?() -> Bool
+      at = @pos + 1
+      while at < @length && (@text.getbyte(at) == 32 || @text.getbyte(at) == 9)
+        at += 1
+      end
+      return false if at >= @length
+      byte = @text.getbyte(at)
+      byte == 10 || (byte == 13 && at + 1 < @length && @text.getbyte(at + 1) == 10)
+    end
+
+    def parse_escape(out: StringBuilder)
+      @pos += 1
+      byte = self.peek()
+      @pos += 1
+      if byte == 98
+        out.append(chr(8))
+      elsif byte == 116
+        out.append("\t")
+      elsif byte == 110
+        out.append("\n")
+      elsif byte == 102
+        out.append(chr(12))
+      elsif byte == 114
+        out.append("\r")
+      elsif byte == 34
+        out.append("\"")
+      elsif byte == 92
+        out.append("\\")
+      elsif byte == 117 || byte == 85
+        digits = if byte == 117 then 4 else 8 end
+        @pos -= 1
+        self.fail("\\#{@text.slice(@pos, 1)} needs #{digits} hex digits") if @pos + 1 + digits > @length
+        hex = @text.slice(@pos + 1, digits)
+        hex.chars().each() do |ch|
+          self.fail("\\#{@text.slice(@pos, 1)} needs #{digits} hex digits") unless TOML.hex_digit?(ch.ord())
+        end
+        code = hex.to_i(16)
+        if code > 0x10FFFF || (code >= 0xD800 && code <= 0xDFFF)
+          self.fail("\\#{@text.slice(@pos, 1)}#{hex} isn't a Unicode scalar value")
+        end
+        out.append(TOML.utf8(code))
+        @pos += 1 + digits
+      else
+        @pos -= 1
+        self.fail("unknown escape \\#{if byte < 0 then "" else @text.slice(@pos, 1) end}")
+      end
+    end
+
+    def parse_literal_string() -> String
+      @pos += 1
+      start = @pos
+      while true
+        self.fail("string never closes") if @pos >= @length
+        byte = @text.getbyte(@pos)
+        break if byte == 39
+        self.check_string_byte(byte, false)
+        @pos += 1
+      end
+      text = @text.slice(start, @pos - start)
+      @pos += 1
+      text
+    end
+
+    def parse_multiline_literal_string() -> String
+      @pos += 3
+      self.take_newline()
+      out = StringBuilder.new()
+      segment = @pos
+      while true
+        self.fail("multi-line string never closes") if @pos >= @length
+        byte = @text.getbyte(@pos)
+        if byte == 39 && self.at?("'''")
+          extra = 0
+          while extra < 2 && self.peek_at(3 + extra) == 39
+            extra += 1
+          end
+          out.append(@text.slice(segment, @pos + extra - segment))
+          @pos += 3 + extra
+          return out.to_s()
+        elsif byte == 10 || byte == 13
+          self.fail("bare carriage return in a string") unless self.take_newline()
+        else
+          self.check_string_byte(byte, true)
+          @pos += 1
+        end
+      end
+    end
+
+    # ---- numbers, dates and times ----
+
+    def parse_number_or_date()
+      start = @pos
+      # Dates and times start with digits followed by - or : (1979-05-27, 07:32:00).
+      if TOML.digits_at?(@text, @pos, 4) && self.peek_at(4) == 45
+        return self.parse_date_time()
+      end
+      if TOML.digits_at?(@text, @pos, 2) && self.peek_at(2) == 58
+        return self.parse_local_time()
+      end
+      while @pos < @length
+        byte = @text.getbyte(@pos)
+        break unless TOML.bare_key_byte?(byte) || byte == 43 || byte == 46
+        @pos += 1
+      end
+      token = @text.slice(start, @pos - start)
+      @pos = start
+      self.fail("expected a value, found #{self.describe(self.peek())}") if token.empty?()
+      value = TOML.number(token)
+      self.fail("invalid number #{token.inspect()}") if value == nil
+      @pos = start + token.length()
+      value
+    end
+
+    def two_digits(what: String) -> Int
+      self.fail("expected two digits for the #{what}") unless TOML.digits_at?(@text, @pos, 2)
+      value = @text.slice(@pos, 2).to_i()
+      @pos += 2
+      value
+    end
+
+    def expect_byte(byte: Int, what: String)
+      self.fail("expected #{what}") unless self.peek() == byte
+      @pos += 1
+    end
+
+    # HH:MM:SS with optional fractional seconds; returns the text.
+    def parse_time_text() -> String
+      start = @pos
+      hour = self.two_digits("hour")
+      self.expect_byte(58, ": in the time")
+      minute = self.two_digits("minute")
+      self.expect_byte(58, ": and seconds in the time")
+      second = self.two_digits("second")
+      self.fail("time #{@text.slice(start, @pos - start)} is out of range") if hour > 23 || minute > 59 || second > 60
+      if self.peek() == 46
+        @pos += 1
+        digits = @pos
+        while @pos < @length && TOML.decimal_digit?(@text.getbyte(@pos))
+          @pos += 1
+        end
+        self.fail("expected digits after the decimal point in the time") if @pos == digits
+      end
+      @text.slice(start, @pos - start)
+    end
+
+    def parse_local_time() -> String
+      self.parse_time_text()
+    end
+
+    # A date alone is a String ("1979-05-27"), as is a date and time with no
+    # offset ("1979-05-27T07:32:00"). With an offset it's a Time.
+    def parse_date_time()
+      start = @pos
+      year = @text.slice(@pos, 4).to_i()
+      @pos += 4
+      self.expect_byte(45, "- in the date")
+      month = self.two_digits("month")
+      self.expect_byte(45, "- in the date")
+      day = self.two_digits("day")
+      self.fail("date #{@text.slice(start, 10)} doesn't exist") unless TOML.valid_date?(year, month, day)
+      date = @text.slice(start, 10)
+      byte = self.peek()
+      has_time = byte == 84 || byte == 116 || (byte == 32 && TOML.digits_at?(@text, @pos + 1, 2) && self.peek_at(3) == 58)
+      return date unless has_time
+      @pos += 1
+      time = self.parse_time_text()
+      local = "#{date}T#{time}"
+      byte = self.peek()
+      if byte == 90 || byte == 122
+        @pos += 1
+        return self.to_time("#{local}Z")
+      end
+      if byte == 43 || byte == 45
+        offset_start = @pos
+        @pos += 1
+        offset_hour = self.two_digits("offset hour")
+        self.expect_byte(58, ": in the offset")
+        offset_minute = self.two_digits("offset minute")
+        self.fail("offset is out of range") if offset_hour > 23 || offset_minute > 59
+        return self.to_time(local + @text.slice(offset_start, 6))
+      end
+      local
+    end
+
+    def to_time(text: String)
+      begin
+        Time.parse(text)
+      rescue error
+        self.fail("can't read #{text} as a time: #{error.message()}")
+      end
+    end
+  end
+
+  def self.format_key(key) -> String
+    text = "#{key}"
+    bare = !text.empty?()
+    text.chars().each() do |ch|
+      bare = false unless TOML.bare_key_byte?(ch.ord())
+    end
+    if bare then text else TOML.format_string(text) end
+  end
+
+  ## A String as a TOML basic string, with quotes, backslashes and control
+  ## characters escaped.
+  def self.format_string(text: String) -> String
+    out = StringBuilder.new()
+    out.append("\"")
+    segment = 0
+    index = 0
+    length = text.length()
+    while index < length
+      byte = text.getbyte(index)
+      escape = nil
+      if byte == 34
+        escape = "\\\""
+      elsif byte == 92
+        escape = "\\\\"
+      elsif byte == 10
+        escape = "\\n"
+      elsif byte == 9
+        escape = "\\t"
+      elsif byte == 13
+        escape = "\\r"
+      elsif byte < 32 || byte == 127
+        escape = "\\u%04X".format(byte)
+      end
+      if escape != nil
+        out.append(text.slice(segment, index - segment))
+        out.append(escape)
+        segment = index + 1
+      end
+      index += 1
+    end
+    out.append(text.slice(segment, length - segment))
+    out.append("\"")
+    out.to_s()
+  end
+
+  def self.display_path(path: Array) -> String
+    keys = path.map() do |key| TOML.format_key(key) end
+    keys.join(".")
+  end
+
+  def self.bare_key_byte?(byte: Int) -> Bool
+    (byte >= 65 && byte <= 90) || (byte >= 97 && byte <= 122) || (byte >= 48 && byte <= 57) ||
+      byte == 45 || byte == 95
+  end
+
+  def self.decimal_digit?(byte: Int) -> Bool
+    byte >= 48 && byte <= 57
+  end
+
+  def self.hex_digit?(byte: Int) -> Bool
+    TOML.decimal_digit?(byte) || (byte >= 65 && byte <= 70) || (byte >= 97 && byte <= 102)
+  end
+
+  def self.digits_at?(text: String, at: Int, count: Int) -> Bool
+    return false if at + count > text.length()
+    index = 0
+    while index < count
+      return false unless TOML.decimal_digit?(text.getbyte(at + index))
+      index += 1
+    end
+    true
+  end
+
+  def self.valid_date?(year: Int, month: Int, day: Int) -> Bool
+    return false if month < 1 || month > 12 || day < 1
+    leap = (year % 4 == 0 && year % 100 != 0) || year % 400 == 0
+    lengths = [31, if leap then 29 else 28 end, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+    day <= lengths[month - 1]
+  end
+
+  # A code point as UTF-8 bytes.
+  def self.utf8(code: Int) -> String
+    return chr(code) if code < 0x80
+    if code < 0x800
+      return chr(0xC0 | (code >> 6)) + chr(0x80 | (code & 0x3F))
+    end
+    if code < 0x10000
+      return chr(0xE0 | (code >> 12)) + chr(0x80 | ((code >> 6) & 0x3F)) + chr(0x80 | (code & 0x3F))
+    end
+    chr(0xF0 | (code >> 18)) + chr(0x80 | ((code >> 12) & 0x3F)) + chr(0x80 | ((code >> 6) & 0x3F)) +
+      chr(0x80 | (code & 0x3F))
+  end
+
+  # Underscores must sit between two digits (of the given kind).
+  def self.clean_digits(text: String, hex: Bool)
+    return nil if text.empty?() || text.start_with?("_") || text.end_with?("_") || text.include?("__")
+    digits = text.gsub("_", "")
+    ok = true
+    digits.chars().each() do |ch|
+      byte = ch.ord()
+      ok = false unless (hex && TOML.hex_digit?(byte)) || (!hex && TOML.decimal_digit?(byte))
+    end
+    if ok then digits else nil end
+  end
+
+  # An integer or float token, or nil when it isn't one. Integers must fit in
+  # 64 bits, as TOML requires.
+  def self.number(token: String)
+    sign = ""
+    body = token
+    if token.start_with?("+") || token.start_with?("-")
+      sign = token.slice(0, 1)
+      body = token.slice(1, token.length() - 1)
+    end
+    if body == "inf"
+      return if sign == "-" then -1.0 / 0.0 else 1.0 / 0.0 end
+    end
+    if body == "nan"
+      return 0.0 / 0.0
+    end
+    if body.start_with?("0x", "0o", "0b")
+      return nil unless sign == ""
+      digits = TOML.clean_digits(body.slice(2, body.length() - 2), body.start_with?("0x"))
+      return nil if digits == nil
+      base = if body.start_with?("0x") then 16 elsif body.start_with?("0o") then 8 else 2 end
+      limit = if base == 16 then "0123456789abcdefABCDEF" elsif base == 8 then "01234567" else "01" end
+      digits.chars().each() do |ch|
+        return nil unless limit.include?(ch)
+      end
+      value = digits.to_i(base)
+      return nil if value > 9223372036854775807
+      return value
+    end
+    exponent_at = body.index_of("e")
+    exponent_at = body.index_of("E") if exponent_at == nil
+    mantissa = if exponent_at == nil then body else body.slice(0, exponent_at) end
+    dot = mantissa.index_of(".")
+    whole = if dot == nil then mantissa else mantissa.slice(0, dot) end
+    whole_digits = TOML.clean_digits(whole, false)
+    return nil if whole_digits == nil
+    return nil if whole_digits.length() > 1 && whole_digits.start_with?("0")
+    if dot == nil && exponent_at == nil
+      value = (sign + whole_digits).to_i()
+      return nil if value > 9223372036854775807 || value < -9223372036854775808
+      return value
+    end
+    text = sign + whole_digits
+    if dot != nil
+      fraction = TOML.clean_digits(mantissa.slice(dot + 1, mantissa.length() - dot - 1), false)
+      return nil if fraction == nil
+      text = text + "." + fraction
+    end
+    if exponent_at != nil
+      exponent = body.slice(exponent_at + 1, body.length() - exponent_at - 1)
+      exponent_sign = ""
+      if exponent.start_with?("+") || exponent.start_with?("-")
+        exponent_sign = exponent.slice(0, 1)
+        exponent = exponent.slice(1, exponent.length() - 1)
+      end
+      exponent_digits = TOML.clean_digits(exponent, false)
+      return nil if exponent_digits == nil
+      text = text + "e" + exponent_sign + exponent_digits
+    end
+    text.to_f()
+  end
+end

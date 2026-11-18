@@ -1,0 +1,175 @@
+require "../lib/toml"
+require "../../../lib/minitest"
+
+def parse_error(text: String)
+  begin
+    TOML.parse(text)
+  rescue error: TOML::ParseError
+    return error
+  end
+  nil
+end
+
+def run_tests()
+  def test_scalars()
+    doc = TOML.parse("s = \"hi\"\ni = -42\nf = 3.5\nb = true\nn = false\n")
+    Minitest.assert_equal({"s": "hi", "i": -42, "f": 3.5, "b": true, "n": false}, doc)
+  end
+
+  def test_integers()
+    doc = TOML.parse("a = 1_000\nb = 0xDEAD_beef\nc = 0o755\nd = 0b1101\ne = +7\nf = 9223372036854775807\n")
+    Minitest.assert_equal({"a": 1000, "b": 3735928559, "c": 493, "d": 13, "e": 7, "f": 9223372036854775807}, doc)
+  end
+
+  def test_floats()
+    doc = TOML.parse("a = 6.626e-34\nb = 5e+22\nc = 1_0.5\nd = inf\ne = -inf\nf = nan\n")
+    Minitest.assert_equal(6.626e-34, doc["a"])
+    Minitest.assert_equal(5e+22, doc["b"])
+    Minitest.assert_equal(10.5, doc["c"])
+    Minitest.assert_equal(1.0 / 0.0, doc["d"])
+    Minitest.assert_equal(-1.0 / 0.0, doc["e"])
+    Minitest.assert(doc["f"].nan?())
+  end
+
+  def test_bad_numbers()
+    ["a = 01", "a = 1__0", "a = _1", "a = 1.", "a = .5", "a = +0x1", "a = 9223372036854775808", "a = 1e"].each() do |text|
+      Minitest.refute_nil(parse_error(text), text)
+    end
+  end
+
+  def test_strings()
+    doc = TOML.parse("a = \"tab\\tquote\\\" \\u00e9 \\U0001F600\"\nb = 'C:\\path'\n")
+    Minitest.assert_equal("tab\tquote\" é 😀", doc["a"])
+    Minitest.assert_equal("C:\\path", doc["b"])
+  end
+
+  def test_multiline_strings()
+    text = "a = \"\"\"\nRoses \\\n   are red\"\"\"\nb = '''\nraw \\n\n'''\nc = \"\"\"two \"\"quotes\"\"\"\"\"\n"
+    doc = TOML.parse(text)
+    Minitest.assert_equal("Roses are red", doc["a"])
+    Minitest.assert_equal("raw \\n\n", doc["b"])
+    Minitest.assert_equal("two \"\"quotes\"\"", doc["c"])
+  end
+
+  def test_dates_and_times()
+    doc = TOML.parse("a = 1979-05-27T07:32:00Z\nb = 1979-05-27 00:32:00.5-07:00\nc = 1979-05-27\nd = 07:32:00\ne = 1979-05-27t07:32:00\n")
+    Minitest.assert(doc["a"].is_a?(Time))
+    Minitest.assert_equal("1979-05-27T07:32:00Z", doc["a"].iso8601())
+    Minitest.assert_equal(Time.parse("1979-05-27T07:32:00.5Z").to_f(), doc["b"].to_f())
+    Minitest.assert_equal("1979-05-27", doc["c"])
+    Minitest.assert_equal("07:32:00", doc["d"])
+    Minitest.assert_equal("1979-05-27T07:32:00", doc["e"])
+    Minitest.refute_nil(parse_error("a = 2023-02-29"))
+    Minitest.refute_nil(parse_error("a = 1979-05-27T25:00:00"))
+  end
+
+  def test_tables()
+    doc = TOML.parse("top = 1\n[server]\nhost = \"x\"\n[server.tls]\non = true\n[\"quoted . key\"]\nv = 2\n")
+    Minitest.assert_equal({"top": 1, "server": {"host": "x", "tls": {"on": true}}, "quoted . key": {"v": 2}}, doc)
+  end
+
+  def test_dotted_keys()
+    doc = TOML.parse("site.\"google.com\" = true\n[fruit]\napple.color = \"red\"\napple.taste.sweet = true\n[fruit.apple.texture]\nsmooth = true\n")
+    Minitest.assert_equal({"google.com": true}, doc["site"])
+    Minitest.assert_equal({"color": "red", "taste": {"sweet": true}, "texture": {"smooth": true}}, doc["fruit"]["apple"])
+  end
+
+  def test_arrays()
+    doc = TOML.parse("a = [ 1, 2, 3, ]\nb = [\n  \"x\", # comment\n  [1.5, \"mixed\"],\n]\nc = []\n")
+    Minitest.assert_equal({"a": [1, 2, 3], "b": ["x", [1.5, "mixed"]], "c": []}, doc)
+  end
+
+  def test_inline_tables()
+    doc = TOML.parse("p = { x = 1, y.z = 2 }\ne = {}\n")
+    Minitest.assert_equal({"p": {"x": 1, "y": {"z": 2}}, "e": {}}, doc)
+    Minitest.refute_nil(parse_error("p = { x = 1, }"))
+    Minitest.refute_nil(parse_error("p = { x = 1,\n y = 2 }"))
+    Minitest.refute_nil(parse_error("p = { x = 1 }\np.y = 2"))
+  end
+
+  def test_arrays_of_tables()
+    text = "[[products]]\nname = \"Hammer\"\n[[products]]\n[[products]]\nname = \"Nail\"\n[products.size]\nmm = 3\n"
+    doc = TOML.parse(text)
+    Minitest.assert_equal([{"name": "Hammer"}, {}, {"name": "Nail", "size": {"mm": 3}}], doc["products"])
+  end
+
+  def test_redefinitions()
+    Minitest.refute_nil(parse_error("a = 1\na = 2"))
+    Minitest.refute_nil(parse_error("[a]\n[a]"))
+    Minitest.refute_nil(parse_error("[a]\nb.c = 1\n[a.b]"))
+    Minitest.refute_nil(parse_error("a = []\n[[a]]"))
+    Minitest.refute_nil(parse_error("[[a]]\n[a]"))
+    Minitest.refute_nil(parse_error("a = 1\n[a.b]"))
+  end
+
+  def test_error_position()
+    error = parse_error("a = 1\nb = \"open\n")
+    Minitest.refute_nil(error)
+    Minitest.assert_equal(2, error.line())
+    Minitest.assert(error.message().start_with?("line 2, column "), error.message())
+  end
+
+  def test_bad_utf8()
+    error = parse_error("a = 1\n# \xC3\x28\n")
+    Minitest.refute_nil(error)
+    Minitest.assert_equal(2, error.line())
+  end
+
+  def test_comments_and_crlf()
+    doc = TOML.parse("# top\r\na = 1 # trailing\r\n\r\n[t] # header\r\nb = 2\r\n")
+    Minitest.assert_equal({"a": 1, "t": {"b": 2}}, doc)
+    Minitest.refute_nil(parse_error("a = 1\rb = 2"))
+  end
+
+  def test_generate()
+    doc = {"title": "x", "n": 1, "on": true, "ratio": 2.0, "list": [1, "two"], "point": {"x": 1}, "when": Time.parse("1979-05-27T07:32:00Z"),
+           "servers": {"alpha": {"ip": "10.0.0.1"}}, "products": [{"name": "Hammer"}, {"name": "Nail"}], "odd key": "a\"b\n"}
+    text = TOML.generate(doc)
+    expected = "title = \"x\"\nn = 1\non = true\nratio = 2.0\nlist = [1, \"two\"]\nwhen = 1979-05-27T07:32:00Z\n\"odd key\" = \"a\\\"b\\n\"\n" +
+      "\n[point]\nx = 1\n\n[servers.alpha]\nip = \"10.0.0.1\"\n\n[[products]]\nname = \"Hammer\"\n\n[[products]]\nname = \"Nail\"\n"
+    Minitest.assert_equal(expected, text)
+  end
+
+  def test_generate_round_trip()
+    doc = {"a": {"b": {"c": [1, 2]}, "d": [{"e": {"f": 1}}, {"list": [{"inline": true}]}]}, "big": -9223372036854775808, "inf": 1.0 / 0.0}
+    Minitest.assert_equal(doc, TOML.parse(TOML.generate(doc)))
+  end
+
+  def test_generate_rejects()
+    Minitest.assert_raises[TOML::GenerateError]() do TOML.generate({"a": nil}) end
+    Minitest.assert_raises[TOML::GenerateError]() do TOML.generate({"a": [1, nil]}) end
+    Minitest.assert_raises[TOML::GenerateError]() do TOML.generate({"a": 99999999999999999999}) end
+  end
+
+  def test_parse_file()
+    path = "#{ENV["TOML_TEST_DIR"]}/app.toml"
+    file = File.open(path, "w")
+    file.write("[database]\nurl = \"postgres://localhost/app\"\npool = 5\n")
+    file.close()
+    Minitest.assert_equal({"database": {"url": "postgres://localhost/app", "pool": 5}}, TOML.parse_file(path))
+  end
+
+  suite = Minitest.new()
+  suite.test("scalars", test_scalars)
+  suite.test("integers", test_integers)
+  suite.test("floats", test_floats)
+  suite.test("bad numbers", test_bad_numbers)
+  suite.test("strings", test_strings)
+  suite.test("multi-line strings", test_multiline_strings)
+  suite.test("dates and times", test_dates_and_times)
+  suite.test("tables", test_tables)
+  suite.test("dotted keys", test_dotted_keys)
+  suite.test("arrays", test_arrays)
+  suite.test("inline tables", test_inline_tables)
+  suite.test("arrays of tables", test_arrays_of_tables)
+  suite.test("redefinitions", test_redefinitions)
+  suite.test("error position", test_error_position)
+  suite.test("bad UTF-8", test_bad_utf8)
+  suite.test("comments and CRLF", test_comments_and_crlf)
+  suite.test("generate", test_generate)
+  suite.test("generate round trip", test_generate_round_trip)
+  suite.test("generate rejects", test_generate_rejects)
+  suite.test("parse_file", test_parse_file)
+  exit(suite.run() ? 0 : 1)
+end
+run_tests()

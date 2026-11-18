@@ -1,0 +1,32 @@
+## Reads and writes TOML 1.0 configuration files.
+require "./toml/parser"
+require "./toml/generator"
+
+module TOML
+  ## The document in `text` as a `Hash`. Tables become `Hash`es, arrays
+  ## `Array`s, and an offset date-time (`1979-05-27T07:32:00Z`) a `Time`. Local
+  ## dates, times and date-times, which name no instant, stay `String`s
+  ## (`"1979-05-27"`). Raises `TOML::ParseError` for invalid TOML.
+  def self.parse(text: String) -> Hash
+    TOML::Parser.new(text).parse_document()
+  end
+
+  ## The TOML file at `path`, read with `parse`.
+  def self.parse_file(path: String) -> Hash
+    file = File.open(path, "r")
+    begin
+      TOML.parse(file.read())
+    ensure
+      file.close()
+    end
+  end
+
+  ## A `Hash` as TOML text. Plain values come first in each table, then its
+  ## sub-tables as `[headers]`, and arrays of `Hash`es as `[[headers]]`.
+  ## Raises `TOML::GenerateError` for `nil` and anything else TOML can't hold.
+  def self.generate(document: Hash) -> String
+    writer = TOML::Writer.new()
+    writer.write_table(document, [], "")
+    writer.to_s()
+  end
+end
