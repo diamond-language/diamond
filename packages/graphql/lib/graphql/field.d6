@@ -23,6 +23,12 @@ module GraphQL
       @directives = directives
     end
 
+    # Replaces the resolver (GraphQL::App installs one on every field it builds) and returns the field.
+    def bind(resolve)
+      @resolve = resolve
+      self
+    end
+
     # The applied directive called `directive_name`, or nil.
     def directive(directive_name)
       @directives.find() do |candidate|

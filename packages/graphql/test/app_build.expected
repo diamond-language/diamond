@@ -1,0 +1,18 @@
+{"data":{"board":{"id":"7","slug":"main","trustedOnly":true,"topScores":[30,20],"memberIds":["1","2"]}}}
+{data: {board: {topScores: [30, 20, 10]}}}
+{data: {me: {id: 9, handle: zed, createdAt: 100}}}
+{data: {rename: {handle: bo}}}
+{data: {search: [{slug: b}, {handle: ann, createdAt: 5}]}}
+{"data":{"board":{"trustedOnly":1}}}
+Account.nick: the Hash has no "nick" key
+{data: {search: [{__typename: Board}, {__typename: Board}]}}
+the GraphQL app is not ready:
+- resolvers are bound to Nope, which the schema does not define
+- resolvers are bound to Result, which is not an object type
+- resolve_type is set for Board, which is not an interface or union in the schema
+- Board.topScores takes arguments, so it needs top_scores(object, args, context) on a resolvers object bound to Board
+- Mutation.rename has no resolver: define rename(object, args, context) on a resolvers object bound to Mutation
+- Query.board has no resolver: define board(object, args, context) on Empty
+- Query.search has no resolver: define search(object, args, context) on Empty
+- Query.me has no resolver: define me(object, args, context) on Empty
+[trusted_only, sha256, url_path, user_id, id]

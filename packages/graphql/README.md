@@ -263,6 +263,68 @@ Directives do nothing by themselves; code that reads `field.directives()` decide
 
 A schema printed by `to_sdl()` reads back into one that prints the same text.
 
+## Apps: SDL plus resolvers bound by name
+
+`GraphQL::App` builds a schema from SDL and binds resolvers to it by name. A resolvers object is
+bound to an object type, and its method named after a field resolves that field. Only fields that
+need work need a method:
+
+```ruby
+class QueryResolvers
+  def board(_, args, ctx) = Boards.find(ctx.repo(), args["slug"])
+end
+
+class BoardResolvers
+  def top_scores(board, args, ctx) = Scores.top(ctx.repo(), board, args["limit"])
+end
+
+schema = GraphQL::App.new(File.read("schema.graphql"))
+  .resolvers("Query", QueryResolvers.new())
+  .resolvers("Board", BoardResolvers.new())
+  .int_booleans()
+  .build()
+```
+
+A field gets its value from the first of these that exists:
+
+1. the bound resolvers' method with the field's snake_case name (`topScores` -> `top_scores`),
+   called as `(object, args, context)`
+2. the parent object's zero-argument method of that name, such as a `struct` field
+3. a key on a parent Hash, snake_case first and then the field's own name
+
+`Query` and `Mutation` fields, and any field that takes arguments, need a resolver method. A value
+for an `ID` that is an Int becomes a String. With `int_booleans`, a `Boolean` field also turns 0 and
+1 into `false` and `true`, for SQLite rows.
+
+An interface or union finds a value's concrete type from its class name (the last `::` segment), or
+from a Hash's `"__typename"` key. `.resolve_type("Result", callable)` overrides that: `callable` gets
+`(value, context)` and returns a type name.
+
+`build()` returns the `Schema`. If anything is missing, it raises one `SchemaError` that lists every
+problem:
+
+```text
+the GraphQL app is not ready:
+- resolvers are bound to Nope, which the schema does not define
+- Board.topScores takes arguments, so it needs top_scores(object, args, context) on BoardResolvers
+- Query.board has no resolver: define board(object, args, context) on QueryResolvers
+```
+
+The executor stores `"dataloader"` and `"lookahead"` in the context. A Hash context works as is. To
+pass your own object, `include GraphQL::Context` in its class:
+
+```ruby
+class RequestContext
+  include GraphQL::Context
+  def initialize(repo)
+    @repo = repo
+  end
+  def repo() = @repo
+end
+
+schema.execute(query, variables, RequestContext.new(repo))
+```
+
 ## Introspection
 
 Standard introspection queries (`__schema`, `__type`) are supported, so GraphiQL-style tooling works against a `Schema`.

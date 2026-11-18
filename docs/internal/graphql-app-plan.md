@@ -1,8 +1,8 @@
 # Plan: schema-first GraphQL apps (`GraphQL::App`)
 
-Status: in progress on branch `graphql-app` (filed 2026-11-17). Step 1, the SDL parser, is
-written (graphql 0.3.6). The roadmap entry is "Schema-first GraphQL apps" under "Grow packages
-from application needs".
+Status: in progress on branch `graphql-app` (filed 2026-11-17). Steps 1 and 2, the SDL
+parser and `GraphQL::App`, are written (graphql 0.3.6). The roadmap entry is "Schema-first
+GraphQL apps" under "Grow packages from application needs".
 
 ## The problem
 
@@ -97,9 +97,10 @@ Ship it as one branch with one draft PR, pushed after each step. It is a minor r
    schema objects, keeping field directives and type descriptions. Pheint's 444-line `schema.graphql`
    reads back through `to_sdl()` byte for byte (checked by hand; the package tests use their own
    schema, since Pheint is a private repository).
-2. **`GraphQL::App`.** Binding by name, the three-source field lookup, the value coercions and
-   `build()` validation. Interfaces and unions read from SDL have no `resolve_type`, so the
-   App needs a default (for example, the object's class name) or an explicit binding.
+2. **`GraphQL::App` (written).** Binding by name, the three-source field lookup, the value
+   coercions and `build()` validation. Interfaces and unions default to the value's class name, or a
+   Hash's `"__typename"`, and `resolve_type` overrides that. The executor writes `"dataloader"` and
+   `"lookahead"` into the context, so a custom context class includes `GraphQL::Context`.
 3. **Directive middleware, and `Fail` in the cut.**
 4. **Port Pheint.** Its `compat_test` and `docs/api-baseline.graphql` already pin the public API.
    The expected result is `api.di` going from about 1,170 lines to about 450.

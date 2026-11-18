@@ -1255,4 +1255,10 @@ done
 [[ "$actual" != *"NO ERROR"* ]] || { echo "sdl_errors: a bad schema was accepted"; echo "$actual"; exit 1; }
 count=$((count + 1))
 
+# --- GraphQL::App: resolvers bound by type name, plain fields by convention, ID and 0/1 coercion,
+# resolve_type, a context class, and build() listing every problem (test/app_build.d6) ---
+actual="$(run_file "$(cat test/app_build.d6)")"
+[[ "$actual" == "$(cat test/app_build.expected)" ]] || { echo "app_build: got"; echo "$actual"; exit 1; }
+count=$((count + 1))
+
 echo "$count graphql tests passed"
