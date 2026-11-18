@@ -70,6 +70,11 @@ enum {
      * setup_db.d6 and winamp_api.d6 for real examples this fix
      * eliminates the workaround for. */
     DIAMOND_MAX_STRING_LENGTH = 4095,
+    /* Length limit for any one string constant in compiled code. Larger than the
+     * literal limit above because a `File.embed` constant holds a whole file (see
+     * src/embed.h); this bounds what a bytecode cache or a `d6 build` binary may
+     * claim, so a corrupt length is rejected instead of trusted. */
+    DIAMOND_MAX_STRING_CONSTANT_LENGTH = 16 * 1024 * 1024,
     DIAMOND_MAX_CLASSES = 1024,
     /* Interfaces and modules are separately allocated slots behind a
      * pointer table (like classes), so these caps cost 8 bytes per entry

@@ -81,6 +81,9 @@ bytecode cache or a `d6 build` binary keeps the path it was compiled
 from. Text in a comment or string that only mentions them is left alone;
 inside a string they work in `#{...}` interpolation.
 
+`File.embed("data.json")` is a file's contents read when the program is compiled,
+with the path resolved the same way; see [Local I/O](local-io.md#files-compiled-in-fileembed).
+
 `exit(code = 0)` immediately terminates the whole process with the given
 status (0–255; anything else raises `ArgumentError`, a non-`Int` raises
 `TypeError`). This is a *hard* exit, not a raised/rescuable control-flow

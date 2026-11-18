@@ -200,6 +200,33 @@ Any operation other than `.close()` on an already-closed handle, or a
 genuine read/write failure (checked via `ferror`, not just a short
 return value), raises a rescuable `IOError`.
 
+## Files compiled in: `File.embed`
+
+`File.embed("schema.graphql")` is the file's contents as a String, read when the
+program is compiled rather than when it runs. A `d6 build` binary or a bytecode cache
+carries the text with it, so a schema, a SQL migration or a template can ship inside one
+executable:
+
+```ruby
+SCHEMA = File.embed("schema.graphql")   # next to this source file
+schema = GraphQL::App.new(SCHEMA).resolvers("Query", QueryResolvers.new()).build()
+```
+
+- The path is a plain string literal (no `#{...}` interpolation and no escapes). A
+  relative path is resolved against the directory of the file the call is written in,
+  like `require`, so a library can embed files beside itself. `-e` and the REPL use the
+  working directory.
+- The file may be up to 16 MiB of any bytes, NUL included. A missing or unreadable file
+  is a load error naming the file and line, before anything runs.
+- Editing an embedded file invalidates the bytecode cache, as editing a `require`d file
+  does (see [Bytecode caching](caching.md)).
+- Text in a comment or a string that only mentions `File.embed` is left alone.
+- Under `--sandbox`, `File.embed` is refused unless the `filesystem` category is allowed
+  (see [Sandbox mode](sandbox.md)).
+
+Use `File.read` for a file that should be read again on every run, or that is not there
+when the program is compiled.
+
 ## File paths: `File.join`/`.dirname`/`.basename`/`.extname`/`.absolute?`/`.expand_path`
 
 <!-- doc-check: skip -->

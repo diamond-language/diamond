@@ -426,7 +426,7 @@ static bool read_function(const uint8_t **cursor, const uint8_t *end,
         const uint8_t *length_bytes=take(cursor,end,sizeof length);
         if(length_bytes==nullptr)goto invalid_metadata;
         memcpy(&length,length_bytes,sizeof length);
-        if(length>DIAMOND_MAX_STRING_LENGTH)goto invalid_metadata;
+        if(length>DIAMOND_MAX_STRING_CONSTANT_LENGTH)goto invalid_metadata;
         const uint8_t *chars=take(cursor,end,(size_t)length);
         if(chars==nullptr&&length>0)goto invalid_metadata;
         storage.strings[index]=(DiamondStringConstant){.chars=(char *)chars,.length=(size_t)length};

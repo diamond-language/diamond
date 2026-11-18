@@ -1,0 +1,16 @@
+# File.embed puts a file's contents into the compiled program as one String: a path is
+# resolved against the file the call is written in, including through a require.
+require "file_embed_data/helper"
+# A comment mentioning File.embed("nope.txt") is left alone, and so is a string.
+mention = "File.embed(\"nope.txt\")"
+
+text = File.embed("file_embed_data/text.txt")
+puts(text)
+puts(text == FileEmbedHelper::TEXT)
+puts(mention)
+
+# The same file read at run time: identical, and longer than a string literal may be.
+puts(text == File.read("#{__dir__}/file_embed_data/text.txt"))
+big = File.embed("file_embed_data/big.txt")
+puts(big.length())
+puts(big.start_with?("0123456789"))
