@@ -9939,6 +9939,63 @@ class Parser
     nil
   end
 
+  # `Owner.respond_to?(name)` when the owner defines no respond_to? of its own:
+  # `[names].include?(name.to_s())`, names being the singleton functions declared
+  # so far. src/compiler_names.c's parse_singleton_respond_to sees every singleton
+  # and also folds a Symbol literal; the answers differ only for a singleton
+  # declared below the call. The current token follows `respond_to?`.
+  def compile_singleton_respond_to(names)
+    if @current.kind() != :left_paren
+      self.fail("expected '(' after respond_to?")
+      return 0
+    end
+    self.advance_token()
+    self.skip_newlines()
+    argument = self.parse_expression()
+    self.skip_newlines()
+    if @current.kind() != :right_paren
+      self.fail("expected ')' after arguments")
+      return 0
+    end
+    self.advance_token()
+    if names.length() > 255
+      self.fail("respond_to? with a computed name needs at most 255 singleton methods")
+      return 0
+    end
+    base = self.allocate_register()
+    index = 1
+    while index < names.length()
+      self.allocate_register()
+      index = index + 1
+    end
+    index = 0
+    while index < names.length()
+      self.emit_instruction2(Opcode::STRING, base + index, self.add_string(names[index]))
+      self.set_type_fact(base + index, Type::STRING)
+      index = index + 1
+    end
+    list = self.allocate_register()
+    self.emit_instruction3(Opcode::ARRAY, list, base, names.length())
+    self.set_type_fact(list, Type::ARRAY)
+    text = self.emit_compiler_invoke(argument, "to_s", argument, 0)
+    result = self.emit_compiler_invoke(list, "include?", text, 1)
+    self.set_type_fact(result, Type::BOOL)
+    result
+  end
+
+  # A method call whose name the compiler supplies, with `count` arguments
+  # already in contiguous registers from `base`.
+  def emit_compiler_invoke(receiver, name, base, count)
+    destination = self.allocate_register()
+    self.emit_call_opcode(Opcode::INVOKE)
+    self.emit_register(destination)
+    self.emit_register(receiver)
+    self.emit_register(self.add_string(name))
+    self.emit_register(base)
+    self.emit_byte(count)
+    destination
+  end
+
   # module_entry[7] holds module_function-exported descriptors
   # ([name, function_index, arity, uses_state]); module_entry[9] holds
   # def self.foo-declared ones ([name, function_index, arity,
@@ -9958,6 +10015,12 @@ class Parser
     end
     exported = find_descriptor(module_entry[7], name)
     declared = find_descriptor(module_entry[9], name)
+    if exported == nil && declared == nil && name == "respond_to?"
+      names = []
+      module_entry[7].each() do |descriptor| names.push(descriptor[0]) end
+      module_entry[9].each() do |descriptor| names.push(descriptor[0]) end
+      return self.compile_singleton_respond_to(names)
+    end
     if exported == nil && declared == nil
       return self.compile_forward_singleton_member(method_token, module_entry[0], name, method_token)
     end
@@ -10076,6 +10139,15 @@ class Parser
       self.advance_token()
     end
     descriptor = self.find_class_singleton_descriptor(class_entry, name)
+    if descriptor == nil && name == "respond_to?"
+      names = []
+      owner = class_entry
+      while owner != nil
+        owner[3].each() do |entry| names.push(entry[0]) end
+        owner = if owner[2] == nil then nil else class_entry_by_index(@classes, owner[2]) end
+      end
+      return self.compile_singleton_respond_to(names)
+    end
     if descriptor == nil
       self.fail("undefined class singleton method")
       return 0
@@ -10144,7 +10216,7 @@ class Parser
       end
       lookup_name = if after.kind() == :equal then writer_name else candidate_name end
       overridable = class_entry[1] == @current_class_index && find_descriptor(class_entry[3], lookup_name) == nil
-      if found != nil && !overridable
+      if (found != nil && !overridable) || (found == nil && candidate_name == "respond_to?")
         self.advance_token()
         return self.compile_class_singleton_call(class_entry)
       end

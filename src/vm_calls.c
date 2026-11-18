@@ -1479,12 +1479,23 @@ DiamondVmStatus diamond_jit_invoke_instance(DiamondVm *vm, const DiamondChunk *c
        !class_defines(owner,instance->class,"respond_to?",11)) {
         if(type_argument_count!=0)return reject_type_arguments(vm,method_name);
         if(argc!=1) return DIAMOND_VM_ARITY_ERROR;
-        if(registers[base].kind!=DIAMOND_VALUE_OBJECT||
-           registers[base].as.object->kind!=DIAMOND_OBJECT_SYMBOL)
+        /* A Symbol or a String, like respond_to? on native values. */
+        const char *probe_chars=nullptr;size_t probe_length=0;
+        if(registers[base].kind==DIAMOND_VALUE_OBJECT&&
+           registers[base].as.object->kind==DIAMOND_OBJECT_SYMBOL) {
+            probe_chars=((const DiamondSymbol *)registers[base].as.object)->chars;
+            probe_length=((const DiamondSymbol *)registers[base].as.object)->length;
+        } else if(registers[base].kind==DIAMOND_VALUE_OBJECT&&
+                  registers[base].as.object->kind==DIAMOND_OBJECT_STRING) {
+            probe_chars=((const DiamondString *)registers[base].as.object)->chars;
+            probe_length=((const DiamondString *)registers[base].as.object)->length;
+        } else {
+            snprintf(vm->error,sizeof vm->error,
+                "respond_to? expects a Symbol or String method name");
             return DIAMOND_VM_TYPE_ERROR;
-        const DiamondSymbol *probe=(const DiamondSymbol *)registers[base].as.object;
+        }
         const DiamondMethod *probed=lookup_method(owner,instance->class,
-            probe->chars,probe->length);
+            probe_chars,probe_length);
         *out=DIAMOND_BOOL(probed!=nullptr&&!probed->is_private);
         return DIAMOND_VM_OK;
     }

@@ -558,14 +558,21 @@ defines its own `deep_freeze` always wins for the receiver, like `dup`.
 Immutable values and primitives are left alone (no-op), and native
 resource-backed types are skipped rather than traversed.
 
-`respond_to?(name)` takes a `Symbol` and checks whether the receiver's
+`respond_to?(name)` takes a `Symbol` or a `String` and checks whether the receiver's
 class defines a method by that name — `false` for a private method, same
-as Ruby's own default (there is no `include_private` second argument). On a
+as Ruby's own default (there is no `include_private` second argument). Any
+other argument raises a `TypeError`. On a
 `String`, `Array`, `Hash`, `Int` or `Float` it is `true` for a native method, a
 prelude method, or a program's own `string_x`/`array_x`/`hash_x`/`integer_x`/`float_x`
 extension function, and the name may be a `Symbol` or a `String`:
 `"abc".respond_to?(:upcase)`. Other native values (`File`, `Process`, a Socket) do not
 answer it.
+
+A module or class answers `respond_to?(name)` for its own `def self.` functions, and a
+class also for its superclasses' singleton methods. Instance methods don't count:
+`Point.respond_to?(:x)` is `false`. Modules and classes are not values, so the compiler
+answers from their declarations: a Symbol literal becomes `true` or `false` at compile
+time, and a computed name is checked at run time.
 
 Like `tap`, a class's own method of the same name always takes priority
 over `dup`/`respond_to?`/`public_send`'s own built-in behavior, checked first.

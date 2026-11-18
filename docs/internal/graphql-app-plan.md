@@ -82,9 +82,10 @@ enum value, and 0/1 becomes a `Boolean`. The 0/1 rule is opt-in per schema, for 
 
 ### Language support this relies on
 
-Binding and the field fallback use `respond_to?(name.to_sym())` and `public_send(name, ...)` on
-class instances, which both work. Resolvers are classes, not modules, because `respond_to?` on a
-module did not compile when this was filed ("undefined module singleton function").
+Binding and the field fallback use `respond_to?(name)` and `public_send(name, ...)` on class
+instances, which both work, and both take a Symbol or a String. Resolvers are classes, not
+modules: a module answers `respond_to?`, but `public_send` on a module does not compile, because a
+module is not a value.
 
 ## Steps
 

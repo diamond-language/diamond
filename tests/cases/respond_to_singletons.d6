@@ -1,0 +1,51 @@
+# respond_to? on modules and classes answers from their singleton functions; on an
+# instance it takes a Symbol or a String.
+module Board
+  def self.entries(limit) = limit
+  def self.name=(value) = value
+end
+
+class Base
+  def self.inherited_one() = 1
+end
+
+class Child < Base
+  def self.own() = 2
+  def instance_only() = 3
+end
+
+class Polite
+  def self.respond_to?(name) = "custom"
+end
+
+# A Symbol literal folds at compile time.
+puts(Board.respond_to?(:entries))
+puts(Board.respond_to?(:missing))
+puts(Board.respond_to?(:name=))
+
+# A computed name is checked at run time, as a Symbol or a String.
+wanted = "entries"
+puts(Board.respond_to?(wanted))
+puts(Board.respond_to?(wanted.to_sym()))
+puts(Board.respond_to?("nope"))
+
+# A class answers for its own and its superclasses' singleton methods, not instance methods.
+puts(Child.respond_to?(:own))
+puts(Child.respond_to?(:inherited_one))
+puts(Child.respond_to?(:instance_only))
+puts(Child.respond_to?("inherited_one"))
+puts(Base.respond_to?(:own))
+
+# A class's own respond_to? still wins.
+puts(Polite.respond_to?(:anything))
+
+# Instances take a Symbol or a String.
+child = Child.new()
+puts(child.respond_to?(:instance_only))
+puts(child.respond_to?("instance_only"))
+puts(child.respond_to?("own"))
+
+# Inside a method, with the name coming from an argument.
+def probe(name) = Board.respond_to?(name)
+puts(probe(:entries))
+puts(probe("missing"))
