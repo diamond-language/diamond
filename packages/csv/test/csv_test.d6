@@ -1,0 +1,161 @@
+require "../lib/csv"
+require "../../../lib/minitest"
+
+def run_tests()
+  def test_plain_rows()
+    Minitest.assert_equal([["a", "b"], ["1", "2"]], CSV.parse("a,b\n1,2\n"))
+  end
+
+  def test_no_trailing_newline()
+    Minitest.assert_equal([["a", "b"], ["1", "2"]], CSV.parse("a,b\n1,2"))
+  end
+
+  def test_quoted_fields()
+    rows = CSV.parse("\"x,y\",\"say \"\"hi\"\"\",\"two\nlines\"\n")
+    Minitest.assert_equal([["x,y", "say \"hi\"", "two\nlines"]], rows)
+  end
+
+  def test_empty_fields()
+    Minitest.assert_equal([["", "", ""], ["a", ""]], CSV.parse(",,\na,\n"))
+    Minitest.assert_equal([["", "b"]], CSV.parse("\"\",b"))
+  end
+
+  def test_line_endings()
+    Minitest.assert_equal([["a"], ["b"], ["c"]], CSV.parse("a\r\nb\rc\n"))
+  end
+
+  def test_blank_lines_skipped()
+    Minitest.assert_equal([["a"], ["b"]], CSV.parse("\n\na\n\r\n\nb\n\n"))
+    Minitest.assert_equal([], CSV.parse(""))
+  end
+
+  def test_byte_order_mark()
+    Minitest.assert_equal([["h"], ["v"]], CSV.parse("\xEF\xBB\xBFh\nv\n"))
+  end
+
+  def test_stray_quote_in_unquoted_field()
+    Minitest.assert_equal([["5\" screen", "ok"]], CSV.parse("5\" screen,ok"))
+  end
+
+  def test_other_separators()
+    Minitest.assert_equal([["a", "b,c"]], CSV.parse("a\tb,c\n", separator: "\t"))
+    Minitest.assert_equal([["1", "2"]], CSV.parse("1;2", separator: ";"))
+  end
+
+  def test_bad_separator()
+    Minitest.assert_raises[ArgumentError]() do CSV.parse("a", separator: "\"") end
+    Minitest.assert_raises[ArgumentError]() do CSV.parse("a", separator: "::") end
+  end
+
+  def test_unclosed_quote()
+    error = nil
+    begin
+      CSV.parse("a\nb,\"open\nstill open")
+    rescue caught: CSV::MalformedError
+      error = caught
+    end
+    Minitest.refute_nil(error)
+    Minitest.assert_equal(2, error.line())
+    Minitest.assert_equal("line 2: quoted field never closes", error.message())
+  end
+
+  def test_text_after_closing_quote()
+    Minitest.assert_raises[CSV::MalformedError]() do CSV.parse("\"a\"b,c") end
+  end
+
+  def test_records()
+    records = CSV.parse_records("name,age\nAda,36\nBob\n")
+    Minitest.assert_equal([{"name": "Ada", "age": "36"}, {"name": "Bob", "age": nil}], records)
+    Minitest.assert_equal([], CSV.parse_records(""))
+    Minitest.assert_equal([], CSV.parse_records("only,headers\n"))
+  end
+
+  def test_record_with_extra_fields()
+    Minitest.assert_raises[CSV::MalformedError]() do CSV.parse_records("a\n1,2\n") end
+  end
+
+  def test_streaming_any_chunking()
+    text = "a,\"b\nc\",\"q\"\"\"\r\n\xEF\xBB\xBF,e\r\nlast"
+    expected = CSV.parse(text)
+    size = 1
+    while size <= text.length()
+      reader = CSV::Reader.new()
+      rows = []
+      start = 0
+      while start < text.length()
+        count = if start + size > text.length() then text.length() - start else size end
+        rows = rows.concat(reader.feed(text.slice(start, count)))
+        start += count
+      end
+      rows = rows.concat(reader.finish())
+      Minitest.assert_equal(expected, rows, "chunks of #{size}")
+      size += 1
+    end
+  end
+
+  def test_streaming_bom_split()
+    reader = CSV::Reader.new()
+    rows = reader.feed("\xEF")
+    rows = rows.concat(reader.feed("\xBB\xBFx\n"))
+    Minitest.assert_equal([["x"]], rows.concat(reader.finish()))
+  end
+
+  def test_generate_quotes_only_when_needed()
+    text = CSV.generate([["a", "b,c", nil, 3, "q\"t"], [" x", "line\nbreak", ""]])
+    Minitest.assert_equal("a,\"b,c\",,3,\"q\"\"t\"\n\" x\",\"line\nbreak\",\n", text)
+  end
+
+  def test_generate_line_endings_and_separator()
+    Minitest.assert_equal("a\tb c\r\n", CSV.generate_line(["a", "b c"], separator: "\t", line_ending: "\r\n"))
+  end
+
+  def test_round_trip()
+    rows = [["id", "note"], ["1", "plain"], ["2", "comma, quote \" and\nnewline"], ["3", ""]]
+    Minitest.assert_equal(rows, CSV.parse(CSV.generate(rows)))
+  end
+
+  def test_generate_records()
+    text = CSV.generate_records([{"n": 1, "m": "z"}, {"n": 2}])
+    Minitest.assert_equal("n,m\n1,z\n2,\n", text)
+    picked = CSV.generate_records([{"n": 1, "m": "z"}], headers: ["m"])
+    Minitest.assert_equal("m\nz\n", picked)
+  end
+
+  def test_foreach()
+    path = "#{ENV["CSV_TEST_DIR"]}/people.csv"
+    file = File.open(path, "w")
+    file.write("name,city\nAda,London\n\"Grace\",\"New York, NY\"\n")
+    file.close()
+    rows = []
+    CSV.foreach(path) do |row| rows.push(row) end
+    Minitest.assert_equal([["name", "city"], ["Ada", "London"], ["Grace", "New York, NY"]], rows)
+    records = []
+    CSV.foreach_record(path) do |record| records.push(record) end
+    Minitest.assert_equal([{"name": "Ada", "city": "London"}, {"name": "Grace", "city": "New York, NY"}], records)
+  end
+
+  suite = Minitest.new()
+  suite.test("plain rows", test_plain_rows)
+  suite.test("no trailing newline", test_no_trailing_newline)
+  suite.test("quoted fields", test_quoted_fields)
+  suite.test("empty fields", test_empty_fields)
+  suite.test("line endings", test_line_endings)
+  suite.test("blank lines are skipped", test_blank_lines_skipped)
+  suite.test("byte-order mark", test_byte_order_mark)
+  suite.test("stray quote in an unquoted field", test_stray_quote_in_unquoted_field)
+  suite.test("other separators", test_other_separators)
+  suite.test("bad separator", test_bad_separator)
+  suite.test("unclosed quote", test_unclosed_quote)
+  suite.test("text after a closing quote", test_text_after_closing_quote)
+  suite.test("records", test_records)
+  suite.test("record with extra fields", test_record_with_extra_fields)
+  suite.test("streaming with any chunking", test_streaming_any_chunking)
+  suite.test("streaming with a split byte-order mark", test_streaming_bom_split)
+  suite.test("generate quotes only when needed", test_generate_quotes_only_when_needed)
+  suite.test("generate line endings and separator", test_generate_line_endings_and_separator)
+  suite.test("round trip", test_round_trip)
+  suite.test("generate records", test_generate_records)
+  suite.test("foreach", test_foreach)
+  exit(suite.run() ? 0 : 1)
+end
+run_tests()

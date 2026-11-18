@@ -1,0 +1,199 @@
+module CSV
+  ## Raised for input that isn't valid CSV: a quoted field that never closes,
+  ## text right after a closing quote, or a record with more fields than its
+  ## header. `line` is the 1-based line of the problem, or 0 for a record
+  ## (whose message names its row instead).
+  class MalformedError < StandardError
+    attr_reader message: String
+    attr_reader line: Int
+    def initialize(message: String, line: Int = 0)
+      @message = if line > 0 then "line #{line}: #{message}" else message end
+      @line = line
+    end
+  end
+
+  # Byte values the scanner compares against.
+  def self.lf() = 10
+  def self.cr() = 13
+  def self.quote() = 34
+
+  # The separator must be one byte, and can't be a quote or a line break.
+  def self.separator_byte(separator: String) -> Int
+    if separator.length() != 1
+      raise ArgumentError.new("CSV separator must be one byte, got #{separator.inspect()}")
+    end
+    byte = separator.getbyte(0)
+    if byte == CSV.quote() || byte == CSV.lf() || byte == CSV.cr()
+      raise ArgumentError.new("CSV separator can't be a quote or a line break")
+    end
+    byte
+  end
+
+  ## Parses CSV text that arrives in pieces, such as a file read in chunks.
+  ## `feed(chunk)` returns the rows completed so far (each an `Array` of
+  ## `String`s), and `finish()` returns whatever is left once the input ends.
+  ## A row is never split across two results, however the chunks fall.
+  class Reader
+    def initialize(separator: String = ",")
+      @separator = CSV.separator_byte(separator)
+      @buffer = ""
+      @pos = 0
+      @line = 1
+      @started = false
+    end
+
+    ## Adds `chunk` to the input and returns every row it completed.
+    def feed(chunk: String) -> Array
+      @buffer = @buffer + chunk
+      self.drain(false)
+    end
+
+    ## Ends the input and returns the remaining rows. Raises
+    ## `CSV::MalformedError` if the input ends inside a quoted field.
+    def finish() -> Array
+      self.drain(true)
+    end
+
+    def drain(final: Bool) -> Array
+      rows = []
+      unless @started
+        # A UTF-8 byte-order mark (from Excel and other Windows tools) isn't data.
+        if @buffer.length() < 3 && !final && "\xEF\xBB\xBF".start_with?(@buffer)
+          return rows
+        end
+        @buffer = @buffer.slice(3, @buffer.length() - 3) if @buffer.start_with?("\xEF\xBB\xBF")
+        @started = true
+      end
+      while true
+        row = self.read_row(final)
+        break if row == nil
+        rows.push(row)
+      end
+      if @pos > 0
+        @buffer = @buffer.slice(@pos, @buffer.length() - @pos)
+        @pos = 0
+      end
+      rows
+    end
+
+    # Reads one row starting at @pos. Returns nil at the end of the input, or
+    # when the row isn't complete yet and more input may follow. @pos and
+    # @line only move once a whole row has been read.
+    def read_row(final: Bool)
+      text = @buffer
+      length = text.length()
+      pos = @pos
+      line = @line
+      lf = CSV.lf()
+      cr = CSV.cr()
+      quote = CSV.quote()
+      separator = @separator
+
+      # Blank lines are skipped rather than read as a row with one empty field.
+      while pos < length
+        byte = text.getbyte(pos)
+        if byte == lf
+          pos += 1
+          line += 1
+        elsif byte == cr
+          return nil if pos + 1 >= length && !final
+          pos += 1
+          pos += 1 if pos < length && text.getbyte(pos) == lf
+          line += 1
+        else
+          break
+        end
+      end
+      if pos >= length
+        if final
+          @pos = pos
+          @line = line
+        end
+        return nil
+      end
+
+      row = []
+      while true
+        if pos >= length
+          # The input ended right after a separator: the last field is empty.
+          return nil unless final
+          row.push("")
+          break
+        end
+
+        byte = text.getbyte(pos)
+        ended = false
+        if byte == quote
+          start_line = line
+          pos += 1
+          field = StringBuilder.new()
+          segment = pos
+          while true
+            if pos >= length
+              return nil unless final
+              raise CSV::MalformedError.new("quoted field never closes", start_line)
+            end
+            byte = text.getbyte(pos)
+            if byte == quote
+              if pos + 1 >= length && !final
+                return nil
+              end
+              if pos + 1 < length && text.getbyte(pos + 1) == quote
+                # "" inside a quoted field is one literal quote.
+                field.append(text.slice(segment, pos + 1 - segment))
+                pos += 2
+                segment = pos
+              else
+                field.append(text.slice(segment, pos - segment))
+                pos += 1
+                break
+              end
+            else
+              line += 1 if byte == lf
+              pos += 1
+            end
+          end
+          row.push(field.to_s())
+          if pos >= length
+            return nil unless final
+            break
+          end
+          byte = text.getbyte(pos)
+          if byte != separator && byte != lf && byte != cr
+            raise CSV::MalformedError.new("unexpected #{text.slice(pos, 1).inspect()} after a closing quote", line)
+          end
+        else
+          # An unquoted field runs to the next separator or line break. A quote
+          # in the middle of one is kept as an ordinary character.
+          segment = pos
+          while pos < length
+            byte = text.getbyte(pos)
+            break if byte == separator || byte == lf || byte == cr
+            pos += 1
+          end
+          return nil if pos >= length && !final
+          row.push(text.slice(segment, pos - segment))
+          break if pos >= length
+        end
+
+        if byte == separator
+          pos += 1
+        else
+          # The row ends at a line break: \n, \r\n or a lone \r.
+          if byte == cr
+            return nil if pos + 1 >= length && !final
+            pos += 1
+            pos += 1 if pos < length && text.getbyte(pos) == lf
+          else
+            pos += 1
+          end
+          line += 1
+          break
+        end
+      end
+      @pos = pos
+      @line = line
+      row
+    end
+  end
+end
