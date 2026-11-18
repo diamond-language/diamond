@@ -303,7 +303,8 @@ A field gets its value from the first of these that exists:
 1. the bound resolvers' method with the field's snake_case name (`topScores` -> `top_scores`),
    called as `(object, args, context)`
 2. the parent object's zero-argument method of that name, such as a `struct` field
-3. a key on a parent Hash, snake_case first and then the field's own name
+3. a key on a parent Hash, snake_case first and then the field's own name. A Hash with neither
+   key gives null for a nullable field and an error naming the key for a non-null one
 
 `Query` and `Mutation` fields, and any field that takes arguments, need a resolver method. A value
 for an `ID` that is an Int becomes a String. With `int_booleans`, a `Boolean` field also turns 0 and

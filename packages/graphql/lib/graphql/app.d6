@@ -25,7 +25,8 @@ module GraphQL
   ## A field gets its value from, in order: the method with its snake_case name
   ## (`trustedOnly` -> `trusted_only`) on the resolvers bound to its type, called as
   ## `(object, args, context)`; else that zero-argument method on the parent object;
-  ## else that key on a parent Hash (snake_case first, then the field's own name).
+  ## else that key on a parent Hash (snake_case first, then the field's own name; a missing key is
+  ## null for a nullable field).
   ## Query and Mutation fields, and fields that take arguments, need a resolver
   ## method. An Int returned for an `ID` becomes a String.
   class App
@@ -128,9 +129,11 @@ module GraphQL
       resolve
     end
 
-    # A resolver reading the parent's method, or its Hash key, named after the field.
+    # A resolver reading the parent's method, or its Hash key, named after the field. A Hash without the key
+    # reads as null for a nullable field and raises for a non-null one, where null would be an error anyway.
     def self.property_resolver(owner, method, field_name, type, int_booleans)
       coerce = App.needs_coercion?(type, int_booleans)
+      required = type.kind() == "NON_NULL"
       symbol = method.to_sym()
       def resolve(object, args, context)
         value = if object is Hash
@@ -138,6 +141,8 @@ module GraphQL
             object[method]
           elsif object.key?(field_name)
             object[field_name]
+          elsif !required
+            nil
           else
             keys = if method == field_name then "no \"#{method}\" key" else "neither a \"#{method}\" nor a \"#{field_name}\" key" end
             raise GraphQL::ExecutionError.new("#{owner}.#{field_name}: the Hash has #{keys}")

@@ -74,9 +74,11 @@ plain = GraphQL::App.new(lines.join("\n"))
   .resolvers("Board", BoardResolvers.new()).build()
 puts(JSON.stringify(plain.execute("{ board(slug: \"m\") { trustedOnly } }", {}, ctx)))
 
-# A missing property names the type, the field and what was missing.
-missing = GraphQL::App.new("type Query {\n  me: Account\n}\n\ntype Account {\n  nick: String\n}\n")
+# A Hash without the key is null for a nullable field. For a non-null one, the error names the type,
+# the field and what was missing.
+missing = GraphQL::App.new("type Query {\n  me: Account\n}\n\ntype Account {\n  nick: String!\n  bio: String\n}\n")
   .resolvers("Query", QueryResolvers.new()).build()
+puts(JSON.stringify(missing.execute("{ me { bio } }", {}, ctx)))
 puts(missing.execute("{ me { nick } }", {}, ctx)["errors"][0]["message"])
 
 # An explicit resolve_type wins over the class name.

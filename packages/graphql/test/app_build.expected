@@ -4,6 +4,7 @@
 {data: {rename: {handle: bo}}}
 {data: {search: [{slug: b}, {handle: ann, createdAt: 5}]}}
 {"data":{"board":{"trustedOnly":1}}}
+{"data":{"me":{"bio":null}}}
 Account.nick: the Hash has no "nick" key
 {data: {search: [{__typename: Board}, {__typename: Board}]}}
 the GraphQL app is not ready:

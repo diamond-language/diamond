@@ -64,7 +64,8 @@ The executor tries three sources, in order:
 1. A method on the resolver class bound to the field's type. The field name goes from
    camelCase to snake_case, so `entries` stays `entries` and `trustedOnly` becomes `trusted_only`.
 2. Otherwise, a method of that name on the object (`object.trusted_only()`).
-3. Otherwise, a key on a Hash object: snake_case first, then camelCase.
+3. Otherwise, a key on a Hash object: snake_case first, then camelCase. A missing key is null for a
+   nullable field (a Hash with optional keys is normal) and an error naming the key for a non-null one.
 
 The value is then coerced to the declared type: an Int becomes an `ID` string, a String becomes an
 enum value, and 0/1 becomes a `Boolean`. The 0/1 rule is opt-in per schema, for SQLite rows.
