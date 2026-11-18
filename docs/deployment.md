@@ -32,6 +32,8 @@ d6 build [SOURCE] [-o OUTPUT] [--cc=COMPILER] [--target=TRIPLE] [--lto]
   identical `require` resolution, identical embedded-prelude-template fast
   path -- so anything that runs correctly under the interpreter compiles
   identically under `build`.
+  Files read with `File.embed` are compiled into the binary and need not be
+  shipped beside it.
 - `-o OUTPUT` names the produced binary. Defaults to `SOURCE`'s own basename
   with its final extension stripped (`app.d6` -> `app`, and legacy
   `app.di` -> `app`). A basename without an extension is unchanged. When `SOURCE`

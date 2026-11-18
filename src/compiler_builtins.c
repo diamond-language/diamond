@@ -3,6 +3,7 @@
 #define __BSD_VISIBLE 1
 #define _DARWIN_C_SOURCE
 #include "compiler_internal.h"
+#include "embed.h"
 #include "jit.h"
 
 #include <assert.h>
@@ -21,6 +22,7 @@
 
 static uint16_t parse_file_path_unary_call(Compiler *compiler,DiamondFilePathFunction id);
 static uint16_t parse_file_path_binary_call(Compiler *compiler,DiamondFilePathFunction id);
+static uint16_t emit_string_bytes(Compiler *compiler,const char *text,size_t length);
 
 uint16_t parse_redefine_method_call(Compiler *compiler, int class_index) {
     advance_token(compiler); /* consume 'redefine_method' */
@@ -767,6 +769,72 @@ static uint16_t parse_file_path_binary_call(Compiler *compiler,DiamondFilePathFu
     return dest;
 }
 
+/* `File.embed(path, digest)`, as the loader rewrites `File.embed("relative/path")` (see
+ * src/embed.h): reads the file now and compiles its contents as one String constant. The
+ * digest the loader recorded must still match, so the compiled program agrees with the
+ * bytecode cache key the loader's text produced. */
+static uint16_t parse_file_embed_call(Compiler *compiler,DiamondSpan method) {
+    DiamondSpan path_span={0},digest_span={0};
+    bool resolved=compiler->current.kind==DIAMOND_TOKEN_LEFT_PAREN;
+    if(resolved) {
+        advance_token(compiler);
+        path_span=compiler->current.span;
+        resolved=compiler->current.kind==DIAMOND_TOKEN_STRING;
+    }
+    if(resolved) {
+        advance_token(compiler);
+        resolved=compiler->current.kind==DIAMOND_TOKEN_COMMA;
+    }
+    if(resolved) {
+        advance_token(compiler);
+        digest_span=compiler->current.span;
+        resolved=compiler->current.kind==DIAMOND_TOKEN_STRING&&
+            digest_span.length==DIAMOND_EMBED_DIGEST_HEX+2;
+    }
+    if(resolved) {
+        advance_token(compiler);
+        resolved=compiler->current.kind==DIAMOND_TOKEN_RIGHT_PAREN;
+    }
+    if(!resolved) {
+        /* Only source that skipped the loader (an LSP buffer with no file) gets here, or a
+         * hand-written two-argument form the loader already rejects. */
+        fail(compiler,method,"File.embed needs a file on disk to resolve its path against: "
+             "File.embed(\"schema.graphql\")");
+        return 0;
+    }
+    advance_token(compiler);
+    /* The loader writes the path as a literal with '"', '\' and '#' escaped by a backslash. */
+    char path[4096];
+    size_t length=0;
+    for(size_t at=path_span.start+1;at+1<path_span.start+path_span.length;at++) {
+        char character=compiler->source[at];
+        if(character=='\\')character=compiler->source[++at];
+        if(length+1>=sizeof path) {fail(compiler,path_span,"File.embed path is too long");return 0;}
+        path[length++]=character;
+    }
+    path[length]='\0';
+    char *chars=nullptr;
+    size_t chars_length=0;
+    char digest[DIAMOND_EMBED_DIGEST_HEX+1];
+    char reason[256];
+    if(!diamond_embed_read(path,&chars,&chars_length,digest,reason,sizeof reason)) {
+        char message[4400];
+        snprintf(message,sizeof message,"cannot embed '%s': %s",path,reason);
+        fail(compiler,path_span,message);
+        return 0;
+    }
+    if(memcmp(digest,compiler->source+digest_span.start+1,DIAMOND_EMBED_DIGEST_HEX)!=0) {
+        free(chars);
+        char message[4400];
+        snprintf(message,sizeof message,"'%s' changed while the program was being compiled",path);
+        fail(compiler,path_span,message);
+        return 0;
+    }
+    const uint16_t destination=emit_string_bytes(compiler,chars,chars_length);
+    free(chars);
+    return destination;
+}
+
 /* `File.<method>(...)` dispatcher -- `.open` keeps its own two-required-
  * argument shape (DIAMOND_OP_FILE_OPEN, unchanged); `.join` is variadic
  * (DIAMOND_OP_FILE_JOIN); the rest share DIAMOND_OP_FILE_PATH's fixed-
@@ -779,6 +847,10 @@ uint16_t parse_file_call(Compiler *compiler) {
         return 0;
     }
     const DiamondSpan method=compiler->current.span;
+    if(name_equals(compiler,"embed",method,false)) {
+        advance_token(compiler);
+        return parse_file_embed_call(compiler,method);
+    }
     if(name_equals(compiler,"open",method,false)) {
         advance_token(compiler);
         return parse_file_open_arguments(compiler);
@@ -1162,9 +1234,9 @@ uint16_t parse_tcp_connect_call(Compiler *compiler) {
     return dest;
 }
 
-/* A string constant the compiler itself supplies (an option name), not source. */
-static uint16_t emit_literal_string(Compiler *compiler,const char *text) {
-    const size_t length=strlen(text);
+/* A string constant the compiler itself supplies (an option name, or a file File.embed read),
+ * not source text, loaded into a new register. */
+static uint16_t emit_string_bytes(Compiler *compiler,const char *text,size_t length) {
     if(compiler->function->string_count==compiler->function->string_capacity&&
        !diamond_function_reserve_strings(compiler->function,
           compiler->function->string_capacity==0?16:
@@ -1184,6 +1256,10 @@ static uint16_t emit_literal_string(Compiler *compiler,const char *text) {
     emit_instruction(compiler,DIAMOND_OP_STRING,destination,index,0,2);
     compiler->known_types[destination]=DIAMOND_TYPE_STRING;
     return destination;
+}
+
+static uint16_t emit_literal_string(Compiler *compiler,const char *text) {
+    return emit_string_bytes(compiler,text,strlen(text));
 }
 
 /* `TCPServer.listen(port)`/`listen_nonblocking(port)`, optionally followed

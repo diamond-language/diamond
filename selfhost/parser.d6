@@ -11784,6 +11784,61 @@ class Parser
     ["delete", 17, false, Type::STRING], ["sync", 18, false, Type::STRING]
   ]
 
+  # `File.embed(path, digest)`, as the loader rewrites `File.embed("relative/path")`, like
+  # compiler_builtins.c's parse_file_embed_call: the file's contents become one String constant,
+  # and the digest the loader recorded must still match.
+  def parse_file_embed_call(method_token)
+    resolved = @current.kind() == :left_paren
+    path_token = nil
+    digest_token = nil
+    if resolved
+      self.advance_token()
+      path_token = @current
+      resolved = @current.kind() == :string
+    end
+    if resolved
+      self.advance_token()
+      resolved = @current.kind() == :comma
+    end
+    if resolved
+      self.advance_token()
+      digest_token = @current
+      resolved = @current.kind() == :string && @current.length() == 66
+    end
+    if resolved
+      self.advance_token()
+      resolved = @current.kind() == :right_paren
+    end
+    if !resolved
+      self.fail_at(method_token.start(), method_token.line(), method_token.column(),
+        "File.embed needs a file on disk to resolve its path against: File.embed(\"schema.graphql\")")
+      return 0
+    end
+    self.advance_token()
+    # The loader writes the path with '"', '\' and '#' escaped by a backslash.
+    quoted = self.token_text(path_token)
+    path = ""
+    index = 1
+    while index < quoted.length() - 1
+      if quoted[index] == "\\" then index = index + 1 end
+      path = path + quoted[index]
+      index = index + 1
+    end
+    if !File.file?(path)
+      self.fail_at(path_token.start(), path_token.line(), path_token.column(), "cannot embed '#{path}': not a regular file")
+      return 0
+    end
+    digest = self.token_text(digest_token)
+    if File.sha256(path) != digest.slice(1, 64)
+      self.fail_at(path_token.start(), path_token.line(), path_token.column(), "'#{path}' changed while the program was being compiled")
+      return 0
+    end
+    destination = self.allocate_register()
+    self.emit_instruction2(Opcode::STRING, destination, self.add_string(File.read(path)))
+    self.set_type_fact(destination, Type::STRING)
+    destination
+  end
+
   # `File.<method>(...)` and `Dir.<method>(...)`, as compiler_builtins.c's
   # parse_file_call and parse_dir_entries_call.
   def parse_file_open_call(namespace)
@@ -11793,6 +11848,11 @@ class Parser
       return 0
     end
     method = self.token_text(@current)
+    if namespace == "File" && method == "embed"
+      method_token = @current
+      self.advance_token()
+      return self.parse_file_embed_call(method_token)
+    end
     table = if namespace == "File" then self.file_path_methods() else self.dir_path_methods() end
     index = 0
     while index < table.length()

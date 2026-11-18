@@ -251,6 +251,9 @@ known limitations:
   to already be source the caller chose to run. A `require` the program triggers at run
   time through `ProgramBuilder#expand_source` is a different thing: it is a file read, so
   it is denied with the `filesystem` category.
+  So is `File.embed`, though it runs when the program is loaded: the program, not the
+  caller, picks the file, so a sandboxed program can embed a file only when
+  `filesystem` is allowed.
 
 Revisit any of these only with a real driving need, not speculatively -- the same bar
 [the roadmap](roadmap.md) already holds every other research direction to.

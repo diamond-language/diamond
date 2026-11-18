@@ -29,6 +29,8 @@ files from disk on every run regardless of caching -- there's no separate cache 
 - editing a `require`d library file, with the entry file itself completely unchanged,
   *also* invalidates the cache -- the hash covers the whole expanded program, not just
   the one file named on the command line.
+- editing a file read with `File.embed` invalidates the cache too: the loader writes
+  the file's SHA-256 into the expanded source beside its path.
 
 Caching only ever skips the **compile** step (lexing, parsing, bytecode generation).
 `require` resolution and file reads still happen on every run, cache hit or not -- there

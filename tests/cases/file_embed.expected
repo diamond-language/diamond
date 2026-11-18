@@ -1,0 +1,9 @@
+line one
+line "two" with #{no} interpolation
+
+true
+File.embed("nope.txt")
+true
+6010
+true
+nil

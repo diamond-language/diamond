@@ -1,0 +1,2 @@
+# Sandboxed code cannot read a file by embedding it.
+puts(File.embed("file_embed_data/text.txt"))

@@ -23,6 +23,12 @@ record. From 1.0.0, releases follow the [1.x compatibility policy](docs/compatib
   and other native values. Any other argument raises a `TypeError` that names the problem,
   where it used to say only "type error"
   ([classes and modules](docs/classes-and-modules.md#object-utilities)).
+- `File.embed("schema.graphql")` reads a file when the program is compiled and gives its
+  contents as a String, so a `d6 build` binary carries its schema, SQL or templates inside
+  it. The path is resolved against the file the call is written in, editing the embedded
+  file invalidates the bytecode cache, and files up to 16 MiB work (string literals stop at
+  4,095 bytes). `--sandbox` refuses it unless `filesystem` is allowed
+  ([local I/O](docs/local-io.md#files-compiled-in-fileembed)).
 
 ## 1.0.1 — 2026-11-17
 

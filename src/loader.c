@@ -1,4 +1,5 @@
 #define _XOPEN_SOURCE 700
+#include "embed.h"
 #include "lexer.h"
 #include "loader.h"
 #include "manifest_literal.h"
@@ -281,6 +282,108 @@ static bool rewrite_path_constants(const char *source,const char *path,char **ou
     return true;
 }
 
+/* `File.embed("schema.graphql")` becomes `File.embed("/abs/schema.graphql", "<sha256 hex>")`:
+ * the path is resolved against the directory of the file the call is written in (the working
+ * directory for -e and the REPL), and the digest puts the embedded file's contents into the
+ * expanded source and so into the bytecode cache key. See src/embed.h. Sets loader->error and
+ * returns false on a malformed call or an unreadable file. */
+static bool rewrite_embeds(Loader *loader,const char *source,const char *path,char **out) {
+    *out=nullptr;
+    if(strstr(source,"embed")==nullptr)return true;
+    char directory[DIAMOND_MAX_SOURCE_PATH];
+    char absolute[DIAMOND_MAX_SOURCE_PATH];
+    if(realpath(path,absolute)==nullptr) {
+        if(getcwd(directory,sizeof directory)==nullptr)snprintf(directory,sizeof directory,".");
+    } else {
+        snprintf(directory,sizeof directory,"%s",absolute);
+        char *slash=strrchr(directory,'/');
+        if(slash==nullptr)snprintf(directory,sizeof directory,".");
+        else if(slash==directory)directory[1]='\0';
+        else *slash='\0';
+    }
+    PathRewrite rewrite={};
+    size_t copied=0;
+    DiamondLexer lexer;
+    diamond_lexer_init(&lexer,source);
+    DiamondTokenKind previous=DIAMOND_TOKEN_NEWLINE;
+    for(;;) {
+        DiamondToken token=diamond_lexer_next(&lexer);
+        if(token.kind==DIAMOND_TOKEN_EOF||token.kind==DIAMOND_TOKEN_ERROR)break;
+        const bool receiver=token.kind==DIAMOND_TOKEN_IDENTIFIER&&token.span.length==4&&
+            memcmp(source+token.span.start,"File",4)==0&&previous!=DIAMOND_TOKEN_DOT&&
+            previous!=DIAMOND_TOKEN_DOUBLE_COLON&&previous!=DIAMOND_TOKEN_AMPERSAND_DOT;
+        previous=token.kind;
+        if(!receiver)continue;
+        DiamondToken dot=diamond_lexer_next(&lexer);
+        previous=dot.kind;
+        if(dot.kind!=DIAMOND_TOKEN_DOT)continue;
+        DiamondToken name=diamond_lexer_next(&lexer);
+        previous=name.kind;
+        if(name.kind!=DIAMOND_TOKEN_IDENTIFIER||name.span.length!=5||
+           memcmp(source+name.span.start,"embed",5)!=0)continue;
+        const size_t line=token.span.line;
+        DiamondToken open=diamond_lexer_next(&lexer);
+        DiamondToken literal=diamond_lexer_next(&lexer);
+        DiamondToken close=diamond_lexer_next(&lexer);
+        previous=close.kind;
+        const char *text=source+literal.span.start;
+        const size_t text_length=literal.span.length;
+        bool plain=open.kind==DIAMOND_TOKEN_LEFT_PAREN&&literal.kind==DIAMOND_TOKEN_STRING&&
+            close.kind==DIAMOND_TOKEN_RIGHT_PAREN&&text_length>=3&&text[0]=='"'&&
+            text[text_length-1]=='"';
+        for(size_t at=1;plain&&at+1<text_length;at++)
+            if(text[at]=='\\'||(text[at]=='#'&&text[at+1]=='{'))plain=false;
+        if(!plain) {
+            (void)snprintf(loader->error,loader->error_capacity,
+                "%s:%zu: File.embed takes one plain string literal, the path of the file to "
+                "embed: File.embed(\"schema.graphql\")",path,line);
+            free(rewrite.text);return false;
+        }
+        char requested[DIAMOND_MAX_SOURCE_PATH];
+        char canonical[DIAMOND_MAX_SOURCE_PATH];
+        const int inner=(int)(text_length-2);
+        const int written=text[1]=='/'?
+            snprintf(requested,sizeof requested,"%.*s",inner,text+1):
+            snprintf(requested,sizeof requested,"%s/%.*s",directory,inner,text+1);
+        if(written<0||(size_t)written>=sizeof requested) {
+            (void)snprintf(loader->error,loader->error_capacity,
+                "%s:%zu: File.embed path is too long",path,line);
+            free(rewrite.text);return false;
+        }
+        char reason[256];
+        char digest[DIAMOND_EMBED_DIGEST_HEX+1];
+        if(!diamond_embed_allowed()) {
+            (void)snprintf(loader->error,loader->error_capacity,
+                "%s:%zu: sandbox denies File.embed (it reads a file; allow the filesystem "
+                "category to permit it)",path,line);
+            free(rewrite.text);return false;
+        }
+        if(realpath(requested,canonical)==nullptr) {
+            snprintf(reason,sizeof reason,"%s",strerror(errno));
+        } else if(diamond_embed_read(canonical,nullptr,nullptr,digest,reason,sizeof reason)) {
+            rewrite_append(&rewrite,source+copied,literal.span.start-copied);
+            rewrite_append_literal(&rewrite,canonical);
+            rewrite_append(&rewrite,", \"",3);
+            rewrite_append(&rewrite,digest,DIAMOND_EMBED_DIGEST_HEX);
+            rewrite_append(&rewrite,"\"",1);
+            copied=literal.span.start+text_length;
+            continue;
+        }
+        (void)snprintf(loader->error,loader->error_capacity,
+            "%s:%zu: cannot embed '%s': %s",path,line,requested,reason);
+        free(rewrite.text);return false;
+    }
+    if(rewrite.text==nullptr&&!rewrite.failed)return true;
+    rewrite_append(&rewrite,source+copied,strlen(source+copied));
+    if(rewrite.failed) {
+        free(rewrite.text);
+        (void)snprintf(loader->error,loader->error_capacity,"%s: out of memory resolving File.embed",path);
+        return false;
+    }
+    *out=rewrite.text;
+    return true;
+}
+
 static bool expand(Loader *loader,const char *path,const char *source,
                    const char *including_path,size_t including_line);
 
@@ -484,8 +587,14 @@ static bool expand(Loader *loader,const char *path,const char *source,
                        "%s: out of memory resolving __dir__",path);
         return false;
     }
-    const bool ok=expand_source(loader,path,rewritten!=nullptr?rewritten:source,
-                                including_path,including_line);
+    char *embedded=nullptr;
+    if(!rewrite_embeds(loader,rewritten!=nullptr?rewritten:source,path,&embedded)) {
+        free(rewritten);
+        return false;
+    }
+    const char *text=embedded!=nullptr?embedded:rewritten!=nullptr?rewritten:source;
+    const bool ok=expand_source(loader,path,text,including_path,including_line);
+    free(embedded);
     free(rewritten);
     return ok;
 }

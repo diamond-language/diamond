@@ -338,7 +338,7 @@ static DiamondVmStatus program_builder_add_string(DiamondVm *vm, DiamondProgram 
         program_builder_target(built,registers[base].as.integer);
     const DiamondString *text=
         (const DiamondString *)registers[(size_t)base+1].as.object;
-    if(target==nullptr||text->length>DIAMOND_MAX_STRING_LENGTH) {
+    if(target==nullptr||text->length>DIAMOND_MAX_STRING_CONSTANT_LENGTH) {
         snprintf(vm->error,sizeof vm->error,"ProgramBuilder#%s",
             "add_string has an invalid function index or an oversized string");
         return DIAMOND_VM_TYPE_ERROR;

@@ -1,0 +1,4 @@
+module FileEmbedHelper
+  # Resolved against this file's own directory, not the requiring one.
+  TEXT = File.embed("text.txt")
+end

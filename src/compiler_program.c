@@ -44,7 +44,7 @@ void *diamond_function_metadata_alloc(DiamondFunction *function,size_t size) {
 
 bool diamond_function_set_string(DiamondFunction *function,size_t index,
         const char *chars,size_t length) {
-    if(length>DIAMOND_MAX_STRING_LENGTH)return false;
+    if(length>DIAMOND_MAX_STRING_CONSTANT_LENGTH)return false;
     char *copy=diamond_function_metadata_alloc(function,length+1);
     if(copy==nullptr)return false;
     if(length>0)memcpy(copy,chars,length);
