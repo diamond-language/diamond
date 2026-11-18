@@ -19,7 +19,6 @@ if ! command -v podman >/dev/null 2>&1; then
 fi
 
 container_name="diamond-arel-mariadb-dialect-test"
-port=33063
 
 cleanup() {
     podman stop "$container_name" >/dev/null 2>&1 || true
@@ -30,8 +29,10 @@ podman rm -f "$container_name" >/dev/null 2>&1 || true
 podman run --rm -d --name "$container_name" \
     -e MARIADB_ROOT_PASSWORD=diamondtest \
     -e MARIADB_DATABASE=diamond_arel_test \
-    -p "127.0.0.1:${port}:3306" \
+    -p "127.0.0.1::3306" \
     docker.io/library/mariadb:11 >/dev/null
+# The runtime picks a free host port: a fixed one can collide with a client socket from the ephemeral range.
+port="$(podman port "$container_name" 3306/tcp | head -n1 | sed "s/.*://")"
 
 ready=0
 for _ in $(seq 1 30); do
