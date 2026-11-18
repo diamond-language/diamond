@@ -95,6 +95,10 @@ New package work should be driven by a concrete application or interoperability 
 - Add package examples and compatibility tests.
 - Avoid framework magic that hides database access or weakens d6's type and error
   contracts.
+- **Schema-first GraphQL apps** -- build a `graphql` schema from a `.graphql` file, bind
+  resolver classes by name, resolve plain fields by convention, and run access checks as
+  directive middleware. Pheint is the test case: about 60% of its 1,166-line `lib/api.di` is
+  mechanical. Plan: [graphql-app-plan](internal/graphql-app-plan.md).
 
 ## Runtime research
 
