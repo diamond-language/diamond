@@ -75,6 +75,12 @@ still loads its bundled cuts from `ef4cb8f0`). The same day `catalog.html` and `
 replaced with their `1.0` `0b310af1` versions (links to rolld6.codes, cuts.rolld6.codes and
 diamond-language/d6); no restart, previous copies in `/root/registry-pages-rolld6-20261115/`.
 
+graphql 0.3.6 (#607: `Schema.from_sdl`, `GraphQL::App`, directive middleware, `GraphQL::Fail`) was
+published on 2026-11-18 UTC from main `0af816e4` with a 30-minute `publish:graphql` credential for
+`diamond-language` (id 43, revoked afterwards). The published sha256 `25f3d48a...` matches
+`docs/registry-launch-inventory.json`, and `tools/verify_registry_launch.d6` passed for all 20 public
+cuts. The registry does not load graphql, so no redeploy.
+
 Previously `0e482f26c56854c4c41c6c82d093ad04f6569a21` (v1.0.0-rc4, deployed 2026-11-12 UTC (2026-11-11 Pacific)
 with `tools/deploy_registry.sh --revision=v1.0.0-rc4 --force` after its dry run).
 The fresh snapshot at
