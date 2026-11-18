@@ -1,8 +1,8 @@
 # Plan: schema-first GraphQL apps (`GraphQL::App`)
 
 Status: in progress on branch `graphql-app` (filed 2026-11-17). Steps 1-3 are written
-(graphql 0.3.6): the SDL parser, `GraphQL::App`, and directive middleware with `Fail`. Step 4
-ports Pheint. The roadmap entry is "Schema-first GraphQL apps" under "Grow packages from
+(graphql 0.3.6): the SDL parser, `GraphQL::App`, and directive middleware with `Fail`. Step 4, the Pheint
+port, is diamond-language/pheint#54 (api.di 1,166 to 670 lines, the same 724 checks passing). The roadmap entry is "Schema-first GraphQL apps" under "Grow packages from
 application needs".
 
 ## The problem
@@ -107,7 +107,7 @@ Ship it as one branch with one draft PR, pushed after each step. It is a minor r
    `(directive_args, object, args, context, resolve)` and wraps the field's resolver; the first
    directive written runs outermost. `GraphQL::Fail` has `signal`, `code` and `annotate`; Pheint's
    HTTP `status` mapping stays in Pheint, since the codes are its own.
-4. **Port Pheint.** Its `compat_test` and `docs/api-baseline.graphql` already pin the public API.
+4. **Port Pheint (pheint#54).** Its `compat_test` and `docs/api-baseline.graphql` already pin the public API.
    The expected result is `api.di` going from about 1,170 lines to about 450.
 
 ## Rejected: a shorter code-first syntax
