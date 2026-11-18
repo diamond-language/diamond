@@ -1261,4 +1261,10 @@ actual="$(run_file "$(cat test/app_build.d6)")"
 [[ "$actual" == "$(cat test/app_build.expected)" ]] || { echo "app_build: got"; echo "$actual"; exit 1; }
 count=$((count + 1))
 
+# --- GraphQL::App directives as middleware (guards, transforms, nesting order), GraphQL::Fail codes,
+# and build() reporting directives without functions (test/app_directives.d6) ---
+actual="$(run_file "$(cat test/app_directives.d6)")"
+[[ "$actual" == "$(cat test/app_directives.expected)" ]] || { echo "app_directives: got"; echo "$actual"; exit 1; }
+count=$((count + 1))
+
 echo "$count graphql tests passed"

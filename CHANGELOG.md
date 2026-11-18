@@ -38,7 +38,10 @@ record. From 1.0.0, releases follow the [1.x compatibility policy](docs/compatib
   method reads the parent's method or Hash key of the same name. An Int for an `ID` comes out as a
   String, and `int_booleans` turns 0/1 into booleans. Interfaces and unions find the concrete type
   from the class name, and `build()` lists every missing resolver at once. An application's own
-  context class can `include GraphQL::Context`. These are the first steps of
+  context class can `include GraphQL::Context`. `.directive("auth", function)` makes a directive
+  wrap every field it is applied to, so access checks or result transforms live in one function
+  and run in the order written. `GraphQL::Fail.signal(code, message)` raises an error with a code,
+  and `Fail.annotate` gives every error in a result a code. These are the first steps of
   [schema-first GraphQL apps](docs/internal/graphql-app-plan.md).
 
 ## 1.0.1 — 2026-11-17

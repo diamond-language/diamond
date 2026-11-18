@@ -197,6 +197,19 @@ raise GraphQL::ExecutionError.new("invalid email or password", {"code": "UNAUTHE
 
 An error without extensions has no `"extensions"` key.
 
+`GraphQL::Fail` is shorthand for errors with a code, so a client can branch on the code and never
+on the message text:
+
+```ruby
+GraphQL::Fail.signal("NOT_FOUND", "no such board")   # raises the ExecutionError above, with that code
+GraphQL::Fail.code(error)                            # its code, or "INTERNAL"
+GraphQL::Fail.annotate(schema.execute(query))        # gives every error a code
+```
+
+`annotate` leaves an error that already has extensions alone. Any other field error gets
+`"INTERNAL"`, and an error that rejected the whole request (no `"data"` in the result) gets
+`"BAD_REQUEST"`.
+
 ### Lookahead
 
 Immediately before each field resolves, the executor sets `context["lookahead"]` to a `GraphQL::Execution::Lookahead` describing that field's sub-selections. A resolver can use it to skip work the query didn't ask for. [`graphsql`](https://github.com/diamond-language/d6/blob/main/packages/graphsql/README.md) builds on this to select only the requested SQL columns and to preload only the requested associations.
@@ -324,6 +337,46 @@ end
 
 schema.execute(query, variables, RequestContext.new(repo))
 ```
+
+### Directives as middleware
+
+A directive applied to fields in SDL does whatever function `.directive(name, function)`
+registers for it. The function wraps each such field's resolver and is called as
+`(directive_args, object, args, context, resolve)`:
+- `directive_args` holds the directive's arguments, with the defaults filled in.
+- `resolve(object, args, context)` runs the field.
+
+A guard raises to deny, or returns `resolve(...)`:
+
+```graphql
+directive @auth(as: Role = USER) on FIELD_DEFINITION
+
+type Query {
+  me: Account @auth
+  auditLog: [Entry!]! @auth(as: ADMIN)
+}
+```
+
+```ruby
+def auth(directive, object, args, context, resolve)
+  user = context["user"]
+  if user == nil then GraphQL::Fail.signal("UNAUTHENTICATED", "sign in first") end
+  if directive["as"] == "ADMIN" && !user.admin?() then GraphQL::Fail.signal("FORBIDDEN", "admins only") end
+  resolve(object, args, context)
+end
+
+schema = GraphQL::App.new(File.read("schema.graphql"))
+  .resolvers("Query", QueryResolvers.new())
+  .directive("auth", auth)
+  .build()
+```
+
+A function can also change the result: `def upper(d, o, a, c, resolve) = resolve(o, a, c).upcase()`.
+On a field with several directives, the first one written runs outermost. Directives wrap plain
+fields too, not only fields with resolver methods. `build()` reports any directive used on a field
+with no function registered, and any function registered for a directive the schema doesn't
+define. Directives on interface fields don't run, because interface fields are never resolved
+directly; put them on the implementing types' fields.
 
 ## Introspection
 

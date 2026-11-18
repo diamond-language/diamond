@@ -34,6 +34,7 @@ module GraphQL
       @bindings = {}
       @type_resolvers = {}
       @int_booleans = false
+      @directive_functions = {}
     end
 
     ## Binds `resolvers` (any object) to the object type `type_name` and returns the app.
@@ -48,6 +49,18 @@ module GraphQL
     ## a Hash's `"__typename"`.
     def resolve_type(type_name, callable)
       @type_resolvers[type_name] = callable
+      self
+    end
+
+    ## Registers the function that runs `@name` wherever SDL applies it to a field, and
+    ## returns the app. The function wraps the field's resolver and is called as
+    ## `(directive_args, object, args, context, resolve)`: `directive_args` holds the
+    ## directive's arguments (defaults included), and `resolve(object, args, context)`
+    ## runs the field. A guard raises to deny (see `Fail.signal`) or returns
+    ## `resolve(...)`; it may also change the result. On a field with several
+    ## directives, the first one written runs outermost.
+    def directive(name, function)
+      @directive_functions[name] = function
       self
     end
 
@@ -139,6 +152,15 @@ module GraphQL
       resolve
     end
 
+    # `resolve` wrapped in one applied directive's function.
+    def self.wrap(resolve, applied, function)
+      arguments = applied.arguments()
+      def wrapped(object, args, context)
+        function(arguments, object, args, context, resolve)
+      end
+      wrapped
+    end
+
     def self.default_type_resolver(value, context)
       if value is Hash then return value["__typename"] end
       name = value.class()
@@ -148,8 +170,9 @@ module GraphQL
 
     ## Binds every field and returns the `Schema`. Raises `SchemaError` listing every
     ## problem at once: resolvers bound to a missing or non-object type, a
-    ## `resolve_type` for something not an interface or union, and each field that
-    ## needs a resolver method and has none.
+    ## `resolve_type` for something not an interface or union, each field that needs
+    ## a resolver method and has none, a directive used on a field with no registered
+    ## function, and a function registered for a directive the schema does not define.
     def build()
       types = @schema.type_map()
       problems = []
@@ -167,6 +190,12 @@ module GraphQL
           problems.push("resolve_type is set for #{name}, which is not an interface or union in the schema")
         end
       end
+      @directive_functions.keys().sort().each() do |name|
+        if @schema.directive_named(name) == nil
+          problems.push("a function is registered for @#{name}, which the schema does not define")
+        end
+      end
+      @unhandled = {}
       roots = [@schema.query_type().name()]
       if @schema.mutation_type() != nil then roots.push(@schema.mutation_type().name()) end
       types.keys().sort().each() do |name|
@@ -179,10 +208,30 @@ module GraphQL
           type.resolve_type(if resolver == nil then App.default_type_resolver else resolver end)
         end
       end
+      @unhandled.keys().sort().each() do |name|
+        problems.push("@#{name} has no function (it is used on #{@unhandled[name].join(", ")}): register one with .directive(\"#{name}\", function)")
+      end
       if problems.length() > 0
         raise GraphQL::SchemaError.new("the GraphQL app is not ready:\n- " + problems.join("\n- "))
       end
       @schema
+    end
+
+    # Wraps from the last directive written to the first, so the first runs outermost. A directive with no
+    # registered function is recorded for build()'s problem list.
+    def wrap_directives(resolve, field, type_name)
+      wrapped = resolve
+      field.directives().reverse().each() do |applied|
+        function = @directive_functions[applied.name()]
+        if function == nil
+          if @unhandled[applied.name()] == nil then @unhandled[applied.name()] = [] end
+          place = "#{type_name}.#{field.name()}"
+          unless @unhandled[applied.name()].include?(place) then @unhandled[applied.name()].push(place) end
+        else
+          wrapped = App.wrap(wrapped, applied, function)
+        end
+      end
+      wrapped
     end
 
     def bind_fields(type, root, problems)
@@ -191,15 +240,17 @@ module GraphQL
       holder = if bound == nil then "a resolvers object bound to #{name}" else bound.class() end
       type.fields().each() do |field|
         method = App.snake_case(field.name())
+        resolve = nil
         if bound != nil && bound.respond_to?(method.to_sym())
-          field.bind(App.method_resolver(bound, method, field.type(), @int_booleans))
+          resolve = App.method_resolver(bound, method, field.type(), @int_booleans)
         elsif root
           problems.push("#{name}.#{field.name()} has no resolver: define #{method}(object, args, context) on #{holder}")
         elsif field.arguments().length() > 0
           problems.push("#{name}.#{field.name()} takes arguments, so it needs #{method}(object, args, context) on #{holder}")
         else
-          field.bind(App.property_resolver(name, method, field.name(), field.type(), @int_booleans))
+          resolve = App.property_resolver(name, method, field.name(), field.type(), @int_booleans)
         end
+        if resolve != nil then field.bind(self.wrap_directives(resolve, field, name)) end
       end
     end
   end

@@ -1,0 +1,87 @@
+# Directives as middleware: a registered function wraps every field the directive is applied to.
+lines = [
+  "directive @auth(as: Role = USER) on FIELD_DEFINITION",
+  "directive @upper on FIELD_DEFINITION",
+  "directive @trace(label: String!) repeatable on FIELD_DEFINITION",
+  "",
+  "enum Role {",
+  "  USER",
+  "  ADMIN",
+  "}",
+  "",
+  "type Query {",
+  "  hello: String! @upper",
+  "  me: String @auth",
+  "  secrets: [String!]! @auth(as: ADMIN) @trace(label: \"secrets\")",
+  "  board: Board",
+  "}",
+  "",
+  "type Board {",
+  "  slug: String! @upper @trace(label: \"outer\") @trace(label: \"inner\")",
+  "}",
+  ""
+]
+
+class QueryResolvers
+  def hello(_, args, ctx) = "hi"
+  def me(_, args, ctx) = ctx["user"]
+  def secrets(_, args, ctx) = ["a", "b"]
+  def board(_, args, ctx) = {"slug": "main"}
+end
+
+# A guard: deny with a coded error, or run the field.
+def auth(directive, object, args, context, resolve)
+  user = context["user"]
+  if user == nil then GraphQL::Fail.signal("UNAUTHENTICATED", "sign in first") end
+  if directive["as"] == "ADMIN" && user != "root" then GraphQL::Fail.signal("FORBIDDEN", "admins only") end
+  resolve(object, args, context)
+end
+
+# A transform: change the field's result.
+def upper(directive, object, args, context, resolve) = resolve(object, args, context).upcase()
+
+# Records the order wrappers run in.
+def trace(directive, object, args, context, resolve)
+  context["log"].push(directive["label"])
+  resolve(object, args, context)
+end
+
+def build(lines)
+  GraphQL::App.new(lines.join("\n"))
+    .resolvers("Query", QueryResolvers.new())
+    .directive("auth", auth)
+    .directive("upper", upper)
+    .directive("trace", trace)
+    .build()
+end
+schema = build(lines)
+
+def run(schema, query, user)
+  context = {"user": user, "log": []}
+  result = GraphQL::Fail.annotate(schema.execute(query, {}, context))
+  puts(JSON.stringify(result))
+  if context["log"].length() > 0 then puts(context["log"]) end
+end
+
+run(schema, "{ hello me }", "ann")
+run(schema, "{ me }", nil)
+run(schema, "{ secrets }", "ann")
+run(schema, "{ secrets }", "root")
+# Plain fields are wrapped too; with several directives the first one written runs outermost.
+run(schema, "{ board { slug } }", nil)
+# annotate: an error without a code is INTERNAL, and a rejected request is BAD_REQUEST.
+run(schema, "{ nope }", "ann")
+
+# build() reports directives with no function, and functions for directives that do not exist.
+begin
+  GraphQL::App.new(lines.join("\n"))
+    .resolvers("Query", QueryResolvers.new())
+    .directive("upper", upper)
+    .directive("cache", upper)
+    .build()
+rescue e: GraphQL::SchemaError
+  puts(e.message())
+end
+
+puts(GraphQL::Fail.code(GraphQL::ExecutionError.new("x", {"code": "CONFLICT"})))
+puts(GraphQL::Fail.code(GraphQL::ExecutionError.new("x")))
