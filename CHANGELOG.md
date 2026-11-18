@@ -29,6 +29,12 @@ record. From 1.0.0, releases follow the [1.x compatibility policy](docs/compatib
   file invalidates the bytecode cache, and files up to 16 MiB work (string literals stop at
   4,095 bytes). `--sandbox` refuses it unless `filesystem` is allowed
   ([local I/O](docs/local-io.md#files-compiled-in-fileembed)).
+- graphql 0.3.6: `GraphQL::Schema.from_sdl(text)` builds a schema from a `.graphql` file. It
+  reads all six kinds of type, a `schema { }` block, descriptions, directive definitions, and
+  directives applied to fields, which code reads with `field.directives()`. Errors name the
+  problem and its line. Types can now carry a description (`describe`), which introspection
+  and `to_sdl` show, and whatever `to_sdl` prints reads back unchanged. This is the first step
+  of [schema-first GraphQL apps](docs/internal/graphql-app-plan.md).
 
 ## 1.0.1 — 2026-11-17
 

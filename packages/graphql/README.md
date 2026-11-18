@@ -216,12 +216,52 @@ Batching is local to a group of siblings (one list's items, or one selection set
 ## SDL
 
 `schema.to_sdl()` returns the schema as GraphQL SDL text, for client codegen and review. Types are in name order,
-the built-in scalars are omitted, and field and argument descriptions are printed as block strings. Resolvers and
+the built-in scalars are omitted, and descriptions are printed as block strings. Resolvers and
 `resolve_type` callables are not part of SDL. A server can serve it directly:
 
 ```ruby
 [200, {"Content-Type": "text/plain; charset=utf-8"}, schema.to_sdl()]
 ```
+
+`GraphQL::Schema.from_sdl(text)` goes the other way. It builds a schema from SDL: object, interface, union, enum,
+input and scalar types, a `schema { query: ... mutation: ... }` block, descriptions, directive definitions, and
+directives applied to field definitions:
+
+```ruby
+schema = GraphQL::Schema.from_sdl(File.read("schema.graphql"))
+schema.query_type().field_named("books").directive("auth").arguments()   # {"as": "ANY"}
+```
+
+```graphql
+directive @auth(as: Principal!) on FIELD_DEFINITION
+
+enum Principal {
+  ANY
+  EDITOR
+}
+
+type Query {
+  books(first: Int = 10): [Book!]! @auth(as: ANY)
+}
+
+type Book {
+  id: ID!
+  title: String!
+}
+```
+
+The fields have no resolvers, so each resolves to the parent object's public method of the same name. A custom
+`scalar` passes values through unchanged. An applied directive's `arguments()` include the definition's defaults.
+Directives do nothing by themselves; code that reads `field.directives()` decides what they mean.
+
+`from_sdl` raises `GraphQL::SchemaError` with the problem and its line, for example
+`unknown type Bok in Query.books (line 9)`. It also reports what the type system can't represent:
+- `extend` and subscriptions
+- an interface implementing another interface
+- a directive anywhere other than a field definition
+- a type that no root type, field or directive leads to (it would vanish from introspection)
+
+A schema printed by `to_sdl()` reads back into one that prints the same text.
 
 ## Introspection
 

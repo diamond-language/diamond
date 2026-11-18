@@ -29,3 +29,4 @@ require "./graphql/execution/executor"
 
 require "./graphql/sdl"
 require "./graphql/schema"
+require "./graphql/schema_parser"

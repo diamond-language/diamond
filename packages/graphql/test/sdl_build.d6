@@ -1,0 +1,88 @@
+
+# Written in the form to_sdl prints, so printing it back must give the same text.
+lines = [
+  "schema {",
+  "  query: Root",
+  "  mutation: Change",
+  "}",
+  "",
+  "\"\"\"who may call a field\"\"\"",
+  "directive @auth(as: Principal!, note: String = \"x\") on FIELD_DEFINITION",
+  "",
+  "directive @tag(name: String!) repeatable on FIELD_DEFINITION | OBJECT",
+  "",
+  "type Book implements Node & Named {",
+  "  id: ID!",
+  "  name: String!",
+  "  pages: Int",
+  "}",
+  "",
+  "type Change {",
+  "  rename(input: RenameInput!): Book @auth(as: EDITOR) @tag(name: \"write\") @tag(name: \"audit\")",
+  "}",
+  "",
+  "scalar Date",
+  "",
+  "interface Named {",
+  "  name: String!",
+  "}",
+  "",
+  "\"\"\"",
+  "Anything with an id.",
+  "Two lines.",
+  "\"\"\"",
+  "interface Node {",
+  "  id: ID!",
+  "}",
+  "",
+  "enum Principal {",
+  "  \"\"\"anyone signed in\"\"\"",
+  "  ANY",
+  "  EDITOR",
+  "}",
+  "",
+  "input RenameInput {",
+  "  id: ID!",
+  "  \"\"\"the new name\"\"\"",
+  "  name: String!",
+  "  tags: [String!] = [\"a\", \"b\"]",
+  "}",
+  "",
+  "type Root {",
+  "  book(id: ID!): Book",
+  "  books(first: Int = 10, sort: Principal = ANY): [Book!]! @auth(as: ANY)",
+  "  search(term: String!): [SearchResult!]!",
+  "  today: Date",
+  "}",
+  "",
+  "union SearchResult = Book | Shelf",
+  "",
+  "type Shelf {",
+  "  books: [Book!]!",
+  "}",
+  ""
+]
+source = lines.join("\n")
+schema = GraphQL::Schema.from_sdl(source)
+printed = schema.to_sdl()
+puts(printed == source)
+if printed != source then puts(printed) end
+
+# What the builder made.
+books = schema.query_type().field_named("books")
+puts(books.directive("auth").arguments())
+puts(books.directive("auth").written())
+puts(schema.mutation_type().field_named("rename").directives().length())
+puts(schema.directive_named("tag").repeatable?())
+puts(schema.type_map()["Node"].description())
+puts(schema.type_map()["Book"].interfaces().map() do |i| i.name() end)
+puts(books.argument("first").default_value())
+
+# A parsed schema runs queries; fields resolve to same-name methods.
+struct Item(id: Int, name: String, pages: Int | Nil)
+end
+class Library
+  def book() = Item.new(7, "Notes", nil)
+end
+puts(GraphQL::Schema.from_sdl("type Query {\n  book: Item\n}\n\ntype Item {\n  id: ID!\n  name: String!\n  pages: Int\n}\n").execute("{ book { id name pages } }", {}, {}, Library.new()))
+puts(GraphQL::Schema.from_sdl("\"\"\"the root\"\"\"\ntype Query {\n  a: Int\n}\n").execute("{ __type(name: \"Query\") { description } }"))

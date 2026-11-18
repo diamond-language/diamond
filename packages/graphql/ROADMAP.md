@@ -8,4 +8,4 @@
 - Improve validation and execution diagnostics.
 - Add batching or schema tools when application use shows a clear need.
 
-Schema definitions use builders because d6 types are runtime values.
+Build a schema with the type builders, or read one from SDL with `Schema.from_sdl`.

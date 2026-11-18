@@ -61,22 +61,43 @@ module GraphQL
       end
     end
 
-    def self.fields(fields)
-      fields.map() do |field|
-        SchemaPrinter.description(field.description(), 2) + "  #{field.name()}" + SchemaPrinter.arguments(field.arguments(), 2) + ": #{field.type().name()}\n"
+    # ` @name(arg: value)` for each directive applied to a field, with only the arguments the SDL wrote.
+    def self.applied(directives, schema)
+      directives.map() do |directive|
+        definition = if schema == nil then nil else schema.directive_named(directive.name()) end
+        written = directive.written()
+        args = written.map() do |name|
+          spec = if definition == nil then nil else definition.argument(name) end
+          type = if spec == nil then GraphQL::ScalarType.string() else spec.type() end
+          "#{name}: #{SchemaPrinter.literal(directive.arguments()[name], type)}"
+        end
+        if written.length() == 0 then " @#{directive.name()}" else " @#{directive.name()}(" + args.join(", ") + ")" end
       end.join("")
     end
 
-    def self.type_definition(type)
+    def self.directive_definition(definition)
+      repeatable = if definition.repeatable?() then " repeatable" else "" end
+      SchemaPrinter.description(definition.description(), 0) + "directive @#{definition.name()}" +
+        SchemaPrinter.arguments(definition.arguments(), 0) + repeatable + " on " + definition.locations().join(" | ") + "\n"
+    end
+
+    def self.fields(fields, schema = nil)
+      fields.map() do |field|
+        SchemaPrinter.description(field.description(), 2) + "  #{field.name()}" + SchemaPrinter.arguments(field.arguments(), 2) + ": #{field.type().name()}" +
+          SchemaPrinter.applied(field.directives(), schema) + "\n"
+      end.join("")
+    end
+
+    def self.type_definition(type, schema = nil)
       kind = type.kind()
-      head = ""
+      head = SchemaPrinter.description(type.description(), 0)
       if kind == "SCALAR"
         head + "scalar #{type.name()}\n"
       elsif kind == "OBJECT"
         implements = if type.interfaces().length() == 0 then "" else " implements " + type.interfaces().map() do |i| i.name() end.join(" & ") end
-        head + "type #{type.name()}#{implements}" + (if type.fields().length() == 0 then "\n" else " {\n" + SchemaPrinter.fields(type.fields()) + "}\n" end)
+        head + "type #{type.name()}#{implements}" + (if type.fields().length() == 0 then "\n" else " {\n" + SchemaPrinter.fields(type.fields(), schema) + "}\n" end)
       elsif kind == "INTERFACE"
-        head + "interface #{type.name()}" + (if type.fields().length() == 0 then "\n" else " {\n" + SchemaPrinter.fields(type.fields()) + "}\n" end)
+        head + "interface #{type.name()}" + (if type.fields().length() == 0 then "\n" else " {\n" + SchemaPrinter.fields(type.fields(), schema) + "}\n" end)
       elsif kind == "UNION"
         head + "union #{type.name()} = " + type.possible_types().map() do |member| member.name() end.join(" | ") + "\n"
       elsif kind == "ENUM"
@@ -101,9 +122,13 @@ module GraphQL
         if mutation != nil then roots = roots + "  mutation: #{mutation.name()}\n" end
         blocks.push("schema {\n" + roots + "}\n")
       end
+      directive_names = schema.directives().map() do |definition| definition.name() end
+      directive_names.sort().each() do |name|
+        blocks.push(SchemaPrinter.directive_definition(schema.directive_named(name)))
+      end
       types = schema.type_map()
       types.keys().sort().each() do |name|
-        if !SchemaPrinter.builtin?(name) then blocks.push(SchemaPrinter.type_definition(types[name])) end
+        if !SchemaPrinter.builtin?(name) then blocks.push(SchemaPrinter.type_definition(types[name], schema)) end
       end
       blocks.join("\n")
     end

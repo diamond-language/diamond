@@ -1,9 +1,7 @@
 # AST node classes produced by Parser (parser.d6) from GraphQL
-# query-document text (operations/fragments/selections, not schema SDL
-# -- this package's schema is built with Diamond code, see
-# GraphQL::Type and friends, not parsed from `.graphql` files, so there
-# are no ObjectTypeDefinition/ScalarTypeDefinition/SchemaDefinition-style
-# nodes here the way graphql-ruby's own nodes.rb has).
+# query-document text (operations/fragments/selections). SDL has no node
+# classes: SchemaParser (schema_parser.d6) reads type definitions into plain
+# records and builds GraphQL::Type values from them directly.
 #
 # Plain data classes -- attr_reader-only, no behavior. A literal scalar
 # value (Int/Float/String/Bool) used as an argument/default value is

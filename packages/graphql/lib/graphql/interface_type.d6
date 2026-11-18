@@ -20,8 +20,8 @@ module GraphQL
     def kind() = "INTERFACE"
 
     ## Adds a field (no resolver; implementing types resolve it) and returns the type.
-    def field(name, type, arguments = [], description = nil)
-      @fields << Field.new(name, type, nil, arguments, description)
+    def field(name, type, arguments = [], description = nil, directives = [])
+      @fields << Field.new(name, type, nil, arguments, description, directives)
       self
     end
 

@@ -95,7 +95,7 @@ module GraphQL
       end
 
       def self.is_punct(ch)
-        ch == "!" || ch == "$" || ch == "(" || ch == ")" || ch == ":" ||
+        ch == "!" || ch == "$" || ch == "&" || ch == "(" || ch == ")" || ch == ":" ||
           ch == "=" || ch == "@" || ch == "[" || ch == "]" || ch == "{" ||
           ch == "|" || ch == "}"
       end

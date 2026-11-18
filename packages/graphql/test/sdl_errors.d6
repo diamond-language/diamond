@@ -1,0 +1,37 @@
+
+cases = [
+  "type Query {\n  a: Missing\n}\n",
+  "type Query {\n  a: Int\n}\ntype Query {\n  b: Int\n}\n",
+  "type Query {\n  a: Int\n  a: String\n}\n",
+  "scalar String\ntype Query {\n  a: Int\n}\n",
+  "type Query {\n  a: In\n}\ninput In {\n  x: Int\n}\n",
+  "type Query {\n  a(x: Out): Int\n}\ntype Out {\n  y: Int\n}\n",
+  "type Query {\n  a: Int @nope\n}\n",
+  "directive @d on OBJECT\ntype Query {\n  a: Int @d\n}\n",
+  "directive @d(x: Int!) on FIELD_DEFINITION\ntype Query {\n  a: Int @d\n}\n",
+  "directive @d on FIELD_DEFINITION\ntype Query {\n  a: Int @d @d\n}\n",
+  "directive @d(x: Int) on FIELD_DEFINITION\ntype Query {\n  a: Int @d(y: 1)\n}\n",
+  "enum E {\n  A\n}\ndirective @d(e: E) on FIELD_DEFINITION\ntype Query {\n  a: Int @d(e: B)\n}\n",
+  "type Query {\n  a(n: Int = $v): Int\n}\n",
+  "type Query @x {\n  a: Int\n}\n",
+  "extend type Query {\n  a: Int\n}\n",
+  "type Subscription {\n  a: Int\n}\ntype Query {\n  a: Int\n}\n",
+  "type Mutation {\n  a: Int\n}\n",
+  "type Query {\n  a: Int\n}\ntype Lonely {\n  b: Int\n}\n",
+  "interface I {\n  id: ID\n}\ntype Query implements I {\n  a: Int\n}\n",
+  "type Query {\n  a: U\n}\nunion U = Int\n",
+  "interface A {\n  x: Int\n}\ninterface B implements A {\n  x: Int\n}\n",
+  "directive @d on NOWHERE\ntype Query {\n  a: Int\n}\n",
+  "enum E {\n  true\n}\n",
+  "type Query {\n  a: Int\n",
+  "type Query {\n  a: Int ?\n}\n",
+  "type __Query {\n  a: Int\n}\n"
+]
+cases.each() do |source|
+  begin
+    GraphQL::Schema.from_sdl(source)
+    puts("NO ERROR: #{source}")
+  rescue e: GraphQL::SchemaError
+    puts(e.message())
+  end
+end

@@ -12,6 +12,30 @@ module GraphQL
       @mask_errors = true
       @max_query_depth = 20
       @max_query_nodes = 10000
+      @directives = []
+    end
+
+    ## Builds a schema from GraphQL SDL text: object, interface, union, enum, input
+    ## and scalar types, directive definitions, descriptions, and directives applied
+    ## to field definitions. Fields have no resolvers, so each resolves to the
+    ## parent object's method of the same name. A custom scalar passes values
+    ## through unchanged. Raises `SchemaError` naming the problem and its line.
+    def self.from_sdl(source: String) = GraphQL::SchemaParser.build(source)
+
+    ## Registers a `DirectiveDefinition` and returns the schema.
+    def directive(definition)
+      @directives << definition
+      self
+    end
+
+    ## The registered `DirectiveDefinition` values, in the order they were added.
+    def directives() = @directives
+
+    ## The directive definition called `name`, or `nil`.
+    def directive_named(name)
+      @directives.find() do |definition|
+        definition.name() == name
+      end
     end
 
     ## Sets the query root type and returns the schema.
@@ -120,8 +144,8 @@ module GraphQL
       nil
     end
 
-    # Every type reachable from the query/mutation roots, keyed by name.
-    ## Every type reachable from the root types, keyed by name.
+    # Every type reachable from the query/mutation roots or a directive definition's arguments, keyed by name.
+    ## Every type reachable from the root types or a directive's arguments, keyed by name.
     def type_map()
       visited = {}
       unless @query_type == nil
@@ -129,6 +153,9 @@ module GraphQL
       end
       unless @mutation_type == nil
         Schema.visit(@mutation_type, visited)
+      end
+      @directives.each() do |definition|
+        Schema.visit_arguments(definition.arguments(), visited)
       end
       visited
     end

@@ -1204,4 +1204,55 @@ assert_contains "$actual" "unexpected character ? (line 1)"
 assert_contains "$actual" "hi"
 count=$((count + 1))
 
+# --- Schema.from_sdl: every construct prints back unchanged, directives and descriptions are kept,
+# and a parsed schema executes queries (test/sdl_build.d6) ---
+actual="$(run_file "$(cat test/sdl_build.d6)")"
+expected="true
+{as: ANY, note: x}
+[as]
+3
+true
+Anything with an id.
+Two lines.
+[Node, Named]
+10
+{data: {book: {id: 7, name: Notes, pages: nil}}}
+{data: {__type: {description: the root}}}"
+[[ "$actual" == "$expected" ]] || { echo "sdl_build: got"; echo "$actual"; exit 1; }
+count=$((count + 1))
+
+# --- Schema.from_sdl errors name the problem and its line (test/sdl_errors.d6) ---
+actual="$(run_file "$(cat test/sdl_errors.d6)")"
+for needle in \
+    "unknown type Missing in Query.a (line 2)" \
+    "type Query is defined twice (line 4)" \
+    "Query declares the field a twice (line 3)" \
+    "String is a built-in scalar and cannot be redefined (line 1)" \
+    "Query.a returns the input type In; a field needs an output type (line 2)" \
+    "Query.a(x) has the output type Out; an argument or input field needs a scalar, enum or input type (line 2)" \
+    "unknown directive @nope on Query.a (line 2)" \
+    "@d is not declared for FIELD_DEFINITION, so it cannot be used on Query.a (line 3)" \
+    "@d on Query.a needs the argument x (line 3)" \
+    "@d is used twice on Query.a but is not repeatable (line 3)" \
+    "@d has no argument y (Query.a, line 3)" \
+    "@d on Query.a: B is not a value of enum E (line 6)" \
+    "Query.a(n) uses the variable \$v; a schema can only use literal values (line 2)" \
+    "directives are only supported on field definitions, not on type Query (line 1)" \
+    "extend is not supported; put every field in the type's own definition (line 1)" \
+    "subscriptions are not supported (type Subscription)" \
+    "the schema has no Query type" \
+    "type Lonely is not used by the query or mutation type, any field they lead to, or a directive (line 4)" \
+    "type Query implements I but has no field id (line 4)" \
+    "union U names Int, which is not an object type (line 4)" \
+    "an interface implementing another interface is not supported (line 4)" \
+    "unknown directive location NOWHERE (line 1)" \
+    "true cannot be an enum value (line 2)" \
+    "expected a name, found EOF \"\" (line 3)" \
+    "unexpected character ? (line 2)" \
+    "__Query: names starting with __ are reserved (line 1)"; do
+    assert_contains "$actual" "$needle" || { echo "sdl_errors: missing: $needle"; echo "$actual"; exit 1; }
+done
+[[ "$actual" != *"NO ERROR"* ]] || { echo "sdl_errors: a bad schema was accepted"; echo "$actual"; exit 1; }
+count=$((count + 1))
+
 echo "$count graphql tests passed"

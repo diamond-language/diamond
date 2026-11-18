@@ -7,12 +7,21 @@ module GraphQL
   # has no class-body macros (see ROADMAP.md), so every concrete type is
   # built as a plain value via chained instance-method calls
   # (packages/dials's Router#get/#post is the template), not a DSL.
-  ## The base of every schema type. Its two methods wrap a type.
+  ## The base of every schema type: wrapping (`non_null`, `list`) and a description.
   class Type
     ## This type as `T!`.
     def non_null() = NonNullType.new(self)
     ## This type as `[T]`.
     def list() = ListType.new(self)
+
+    ## The type's description, or `nil`. Introspection and `Schema#to_sdl` show it.
+    def description() = @description
+
+    ## Sets the type's description and returns the type.
+    def describe(text)
+      @description = text
+      self
+    end
   end
 
 end
