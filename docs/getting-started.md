@@ -37,13 +37,13 @@ install it:
 ```sh
 # Ubuntu 26.04
 sudo apt update && sudo apt upgrade
-sudo apt install ~/Downloads/d6-lang_1.0.1-1_amd64.deb
-sudo apt install ~/Downloads/d6-lang_1.0.1-1_arm64.deb     # 64-bit ARM
+sudo apt install ~/Downloads/d6-lang_1.1.0-1_amd64.deb
+sudo apt install ~/Downloads/d6-lang_1.1.0-1_arm64.deb     # 64-bit ARM
 
 # Fedora 45 (for Fedora 44, the fc44 file)
 sudo dnf upgrade
-sudo dnf install ~/Downloads/d6-lang-1.0.1-1.fc45.x86_64.rpm
-sudo dnf install ~/Downloads/d6-lang-1.0.1-1.fc45.aarch64.rpm   # 64-bit ARM
+sudo dnf install ~/Downloads/d6-lang-1.1.0-1.fc45.x86_64.rpm
+sudo dnf install ~/Downloads/d6-lang-1.1.0-1.fc45.aarch64.rpm   # 64-bit ARM
 ```
 
 The package puts `d6`, `facet`, `d6-lsp` and `d6-dap` in `/usr/bin`, and apt or dnf
@@ -87,7 +87,7 @@ Things to know about the prebuilt route:
 
 - mise holds back any version published less than 24 hours ago (its `minimum_release_age`
   setting), so `latest` gives the previous release for the first day. Name the version to get
-  it at once (`mise use -g github:diamond-language/d6@1.0.1`), or set
+  it at once (`mise use -g github:diamond-language/d6@1.1.0`), or set
   `MISE_MINIMUM_RELEASE_AGE=0` for one command.
 - `latest` is never a release candidate. Ask for one by its full version.
 - `d6 build` compiles and links your program with `gcc`, so it needs `gcc` and the development
@@ -152,7 +152,7 @@ This puts `d6`, `facet`, `d6-lsp` and `d6-dap` in
 However you installed it, check it:
 
 ```sh
-d6 --version     # d6 1.0.1
+d6 --version     # d6 1.1.0
 ```
 
 Built from a git checkout other than a release tag, it adds the revision, as in
