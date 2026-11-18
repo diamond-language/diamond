@@ -132,6 +132,103 @@ static bool parse_builtin_function_call(Compiler *compiler, DiamondSpan name,
 }
 
 /* `Module.function(...)`: the current token is the '.'. */
+/* Whether `name` is one of the public singleton functions in `methods`. */
+static bool singleton_names_include(const DiamondMethod *methods,size_t count,
+        const char *name,size_t length) {
+    for(size_t index=0;index<count;index++)
+        if(!methods[index].is_private&&strlen(methods[index].name)==length&&
+           memcmp(methods[index].name,name,length)==0)return true;
+    return false;
+}
+
+/* Loads each public singleton function name in `methods` into a fresh String
+ * register and appends it to names[*staged]; false when more than `capacity`. */
+static bool stage_singleton_names(Compiler *compiler,const DiamondMethod *methods,
+        size_t count,uint16_t *names,size_t *staged,size_t capacity) {
+    for(size_t index=0;index<count;index++) {
+        if(methods[index].is_private)continue;
+        if(*staged==capacity)return false;
+        const uint16_t text=add_name_text(compiler,methods[index].name,
+            strlen(methods[index].name),compiler->current.span);
+        const uint16_t value=allocate_register(compiler);
+        emit_instruction(compiler,DIAMOND_OP_STRING,value,text,0,2);
+        compiler->known_types[value]=DIAMOND_TYPE_STRING;
+        names[(*staged)++]=value;
+    }
+    return true;
+}
+
+/* `Module.respond_to?(name)` and `Class.respond_to?(name)`, when the module or
+ * class does not define its own. Modules and classes are not values, so this is
+ * answered from the singleton table the real pass already holds: a Symbol literal
+ * folds to true/false, and any other argument (a Symbol or String at run time)
+ * is checked with `[names].include?(name.to_s())`. A class also answers for its
+ * superclasses' singleton methods, like `Class.method(...)` dispatch. The current
+ * token is `respond_to?`. */
+static uint16_t parse_singleton_respond_to(Compiler *compiler,int module_index,
+        int class_index) {
+    const DiamondSpan at=compiler->current.span;
+    advance_token(compiler);
+    if(compiler->current.kind!=DIAMOND_TOKEN_LEFT_PAREN) {
+        fail(compiler,compiler->current.span,"expected '(' after respond_to?");return 0;
+    }
+    advance_token(compiler);
+    DiamondLexer lookahead=compiler->lexer;
+    const bool literal=compiler->current.kind==DIAMOND_TOKEN_SYMBOL&&
+        compiler->current.span.length>1&&
+        compiler->source[compiler->current.span.start+1]!='"'&&
+        diamond_lexer_next(&lookahead).kind==DIAMOND_TOKEN_RIGHT_PAREN;
+    if(literal) {
+        const char *name=compiler->source+compiler->current.span.start+1;
+        const size_t length=compiler->current.span.length-1;
+        bool found=false;
+        if(module_index>=0) {
+            const DiamondModule *module=compiler->program->modules[(size_t)module_index];
+            found=singleton_names_include(module->singleton_methods,
+                module->singleton_method_count,name,length);
+        } else {
+            for(const DiamondClass *owner=compiler->program->classes[(size_t)class_index];
+                owner!=nullptr&&!found;
+                owner=owner->superclass==DIAMOND_NO_CLASS?nullptr:
+                    compiler->program->classes[owner->superclass])
+                found=singleton_names_include(owner->singleton_methods,
+                    owner->singleton_method_count,name,length);
+        }
+        advance_token(compiler);advance_token(compiler);
+        const uint16_t destination=allocate_register(compiler);
+        emit_instruction(compiler,DIAMOND_OP_BOOL,destination,found,0,2);
+        compiler->known_types[destination]=DIAMOND_TYPE_BOOL;
+        return destination;
+    }
+    const uint16_t argument=parse_expression(compiler);
+    if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN) {
+        fail(compiler,compiler->current.span,"expected ')' after arguments");return 0;
+    }
+    advance_token(compiler);
+    uint16_t names[255];size_t staged=0;bool fits=true;
+    if(module_index>=0) {
+        const DiamondModule *module=compiler->program->modules[(size_t)module_index];
+        fits=stage_singleton_names(compiler,module->singleton_methods,
+            module->singleton_method_count,names,&staged,255);
+    } else {
+        for(const DiamondClass *owner=compiler->program->classes[(size_t)class_index];
+            owner!=nullptr&&fits;
+            owner=owner->superclass==DIAMOND_NO_CLASS?nullptr:
+                compiler->program->classes[owner->superclass])
+            fits=stage_singleton_names(compiler,owner->singleton_methods,
+                owner->singleton_method_count,names,&staged,255);
+    }
+    if(!fits) {
+        fail(compiler,at,"respond_to? with a computed name needs at most 255 singleton methods");
+        return 0;
+    }
+    const uint16_t list=emit_argument_array(compiler,names,staged);
+    const uint16_t text=emit_invoke_named(compiler,argument,"to_s",nullptr,0);
+    const uint16_t result=emit_invoke_named(compiler,list,"include?",&text,1);
+    compiler->known_types[result]=DIAMOND_TYPE_BOOL;
+    return result;
+}
+
 static uint16_t parse_module_singleton_call(Compiler *compiler, DiamondSpan name,
         int module_index) {
     advance_token(compiler);
@@ -144,6 +241,9 @@ static uint16_t parse_module_singleton_call(Compiler *compiler, DiamondSpan name
                    module->singleton_methods[index].name,
                    compiler->current.span))
                 method=&module->singleton_methods[index];
+    if(method==nullptr&&compiler->current.kind==DIAMOND_TOKEN_IDENTIFIER&&
+       name_equals(compiler,"respond_to?",compiler->current.span,false))
+        return parse_singleton_respond_to(compiler,module_index,-1);
     if(method==nullptr) {
         fail(compiler,compiler->current.span,
              "undefined module singleton function");return 0;
@@ -621,6 +721,9 @@ static uint16_t parse_class_member_call(Compiler *compiler, DiamondSpan name,
             owner=owner->superclass==DIAMOND_NO_CLASS?nullptr:
                 compiler->program->classes[owner->superclass];
         }
+        if(method==nullptr&&
+           name_equals(compiler,"respond_to?",compiler->current.span,false))
+            return parse_singleton_respond_to(compiler,-1,class_index);
         if(method==nullptr&&compiler->discovery_pass) {
             /* A singleton defined later in the class body isn't in the table yet
              * during discovery (a REPL reading the class one line at a time hits

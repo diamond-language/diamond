@@ -1,0 +1,3 @@
+class K
+end
+puts(K.new().respond_to?(5))

@@ -17,6 +17,12 @@ record. From 1.0.0, releases follow the [1.x compatibility policy](docs/compatib
   clean release tag (`d6 1.0.0-rc6-3d8eb74cab0f`, `-dirty` for uncommitted changes), so a bug
   report from an interim state says which one. Release packages and tarballs report the bare
   version.
+- Modules and classes answer `respond_to?(name)` for their `def self.` functions (a class
+  includes its superclasses'), so `Board.respond_to?(:entries)` compiles. On an instance,
+  `respond_to?` takes a `String` as well as a `Symbol`, as it already did on Strings, Arrays
+  and other native values. Any other argument raises a `TypeError` that names the problem,
+  where it used to say only "type error"
+  ([classes and modules](docs/classes-and-modules.md#object-utilities)).
 
 ## 1.0.1 — 2026-11-17
 
