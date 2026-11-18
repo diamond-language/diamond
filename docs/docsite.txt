@@ -22,6 +22,7 @@ getting-started.md
 
 == Release notes
 compatibility.md
+release-1.1.0.md
 release-1.0.1.md
 release-1.0.0.md
 release-1.0.0-rc7.md

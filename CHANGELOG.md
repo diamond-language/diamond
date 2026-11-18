@@ -6,6 +6,12 @@ record. From 1.0.0, releases follow the [1.x compatibility policy](docs/compatib
 
 ## Unreleased
 
+## 1.1.0 — 2026-11-18
+
+The first minor release of 1.x: `File.embed`, schema-first GraphQL apps (graphql 0.3.6),
+`--version` for built binaries and `respond_to?` on modules and classes. Nothing that works
+on 1.0 changes ([release notes](docs/release-1.1.0.md)).
+
 ### Added
 
 - Binaries made by `d6 build` answer a lone `--version` with their name, version and the d6
