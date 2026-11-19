@@ -1,0 +1,241 @@
+# Check that the builtin API pages (docs/api/) cover every method the built-in
+# value types and the prelude's classes answer, and document nothing they do not.
+#
+#   build/diamond tools/check_builtin_api_docs.d6 [ROOT]
+#
+# A value type's methods come from two places: the VM's native member list for
+# it in src/vm_types.c (NATIVE_MEMBERS_STRING and so on, the list editor
+# completion uses and tests/lsp_test.sh calls on real values), and the prelude
+# extension functions in lib/ named `TYPE_name` or `diamond_TYPE_name`, which
+# the VM finds when a value has no native method of that name. A prelude class
+# or module (Range, Math, ...) contributes the `def`s in its body.
+#
+# A page documents a method with a `### `name(...)` heading, or
+# `### `Class.name(...)` for a class method. A trailing `?` or `!` is left out
+# of extension function names, so names are compared without it.
+#
+# The examples on the pages are run by `make test-docs`; this checks coverage.
+
+ROOT = ARGV.length() > 0 ? ARGV[0] : "."
+
+# page, native list, prelude prefixes
+TYPES = [
+  ["string.md", "NATIVE_MEMBERS_STRING", ["string"]],
+  ["array.md", "NATIVE_MEMBERS_ARRAY", ["array"]],
+  ["hash.md", "NATIVE_MEMBERS_HASH", ["hash"]],
+  ["int.md", "NATIVE_MEMBERS_INT", ["integer", "numeric"]],
+  ["float.md", "NATIVE_MEMBERS_FLOAT", ["float", "numeric"]]
+]
+
+# Prelude functions with a type prefix that are not methods: helpers called
+# with extra leading arguments, typed variants the compiler picks, and the
+# operator bridges (documented in each page's Operators table). `integer_next` is unreachable as a
+# method because `next` is a keyword.
+INTERNAL = {
+  "array": ["each_until", "map_int", "map_string", "map_typed", "swap_first_two", "membership",
+            "member", "op_minus", "op_and", "op_or", "op_times"],
+  "hash": ["each_until", "call_pair"],
+  "string": ["op_times", "split_extended"],
+  "integer": ["diamond_array_new", "next"],
+  "numeric": [],
+  "float": []
+}
+
+HEADING = Regexp.new("^### `([A-Z][A-Za-z]*\\.)?([a-z_][a-z0-9_]*[?!]?)")
+DEFINITION = Regexp.new("^def (diamond_)?([a-z]+)_([a-z0-9_]+[?!]?)[(\\[ ]")
+
+def base(name: String) -> String
+  name.end_with?("?") || name.end_with?("!") ? name.slice(0, name.length() - 1) : name
+end
+
+# The quoted names in `static const char *const LIST[]={ ... };`.
+def native_members(source: String, list: String) -> Array
+  start = source.index_of("#{list}[]={")
+  raise "#{list} not found in src/vm_types.c" if start == nil
+  body = source.slice(start, source.length() - start)
+  body = body.slice(0, body.index_of("};"))
+  body.scan(Regexp.new("\"([^\"]+)\"")).map() do |groups| groups[0] end
+end
+
+def prelude_files(root: String) -> Array
+  files = ["#{root}/lib/core.d6"]
+  Dir.entries("#{root}/lib/core").sort().each() do |entry|
+    files.push("#{root}/lib/core/#{entry}") if entry.end_with?(".d6")
+  end
+  files
+end
+
+def prelude_methods(root: String, prefixes: Array) -> Array
+  names = []
+  prelude_files(root).each() do |path|
+    File.read(path).split("\n").each() do |line|
+      m = DEFINITION.match(line)
+      next if m == nil
+      next unless prefixes.include?(m[2])
+      next if INTERNAL[m[2]].include?(base(m[3]))
+      names.push(m[3])
+    end
+  end
+  names
+end
+
+# `qualified` keeps `Name.function` headings; value-type pages leave them to the
+# namespace check, since `Array.new` is not an Array method.
+def documented(path: String, qualified: Bool) -> Array
+  return [] unless File.exist?(path)
+  File.read(path).split("\n").map() do |line|
+    m = HEADING.match(line)
+    m == nil || (m[1] != nil && !qualified) ? nil : m[2]
+  end.compact()
+end
+
+# The public methods of a class or module the prelude defines in d6: its
+# two-space-indented `def`s (`def self.x` for module functions), with
+# `initialize` documented as `new`. Operator methods (`<`, `==`) belong in a
+# page's Operators table, so only named methods are listed.
+def class_methods(root: String, name: String, internal: Array) -> Array
+  opener = Regexp.new("^(class|module) #{name}\\b")
+  method = Regexp.new("^  def (self\\.)?([a-z_][a-z0-9_]*[?!]?)")
+  names = []
+  found = false
+  prelude_files(root).each() do |path|
+    inside = false
+    File.read(path).split("\n").each() do |line|
+      if opener.match?(line)
+        inside = true
+        found = true
+      elsif inside && line == "end"
+        inside = false
+      elsif inside
+        m = method.match(line)
+        next if m == nil || internal.include?(m[2])
+        names.push(m[2] == "initialize" ? "new" : m[2])
+      end
+    end
+  end
+  raise "#{name} is not defined in lib/" unless found
+  names
+end
+
+# Adds a problem for each implemented name without an entry and each entry
+# without an implementation.
+def compare(page: String, implemented: Array, problems: Array, qualified: Bool)
+  have = implemented.map() do |name| base(name) end.uniq()
+  documented_names = documented("#{ROOT}/docs/api/#{page}", qualified)
+  docs = documented_names.map() do |name| base(name) end.uniq()
+  have.sort().each() do |name|
+    problems.push("docs/api/#{page}: no entry for #{name}") unless docs.include?(name)
+  end
+  documented_names.uniq().each() do |name|
+    problems.push("docs/api/#{page}: #{name} is documented but not implemented") unless have.include?(base(name))
+  end
+end
+
+# page, class or module in lib/, methods that are internal plumbing
+CLASSES = [
+  ["range.md", "Range", []],
+  ["enumerable.md", "Enumerable", []],
+  ["comparable.md", "Comparable", []],
+  ["lazy_enumerator.md", "LazyEnumerator", ["initialize", "append"]],
+  ["string_builder.md", "StringBuilder", []],
+  ["math.md", "Math", []],
+  ["json.md", "JSON", []]
+]
+
+# The function names a native namespace's compiler parser accepts
+# (`File.read` and so on): the `name_equals(compiler,"name",...)` tests in the
+# body of the parser function in src/compiler_builtins.c.
+def namespace_functions(builtins: String, parser: String) -> Array
+  start = builtins.index_of("\nuint16_t #{parser}(Compiler *compiler")
+  raise "#{parser} not found in src/compiler_builtins.c" if start == nil
+  body = builtins.slice(start + 1, builtins.length() - start - 1)
+  body = body.slice(0, body.index_of("\n}\n"))
+  body.scan(Regexp.new("name_equals\\(compiler,\"([a-z_][a-z0-9_]*[?!]?)\"")).map() do |groups| groups[0] end.uniq()
+end
+
+# The `### `Name.function(...)` headings on a page.
+def documented_functions(path: String, name: String) -> Array
+  return [] unless File.exist?(path)
+  heading = Regexp.new("^### `#{name}\\.([a-z_][a-z0-9_]*[?!]?)")
+  File.read(path).split("\n").map() do |line|
+    m = heading.match(line)
+    m == nil ? nil : m[1]
+  end.compact()
+end
+
+# page, namespace, its parser in src/compiler_builtins.c, and any functions the
+# parser matches some other way (`Fiber.yield` is the `yield` keyword token),
+# and names the parser compares that are not functions of that namespace
+# (keyword options; `verify`, which the Digest/HMAC parser takes for HMAC only)
+NAMESPACES = [
+  ["file.md", "File", "parse_file_call"],
+  ["dir.md", "Dir", "parse_dir_entries_call"],
+  ["time.md", "Time", "parse_time_call"],
+  ["array.md", "Array", "parse_array_new_call"],
+  ["hash.md", "Hash", "parse_hash_new_call"],
+  ["regexp.md", "Regexp", "parse_regexp_new_call"],
+  ["process.md", "Process", "parse_process_call"],
+  ["process.md", "Signal", "parse_signal_trap_call"],
+  ["process.md", "IO", "parse_io_poll_call"],
+  ["fiber.md", "Fiber", "parse_fiber_call", ["yield"]],
+  ["thread.md", "Thread", "parse_thread_new_call"],
+  ["channel.md", "Channel", "parse_channel_new_call"],
+  ["supervisor.md", "Supervisor", "parse_supervisor_new_call"],
+  ["network.md", "TCPSocket", "parse_tcp_connect_call"],
+  ["network.md", "TCPServer", "parse_tcp_listen_call"],
+  ["network.md", "TLSSocket", "parse_tls_connect_call"],
+  ["network.md", "TLSServer", "parse_tls_listen_call"],
+  ["network.md", "UDPSocket", "parse_udp_socket_call", [], ["host"]],
+  ["network.md", "DNS", "parse_dns_resolve_call"],
+  ["database.md", "SQLite3", "parse_sqlite3_open_call"],
+  ["database.md", "PostgreSQL", "parse_postgres_open_call"],
+  ["database.md", "MySQL", "parse_mysql_open_call"],
+  ["crypto.md", "Digest", "parse_crypto_call", [], ["verify"]],
+  ["crypto.md", "HMAC", "parse_crypto_call"],
+  ["crypto.md", "BCrypt", "parse_bcrypt_call"],
+  ["crypto.md", "Cipher", "parse_cipher_call"],
+  ["crypto.md", "SecureRandom", "parse_secure_random_call"],
+  ["crypto.md", "Gzip", "parse_gzip_call"],
+  ["crypto.md", "Base64", "parse_base64_call"],
+  ["crypto.md", "SemVer", "parse_semver_call"],
+  ["tensor.md", "Tensor", "parse_tensor_call"]
+]
+
+source = File.read("#{ROOT}/src/vm_types.c")
+builtins = File.read("#{ROOT}/src/compiler_builtins.c")
+problems = []
+NAMESPACES.each() do |entry|
+  options = entry.length() > 4 ? entry[4] : []
+  have = namespace_functions(builtins, entry[2]).concat(entry.length() > 3 ? entry[3] : []).reject() do |name|
+    options.include?(name)
+  end
+  docs = documented_functions("#{ROOT}/docs/api/#{entry[0]}", entry[1])
+  have.each() do |name|
+    problems.push("docs/api/#{entry[0]}: no entry for #{entry[1]}.#{name}") unless docs.include?(name)
+  end
+  docs.uniq().each() do |name|
+    problems.push("docs/api/#{entry[0]}: #{entry[1]}.#{name} is documented but not implemented") unless have.include?(name)
+  end
+end
+# Every namespace in the compiler's table needs an entry above, so a new one
+# cannot ship undocumented. ProgramBuilder is experimental (docs/compatibility.md).
+UNDOCUMENTED = ["ProgramBuilder"]
+names = File.read("#{ROOT}/src/compiler_names.c")
+table = names.slice(names.index_of("builtin_namespace_calls[]"), names.length())
+table = table.slice(0, table.index_of("\n};"))
+checked = NAMESPACES.map() do |entry| entry[1] end
+table.scan(Regexp.new("\\{\"([A-Z][A-Za-z0-9]*)\",parse_")).each() do |groups|
+  name = groups[0]
+  problems.push("#{name}: a builtin namespace with no docs/api page (add it to NAMESPACES)") unless checked.include?(name) || UNDOCUMENTED.include?(name)
+end
+
+TYPES.each() do |entry|
+  compare(entry[0], native_members(source, entry[1]).concat(prelude_methods(ROOT, entry[2])), problems, false)
+end
+CLASSES.each() do |entry|
+  compare(entry[0], class_methods(ROOT, entry[1], entry[2]), problems, true)
+end
+
+problems.each() do |problem| warn(problem) end
+puts("builtin API docs: #{TYPES.length() + CLASSES.length() + NAMESPACES.length()} entries checked, #{problems.length()} problems")
+exit(problems.length() == 0 ? 0 : 1)

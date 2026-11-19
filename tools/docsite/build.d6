@@ -3,7 +3,7 @@
 #   build/diamond tools/docsite/build.d6 [OUTPUT]     # default: build/docsite
 #
 # docs/docsite.txt lists the pages in sidebar order. Each page is written one
-# directory deep (guide/NAME.html or reference/NAME.html) and every link
+# directory deep (guide/NAME.html, api/NAME.html or reference/NAME.html) and every link
 # between pages is relative, so the output works when served under /docs/
 # and when opened straight from disk. index.html sends a visitor to the
 # first page.
@@ -41,18 +41,20 @@ def contents(path: String) -> Array
   sections
 end
 
-# Pages in a "Guide" section are published under guide/, the rest under reference/.
+# Pages in a "Guide" section are published under guide/, docs/api/ pages under api/, the rest
+# under reference/.
 def url_for(source: String, section: String) -> String
   return "cuts/#{source.slice(4, source.length() - 4)}.html" if source.start_with?("cut:")
   return "cuts/index.html" if source == "cuts:index"
   name = File.basename(source, ".md")
+  return "api/#{name}.html" if source.start_with?("api/")
   section.start_with?("Guide") ? "guide/#{name}.html" : "reference/#{name}.html"
 end
 
 # Every docs/ Markdown file, relative to docs/.
 def markdown_files(docs: String) -> Array
   files = []
-  [".", "guide"].each() do |dir|
+  [".", "guide", "api"].each() do |dir|
     full = dir == "." ? docs : "#{docs}/#{dir}"
     next unless File.directory?(full)
     Dir.entries(full).sort().each() do |entry|
@@ -217,7 +219,7 @@ end
 
 # Start from empty directories, so a page removed from the contents file is
 # removed from the site too.
-["guide", "reference", "cuts", "assets"].each() do |dir|
+["guide", "api", "reference", "cuts", "assets"].each() do |dir|
   Process.run(["rm", "-rf", "#{output}/#{dir}"])
   Dir.mkdir_p("#{output}/#{dir}")
 end

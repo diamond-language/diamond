@@ -117,11 +117,11 @@ handle.kill()          # raises IOError -- process has already exited
 
 Unlike `Process.run`, `Process.spawn(argv)` (same `argv`-Array-only
 argument, same `PATH` resolution, same `/dev/null` stdin) returns
-immediately with a live `Process::Handle` — no output capture, no
+immediately with a live `ProcessHandle` — no output capture, no
 waiting for exit:
 
 - **`.pid()`** → `Int`, the child's process ID.
-- **`.stdout()`** / **`.stderr()`** → a `Process::Stream` each (a new
+- **`.stdout()`** / **`.stderr()`** → a `ProcessStream` each (a new
   object kind, `DIAMOND_OBJECT_PROCESS_STREAM`) — the *read end* of a
   pipe to the child, always the same object across repeated calls. Set
   `O_NONBLOCK` right after spawning, the same reasoning
@@ -139,8 +139,8 @@ waiting for exit:
   `.close()` is idempotent. No `.write()` —
   this end is read-only (the child's stdin end is a separate stream, below).
   Poll it directly: `IO.poll([handle.stdout(), handle.stderr()], [], timeout_ms)`
-  accepts a `Process::Stream` exactly like a `Socket`.
-- **`.stdin()`** → the child's stdin, a writable `Process::Stream`, when
+  accepts a `ProcessStream` exactly like a `Socket`.
+- **`.stdin()`** → the child's stdin, a writable `ProcessStream`, when
   spawned with `{"stdin": true}`, otherwise `nil`. `.write(string)`
   writes all of the String (blocking until the child has read it) and
   returns its length; `.close()` sends EOF. Close it for a child that

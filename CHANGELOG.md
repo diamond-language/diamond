@@ -12,6 +12,11 @@ record. From 1.0.0, releases follow the [1.x compatibility policy](docs/compatib
   compiled in with `File.embed`, resolvers bound by `GraphQL::App`, served by gremlin at
   `POST /graphql`, and tests that post queries to the handler without starting a server
   ([packages](docs/packages.md#facet-new)).
+- An API reference for the builtins under `docs/api/`, published in the docs site: one entry
+  per function and method for the value types, prelude modules and native namespaces, each
+  with a signature and an example that CI runs. `tools/check_builtin_api_docs.d6` fails the
+  docs check when a builtin has no entry or an entry names something that does not exist
+  ([API reference](docs/api/index.md)).
 
 ## 1.1.0 — 2026-11-18
 
