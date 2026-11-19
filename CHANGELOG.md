@@ -29,6 +29,9 @@ record. From 1.0.0, releases follow the [1.x compatibility policy](docs/compatib
   database handles, process handles, Tensor), answering from a method list per kind in
   `src/vm_types.c`. A test calls every listed name on a real object, and the API docs check
   compares the lists with the reference pages. `Supervisor#child_count` is now documented.
+- `URI` percent-encodes for URLs and reads and writes form bodies and query strings:
+  `encode_component`, `decode_component`, `encode_form`, `decode_form`, `decode_form_pairs`
+  ([URI](docs/api/uri.md)). Web apps no longer need their own form decoder.
 
 ### Fixed
 

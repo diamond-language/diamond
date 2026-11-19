@@ -1,0 +1,9 @@
+"a%20b%2F%C3%A9~-_."
+"a b/é+%zz%4%"
+"q=1+%2B+1&tag=a&tag=b%26c&n=3"
+{"name": "last", "target": "http://x/y?q=1", "empty": "", "flag": ""}
+[["a", "1"], ["a", "2"], ["b", ""]]
+{}
+{"x": "é & = + %"}
+true
+true

@@ -1,0 +1,9 @@
+# URI percent-encoding, form bodies and query strings (docs/api/uri.md).
+p(URI.encode_component("a b/é~-_."))
+p(URI.decode_component("a%20b%2F%C3%A9+%zz%4%"))
+p(URI.encode_form({"q": "1 + 1", "tag": ["a", "b&c"], "n": 3}))
+p(URI.decode_form("name=a+b&target=http%3A%2F%2Fx%2Fy%3Fq%3D1&empty=&flag&name=last"))
+p(URI.decode_form_pairs("a=1&a=2&&b"))
+p(URI.decode_form(""))
+p(URI.decode_form(URI.encode_form({"x": "é & = + %"})))
+p(URI.decode_component(URI.encode_component("\x00\xff\n")) == "\x00\xff\n")

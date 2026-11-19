@@ -141,7 +141,8 @@ CLASSES = [
   ["string_builder.md", "StringBuilder", []],
   ["match_data.md", "MatchData", ["group_index"]],
   ["math.md", "Math", []],
-  ["json.md", "JSON", []]
+  ["json.md", "JSON", []],
+  ["uri.md", "URI", ["diamond_encode", "diamond_decode", "diamond_hex_value"]]
 ]
 
 # The function names a native namespace's compiler parser accepts
