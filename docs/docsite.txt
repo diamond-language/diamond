@@ -35,6 +35,7 @@ release-1.0.0-rc3.md
 api/index.md
 api/string.md
 api/array.md
+api/hash.md
 
 == Reference: the language
 syntax.md
