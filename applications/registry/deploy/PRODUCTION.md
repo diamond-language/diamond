@@ -88,6 +88,13 @@ published on 2026-11-18 UTC from main `0af816e4` with a 30-minute `publish:graph
 `docs/registry-launch-inventory.json`, and `tools/verify_registry_launch.d6` passed for all 20 public
 cuts. The registry does not load graphql, so no redeploy.
 
+http 0.2.6, gremlin 0.5.6, mjolnir 0.4.3 and rack 0.2.5 (#615: no body in HEAD responses, rack
+`HeadAsGet`, mjolnir `:bool` read as Bool) were published on 2026-11-19 UTC from main `78d57b7b`
+with one 30-minute credential for `diamond-language` scoped to `publish:` each of the four (id 44,
+revoked afterwards). The published sha256s match `docs/registry-launch-inventory.json`, and
+`tools/verify_registry_launch.d6` passed for all 20 public cuts. The running registry keeps its
+bundled http/gremlin/rack until its next deploy.
+
 Previously `0e482f26c56854c4c41c6c82d093ad04f6569a21` (v1.0.0-rc4, deployed 2026-11-12 UTC (2026-11-11 Pacific)
 with `tools/deploy_registry.sh --revision=v1.0.0-rc4 --force` after its dry run).
 The fresh snapshot at
