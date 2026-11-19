@@ -9,6 +9,8 @@ The [language reference](../syntax.md) explains the rules these methods follow
 
 ## Values
 
+- [Kernel functions](kernel.md): `puts`, `gets`, `exit`, ...
+- [Object](object.md): methods every value answers; Nil, Bool and Symbol
 - [String](string.md)
 - [Array](array.md)
 - [Hash](hash.md)

@@ -33,6 +33,8 @@ release-1.0.0-rc3.md
 
 == API: builtins
 api/index.md
+api/kernel.md
+api/object.md
 api/string.md
 api/array.md
 api/hash.md

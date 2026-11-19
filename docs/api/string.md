@@ -1,6 +1,6 @@
 # String
 
-[API reference](index.md) · Next: [Array](array.md)
+[API reference](index.md) · Previous: [Object](object.md) · Next: [Array](array.md)
 
 A `String` is an immutable sequence of bytes, usually UTF-8 text. Every method
 returns a new value and leaves the receiver unchanged. Positions, lengths and
