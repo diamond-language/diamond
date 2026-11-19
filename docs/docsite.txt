@@ -34,6 +34,7 @@ release-1.0.0-rc3.md
 == API: builtins
 api/index.md
 api/string.md
+api/array.md
 
 == Reference: the language
 syntax.md

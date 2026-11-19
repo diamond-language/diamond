@@ -10,3 +10,4 @@ The [language reference](../syntax.md) explains the rules these methods follow
 ## Values
 
 - [String](string.md)
+- [Array](array.md)
