@@ -46,3 +46,8 @@ The [language reference](../syntax.md) explains the rules these methods follow
 
 - [TCP, TLS, UDP and DNS](network.md)
 - [SQLite3, PostgreSQL and MySQL](database.md)
+
+## Utilities
+
+- [Crypto and encoding](crypto.md): Digest, HMAC, BCrypt, Cipher, SecureRandom, Gzip, Base64, SemVer
+- [Tensor](tensor.md)

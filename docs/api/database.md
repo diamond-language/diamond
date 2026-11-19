@@ -1,6 +1,6 @@
 # Databases
 
-[API reference](index.md) · Previous: [Networking](network.md)
+[API reference](index.md) · Previous: [Networking](network.md) · Next: [Crypto and encoding](crypto.md)
 
 Three drivers share one shape: `execute` runs a statement that changes data
 and returns the number of rows changed, and `query` returns the rows as an

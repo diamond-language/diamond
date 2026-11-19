@@ -58,6 +58,8 @@ api/channel.md
 api/supervisor.md
 api/network.md
 api/database.md
+api/crypto.md
+api/tensor.md
 
 == Reference: the language
 syntax.md

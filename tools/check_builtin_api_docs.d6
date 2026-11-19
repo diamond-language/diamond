@@ -165,7 +165,8 @@ end
 
 # page, namespace, its parser in src/compiler_builtins.c, and any functions the
 # parser matches some other way (`Fiber.yield` is the `yield` keyword token),
-# and names the parser compares that are keyword options, not functions
+# and names the parser compares that are not functions of that namespace
+# (keyword options; `verify`, which the Digest/HMAC parser takes for HMAC only)
 NAMESPACES = [
   ["file.md", "File", "parse_file_call"],
   ["dir.md", "Dir", "parse_dir_entries_call"],
@@ -188,7 +189,16 @@ NAMESPACES = [
   ["network.md", "DNS", "parse_dns_resolve_call"],
   ["database.md", "SQLite3", "parse_sqlite3_open_call"],
   ["database.md", "PostgreSQL", "parse_postgres_open_call"],
-  ["database.md", "MySQL", "parse_mysql_open_call"]
+  ["database.md", "MySQL", "parse_mysql_open_call"],
+  ["crypto.md", "Digest", "parse_crypto_call", [], ["verify"]],
+  ["crypto.md", "HMAC", "parse_crypto_call"],
+  ["crypto.md", "BCrypt", "parse_bcrypt_call"],
+  ["crypto.md", "Cipher", "parse_cipher_call"],
+  ["crypto.md", "SecureRandom", "parse_secure_random_call"],
+  ["crypto.md", "Gzip", "parse_gzip_call"],
+  ["crypto.md", "Base64", "parse_base64_call"],
+  ["crypto.md", "SemVer", "parse_semver_call"],
+  ["tensor.md", "Tensor", "parse_tensor_call"]
 ]
 
 source = File.read("#{ROOT}/src/vm_types.c")
