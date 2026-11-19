@@ -62,6 +62,10 @@ timeout, interrupts whatever is still running after `timeout_ms` and returns
 whether everything finished in time. `ensure` blocks do not run in an
 interrupted worker.
 
+### `child_count() -> Int`
+
+How many children have been added, running or not.
+
 ### `alive?(index) -> Bool`
 
 Whether that child is still running or restarting.

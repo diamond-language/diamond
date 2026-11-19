@@ -37,8 +37,9 @@ INTERNAL = {
   "hash": ["each_until", "call_pair"],
   "string": ["op_times", "split_extended"],
   "integer": ["diamond_array_new", "next"],
-  "numeric": [],
-  "float": []
+  "numeric": ["diamond_sleep"],
+  "float": [],
+  "regexp": []
 }
 
 HEADING = Regexp.new("^### `([A-Z][A-Za-z]*\\.)?([a-z_][a-z0-9_]*[?!]?)")
@@ -138,6 +139,7 @@ CLASSES = [
   ["comparable.md", "Comparable", []],
   ["lazy_enumerator.md", "LazyEnumerator", ["initialize", "append"]],
   ["string_builder.md", "StringBuilder", []],
+  ["match_data.md", "MatchData", ["group_index"]],
   ["math.md", "Math", []],
   ["json.md", "JSON", []]
 ]
@@ -201,6 +203,45 @@ NAMESPACES = [
   ["tensor.md", "Tensor", "parse_tensor_call"]
 ]
 
+# Native object kinds: their method list in src/vm_types.c, prelude prefixes
+# for their extension functions, and the page sections that document them
+# ([page, "## heading"], nil meaning the whole page). Universal methods
+# (to_s, tap, ...) are not repeated on each page.
+NATIVE_OBJECTS = [
+  ["NATIVE_OBJECT_MEMBERS_FIBER", [], [["fiber.md", "Methods"]]],
+  ["NATIVE_OBJECT_MEMBERS_THREAD", [], [["thread.md", "Methods"]]],
+  ["NATIVE_OBJECT_MEMBERS_CHANNEL", [], [["channel.md", "Methods"]]],
+  ["NATIVE_OBJECT_MEMBERS_SUPERVISOR", [], [["supervisor.md", "Methods"]]],
+  ["NATIVE_OBJECT_MEMBERS_FILE", [], [["file.md", "Open files"]]],
+  ["NATIVE_OBJECT_MEMBERS_LISTENER", [], [["network.md", "Listener"]]],
+  ["NATIVE_OBJECT_MEMBERS_SOCKET", [], [["network.md", "Socket methods"]]],
+  ["NATIVE_OBJECT_MEMBERS_UDP_SOCKET", [], [["network.md", "UDPSocket"]]],
+  ["NATIVE_OBJECT_MEMBERS_TLS_SOCKET", [], [["network.md", "TLSSocket and TLSServer"]]],
+  ["NATIVE_OBJECT_MEMBERS_REGEXP", ["regexp"], [["regexp.md", "Methods"]]],
+  ["NATIVE_OBJECT_MEMBERS_SQLITE3", [], [["database.md", "SQLite3"]]],
+  ["NATIVE_OBJECT_MEMBERS_STATEMENT", [], [["database.md", "Statement"]]],
+  ["NATIVE_OBJECT_MEMBERS_POSTGRES", [], [["database.md", "PostgreSQL"]]],
+  ["NATIVE_OBJECT_MEMBERS_MYSQL", [], [["database.md", "MySQL"]]],
+  ["NATIVE_OBJECT_MEMBERS_TENSOR", [], [["tensor.md", nil]]],
+  ["NATIVE_OBJECT_MEMBERS_TIME", [], [["time.md", nil]]],
+  ["NATIVE_OBJECT_MEMBERS_PROCESS_RESULT", [], [["process.md", "ProcessResult"]]],
+  ["NATIVE_OBJECT_MEMBERS_PROCESS_HANDLE", [], [["process.md", "ProcessHandle"]]],
+  ["NATIVE_OBJECT_MEMBERS_PROCESS_STREAM", [], [["process.md", "ProcessStream"]]]
+]
+
+# The unqualified method headings in one `## section` of a page (all of it for nil).
+def section_methods(path: String, section: String | Nil) -> Array
+  inside = section == nil
+  names = []
+  File.read(path).split("\n").each() do |line|
+    inside = line == "## #{section}" if section != nil && line.start_with?("## ")
+    next unless inside
+    m = HEADING.match(line)
+    names.push(m[2]) if m != nil && m[1] == nil
+  end
+  names
+end
+
 source = File.read("#{ROOT}/src/vm_types.c")
 builtins = File.read("#{ROOT}/src/compiler_builtins.c")
 problems = []
@@ -235,7 +276,22 @@ end
 CLASSES.each() do |entry|
   compare(entry[0], class_methods(ROOT, entry[1], entry[2]), problems, true)
 end
+NATIVE_OBJECTS.each() do |entry|
+  have = native_members(source, entry[0]).concat(prelude_methods(ROOT, entry[1])).map() do |name| base(name) end.uniq()
+  where = entry[2].map() do |place| place[1] == nil ? place[0] : "#{place[0]} \"## #{place[1]}\"" end.join(", ")
+  docs = []
+  entry[2].each() do |place|
+    docs = docs.concat(section_methods("#{ROOT}/docs/api/#{place[0]}", place[1]))
+  end
+  docs = docs.map() do |name| base(name) end.uniq()
+  have.sort().each() do |name|
+    problems.push("#{where}: no entry for #{name} (#{entry[0]})") unless docs.include?(name)
+  end
+  docs.each() do |name|
+    problems.push("#{where}: #{name} is documented but not in #{entry[0]}") unless have.include?(name)
+  end
+end
 
 problems.each() do |problem| warn(problem) end
-puts("builtin API docs: #{TYPES.length() + CLASSES.length() + NAMESPACES.length()} entries checked, #{problems.length()} problems")
+puts("builtin API docs: #{TYPES.length() + CLASSES.length() + NAMESPACES.length() + NATIVE_OBJECTS.length()} entries checked, #{problems.length()} problems")
 exit(problems.length() == 0 ? 0 : 1)

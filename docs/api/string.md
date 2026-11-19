@@ -357,6 +357,15 @@ Whether `pattern` matches anywhere in the receiver.
 "x=12".match?(/[0-9]+/)   # => true
 ```
 
+### `match_data(pattern, position = 0) -> MatchData | Nil`
+
+Like `match`, but returns a [MatchData](match_data.md), with named groups and
+offsets, for the first match at or after byte offset `position`.
+
+```ruby
+"x=12".match_data("(?<n>[0-9]+)")["n"]   # => "12"
+```
+
 ### `nil?() -> Bool`
 
 Always `false` for a `String`.

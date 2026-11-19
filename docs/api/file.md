@@ -76,6 +76,13 @@ Hands buffered writes to the operating system, so other readers see them.
 Closes the file. Closing it again does nothing; any other call on a closed
 file raises `IOError`.
 
+### `shutdown_write()`
+
+### `peer_address() -> String | Nil`
+
+On a blocking TCP connection, which is a File: see
+[Networking](network.md#socket-methods). On other files they raise `IOError`.
+
 ## Paths
 
 ### `File.absolute?(path) -> Bool`

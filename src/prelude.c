@@ -19,6 +19,10 @@ static constexpr unsigned char DIAMOND_CORE_STRING_BUILDER_SOURCE[] = {
 #embed "../lib/core/string_builder.d6" suffix(,)
     0
 };
+static constexpr unsigned char DIAMOND_CORE_REGEXP_SOURCE[] = {
+#embed "../lib/core/regexp.d6" suffix(,)
+    0
+};
 static constexpr unsigned char DIAMOND_CORE_NUMERIC_SOURCE[] = {
 #embed "../lib/core/numeric.d6" suffix(,)
     0
@@ -41,7 +45,8 @@ bool diamond_prelude_needs_json(const char *text) {
 size_t diamond_prelude_length(bool include_json) {
     size_t length=sizeof(DIAMOND_CORE_NUMERIC_SOURCE)-1+
         sizeof(DIAMOND_CORE_SOURCE)-1+
-        sizeof(DIAMOND_CORE_STRING_BUILDER_SOURCE)-1;
+        sizeof(DIAMOND_CORE_STRING_BUILDER_SOURCE)-1+
+        sizeof(DIAMOND_CORE_REGEXP_SOURCE)-1;
     if(include_json)
         length+=sizeof(DIAMOND_CORE_JSON_CODEC_SOURCE)-1+
             sizeof(DIAMOND_CORE_JSON_SOURCE)-1;
@@ -57,6 +62,8 @@ size_t diamond_prelude_write(char *destination,bool include_json) {
     memcpy(destination+offset,DIAMOND_CORE_SOURCE,core_length);offset+=core_length;
     memcpy(destination+offset,DIAMOND_CORE_STRING_BUILDER_SOURCE,string_builder_length);
     offset+=string_builder_length;
+    const size_t regexp_length=sizeof(DIAMOND_CORE_REGEXP_SOURCE)-1;
+    memcpy(destination+offset,DIAMOND_CORE_REGEXP_SOURCE,regexp_length);offset+=regexp_length;
     if(include_json) {
         const size_t json_codec_length=sizeof(DIAMOND_CORE_JSON_CODEC_SOURCE)-1;
         const size_t json_length=sizeof(DIAMOND_CORE_JSON_SOURCE)-1;

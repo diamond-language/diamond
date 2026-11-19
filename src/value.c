@@ -145,6 +145,13 @@ void diamond_value_fprint(FILE *stream, DiamondValue value) {
                 }
             } else if(value.as.object->kind==DIAMOND_OBJECT_CLOSURE) {
                 fputs("#<Closure>",stream);
+            } else if(value.as.object->kind==DIAMOND_OBJECT_REGEXP) {
+                size_t length=0;
+                char *text=diamond_regexp_inspect(
+                    (const DiamondRegexp *)value.as.object,&length);
+                if(text!=nullptr)fwrite(text,1,length,stream);
+                else fputs("#<Regexp>",stream);
+                free(text);
             } else if(value.as.object->kind==DIAMOND_OBJECT_TIME) {
                 /* Real formatting, not just a correctly-named placeholder
                  * -- shares #to_s/puts/string-interpolation's own exact
@@ -178,4 +185,25 @@ void diamond_value_fprint(FILE *stream, DiamondValue value) {
 
 void diamond_value_print(DiamondValue value) {
     diamond_value_fprint(stdout, value);
+}
+
+char *diamond_regexp_inspect(const DiamondRegexp *regexp, size_t *length) {
+    /* Worst case: every byte a `/` gaining a backslash, two slashes, three flags. */
+    char *text=malloc(regexp->source_length*2+5);
+    if(text==nullptr)return nullptr;
+    size_t used=0;
+    text[used++]='/';
+    bool escaped=false;
+    for(size_t index=0;index<regexp->source_length;index++) {
+        const char byte=regexp->source[index];
+        if(byte=='/'&&!escaped)text[used++]='\\';
+        text[used++]=byte;
+        escaped=byte=='\\'&&!escaped;
+    }
+    text[used++]='/';
+    if(regexp->options&2u)text[used++]='m';
+    if(regexp->options&1u)text[used++]='i';
+    if(regexp->options&4u)text[used++]='x';
+    *length=used;
+    return text;
 }

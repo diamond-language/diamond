@@ -180,14 +180,15 @@ at `Regexp.new` time. `/pattern/imx` literals are equivalent (see the
 [Collections guide](collections.md)). `"text".match(re)` and `"text".match?(re)` (a `String` pattern is compiled first)
 behave like `re.match("text")` and `re.match?("text")`.
 
-This is deliberately a small first cut: no `=~` operator and no richer
-`MatchData` object (`pre_match`, named captures) — the plain-`Array`
-result covers the common case. `String#split`/`#sub`/`#gsub`/`#scan` do
-accept a `Regexp` (`"a,b,c".split(re)`, `"abc123".sub(re, "X")`,
-`"abc123".gsub(re, "X")`, `"abc123".scan(re)`), each with backreference
-and capture-group handling of its own — see the
-[Collections guide](collections.md) for those; `Regexp.new` +
-`.match`/`.match?` plus that String quartet is the whole surface.
+`.match_data(string, position = 0)` returns a `MatchData` instead of an
+Array: groups by number or name (`m["year"]`), `pre_match`, `post_match`,
+`offset(n)` and `named_captures`. `.source`, `.options` and `.names`
+describe the pattern, and a Regexp prints as `/pattern/flags`. There is no
+`=~` operator. `String#split`/`#sub`/`#gsub`/`#scan` also accept a `Regexp`
+(`"a,b,c".split(re)`, `"abc123".sub(re, "X")`, `"abc123".gsub(re, "X")`,
+`"abc123".scan(re)`), each with backreference and capture-group handling of
+its own; see the [Collections guide](collections.md) and the
+[Regexp API reference](api/regexp.md).
 
 ## JSON
 

@@ -396,6 +396,16 @@ uint16_t parse_supervisor_new_call(Compiler *compiler) {
 
 /* The function's type set holding exactly one bare member of type id (no element
  * or callable detail), added on first use. */
+static DiamondTypeMember plain_type_member(uint16_t type_id) {
+    DiamondTypeMember member={.id=type_id,
+        .argument_set=DIAMOND_NO_TYPE_SET,.second_argument_set=DIAMOND_NO_TYPE_SET,
+        .callable_arity=UINT8_MAX,.callable_return_set=DIAMOND_NO_TYPE_SET,
+        .callable_parameters_typed=false};
+    for(size_t member_index=0;member_index<16;member_index++)
+        member.callable_parameter_sets[member_index]=DIAMOND_NO_TYPE_SET;
+    return member;
+}
+
 uint16_t plain_type_set_index(Compiler *compiler,uint16_t type_id) {
     for(size_t index=0;index<compiler->function->type_set_count;index++) {
         const DiamondTypeSet *set=&compiler->function->type_sets[index];
@@ -407,13 +417,48 @@ uint16_t plain_type_set_index(Compiler *compiler,uint16_t type_id) {
     const size_t set_index=compiler->function->type_set_count++;
     DiamondTypeSet *set=&compiler->function->type_sets[set_index];
     set->count=1;
-    set->members[0]=(DiamondTypeMember){.id=type_id,
-        .argument_set=DIAMOND_NO_TYPE_SET,.second_argument_set=DIAMOND_NO_TYPE_SET,
-        .callable_arity=UINT8_MAX,.callable_return_set=DIAMOND_NO_TYPE_SET,
-        .callable_parameters_typed=false};
-    for(size_t member_index=0;member_index<16;member_index++)
-        set->members[0].callable_parameter_sets[member_index]=DIAMOND_NO_TYPE_SET;
+    set->members[0]=plain_type_member(type_id);
     return (uint16_t)set_index;
+}
+
+/* The `Int | Float` type set, for a builtin that takes either number. */
+static uint16_t number_type_set_index(Compiler *compiler) {
+    for(size_t index=0;index<compiler->function->type_set_count;index++) {
+        const DiamondTypeSet *set=&compiler->function->type_sets[index];
+        if(set->count==2&&!set->inferred&&
+           set->members[0].id==DIAMOND_TYPE_INT&&set->members[1].id==DIAMOND_TYPE_FLOAT&&
+           set->members[0].argument_set==DIAMOND_NO_TYPE_SET&&
+           set->members[1].argument_set==DIAMOND_NO_TYPE_SET)
+            return (uint16_t)index;
+    }
+    if(!reserve_type_sets(compiler,1))return 0;
+    const size_t set_index=compiler->function->type_set_count++;
+    DiamondTypeMember members[2]={plain_type_member(DIAMOND_TYPE_INT),
+        plain_type_member(DIAMOND_TYPE_FLOAT)};
+    store_type_set(compiler,set_index,
+        (DiamondTypeSet){.members=members,.count=2,.capacity=2,.inferred=false});
+    return (uint16_t)set_index;
+}
+
+/* sleep(seconds): pauses the program, through the prelude's
+ * numeric_diamond_sleep (lib/core/numeric.d6), which waits in IO.poll so
+ * signal handlers run and a supervisor can interrupt it. A builtin rather
+ * than a prelude function so a program's own `def sleep` still shadows it. */
+uint16_t parse_sleep_call(Compiler *compiler) {
+    advance_token(compiler); /* consume '(' */
+    skip_newlines(compiler);
+    const DiamondSpan seconds_span=compiler->current.span;
+    const uint16_t seconds=parse_expression(compiler);
+    skip_newlines(compiler);
+    if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN) {
+        fail(compiler,compiler->current.span,"expected ')' after sleep's argument");
+        return 0;
+    }
+    advance_token(compiler);
+    emit_type_check(compiler,seconds,number_type_set_index(compiler),seconds_span);
+    const uint16_t result=emit_invoke_named(compiler,seconds,"diamond_sleep",nullptr,0);
+    compiler->known_types[result]=DIAMOND_TYPE_NIL;
+    return result;
 }
 
 /* Array.new(n) and Array.new(n, fill): n copies of fill (nil when omitted),

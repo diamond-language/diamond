@@ -80,6 +80,7 @@ builtin_function_calls[]={
     {"debugger",parse_debugger_call},{"breakpoint",parse_debugger_call},
     {"chr",parse_chr_call},{"to_f",parse_to_float_call},
     {"to_i",parse_to_int_call},{"to_sym",parse_to_sym_call},
+    {"sleep",parse_sleep_call},
     {"diamond_json_stringify",parse_json_stringify_call},
 };
 

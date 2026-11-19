@@ -18,8 +18,7 @@ ch.receive()   # => nil
 ```
 
 `deadline` arguments are absolute `Time.monotonic()` readings, a Float, or
-`nil` for no limit. There is no `sleep`; wait with
-`Channel.new(1).wait_readable([], Time.monotonic() + seconds)`.
+`nil` for no limit.
 
 ## Functions
 

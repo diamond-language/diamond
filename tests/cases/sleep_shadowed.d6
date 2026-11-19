@@ -1,0 +1,5 @@
+# A program's own sleep shadows the builtin, so adding it broke nothing.
+def sleep(seconds)
+  "pretend to sleep #{seconds}"
+end
+puts(sleep(5))

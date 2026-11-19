@@ -1,6 +1,6 @@
 # Process, Signal and IO
 
-[API reference](index.md) · Previous: [Regexp](regexp.md)
+[API reference](index.md) · Previous: [MatchData](match_data.md)
 
 `Process` runs other programs, `Signal` handles a request to stop, and `IO`
 asks about terminals and waits on sockets and pipes. Running programs needs

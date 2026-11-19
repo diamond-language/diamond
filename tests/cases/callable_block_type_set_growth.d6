@@ -1,0 +1,9 @@
+# A Callable-typed local called with a do block: cloning the block's parameter
+# types grows the function's type-set table, and later clones used to read the
+# freed table (CI fuzz, PR #614). Fails under ASan/valgrind before the fix.
+def run(f: Callable[[Callable[[Array[Int], Hash[String, Array[Int]], Int], Array[String]]], Int]) -> Int
+  f() do |a, b, c|
+    ["x"]
+  end
+end
+puts("ok")

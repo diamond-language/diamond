@@ -2507,6 +2507,10 @@ bool diamond_native_method_return_type(uint16_t receiver_type,const char *name,
                                        size_t length,uint16_t *return_type);
 
 size_t diamond_native_member_names(uint16_t receiver_type,const char *const **names);
+/* The methods a native object kind (DiamondObjectKind) answers, and the ones
+ * every native object answers; see src/vm_types.c. Zero for a kind with no list. */
+size_t diamond_native_object_member_names(uint8_t object_kind,const char *const **names);
+size_t diamond_native_object_universal_member_names(const char *const **names);
 
 bool diamond_native_method_satisfies(uint16_t receiver_type,const char *name,
                                      uint8_t arity,uint16_t *return_type);
@@ -2554,5 +2558,11 @@ bool diamond_project_type_member(DiamondClass *const *classes,size_t count,
  * the generic "#<Time>" diamond_format_value_type would otherwise give
  * it. */
 size_t diamond_format_time_default(const DiamondTime *target, char *buffer, size_t capacity);
+
+/* A Regexp as `/source/flags` (flags in the order m, i, x, as Ruby prints
+ * them), with each unescaped `/` in the source written `\/`. Returns a
+ * malloc'd string of *length bytes (not NUL-terminated), or nullptr when out
+ * of memory. Shared by puts/to_s/interpolation and diamond_value_fprint. */
+char *diamond_regexp_inspect(const DiamondRegexp *regexp, size_t *length);
 
 #endif

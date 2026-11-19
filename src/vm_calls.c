@@ -2499,6 +2499,42 @@ DiamondVmStatus merge_keyword_arguments(DiamondVm *vm,
     *merged=values;*merged_count=count;return DIAMOND_VM_OK;
 }
 
+/* respond_to? on a native object (Channel, File, Regexp, ...): its kind's
+ * method list (diamond_native_object_member_names, src/vm_types.c), the
+ * methods every native object answers, and for a Regexp its regexp_*
+ * prelude functions. The argument is a Symbol or a String. */
+static DiamondVmStatus native_object_respond_to(DiamondVm *vm,const DiamondChunk *chunk,
+        DiamondObjectKind kind,const char *const *members,size_t member_count,
+        DiamondValue name_value,uint8_t argc,DiamondValue *out) {
+    if(argc!=1)return DIAMOND_VM_ARITY_ERROR;
+    const char *name=nullptr;size_t length=0;
+    if(name_value.kind==DIAMOND_VALUE_OBJECT&&
+       name_value.as.object->kind==DIAMOND_OBJECT_SYMBOL) {
+        name=((const DiamondSymbol *)name_value.as.object)->chars;
+        length=((const DiamondSymbol *)name_value.as.object)->length;
+    } else if(name_value.kind==DIAMOND_VALUE_OBJECT&&
+              name_value.as.object->kind==DIAMOND_OBJECT_STRING) {
+        name=((const DiamondString *)name_value.as.object)->chars;
+        length=((const DiamondString *)name_value.as.object)->length;
+    } else {
+        snprintf(vm->error,sizeof vm->error,"respond_to? takes a Symbol or a String");
+        return DIAMOND_VM_TYPE_ERROR;
+    }
+    const char *const *universal=nullptr;
+    const size_t universal_count=diamond_native_object_universal_member_names(&universal);
+    bool found=false;
+    for(size_t index=0;!found&&index<member_count;index++)
+        found=strlen(members[index])==length&&memcmp(members[index],name,length)==0;
+    for(size_t index=0;!found&&index<universal_count;index++)
+        found=strlen(universal[index])==length&&memcmp(universal[index],name,length)==0;
+    if(!found&&kind==DIAMOND_OBJECT_REGEXP) {
+        static const char *const prefixes[]={"regexp_"};
+        found=find_value_extension(chunk,prefixes,1,name,length)!=nullptr;
+    }
+    *out=DIAMOND_BOOL(found);
+    return DIAMOND_VM_OK;
+}
+
 /* DIAMOND_OP_INVOKE/INVOKE_MONO/INVOKE_TYPED for every receiver once
  * run_chunk's inline fast paths (a warm monomorphic Instance site, and
  * Array/Hash/String #length and #push) have not handled the call. Shared by
@@ -2715,6 +2751,13 @@ DiamondVmStatus diamond_invoke_general(DiamondVm *vm,const DiamondChunk *chunk,
        receiver_kind==DIAMOND_OBJECT_STRING) {
         if(type_argument_count!=0)return reject_type_arguments(vm,method_name);
         return collection_invoke_helper(vm,chunk,depth,registers,recv,base,argc,dest,method_name);
+    }
+    if(method_name->length==11&&memcmp(method_name->chars,"respond_to?",11)==0) {
+        const char *const *members=nullptr;
+        const size_t member_count=diamond_native_object_member_names(receiver_kind,&members);
+        if(member_count>0)
+            return native_object_respond_to(vm,chunk,receiver_kind,members,member_count,
+                registers[base],argc,&registers[dest]);
     }
     if(receiver_kind==DIAMOND_OBJECT_FIBER) {
         if(type_argument_count!=0)return reject_type_arguments(vm,method_name);

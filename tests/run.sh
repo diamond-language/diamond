@@ -2085,6 +2085,8 @@ rm -f "$error_file"
 DIAMOND_BIN="$diamond" bash tests/signal_interrupt.sh
 DIAMOND_BIN="$diamond" bash tests/supervisor_stdin.sh
 bash tests/signal_threads.sh "$diamond"
+DIAMOND_BIN="$diamond" bash tests/sleep_signal.sh
+"$diamond" tests/native_members_test.d6
 
 # An untrapped signal still gets the OS default disposition (kills the
 # process) -- Signal.trap is opt-in per signal name, not a blanket
@@ -2968,19 +2970,21 @@ test_dump="$(sed -n '/^== test ==$/,$p' <<<"$actual")"
 grep -q 'ADD_INT' <<<"$test_dump"
 
 actual="$($diamond --dump-bytecode -e $'def apply_nested[T](values: Array[Array[T]], &block: Callable[[T], T]) -> T\n yield(values[0][0])\nend\napply_nested([[20], [21]]) do |value|\n value + 1\nend')"
-nested_block_dump="$(sed -n '/^== <block> ==$/,$p' <<<"$actual")"
+nested_block_dump="$(awk '/^== /{inside=($0=="== <block> ==")} inside' <<<"$actual")"
 grep -q 'ADD_INT' <<<"$nested_block_dump"
 
 actual="$($diamond --dump-bytecode -e $'class GenericBox\n def initialize[T](value: T, &block: Callable[[T], T])\n  @value = yield(value)\n end\nend\nGenericBox.new(20) do |value|\n value + 1\nend')"
-constructor_block_dump="$(sed -n '/^== <block> ==$/,$p' <<<"$actual")"
+constructor_block_dump="$(awk '/^== /{inside=($0=="== <block> ==")} inside' <<<"$actual")"
 grep -q 'ADD_INT' <<<"$constructor_block_dump"
 
 actual="$($diamond --dump-bytecode -e $'def apply_spread[T](value: T, &block: Callable[[T], T]) -> T\n yield(value)\nend\napply_spread(*[20]) do |value|\n value + 1\nend')"
-spread_block_dump="$(sed -n '/^== <block> ==$/,$p' <<<"$actual")"
+spread_block_dump="$(awk '/^== /{inside=($0=="== <block> ==")} inside' <<<"$actual")"
 grep -q 'ADD_INT' <<<"$spread_block_dump"
 
 actual="$($diamond --dump-bytecode -e $'class KeywordGeneric\n def initialize[T](value: T, &block: Callable[[T], T])\n  yield(value)\n end\n def self.apply[T](value: T, &block: Callable[[T], T]) -> T\n  yield(value)\n end\n def apply[T](value: T, &block: Callable[[T], T]) -> T\n  yield(value)\n end\nend\nKeywordGeneric.apply(value: 1) do |value|\n value + 1\nend\nobject = KeywordGeneric.new(value: 3) do |value|\n value + 1\nend\nobject.apply(value: 2) do |value|\n value + 1\nend')"
-keyword_block_dump="$(sed -n '/^== <block> ==$/,$p' <<<"$actual")"
+# Only block bodies: a range from the first <block> to the end would also
+# take in prelude functions dumped after it (MatchData#to_a has an ADD_INT).
+keyword_block_dump="$(awk '/^== /{inside=($0=="== <block> ==")} inside' <<<"$actual")"
 [[ "$(grep -c 'ADD_INT' <<<"$keyword_block_dump")" == "3" ]]
 
 actual="$($diamond --dump-bytecode tests/cases/generic_return_propagation.d6)"
@@ -3014,7 +3018,7 @@ callable_union_return_dump="$(sed -n '/^== tests\/cases\/callable_union_return_p
 [[ "$(grep -cE '  ADD +r' <<<"$callable_union_return_dump")" == "1" ]]
 
 actual="$($diamond --dump-bytecode tests/cases/callable_union_block_context.d6)"
-callable_union_block_dump="$(sed -n '/^== <block> ==$/,$p' <<<"$actual")"
+callable_union_block_dump="$(awk '/^== /{inside=($0=="== <block> ==")} inside' <<<"$actual")"
 [[ "$(grep -c 'ADD_INT' <<<"$callable_union_block_dump")" == "4" ]]
 [[ "$(grep -cE '  ADD +r' <<<"$callable_union_block_dump")" == "1" ]]
 
@@ -3027,7 +3031,7 @@ union_receiver_join_dump="$(sed -n '/^== tests\/cases\/union_receiver_return_joi
 [[ "$(grep -c 'CHECK_TYPE' <<<"$union_receiver_join_dump")" == "0" ]]
 
 actual="$($diamond --dump-bytecode tests/cases/divergent_union_block_context.d6)"
-union_block_dump="$(sed -n '/^== <block> ==$/,$p' <<<"$actual")"
+union_block_dump="$(awk '/^== /{inside=($0=="== <block> ==")} inside' <<<"$actual")"
 [[ "$(grep -c 'ADD_INT' <<<"$union_block_dump")" == "1" ]]
 
 actual="$($diamond --dump-bytecode -e $'def nested_union() -> Array[Array[Int] | Array[String]]\n [[1], ["one"]]\nend\nnested_union()')"

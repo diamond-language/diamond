@@ -1,0 +1,28 @@
+# sleep(seconds): waits at least that long, takes Int or Float, returns nil.
+start = Time.monotonic()
+p(sleep(0.05))
+puts(Time.monotonic() - start >= 0.05)
+sleep(0)
+
+def failure(value)
+  begin
+    sleep(value)
+    "no error"
+  rescue error
+    "#{error.class()}: #{error.message()}"
+  end
+end
+puts(failure(-1))
+puts(failure(0.0 / 0.0))
+puts(failure(1.0 / 0.0))
+puts(failure("1"))
+
+# A supervisor's timed stop interrupts a sleeping worker.
+def napper()
+  sleep(30)
+end
+sup = Supervisor.new()
+sup.add_child(napper)
+start = Time.monotonic()
+puts(sup.stop(50))
+puts(Time.monotonic() - start < 5)

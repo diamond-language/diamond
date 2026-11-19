@@ -1,0 +1,42 @@
+# Regexp#source/options/names/match_data, MatchData, and Regexp inspect.
+re = /(?<year>\d+)-(?<month>\d+)/
+p(re.source())
+p(re.options())
+p(re.names())
+m = re.match_data("released 2026-11 today")
+p(m.class())
+p([m[0], m[1], m["month"], m[:year], m[-1], m[9]])
+p([m.pre_match(), m.post_match(), m.offset(0), m.offset("year")])
+p(m.to_a())
+p(m.captures())
+p(m.named_captures())
+p(m.size())
+puts("#{m}")
+p(/\d/.match_data("abc"))
+p(/\d/.match_data("a1b2", 2)[0])
+p(/(a)|(b)/.match_data("b").offset(1))
+p("x=42".match_data("\\d+")[0])
+begin
+  m["nope"]
+rescue e
+  p([e.class(), e.message()])
+end
+p(/a/.names())
+begin
+  /a/.frobnicate()
+rescue e
+  p(e.message())
+end
+p(re.match("2026-11"))
+
+# A repeated name answers with the group of that name that took part.
+both = /(?<v>a+)|(?<v>b+)/
+p(both.names())
+p(both.match_data("bbb")["v"])
+p(both.match_data("aa")["v"])
+
+# Readable inspect and to_s, with flags and escaped slashes.
+p(/a+/i)
+puts(Regexp.new("x/y", 1 | 2 | 4))
+puts("pattern: #{/\d/}")
+p([/a\/b/])

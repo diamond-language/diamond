@@ -141,6 +141,90 @@ static const char *const NATIVE_MEMBERS_FLOAT[]={
     "frozen?","hour","hours","inspect","minute","minutes","nil?","round","second","seconds",
     "tap","to_f","to_i","to_s","week","weeks"};
 
+/* The methods each native object kind answers, for respond_to? and the API
+ * reference check (tools/check_builtin_api_docs.d6 reads these lists by name).
+ * tests/cases/native_object_members.d6 calls every name on a real object, so
+ * a name the VM does not dispatch fails CI. Regexp's prelude methods
+ * (regexp_*, lib/core/regexp.d6) are found by name instead, like String's.
+ * Every kind also answers NATIVE_OBJECT_MEMBERS_UNIVERSAL. */
+static const char *const NATIVE_OBJECT_MEMBERS_UNIVERSAL[]={
+    "inspect","nil?","public_send","respond_to?","tap","to_s"};
+static const char *const NATIVE_OBJECT_MEMBERS_FIBER[]={"alive?","resume","status"};
+static const char *const NATIVE_OBJECT_MEMBERS_THREAD[]={"alive?","join"};
+static const char *const NATIVE_OBJECT_MEMBERS_CHANNEL[]={
+    "close","closed?","receive","send","size","try_receive","try_send","wait_readable",
+    "wait_writable"};
+static const char *const NATIVE_OBJECT_MEMBERS_SUPERVISOR[]={
+    "add_child","alive?","child_count","failed?","join","last_error","restart_count",
+    "restart_policy","stop"};
+static const char *const NATIVE_OBJECT_MEMBERS_FILE[]={
+    "close","flush","gets","peer_address","read","shutdown_write","write"};
+static const char *const NATIVE_OBJECT_MEMBERS_LISTENER[]={"accept","close","port"};
+static const char *const NATIVE_OBJECT_MEMBERS_SOCKET[]={
+    "close","finish_connect","peer_address","read","shutdown_write","write"};
+static const char *const NATIVE_OBJECT_MEMBERS_UDP_SOCKET[]={"close","port","receive","send"};
+static const char *const NATIVE_OBJECT_MEMBERS_TLS_SOCKET[]={
+    "abort","alpn_protocol","close","finish_handshake","gets","peer_fingerprint",
+    "peer_subject","read","server_name","session","session_reused?","write"};
+static const char *const NATIVE_OBJECT_MEMBERS_REGEXP[]={"match","match?","options","source"};
+static const char *const NATIVE_OBJECT_MEMBERS_SQLITE3[]={
+    "close","execute","last_insert_row_id","prepare","query"};
+static const char *const NATIVE_OBJECT_MEMBERS_STATEMENT[]={"close","execute","query"};
+static const char *const NATIVE_OBJECT_MEMBERS_POSTGRES[]={
+    "close","execute","last_insert_row_id","query"};
+static const char *const NATIVE_OBJECT_MEMBERS_MYSQL[]={
+    "close","execute","last_insert_row_id","query"};
+static const char *const NATIVE_OBJECT_MEMBERS_TENSOR[]={
+    "add!","add_bias!","add_columns!","clone","cols","column_sums","columns","gelu!",
+    "gelu_backward","get","layernorm_backward","layernorm_forward","matmul","row_softmax!",
+    "rows","scale!","set","softmax_backward","to_a","transpose"};
+static const char *const NATIVE_OBJECT_MEMBERS_TIME[]={
+    "beginning_of_day","beginning_of_month","beginning_of_quarter","beginning_of_week",
+    "beginning_of_year","day","days_ago","days_from_now","end_of_day","end_of_month",
+    "end_of_quarter","end_of_week","end_of_year","future?","hour","iso8601","localtime","min",
+    "month","months_ago","months_from_now","next_weekday","on_weekday?","on_weekend?","past?",
+    "previous_weekday","same_day?","sec","strftime","to_f","to_i","to_s","today?","tomorrow?",
+    "utc","utc?","utc_offset","wday","weeks_ago","weeks_from_now","yday","year","years_ago",
+    "years_from_now","yesterday?"};
+static const char *const NATIVE_OBJECT_MEMBERS_PROCESS_RESULT[]={
+    "exit_code","stderr","stdout","success?"};
+static const char *const NATIVE_OBJECT_MEMBERS_PROCESS_HANDLE[]={
+    "kill","pid","running?","stderr","stdin","stdout","terminate","wait"};
+static const char *const NATIVE_OBJECT_MEMBERS_PROCESS_STREAM[]={"close","gets","read","write"};
+
+size_t diamond_native_object_member_names(uint8_t object_kind,const char *const **names) {
+#define NATIVE_OBJECT_MEMBERS_CASE(kind,list) \
+    case kind: *names=list;return sizeof list/sizeof list[0];
+    switch(object_kind) {
+        NATIVE_OBJECT_MEMBERS_CASE(DIAMOND_OBJECT_FIBER,NATIVE_OBJECT_MEMBERS_FIBER)
+        NATIVE_OBJECT_MEMBERS_CASE(DIAMOND_OBJECT_THREAD,NATIVE_OBJECT_MEMBERS_THREAD)
+        NATIVE_OBJECT_MEMBERS_CASE(DIAMOND_OBJECT_CHANNEL,NATIVE_OBJECT_MEMBERS_CHANNEL)
+        NATIVE_OBJECT_MEMBERS_CASE(DIAMOND_OBJECT_SUPERVISOR,NATIVE_OBJECT_MEMBERS_SUPERVISOR)
+        NATIVE_OBJECT_MEMBERS_CASE(DIAMOND_OBJECT_FILE,NATIVE_OBJECT_MEMBERS_FILE)
+        NATIVE_OBJECT_MEMBERS_CASE(DIAMOND_OBJECT_LISTENER,NATIVE_OBJECT_MEMBERS_LISTENER)
+        NATIVE_OBJECT_MEMBERS_CASE(DIAMOND_OBJECT_SOCKET,NATIVE_OBJECT_MEMBERS_SOCKET)
+        NATIVE_OBJECT_MEMBERS_CASE(DIAMOND_OBJECT_UDP_SOCKET,NATIVE_OBJECT_MEMBERS_UDP_SOCKET)
+        NATIVE_OBJECT_MEMBERS_CASE(DIAMOND_OBJECT_TLS_SOCKET,NATIVE_OBJECT_MEMBERS_TLS_SOCKET)
+        NATIVE_OBJECT_MEMBERS_CASE(DIAMOND_OBJECT_REGEXP,NATIVE_OBJECT_MEMBERS_REGEXP)
+        NATIVE_OBJECT_MEMBERS_CASE(DIAMOND_OBJECT_SQLITE3,NATIVE_OBJECT_MEMBERS_SQLITE3)
+        NATIVE_OBJECT_MEMBERS_CASE(DIAMOND_OBJECT_SQLITE3_STATEMENT,NATIVE_OBJECT_MEMBERS_STATEMENT)
+        NATIVE_OBJECT_MEMBERS_CASE(DIAMOND_OBJECT_POSTGRES,NATIVE_OBJECT_MEMBERS_POSTGRES)
+        NATIVE_OBJECT_MEMBERS_CASE(DIAMOND_OBJECT_MYSQL,NATIVE_OBJECT_MEMBERS_MYSQL)
+        NATIVE_OBJECT_MEMBERS_CASE(DIAMOND_OBJECT_TENSOR,NATIVE_OBJECT_MEMBERS_TENSOR)
+        NATIVE_OBJECT_MEMBERS_CASE(DIAMOND_OBJECT_TIME,NATIVE_OBJECT_MEMBERS_TIME)
+        NATIVE_OBJECT_MEMBERS_CASE(DIAMOND_OBJECT_PROCESS_RESULT,NATIVE_OBJECT_MEMBERS_PROCESS_RESULT)
+        NATIVE_OBJECT_MEMBERS_CASE(DIAMOND_OBJECT_PROCESS_HANDLE,NATIVE_OBJECT_MEMBERS_PROCESS_HANDLE)
+        NATIVE_OBJECT_MEMBERS_CASE(DIAMOND_OBJECT_PROCESS_STREAM,NATIVE_OBJECT_MEMBERS_PROCESS_STREAM)
+        default: *names=nullptr;return 0;
+    }
+#undef NATIVE_OBJECT_MEMBERS_CASE
+}
+
+size_t diamond_native_object_universal_member_names(const char *const **names) {
+    *names=NATIVE_OBJECT_MEMBERS_UNIVERSAL;
+    return sizeof NATIVE_OBJECT_MEMBERS_UNIVERSAL/sizeof NATIVE_OBJECT_MEMBERS_UNIVERSAL[0];
+}
+
 bool diamond_native_method_return_type(uint16_t receiver_type,const char *name,
                                        size_t length,uint16_t *return_type) {
     bool found=false;
