@@ -164,7 +164,8 @@ end
 # page, namespace, its parser in src/compiler_builtins.c
 NAMESPACES = [
   ["file.md", "File", "parse_file_call"],
-  ["dir.md", "Dir", "parse_dir_entries_call"]
+  ["dir.md", "Dir", "parse_dir_entries_call"],
+  ["time.md", "Time", "parse_time_call"]
 ]
 
 source = File.read("#{ROOT}/src/vm_types.c")

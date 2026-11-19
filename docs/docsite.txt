@@ -49,6 +49,7 @@ api/math.md
 api/json.md
 api/file.md
 api/dir.md
+api/time.md
 
 == Reference: the language
 syntax.md

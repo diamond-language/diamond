@@ -31,3 +31,4 @@ The [language reference](../syntax.md) explains the rules these methods follow
 
 - [File](file.md)
 - [Dir](dir.md)
+- [Time](time.md)

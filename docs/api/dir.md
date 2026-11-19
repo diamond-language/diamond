@@ -1,6 +1,6 @@
 # Dir
 
-[API reference](index.md) · Previous: [File](file.md)
+[API reference](index.md) · Previous: [File](file.md) · Next: [Time](time.md)
 
 `Dir` lists, creates and removes directories. Failures raise `IOError`, and
 every function needs the `filesystem` sandbox capability.
