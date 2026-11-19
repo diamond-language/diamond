@@ -16,9 +16,10 @@ class {{Name}}
     end
   end
 
-  # Middleware runs in the order listed, outermost first. SecurityHeaders
-  # adds nosniff, frame and referrer headers the route did not set.
-  def self.build_chain() = rack_compose([SecurityHeaders.call], {{Name}}.route)
+  # Middleware runs in the order listed, outermost first. HeadAsGet answers
+  # HEAD from the GET routes; SecurityHeaders adds nosniff, frame and referrer
+  # headers the route did not set.
+  def self.build_chain() = rack_compose([HeadAsGet.call, SecurityHeaders.call], {{Name}}.route)
 
   # The handler gremlin calls. Each gremlin worker runs in its own VM, so
   # RackChain builds the chain once per worker.

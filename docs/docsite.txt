@@ -47,6 +47,7 @@ api/lazy_enumerator.md
 api/string_builder.md
 api/math.md
 api/json.md
+api/uri.md
 api/file.md
 api/dir.md
 api/time.md

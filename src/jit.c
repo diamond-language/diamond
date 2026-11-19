@@ -2728,7 +2728,7 @@ static bool builtin_operand_layout(DiamondOpCode opcode, bool *writes_dest, uint
     *bytes = 0;
     switch (opcode) {
         case DIAMOND_OP_ARGV: case DIAMOND_OP_ENV: case DIAMOND_OP_GETS: case DIAMOND_OP_UDP_OPEN:
-        case DIAMOND_OP_PROGRAM_BUILDER_NEW: case DIAMOND_OP_TIME_MONOTONIC:
+        case DIAMOND_OP_PROGRAM_BUILDER_NEW: case DIAMOND_OP_TIME_MONOTONIC: case DIAMOND_OP_PROCESS_PID:
             *shorts = 0; return true;
         case DIAMOND_OP_TIME_NOW:
             *shorts = 0; *bytes = 1; return true;

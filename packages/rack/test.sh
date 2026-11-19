@@ -692,4 +692,18 @@ RateLimit.call({"who": "z"}, {}, app)
 [[ "$actual" == "5|1" ]]
 count=$((count + 1))
 
+# --- HeadAsGet: HEAD reaches GET routes with request["head"] set and the
+# --- method restored afterwards; other methods pass through untouched ---
+actual="$(run_case '
+def app(request, context)
+  if request["method"] == "GET" then [200, {}, "got #{request["head"]}"] else [405, {}, request["method"]] end
+end
+request = {"method": "HEAD", "path": "/"}
+[status, headers, body] = HeadAsGet.call(request, {}, app)
+[s2, h2, b2] = HeadAsGet.call({"method": "POST"}, {}, app)
+"#{status}|#{body}|#{request["method"]}|#{s2}|#{b2}"
+')"
+[[ "$actual" == "200|got true|HEAD|405|POST" ]]
+count=$((count + 1))
+
 echo "$count rack tests passed"

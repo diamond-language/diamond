@@ -21,6 +21,9 @@ These are not covered:
   that crashed, hung or corrupted data.
 - **Security fixes,** which may tighten what the sandbox, TLS, the HTTP parser or
   the package installer accept.
+- **Names added to the standard library.** A new core class, module, function or
+  method can share a name with one an application defines, and the application
+  may need a small refactor, usually renaming its own definition.
 - **Message text.** Exception classes and the conditions that raise them are
   stable. The wording of error messages, warnings, backtraces and `inspect` output is
   not.

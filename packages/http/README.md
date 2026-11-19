@@ -53,7 +53,7 @@ posted = http_post("http://127.0.0.1:8080/items", "name=widget",
 
 ## Notes
 
-`http_serve` accepts a request handler returning `[status, headers, body]`. `http_get` and `http_post` return hashes with `status`, `headers`, and `body`.
+`http_serve` accepts a request handler returning `[status, headers, body]`. The response to a `HEAD` request leaves the body out; `http_write_response(conn, response, false)` writes a response that way. `http_get` and `http_post` return hashes with `status`, `headers`, and `body`.
 
 `http_parse_request(conn, limits)` optionally enables bounded parsing using
 `line_bytes`, `header_bytes`, `header_count`, and `body_bytes` from a limits Hash.

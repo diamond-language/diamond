@@ -73,6 +73,12 @@ read from the socket, never from a header. Behind a reverse proxy it is the prox
 forwarding header (`X-Real-IP`) for the real client, and only when the proxy overwrites it. It is `nil` on a runtime
 older than the release that added `TCPSocket#peer_address`.
 
+## HEAD requests
+
+The response to a `HEAD` request is written with its headers and `Content-Length` but never
+its body. The handler sees the method as `HEAD`; rack's `HeadAsGet` middleware runs it
+through GET routes instead, with `request["head"]` set.
+
 ## Handler errors
 
 A handler that raises answers `500 Internal Server Error` with a plain generic body and

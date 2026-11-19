@@ -1,6 +1,6 @@
 # JSON
 
-[API reference](index.md) · Previous: [Math](math.md)
+[API reference](index.md) · Previous: [Math](math.md) · Next: [URI](uri.md)
 
 `JSON` converts between d6 values and JSON text. Objects become Hashes with
 String keys, arrays become Arrays, `null` becomes `nil`, and numbers become an

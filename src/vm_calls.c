@@ -3124,6 +3124,8 @@ DiamondVmStatus diamond_jit_outlined(DiamondVm *vm,const DiamondChunk *chunk,
             return outlined_time_now(vm,chunk,registers,depth,&ip);
         case DIAMOND_OP_TIME_MONOTONIC:
             return outlined_time_monotonic(vm,chunk,registers,depth,&ip);
+        case DIAMOND_OP_PROCESS_PID:
+            return outlined_process_pid(vm,chunk,registers,depth,&ip);
         case DIAMOND_OP_CHECK_HASH_KEY:
             return outlined_check_hash_key(vm,chunk,registers,depth,&ip);
         case DIAMOND_OP_ARRAY_SUFFIX:

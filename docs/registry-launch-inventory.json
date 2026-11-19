@@ -65,9 +65,9 @@
       "archive": "http.tar",
       "dependencies": {},
       "name": "http",
-      "sha256": "2ac867706ab710adb843941bc48ce5f2081b82389d41e65f70a28bce5cc62e71",
+      "sha256": "eeb69bdd827bdb90922547e72e8509714e261b7a7f18c7e5aa5cc953c657781e",
       "size": 48640,
-      "version": "0.2.5"
+      "version": "0.2.6"
     },
     {
       "archive": "logger.tar",
@@ -80,13 +80,13 @@
     {
       "archive": "gremlin.tar",
       "dependencies": {
-        "http": "^0.2.0",
+        "http": "^0.2.6",
         "logger": "^0.5.0"
       },
       "name": "gremlin",
-      "sha256": "3395164afa5ce1b698570f9a6d835c991389487750bf66ed40cfe7764d75149f",
-      "size": 60416,
-      "version": "0.5.5"
+      "sha256": "ac05d33488319311b72938494da27de356415e9d086804f31e7b2c9aadafea51",
+      "size": 60928,
+      "version": "0.5.6"
     },
     {
       "archive": "jobs.tar",
@@ -118,9 +118,9 @@
         "arel": "^0.35.0"
       },
       "name": "mjolnir",
-      "sha256": "6d3d6b587cd749902b57f5f01a90f2addd4e49db68f020b4dc0eaca283c0bf9b",
-      "size": 53248,
-      "version": "0.4.2"
+      "sha256": "92f2b14f97a09f29d6fca11ad7bc2c968c9d67b0c55ca319e83013fe2e97786c",
+      "size": 53760,
+      "version": "0.4.3"
     },
     {
       "archive": "multipart.tar",
@@ -144,9 +144,9 @@
       "archive": "rack.tar",
       "dependencies": {},
       "name": "rack",
-      "sha256": "11851689a4659ff747b034cc7b8ca2e2d376264744e7abb06c4ed986a6454d0e",
-      "size": 51200,
-      "version": "0.2.4"
+      "sha256": "e7cd3d628181fb07c6bab4973f30e745a2c61a6945dae3d7469676fbe698fd8d",
+      "size": 53248,
+      "version": "0.2.5"
     },
     {
       "archive": "redis.tar",

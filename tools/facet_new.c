@@ -208,7 +208,7 @@ static const NewFile LIB_FILES[] = {
 static const char *const WEB_RESERVED[] = {
     "gremlin", "rack", "http", "logger",
     "GremlinShutdown", "NonblockingConnection", "ContentNegotiation", "Cors",
-    "RackChain", "RackHeaders", "RateLimit", "SecurityHeaders", "StaticFiles",
+    "RackChain", "RackHeaders", "RateLimit", "SecurityHeaders", "StaticFiles", "HeadAsGet",
     "HttpRequestError", "HttpSession", "Logger", "RequestLogging", nullptr,
 };
 
@@ -218,7 +218,7 @@ static const char *const WEB_RESERVED[] = {
 static const char *const GRAPHQL_RESERVED[] = {
     "gremlin", "rack", "http", "logger", "graphql",
     "GremlinShutdown", "NonblockingConnection", "ContentNegotiation", "Cors",
-    "RackChain", "RackHeaders", "RateLimit", "SecurityHeaders", "StaticFiles",
+    "RackChain", "RackHeaders", "RateLimit", "SecurityHeaders", "StaticFiles", "HeadAsGet",
     "HttpRequestError", "HttpSession", "Logger", "RequestLogging",
     "GraphQL", "Note", "NoteStore", "QueryResolvers", "MutationResolvers", nullptr,
 };
@@ -260,7 +260,7 @@ static const char *const RESERVED[] = {
     "FrozenError",
     /* lib/core.d6 and lib/core/ */
     "Comparable", "Enumerable", "LazyEnumerator", "MatchData", "Math", "Range",
-    "StringBuilder",
+    "StringBuilder", "URI",
     /* the minitest cut (lib/minitest.d6) */
     "Minitest", "AssertionError", "Skip", nullptr,
 };

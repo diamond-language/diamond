@@ -52,7 +52,7 @@ server_src() {
 require "$package_root/lib/gremlin"
 def run()
   def handler(request, context)
-    if request["method"] == "GET"
+    if request["method"] == "GET" || request["method"] == "HEAD"
       [200, {"Content-Type": "text/plain"}, "hello, #{request["path"]}"]
     else
       [201, {"Content-Type": "text/plain"}, "posted: #{request["body"]}"]
@@ -174,6 +174,13 @@ printf 'POST /items HTTP/1.1\r\nHost: localhost\r\nContent-Length: %d\r\n\r\n%s'
 response="$(cat <&3)"
 { exec 3<&- 3>&-; } 2>/dev/null || true
 [[ "$response" == $'HTTP/1.1 201 Created\r\nContent-Type: text/plain\r\nContent-Length: 15\r\n\r\nposted: {"n":1}' ]]
+
+# A HEAD response keeps the handler's headers and Content-Length, never its body.
+exec 3<>"/dev/tcp/127.0.0.1/$port"
+printf 'HEAD /world HTTP/1.1\r\nHost: localhost\r\n\r\n' >&3
+response="$(cat <&3)"
+{ exec 3<&- 3>&-; } 2>/dev/null || true
+[[ "$response" == $'HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 13\r\n\r' ]]
 kill "$pid" 2>/dev/null || true
 wait "$pid" 2>/dev/null || true
 rm -f "$out"

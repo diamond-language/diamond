@@ -2233,6 +2233,8 @@ DIAMOND_INTERNAL DiamondVmStatus outlined_time_at(DiamondVm *vm,const DiamondChu
         size_t depth,size_t *ip_ref);
 DIAMOND_INTERNAL DiamondVmStatus outlined_time_now(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
         size_t depth,size_t *ip_ref);
+DIAMOND_INTERNAL DiamondVmStatus outlined_process_pid(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t depth,size_t *ip_ref);
 DIAMOND_INTERNAL DiamondVmStatus outlined_time_monotonic(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
         size_t depth,size_t *ip_ref);
 DIAMOND_INTERNAL DiamondVmStatus outlined_check_hash_key(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,

@@ -2969,22 +2969,28 @@ actual="$($diamond --dump-bytecode -e $'def test(x: Int | String, y: Int | Strin
 test_dump="$(sed -n '/^== test ==$/,$p' <<<"$actual")"
 grep -q 'ADD_INT' <<<"$test_dump"
 
+# The <block> sections of the program in $actual, without the prelude's: a dump
+# lists the main section, then every prelude function and block, then the
+# program's, so this skips as many sections as an empty program's dump has.
+prelude_section_count="$($diamond --dump-bytecode -e '1' | grep -c '^== ')"
+program_block_dump() {
+    awk -v skip="$prelude_section_count" '/^== /{seen++; inside=(seen>skip && $0=="== <block> ==")} inside' <<<"$actual"
+}
+
 actual="$($diamond --dump-bytecode -e $'def apply_nested[T](values: Array[Array[T]], &block: Callable[[T], T]) -> T\n yield(values[0][0])\nend\napply_nested([[20], [21]]) do |value|\n value + 1\nend')"
-nested_block_dump="$(awk '/^== /{inside=($0=="== <block> ==")} inside' <<<"$actual")"
+nested_block_dump="$(program_block_dump)"
 grep -q 'ADD_INT' <<<"$nested_block_dump"
 
 actual="$($diamond --dump-bytecode -e $'class GenericBox\n def initialize[T](value: T, &block: Callable[[T], T])\n  @value = yield(value)\n end\nend\nGenericBox.new(20) do |value|\n value + 1\nend')"
-constructor_block_dump="$(awk '/^== /{inside=($0=="== <block> ==")} inside' <<<"$actual")"
+constructor_block_dump="$(program_block_dump)"
 grep -q 'ADD_INT' <<<"$constructor_block_dump"
 
 actual="$($diamond --dump-bytecode -e $'def apply_spread[T](value: T, &block: Callable[[T], T]) -> T\n yield(value)\nend\napply_spread(*[20]) do |value|\n value + 1\nend')"
-spread_block_dump="$(awk '/^== /{inside=($0=="== <block> ==")} inside' <<<"$actual")"
+spread_block_dump="$(program_block_dump)"
 grep -q 'ADD_INT' <<<"$spread_block_dump"
 
 actual="$($diamond --dump-bytecode -e $'class KeywordGeneric\n def initialize[T](value: T, &block: Callable[[T], T])\n  yield(value)\n end\n def self.apply[T](value: T, &block: Callable[[T], T]) -> T\n  yield(value)\n end\n def apply[T](value: T, &block: Callable[[T], T]) -> T\n  yield(value)\n end\nend\nKeywordGeneric.apply(value: 1) do |value|\n value + 1\nend\nobject = KeywordGeneric.new(value: 3) do |value|\n value + 1\nend\nobject.apply(value: 2) do |value|\n value + 1\nend')"
-# Only block bodies: a range from the first <block> to the end would also
-# take in prelude functions dumped after it (MatchData#to_a has an ADD_INT).
-keyword_block_dump="$(awk '/^== /{inside=($0=="== <block> ==")} inside' <<<"$actual")"
+keyword_block_dump="$(program_block_dump)"
 [[ "$(grep -c 'ADD_INT' <<<"$keyword_block_dump")" == "3" ]]
 
 actual="$($diamond --dump-bytecode tests/cases/generic_return_propagation.d6)"
@@ -3018,7 +3024,7 @@ callable_union_return_dump="$(sed -n '/^== tests\/cases\/callable_union_return_p
 [[ "$(grep -cE '  ADD +r' <<<"$callable_union_return_dump")" == "1" ]]
 
 actual="$($diamond --dump-bytecode tests/cases/callable_union_block_context.d6)"
-callable_union_block_dump="$(awk '/^== /{inside=($0=="== <block> ==")} inside' <<<"$actual")"
+callable_union_block_dump="$(program_block_dump)"
 [[ "$(grep -c 'ADD_INT' <<<"$callable_union_block_dump")" == "4" ]]
 [[ "$(grep -cE '  ADD +r' <<<"$callable_union_block_dump")" == "1" ]]
 
@@ -3031,7 +3037,7 @@ union_receiver_join_dump="$(sed -n '/^== tests\/cases\/union_receiver_return_joi
 [[ "$(grep -c 'CHECK_TYPE' <<<"$union_receiver_join_dump")" == "0" ]]
 
 actual="$($diamond --dump-bytecode tests/cases/divergent_union_block_context.d6)"
-union_block_dump="$(awk '/^== /{inside=($0=="== <block> ==")} inside' <<<"$actual")"
+union_block_dump="$(program_block_dump)"
 [[ "$(grep -c 'ADD_INT' <<<"$union_block_dump")" == "1" ]]
 
 actual="$($diamond --dump-bytecode -e $'def nested_union() -> Array[Array[Int] | Array[String]]\n [[1], ["one"]]\nend\nnested_union()')"

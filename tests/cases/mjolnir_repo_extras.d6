@@ -25,6 +25,11 @@ def x_repo()
   Mjolnir::Repo.new(db)
 end
 
+struct XFlag(id: Int, active: Bool, maybe: Bool | Nil)
+end
+
+def build_x_flag(row: Hash) -> XFlag = XFlag.new(row["id"], row["active"], row["maybe"])
+
 def x_author(repo, authors, name) = repo.insert!(Mjolnir::Changeset.cast(authors, nil, {"name": name}, ["name"]))
 
 def x_book(repo, books, author, title)
@@ -188,6 +193,23 @@ def run_tests()
     Minitest.assert_equal(1, repo.update_all(authors.query().where({"id": ada.id()}), {"name": "Ada L"}))
   end
 
+
+  suite.test("a :bool field reads back as a Bool from SQLite's 0 and 1") do
+    db = SQLite3.open(":memory:")
+    db.execute("CREATE TABLE flags (id INTEGER PRIMARY KEY, active INTEGER NOT NULL, maybe INTEGER)")
+    flags = Mjolnir::Schema.new("flags", {"id": :int, "active": :bool, "maybe": :bool}, build_x_flag)
+    repo = Mjolnir::Repo.new(db)
+    inserted = repo.insert!(Mjolnir::Changeset.cast(flags, nil, {"active": "true"}, ["active", "maybe"]))
+    Minitest.assert_equal(true, inserted.active())
+    Minitest.assert_equal(nil, inserted.maybe())
+    db.execute("INSERT INTO flags (active, maybe) VALUES (0, 1)")
+    all = repo.all(flags.query().order_by("id"))
+    Minitest.assert_equal([true, false], all.map() do |flag| flag.active() end)
+    Minitest.assert_equal([nil, true], all.map() do |flag| flag.maybe() end)
+    Minitest.assert_equal(false, repo.get(flags, all[1].id()).active())
+    changed = repo.update!(Mjolnir::Changeset.cast(flags, all[1], {"active": true}, ["active"]))
+    Minitest.assert_equal(true, changed.active())
+  end
   suite.run!()
 end
 

@@ -1530,6 +1530,8 @@ static bool disassemble_natives_and_debugging(DisassemblyWalk *walk) {
             offset+=5;break;
         case DIAMOND_OP_TIME_MONOTONIC:
             offset=one_register(stream,chunk,"TIME_MONOTONIC",offset, &valid);break;
+        case DIAMOND_OP_PROCESS_PID:
+            offset=one_register(stream,chunk,"PROCESS_PID",offset, &valid);break;
         case DIAMOND_OP_TIME_NOW:
             if(!require_bytes(stream,chunk,offset,4)){valid=false;offset=chunk->code_count;break;}
             out_printf(stream,"%-18s r%u, utc=%u\n","TIME_NOW",

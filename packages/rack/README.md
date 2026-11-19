@@ -109,4 +109,5 @@ than the chain has steps raises `RuntimeError`.
 - `SecurityHeaders` only fills in headers the handler did not set, in any spelling; a route's own stricter `X-Frame-Options` or `Content-Security-Policy` is kept.
 - `StaticFiles` ignores the query string (`/app.css?v=3` serves `app.css`), never serves a path with a segment that starts with a dot (`.env`, `.git/config`), and treats the prefix as a path segment (`/assets` does not match `/assetsX/...`).
 - `ContentNegotiation` treats `q=0` as "not acceptable" and adds `Vary: Accept` to a negotiated response.
+- `HeadAsGet` runs a `HEAD` request through the chain as a `GET` (with `request["head"]` set), so GET routes answer `HEAD`; gremlin and `http_serve` then send the headers and `Content-Length` without the body. Put it first in the chain.
 - `RateLimit` drops buckets of finished windows once more than `"max_keys"` (default 100000) distinct keys are held.

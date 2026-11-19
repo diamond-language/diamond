@@ -61,6 +61,7 @@ continuation lines, the portable crypto's known answers, page files through `req
   error ("cannot connect to 'example.com:80': name lookup is not available in the browser",
   `Process.run: pipe: Not supported`). The module has no imports besides WASI's, and links
   without `--allow-undefined`, so an unexpected new dependency is a build error.
+  `Process.pid()` answers 1: the page is the only process.
 - **Files are read-only and come from the page.** `DiamondRepl.addFile(path, text)` adds a file
   under `/`, which the WASI shim preopens as fd 3, and files outlive `reset()`. `require "./x"`
   resolves from `/`, `require_cut "mjolnir"` finds `/cuts/mjolnir/lib/mjolnir.d6` (with its

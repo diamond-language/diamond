@@ -1,0 +1,8 @@
+# Process.pid() is this process's id: a positive Int, the same on every call,
+# and different from a child's.
+pid = Process.pid()
+p(pid > 0)
+p(pid == Process.pid())
+p(pid + 0 == pid)
+child = Process.run(["sh", "-c", "echo $$"])
+p(child.stdout().strip().to_i() != pid)

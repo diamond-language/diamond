@@ -2182,7 +2182,7 @@ uint16_t parse_time_call(Compiler *compiler) {
     return 0;
 }
 
-/* Process.run(argv) -- the one Process method; mirrors parse_time_at_call's
+/* Process.run(argv); mirrors parse_time_at_call's
  * one-argument-constructor shape (dest register, then a single register
  * operand -- here the argv Array rather than an epoch). argv-array-only
  * by design (see docs/syntax.md): there is no shell-string form to parse
@@ -2256,7 +2256,7 @@ static uint16_t parse_process_spawn_call(Compiler *compiler) {
 uint16_t parse_process_call(Compiler *compiler) {
     advance_token(compiler); /* consume '.' */
     if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER) {
-        fail(compiler,compiler->current.span,"expected 'run' or 'spawn' after 'Process'");
+        fail(compiler,compiler->current.span,"expected 'run', 'spawn' or 'pid' after 'Process'");
         return 0;
     }
     const DiamondSpan method=compiler->current.span;
@@ -2268,7 +2268,25 @@ uint16_t parse_process_call(Compiler *compiler) {
         advance_token(compiler);
         return parse_process_spawn_call(compiler);
     }
-    fail(compiler,method,"expected 'run' or 'spawn' after 'Process'");
+    if(name_equals(compiler,"pid",method,false)) {
+        advance_token(compiler);
+        if(compiler->current.kind!=DIAMOND_TOKEN_LEFT_PAREN) {
+            fail(compiler,compiler->current.span,"expected '(' after 'Process.pid'");
+            return 0;
+        }
+        advance_token(compiler);
+        if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN) {
+            fail(compiler,compiler->current.span,"Process.pid takes no arguments");
+            return 0;
+        }
+        advance_token(compiler);
+        const uint16_t dest=allocate_register(compiler);
+        emit_opcode(compiler,DIAMOND_OP_PROCESS_PID);
+        emit_register(compiler,dest);
+        compiler->known_types[dest]=DIAMOND_TYPE_INT;
+        return dest;
+    }
+    fail(compiler,method,"expected 'run', 'spawn' or 'pid' after 'Process'");
     return 0;
 }
 

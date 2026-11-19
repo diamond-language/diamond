@@ -46,6 +46,14 @@ plus:
 - `"stderr_to_stdout"`: `true` to send standard error wherever standard
   output goes.
 
+### `Process.pid() -> Int`
+
+This process's id, for a pid file or to tell workers apart in logs.
+
+```ruby
+Process.pid() > 0   # => true
+```
+
 ## ProcessResult
 
 ### `stdout() -> String`

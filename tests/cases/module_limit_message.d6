@@ -1,4 +1,4 @@
-# 1,021 user modules plus four prelude modules exceed the limit.
+# 1,020 user modules plus five prelude modules exceed the limit by one.
 module M0
 end
 module M1
@@ -2038,6 +2038,4 @@ end
 module M1018
 end
 module M1019
-end
-module M1020
 end

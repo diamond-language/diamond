@@ -1,0 +1,98 @@
+# Percent-encoding for URLs, and application/x-www-form-urlencoded bodies and
+# query strings. Strings are bytes, so a multi-byte character encodes as one
+# %XX per byte, as browsers do.
+module URI
+  # `text` with every byte outside A-Z a-z 0-9 - _ . ~ written as %XX: safe
+  # inside a path segment or a query value.
+  def self.encode_component(text: String) -> String
+    URI.diamond_encode(text, false)
+  end
+
+  # Reverses encode_component: each %XX becomes its byte. "+" stays "+", and a
+  # "%" not followed by two hex digits is kept as it is.
+  def self.decode_component(text: String) -> String
+    URI.diamond_decode(text, false)
+  end
+
+  # A form body or query string from a Hash: name=value pairs joined by "&",
+  # with spaces as "+". Values are converted with to_s; an Array value repeats
+  # the name once per element.
+  def self.encode_form(fields: Hash) -> String
+    pairs = []
+    fields.each() do |name, value|
+      values = value is Array ? value : [value]
+      values.each() do |item|
+        pairs.push("#{URI.diamond_encode("#{name}", true)}=#{URI.diamond_encode("#{item}", true)}")
+      end
+    end
+    pairs.join("&")
+  end
+
+  # A form body or query string as a Hash of Strings. "+" is a space; a name
+  # without "=" maps to ""; a repeated name keeps its last value (see
+  # decode_form_pairs for all of them).
+  def self.decode_form(text: String) -> Hash
+    fields = {}
+    URI.decode_form_pairs(text).each() do |pair|
+      fields[pair[0]] = pair[1]
+    end
+    fields
+  end
+
+  # Every [name, value] pair in a form body or query string, in order,
+  # repeats included.
+  def self.decode_form_pairs(text: String) -> Array
+    pairs = []
+    text.split("&").each() do |part|
+      next if part.empty?()
+      split = part.index_of("=")
+      name = split == nil ? part : part.slice(0, split)
+      value = split == nil ? "" : part.slice(split + 1, part.length() - split - 1)
+      pairs.push([URI.diamond_decode(name, true), URI.diamond_decode(value, true)])
+    end
+    pairs
+  end
+
+  def self.diamond_encode(text: String, form: Bool) -> String
+    hex_digits = "0123456789ABCDEF"
+    out = StringBuilder.new()
+    text.bytes().each() do |byte|
+      if (byte >= 65 && byte <= 90) || (byte >= 97 && byte <= 122) || (byte >= 48 && byte <= 57) ||
+         byte == 45 || byte == 95 || byte == 46 || byte == 126
+        out.append(byte.chr())
+      elsif form && byte == 32
+        out.append("+")
+      else
+        out.append("%").append(hex_digits[byte / 16]).append(hex_digits[byte % 16])
+      end
+    end
+    out.to_s()
+  end
+
+  def self.diamond_hex_value(byte: Int) -> Int
+    return byte - 48 if byte >= 48 && byte <= 57
+    return byte - 55 if byte >= 65 && byte <= 70
+    return byte - 87 if byte >= 97 && byte <= 102
+    -1
+  end
+
+  def self.diamond_decode(text: String, form: Bool) -> String
+    return text if text.index_of("%") == nil && !(form && text.index_of("+") != nil)
+    bytes = text.bytes()
+    out = StringBuilder.new()
+    index = 0
+    while index < bytes.length()
+      byte = bytes[index]
+      high = byte == 37 && index + 2 < bytes.length() ? URI.diamond_hex_value(bytes[index + 1]) : -1
+      low = high >= 0 ? URI.diamond_hex_value(bytes[index + 2]) : -1
+      if low >= 0
+        out.append((high * 16 + low).chr())
+        index += 3
+      else
+        out.append(form && byte == 43 ? " " : byte.chr())
+        index += 1
+      end
+    end
+    out.to_s()
+  end
+end
