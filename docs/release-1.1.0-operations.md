@@ -55,5 +55,4 @@ public cuts against cuts.rolld6.codes, so nothing was published and no credentia
 | Target | Deployed source | Verification | Rollback |
 |---|---|---|---|
 | Pheint | App `7d00901` (pheint #54: the API on `GraphQL::App`, schema compiled in with `File.embed`), built on the local VM against `v1.1.0` | Source suite, prebuilt suite with and without the JIT; running binary SHA-256 `fcc05ff7...` matched the build; the deploy script's eight outside checks passed (53 MB); an anonymous `me` query got `UNAUTHENTICATED` from `@auth` | `/var/backups/pheint/20261119T002058Z` |
-
-The registry and SkindicateV3 stay on the v1.0.0 tag. Nothing they use changed in 1.1.0.
+| Registry | `tools/deploy_registry.sh --revision=v1.1.0` after its dry run, 2026-11-19 09:22 UTC (upgrade check: REQUIRED, 14 runtime files the registry loads changed) | Health ok; `DIAMOND_JIT=1` kept; all 20 public cuts resolved, digest-checked, loaded and reinstalled | Verified snapshot `~/diamond-registry-backups/cutbackup-2026-11-19-011942-pre-8fc5a2d5` (off-host) |
