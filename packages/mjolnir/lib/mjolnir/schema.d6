@@ -19,6 +19,9 @@ module Mjolnir
       @table_name = table_name
       @fields = fields
       @builder = builder
+      # SQLite and MySQL have no boolean column: a :bool field reads back as 0 or
+      # 1, and build turns it into false or true before the builder sees it.
+      @bool_fields = fields.keys().select() do |name| fields[name] == :bool end
       @primary_keys = if primary_key.is_a?(Array) then primary_key else [primary_key] end
       @primary_key = primary_key
       @timestamps = timestamps
@@ -112,7 +115,7 @@ module Mjolnir
     end
 
     def build(row: Hash) -> T
-      entity = @builder(row)
+      entity = @builder(@bool_fields.empty?() ? row : self.read_bools(row))
       entity.freeze()
       entity
     end
@@ -122,13 +125,24 @@ module Mjolnir
     def build_all(rows: Array) -> Array
       entities = []
       index = 0
+      converts = !@bool_fields.empty?()
       while index < rows.length()
-        entity = @builder(rows[index])
+        entity = @builder(converts ? self.read_bools(rows[index]) : rows[index])
         entity.freeze()
         entities.push(entity)
         index += 1
       end
       entities
+    end
+
+    # A row's 0/1 :bool columns as false/true, in place (rows are the
+    # driver's fresh Hashes). A Bool or nil is left alone.
+    def read_bools(row: Hash) -> Hash
+      @bool_fields.each() do |name|
+        value = row[name]
+        row[name] = value != 0 if value is Int
+      end
+      row
     end
 
     # An entity's declared fields as a Hash. An entity built as a plain

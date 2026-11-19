@@ -34,7 +34,7 @@ db.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT NOT NULL, emai
 repo = Mjolnir::Repo.new(db)
 ```
 
-Field types are `:int`, `:float`, `:string`, `:bool`, and `:any`.
+Field types are `:int`, `:float`, `:string`, `:bool`, and `:any`. SQLite and MySQL store a boolean as 0 or 1; a `:bool` field reads back as `false` or `true` before the builder sees the row.
 
 `Schema`, `Query` and the `Repo` reads are generic over the entity. A builder with a declared return, `def build_user(row: Hash) -> User`, makes `users` a `Schema[User]`: `repo.get(users, 1)` is then a `User | Nil`, and each built row is checked. `build_user` above declares nothing, so the schema is left open: it reads the same but promises nothing, and does not satisfy a `Schema[User]` annotation.
 
