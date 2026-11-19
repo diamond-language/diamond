@@ -123,6 +123,17 @@ void reginold_match_free(reginold_match *m);
 /* Release a compiled regex. */
 void reginold_regex_free(reginold_regex *re);
 
+/*
+ * reginold_foreach_name: calls fn once per named group in the pattern, with
+ * the name (not NUL-terminated), its length, and the group numbers (1-based,
+ * as in reginold_match's captures) that carry it. Under Ruby syntax a
+ * pattern with names captures only its named groups. A non-zero return from
+ * fn stops the walk and is returned; otherwise returns 0.
+ */
+typedef int (*reginold_name_fn)(const char *name, size_t name_len,
+                                const int *groups, int group_count, void *arg);
+int reginold_foreach_name(const reginold_regex *re, reginold_name_fn fn, void *arg);
+
 #ifdef __cplusplus
 }
 #endif

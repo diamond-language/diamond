@@ -138,6 +138,7 @@ CLASSES = [
   ["comparable.md", "Comparable", []],
   ["lazy_enumerator.md", "LazyEnumerator", ["initialize", "append"]],
   ["string_builder.md", "StringBuilder", []],
+  ["match_data.md", "MatchData", ["group_index"]],
   ["math.md", "Math", []],
   ["json.md", "JSON", []]
 ]

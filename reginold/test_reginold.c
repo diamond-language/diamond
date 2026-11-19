@@ -465,6 +465,50 @@ test_search_spans(void)
     }
 }
 
+/* ── group names ─────────────────────────────────────────────────────────── */
+
+typedef struct { char seen[64]; int last_group; } name_log;
+
+static int
+log_name(const char *name, size_t name_len, const int *groups, int group_count,
+         void *arg)
+{
+    name_log *log = arg;
+    size_t used = strlen(log->seen);
+    snprintf(log->seen + used, sizeof log->seen - used, "%.*s:%d;", (int)name_len,
+             name, group_count);
+    log->last_group = groups[group_count - 1];
+    return 0;
+}
+
+static void
+test_group_names(void)
+{
+    reginold_regex *re = NULL;
+    reginold_error err;
+    const char *pattern = "(?<y>\\d+)-(?<m>\\d+)|(?<y>x)";
+    if (reginold_compile(pattern, strlen(pattern), 0, &re, &err) != REGINOLD_OK) {
+        FAIL("named pattern compiles");
+        return;
+    }
+    name_log log = {{0}, 0};
+    int stopped = reginold_foreach_name(re, log_name, &log);
+    if (stopped == 0 && strstr(log.seen, "y:2;") && strstr(log.seen, "m:1;"))
+        PASS("foreach_name reports each name and its groups");
+    else
+        FAIL("foreach_name gave \"%s\"", log.seen);
+    reginold_regex_free(re);
+
+    if (reginold_compile("(a)(b)", 6, 0, &re, &err) == REGINOLD_OK) {
+        name_log none = {{0}, 0};
+        if (reginold_foreach_name(re, log_name, &none) == 0 && none.seen[0] == 0)
+            PASS("foreach_name on an unnamed pattern calls nothing");
+        else
+            FAIL("foreach_name on an unnamed pattern gave \"%s\"", none.seen);
+        reginold_regex_free(re);
+    }
+}
+
 /* ── main ─────────────────────────────────────────────────────────────────── */
 
 int
@@ -481,6 +525,7 @@ main(void)
     test_null_out();
     test_region_storage();
     test_search_spans();
+    test_group_names();
 
     printf("\n%d passed, %d failed\n", g_pass, g_fail);
     return g_fail ? 1 : 0;

@@ -266,3 +266,28 @@ reginold_regex_free(reginold_regex *re)
     regold_free(re->engine);
     free(re);
 }
+
+/* ── Group names ──────────────────────────────────────────────────────────── */
+
+typedef struct {
+    reginold_name_fn fn;
+    void            *arg;
+} name_walk;
+
+static int
+name_walk_step(const OnigUChar *name, const OnigUChar *name_end, int group_count,
+               int *groups, OnigRegex reg, void *arg)
+{
+    (void)reg;
+    const name_walk *walk = (const name_walk *)arg;
+    return walk->fn((const char *)name, (size_t)(name_end - name),
+                    groups, group_count, walk->arg);
+}
+
+int
+reginold_foreach_name(const reginold_regex *re, reginold_name_fn fn, void *arg)
+{
+    if (!re || !fn) return 0;
+    name_walk walk = { fn, arg };
+    return onig_foreach_name(re->engine->onig, name_walk_step, &walk);
+}

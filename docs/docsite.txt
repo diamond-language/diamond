@@ -51,6 +51,7 @@ api/file.md
 api/dir.md
 api/time.md
 api/regexp.md
+api/match_data.md
 api/process.md
 api/fiber.md
 api/thread.md

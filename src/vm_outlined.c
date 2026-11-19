@@ -3063,7 +3063,7 @@ DiamondVmStatus outlined_native_object_invoke(DiamondVm *vm,const DiamondChunk *
     if(receiver_kind==DIAMOND_OBJECT_REGEXP) {
         if(type_argument_count!=0)VM_REJECT_TYPE_ARGUMENTS(method_name);
         const DiamondVmStatus dispatch_status=regexp_invoke_helper(
-            vm,registers,recv,base,argc,dest,method_name);
+            vm,chunk,depth,registers,recv,base,argc,dest,method_name);
         VM_PROPAGATE(dispatch_status);
         return DIAMOND_VM_OK;
     }

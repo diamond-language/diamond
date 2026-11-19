@@ -1,0 +1,27 @@
+"(?<year>\\d+)-(?<month>\\d+)"
+0
+["year", "month"]
+"MatchData"
+["2026-11", "2026", "11", "2026", "11", nil]
+["released ", " today", [9, 16], [9, 13]]
+["2026-11", "2026", "11"]
+["2026", "11"]
+{"year": "2026", "month": "11"}
+3
+2026-11
+nil
+"2"
+nil
+"42"
+["IndexError", "undefined group name reference: nope"]
+[]
+"undefined method 'frobnicate' for Regexp"
+["2026-11", "2026", "11"]
+["v"]
+"bbb"
+"aa"
+/a+/i
+/x\/y/mix
+pattern: /\d/
+[/a\/b/]
+[/a\/b/]

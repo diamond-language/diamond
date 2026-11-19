@@ -583,6 +583,14 @@ bool builder_format_value(StringBuilder *builder,DiamondValue value) {
     }
     if(object->kind==DIAMOND_OBJECT_TIME)
         return format_time_default((const DiamondTime *)object,builder);
+    if(object->kind==DIAMOND_OBJECT_REGEXP) {
+        size_t text_length=0;
+        char *text=diamond_regexp_inspect((const DiamondRegexp *)object,&text_length);
+        if(text==nullptr)return false;
+        const bool appended=builder_append(builder,text,text_length);
+        free(text);
+        return appended;
+    }
     /* Every other object kind (Fiber, File, Thread, Tensor, Channel,
      * Supervisor, Regexp, SQLite3, ...) used to fall through to a single
      * hardcoded "#<Closure>" literal here -- correct only for a real

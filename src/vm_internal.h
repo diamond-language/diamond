@@ -1447,7 +1447,7 @@ static inline bool cached_extension_lookup(DiamondVm *vm,const uint8_t *site,
 }
 
 /* Tags for DiamondExtensionCache's `kind` field at the three
- * find_value_extension call sites (Float/Int/String): each is gated on
+ * find_value_extension call sites (Float/Int/String/Regexp): each is gated on
  * registers[recv].kind before it runs, so a polymorphic call site (a
  * union-typed receiver) can legitimately store more than one of these,
  * plus a DiamondObjectKind entry from the collection protocol below --
@@ -1457,6 +1457,7 @@ enum {
     DIAMOND_EXTENSION_KIND_FLOAT = 250,
     DIAMOND_EXTENSION_KIND_INT = 251,
     DIAMOND_EXTENSION_KIND_STRING = 252,
+    DIAMOND_EXTENSION_KIND_REGEXP = 253,
 };
 
 DIAMOND_INTERNAL const DiamondFunction *find_top_level_function(
@@ -1963,6 +1964,7 @@ DIAMOND_INTERNAL DiamondVmStatus tls_socket_invoke_helper(DiamondVm *vm,
                                                 const DiamondStringConstant *method_name);
 
 DIAMOND_INTERNAL DiamondVmStatus regexp_invoke_helper(DiamondVm *vm,
+                                            const DiamondChunk *chunk, size_t depth,
                                             DiamondValue *registers, uint16_t recv,
                                             uint16_t base, uint8_t argc, uint16_t dest,
                                             const DiamondStringConstant *method_name);

@@ -1,0 +1,112 @@
+# Regexp's methods beyond the native match/match?/source/options
+# (src/vm_regexp.c), reached as regexp_* the way String's are string_*, and
+# MatchData, the richer match result. Regexp#match keeps returning an Array.
+def regexp_names(re: Regexp) -> Array
+  names = []
+  re.diamond_group_names().each() do |name|
+    names.push(name) if name != nil && !names.include?(name)
+  end
+  names
+end
+
+def regexp_match_data(re: Regexp, text: String, position: Int = 0) -> MatchData | Nil
+  spans = re.diamond_match_spans(text, position)
+  return nil if spans == nil
+  MatchData.new(re, text, spans, re.diamond_group_names())
+end
+
+def string_match_data(text: String, pattern: Regexp | String, position: Int = 0) -> MatchData | Nil
+  re = pattern is String ? Regexp.new(pattern) : pattern
+  re.match_data(text, position)
+end
+
+# One match: the whole match is group 0 and the capture groups follow. Offsets
+# are byte offsets into the matched String, like String#slice's.
+class MatchData
+  def initialize(regexp: Regexp, string: String, spans: Array, group_names: Array)
+    @regexp = regexp
+    @string = string
+    @spans = spans
+    @group_names = group_names
+  end
+
+  def regexp() -> Regexp = @regexp
+
+  def string() -> String = @string
+
+  # The number of groups, counting the whole match.
+  def size() -> Int = @spans.length() / 2
+
+  def length() -> Int = self.size()
+
+  # A group's text, by number (negative counts from the end) or by name; nil
+  # for a group that took no part or a number out of range.
+  def [](key) -> String | Nil
+    index = group_index(key)
+    return nil if index == nil
+    start = @spans[index * 2]
+    return nil if start < 0
+    @string.slice(start, @spans[index * 2 + 1] - start)
+  end
+
+  # A group's [begin, end] byte offsets, or nil when it took no part.
+  def offset(key) -> Array | Nil
+    index = group_index(key)
+    return nil if index == nil || @spans[index * 2] < 0
+    [@spans[index * 2], @spans[index * 2 + 1]]
+  end
+
+  def pre_match() -> String = @string.slice(0, @spans[0])
+
+  def post_match() -> String
+    @string.slice(@spans[1], @string.length() - @spans[1])
+  end
+
+  def to_a() -> Array
+    groups = []
+    i = 0
+    while i < self.size()
+      groups.push(self[i])
+      i += 1
+    end
+    groups
+  end
+
+  def captures() -> Array = self.to_a().drop(1)
+
+  def names() -> Array = @regexp.names()
+
+  # Each name with its group's text (for a repeated name, the last group of
+  # that name that took part).
+  def named_captures() -> Hash
+    result = {}
+    self.names().each() do |name|
+      result[name] = self[name]
+    end
+    result
+  end
+
+  def to_s() -> String = self[0]
+
+  private
+
+  def group_index(key) -> Int | Nil
+    if key is Int
+      index = key < 0 ? self.size() + key : key
+      return index >= 0 && index < self.size() ? index : nil
+    end
+    name = key is Symbol ? key.to_s() : key
+    raise TypeError.new("MatchData#[] takes an Int, String or Symbol, got #{key.class()}") unless name is String
+    found = nil
+    i = @group_names.length() - 1
+    while i >= 0
+      if @group_names[i] == name
+        return i + 1 if @spans[(i + 1) * 2] >= 0
+        found = i + 1 if found == nil
+      end
+      i -= 1
+    end
+    raise IndexError.new("undefined group name reference: #{name}") if found == nil
+    found
+  end
+end

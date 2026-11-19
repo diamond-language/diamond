@@ -481,15 +481,144 @@ DiamondVmStatus regexp_split_helper(DiamondVm *vm,const DiamondRegexp *regexp,
     return DIAMOND_VM_OK;
 }
 
+/* Regexp#diamond_match_spans(text, start): the first match at or after byte
+ * offset `start`, as a flat Array of Ints -- the whole match's begin and end,
+ * then each group's (-1, -1 for a group that took no part) -- or nil. The
+ * prelude's MatchData (lib/core.d6) is built on it. */
+static DiamondVmStatus regexp_match_spans(DiamondVm *vm,const DiamondRegexp *regexp,
+        const DiamondString *subject,int64_t start,DiamondValue *registers,uint16_t dest) {
+    if(start<0||(uint64_t)start>subject->length) {
+        registers[dest]=DIAMOND_NIL;
+        return DIAMOND_VM_OK;
+    }
+    reginold_match match_result={0};
+    const reginold_status search_status=reginold_search(regexp->handle,
+        subject->chars,subject->length,(size_t)start,&match_result);
+    if(search_status==REGINOLD_ERROR) {
+        snprintf(vm->error,sizeof vm->error,"regexp match failed");
+        return DIAMOND_VM_REGEXP_ERROR;
+    }
+    if(search_status==REGINOLD_MISMATCH) {
+        registers[dest]=DIAMOND_NIL;
+        return DIAMOND_VM_OK;
+    }
+    const size_t group_count=1+match_result.capture_count;
+    DiamondArray *array=allocate_array_uninitialized(vm,group_count*2);
+    if(array==nullptr) {
+        reginold_match_free(&match_result);
+        return DIAMOND_VM_OUT_OF_MEMORY;
+    }
+    for(size_t index=0;index<group_count;index++) {
+        const reginold_span span=index==0?match_result.overall:
+            match_result.captures[index-1];
+        const bool matched=span.beg>=0&&span.end>=0;
+        array->values[index*2]=DIAMOND_INT(matched?span.beg:-1);
+        array->values[index*2+1]=DIAMOND_INT(matched?span.end:-1);
+    }
+    reginold_match_free(&match_result);
+    registers[dest]=DIAMOND_OBJECT(array);
+    return DIAMOND_VM_OK;
+}
+
+typedef struct {
+    DiamondVm *vm;
+    DiamondArray *names;
+    bool out_of_memory;
+} GroupNameWalk;
+
+static int collect_group_name(const char *name,size_t name_length,
+        const int *groups,int group_count,void *arg) {
+    GroupNameWalk *walk=arg;
+    for(int index=0;index<group_count;index++) {
+        const int slot=groups[index]-1;
+        if(slot<0||(size_t)slot>=walk->names->count)continue;
+        DiamondString *string=allocate_string(walk->vm,name,name_length);
+        if(string==nullptr) {walk->out_of_memory=true;return 1;}
+        walk->names->values[slot]=DIAMOND_OBJECT(string);
+        if(!gc_write_barrier_index(walk->vm,(DiamondObject *)walk->names,(size_t)slot)) {
+            walk->out_of_memory=true;return 1;
+        }
+    }
+    return 0;
+}
+
+/* Regexp#diamond_group_names: one entry per capture group, its name or nil. */
+static DiamondVmStatus regexp_group_names(DiamondVm *vm,const DiamondRegexp *regexp,
+        DiamondValue *registers,uint16_t dest) {
+    size_t groups=0;
+    (void)reginold_search_spans(regexp->handle,"",0,0,nullptr,0,&groups);
+    const size_t capture_count=groups>0?groups-1:0;
+    DiamondArray *names=allocate_array_uninitialized(vm,capture_count);
+    if(names==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
+    for(size_t index=0;index<capture_count;index++)names->values[index]=DIAMOND_NIL;
+    registers[dest]=DIAMOND_OBJECT(names);
+    GroupNameWalk walk={.vm=vm,.names=names,.out_of_memory=false};
+    (void)reginold_foreach_name(regexp->handle,collect_group_name,&walk);
+    return walk.out_of_memory?DIAMOND_VM_OUT_OF_MEMORY:DIAMOND_VM_OK;
+}
+
+static bool method_is(const DiamondStringConstant *method_name,const char *name) {
+    const size_t length=strlen(name);
+    return method_name->length==length&&memcmp(method_name->chars,name,length)==0;
+}
+
 DiamondVmStatus regexp_invoke_helper(DiamondVm *vm,
+                                            const DiamondChunk *chunk, size_t depth,
                                             DiamondValue *registers, uint16_t recv,
                                             uint16_t base, uint8_t argc, uint16_t dest,
                                             const DiamondStringConstant *method_name) {
-    const bool match_method=method_name->length==5&&
-        memcmp(method_name->chars,"match",5)==0;
-    const bool match_p_method=method_name->length==6&&
-        memcmp(method_name->chars,"match?",6)==0;
+    const DiamondRegexp *regexp=(const DiamondRegexp *)registers[recv].as.object;
+    if(method_is(method_name,"source")) {
+        if(argc!=0)return DIAMOND_VM_ARITY_ERROR;
+        DiamondString *source=allocate_string(vm,regexp->source,regexp->source_length);
+        if(source==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
+        registers[dest]=DIAMOND_OBJECT(source);
+        return DIAMOND_VM_OK;
+    }
+    if(method_is(method_name,"options")) {
+        if(argc!=0)return DIAMOND_VM_ARITY_ERROR;
+        registers[dest]=DIAMOND_INT((int64_t)regexp->options);
+        return DIAMOND_VM_OK;
+    }
+    if(method_is(method_name,"diamond_group_names")) {
+        if(argc!=0)return DIAMOND_VM_ARITY_ERROR;
+        return regexp_group_names(vm,regexp,registers,dest);
+    }
+    if(method_is(method_name,"diamond_match_spans")) {
+        if(argc!=2)return DIAMOND_VM_ARITY_ERROR;
+        if(registers[base].kind!=DIAMOND_VALUE_OBJECT||
+           registers[base].as.object->kind!=DIAMOND_OBJECT_STRING||
+           registers[base+1].kind!=DIAMOND_VALUE_INT) {
+            snprintf(vm->error,sizeof vm->error,
+                "Regexp#match_data takes a String and an Int position");
+            return DIAMOND_VM_TYPE_ERROR;
+        }
+        return regexp_match_spans(vm,regexp,(const DiamondString *)registers[base].as.object,
+            registers[base+1].as.integer,registers,dest);
+    }
+    const bool match_method=method_is(method_name,"match");
+    const bool match_p_method=method_is(method_name,"match?");
     if(!match_method&&!match_p_method) {
+        /* The rest of Regexp's methods are prelude functions named regexp_*
+         * (lib/core.d6), the way String's are string_*. */
+        const uint8_t *extension_site=(const uint8_t *)(const void *)method_name;
+        const DiamondFunction *extension=nullptr;
+        if(!cached_extension_lookup(vm,extension_site,
+                DIAMOND_EXTENSION_KIND_REGEXP,&extension)) {
+            static const char *const regexp_prefixes[]={"regexp_"};
+            extension=find_value_extension(chunk,
+                regexp_prefixes,1,method_name->chars,method_name->length);
+            store_extension_lookup(vm,extension_site,
+                DIAMOND_EXTENSION_KIND_REGEXP,extension);
+        }
+        if(extension!=nullptr) {
+            DiamondValue call_result=DIAMOND_NIL;
+            const DiamondVmStatus status=forward_to_top_level_helper(vm,
+                chunk,extension,registers,recv,base,argc,depth,&call_result);
+            if(status!=DIAMOND_VM_OK)return status;
+            registers[dest]=call_result;
+            return DIAMOND_VM_OK;
+        }
         snprintf(vm->error,sizeof vm->error,"undefined method '%.*s' for %s",
             (int)method_name->length,method_name->chars,"Regexp");
         return DIAMOND_VM_TYPE_ERROR;

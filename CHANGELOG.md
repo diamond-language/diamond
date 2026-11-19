@@ -20,6 +20,11 @@ record. From 1.0.0, releases follow the [1.x compatibility policy](docs/compatib
 - `sleep(seconds)` pauses for an `Int` or `Float` number of seconds. Trapped signals run
   during it and a supervisor can interrupt it; a program's own `def sleep` still takes
   precedence ([Kernel functions](docs/api/kernel.md)).
+- `Regexp#match_data` and `String#match_data` return a `MatchData`: groups by number,
+  name or Symbol, `pre_match`, `post_match`, `offset`, `captures` and `named_captures`, with
+  an optional start position. `Regexp#source`, `#options` and `#names` describe a pattern,
+  and a Regexp prints as `/pattern/flags` instead of `#<Regexp>`. `match` still returns an
+  Array ([Regexp](docs/api/regexp.md), [MatchData](docs/api/match_data.md)).
 
 ### Fixed
 

@@ -2555,4 +2555,10 @@ bool diamond_project_type_member(DiamondClass *const *classes,size_t count,
  * it. */
 size_t diamond_format_time_default(const DiamondTime *target, char *buffer, size_t capacity);
 
+/* A Regexp as `/source/flags` (flags in the order m, i, x, as Ruby prints
+ * them), with each unescaped `/` in the source written `\/`. Returns a
+ * malloc'd string of *length bytes (not NUL-terminated), or nullptr when out
+ * of memory. Shared by puts/to_s/interpolation and diamond_value_fprint. */
+char *diamond_regexp_inspect(const DiamondRegexp *regexp, size_t *length);
+
 #endif

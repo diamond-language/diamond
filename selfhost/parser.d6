@@ -12342,10 +12342,10 @@ def parse_and_run(path)
   end
 end
 
-# The native prelude isn't one file: src/run_source.c concatenates
+# The native prelude isn't one file: src/prelude.c concatenates
 # lib/core/numeric.d6, lib/core.d6, lib/core/string_builder.d6,
-# lib/core/json_codec.d6, and lib/core/json.d6, in that order, with no
-# separators between them (see DIAMOND_CORE_*_SOURCE in run_source.c).
+# lib/core/regexp.d6, lib/core/json_codec.d6, and lib/core/json.d6, in that
+# order, with no separators between them (see DIAMOND_CORE_*_SOURCE there).
 # Mirrored here so every self-hosted entry point that needs "the same
 # prelude a natively-compiled program gets" (parse_and_run_with_core
 # below, plus selfhost/self_parse_check.d6 and self_run_check.d6) reads
@@ -12354,6 +12354,7 @@ def core_prelude_source()
   File.open("lib/core/numeric.d6", "r").read() +
     File.open("lib/core.d6", "r").read() +
     File.open("lib/core/string_builder.d6", "r").read() +
+    File.open("lib/core/regexp.d6", "r").read() +
     File.open("lib/core/json_codec.d6", "r").read() +
     File.open("lib/core/json.d6", "r").read()
 end
