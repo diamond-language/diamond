@@ -36,6 +36,8 @@ api/index.md
 api/string.md
 api/array.md
 api/hash.md
+api/int.md
+api/float.md
 
 == Reference: the language
 syntax.md

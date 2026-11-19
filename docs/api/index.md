@@ -12,3 +12,5 @@ The [language reference](../syntax.md) explains the rules these methods follow
 - [String](string.md)
 - [Array](array.md)
 - [Hash](hash.md)
+- [Int](int.md)
+- [Float](float.md)

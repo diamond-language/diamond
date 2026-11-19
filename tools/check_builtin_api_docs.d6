@@ -26,13 +26,14 @@ TYPES = [
 
 # Prelude functions with a type prefix that are not methods: helpers called
 # with extra leading arguments, typed variants the compiler picks, and the
-# operator bridges (documented in each page's Operators table).
+# operator bridges (documented in each page's Operators table). `integer_next` is unreachable as a
+# method because `next` is a keyword.
 INTERNAL = {
   "array": ["each_until", "map_int", "map_string", "map_typed", "swap_first_two", "membership",
             "member", "op_minus", "op_and", "op_or", "op_times"],
   "hash": ["each_until", "call_pair"],
   "string": ["op_times", "split_extended"],
-  "integer": [],
+  "integer": ["diamond_array_new", "next"],
   "numeric": [],
   "float": []
 }
