@@ -54,6 +54,8 @@ int getnameinfo(const struct sockaddr *address, socklen_t length, char *host, so
     (void)service_length; (void)flags; return EAI_FAIL;
 }
 
+/* The page is the only process: Process.pid() answers 1. */
+pid_t getpid(void) { return 1; }
 pid_t waitpid(pid_t pid, int *status, int options) { (void)pid; (void)status; (void)options; UNSUPPORTED_INT(); }
 int kill(pid_t pid, int signal_number) { (void)pid; (void)signal_number; UNSUPPORTED_INT(); }
 int posix_spawnp(pid_t *pid, const char *file, const posix_spawn_file_actions_t *actions,
