@@ -689,6 +689,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
         [DIAMOND_OP_SQLITE3_OPEN] = &&op_SQLITE3_OPEN,
         [DIAMOND_OP_CHECK_DESTRUCTURE_COUNT] = &&op_CHECK_DESTRUCTURE_COUNT,
         [DIAMOND_OP_TIME_MONOTONIC] = &&op_TIME_MONOTONIC,
+        [DIAMOND_OP_PROCESS_PID] = &&op_PROCESS_PID,
         [DIAMOND_OP_TIME_NOW] = &&op_TIME_NOW,
         [DIAMOND_OP_TIME_AT] = &&op_TIME_AT,
         [DIAMOND_OP_SHIFT_LEFT] = &&op_SHIFT_LEFT,
@@ -2160,6 +2161,11 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
              * middleware), not a step toward one. */
             case DIAMOND_OP_TIME_MONOTONIC: op_TIME_MONOTONIC: {
                 ip_slot=ip;const DiamondVmStatus helper_status=outlined_time_monotonic(vm,chunk,registers,depth,&ip_slot);ip=ip_slot;
+                VM_PROPAGATE(helper_status);
+                break;
+            }
+            case DIAMOND_OP_PROCESS_PID: op_PROCESS_PID: {
+                ip_slot=ip;const DiamondVmStatus helper_status=outlined_process_pid(vm,chunk,registers,depth,&ip_slot);ip=ip_slot;
                 VM_PROPAGATE(helper_status);
                 break;
             }

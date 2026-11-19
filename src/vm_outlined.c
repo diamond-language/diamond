@@ -4788,6 +4788,18 @@ DiamondVmStatus outlined_time_now(DiamondVm *vm,const DiamondChunk *chunk,Diamon
 
 }
 
+/* DIAMOND_OP_PROCESS_PID: Process.pid(). Outlined so compiled code runs it through
+ * diamond_jit_outlined like the other one-register builtins. */
+__attribute__((noinline))
+DiamondVmStatus outlined_process_pid(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t depth,size_t *ip_ref) {
+    size_t ip=*ip_ref;(void)depth;(void)vm;
+    uint16_t destination=0;
+    READ_SHORT(destination);
+    registers[destination]=DIAMOND_INT((int64_t)getpid());
+    HELPER_DONE;
+}
+
 /* DIAMOND_OP_TIME_MONOTONIC, moved out of run_chunk's switch so compiled code runs the same body
  * (diamond_jit_outlined). The case body is unchanged apart from its macros. */
 __attribute__((noinline))

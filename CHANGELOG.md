@@ -32,6 +32,7 @@ record. From 1.0.0, releases follow the [1.x compatibility policy](docs/compatib
 - `URI` percent-encodes for URLs and reads and writes form bodies and query strings:
   `encode_component`, `decode_component`, `encode_form`, `decode_form`, `decode_form_pairs`
   ([URI](docs/api/uri.md)). Web apps no longer need their own form decoder.
+- `Process.pid()` returns this process's id ([Process](docs/api/process.md)).
 
 ### Fixed
 

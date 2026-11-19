@@ -677,6 +677,8 @@ typedef enum DiamondOpCode : uint8_t {
     DIAMOND_OP_GREATER_EQUAL_INT_K,
     DIAMOND_OP_EQUAL_INT_K,
     DIAMOND_OP_NOT_EQUAL_INT_K,
+    /* dest: Process.pid(), this process's id as an Int. */
+    DIAMOND_OP_PROCESS_PID,
     DIAMOND_OP_COUNT,
 } DiamondOpCode;
 

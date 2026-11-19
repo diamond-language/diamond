@@ -100,6 +100,7 @@ module Opcode
   PROCESS_SPAWN = 101
   PROCESS_RUN_OPTIONS = 183
   PROCESS_SPAWN_OPTIONS = 184
+  PROCESS_PID = 200
   IO_POLL = 77
   UDP_BIND = 78
   FILE_DELETE = 73
@@ -11380,18 +11381,37 @@ class Parser
     destination
   end
 
+  # `Process.pid()`: this process's id, as compiler_builtins.c's parse_process_call.
+  def parse_process_pid_call()
+    if @current.kind() != :left_paren
+      self.fail("expected '(' after 'Process.pid'")
+      return 0
+    end
+    self.advance_token()
+    if @current.kind() != :right_paren
+      self.fail("Process.pid takes no arguments")
+      return 0
+    end
+    self.advance_token()
+    destination = self.allocate_register()
+    self.emit_instruction1(Opcode::PROCESS_PID, destination)
+    self.set_type_fact(destination, Type::INT)
+    destination
+  end
+
   # `Process.run(argv, options = nil)` or `Process.spawn(argv, options = nil)`:
   # the options Hash (env, cwd, stdin) picks the _OPTIONS opcode, as
   # compiler_builtins.c's parse_process_call.
   def parse_process_call()
     self.advance_token()
     method = if @current.kind() == :identifier then self.token_text(@current) else "" end
-    if method != "run" && method != "spawn"
-      self.fail("expected 'run' or 'spawn' after 'Process'")
+    if method != "run" && method != "spawn" && method != "pid"
+      self.fail("expected 'run', 'spawn' or 'pid' after 'Process'")
       return 0
     end
     call = "Process.#{method}"
     self.advance_token()
+    return self.parse_process_pid_call() if method == "pid"
     if @current.kind() != :left_paren
       self.fail("expected '(' after '#{call}'")
       return 0

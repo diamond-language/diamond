@@ -15,6 +15,9 @@ Source that compiles and runs on 1.x compiles and runs, with the same results,
 on later 1.x releases. Later releases may add syntax, core methods, classes,
 modules, cuts and command-line options.
 
+A new core class or module can share a name with one a program defines itself.
+That is not a break: rename or remove the program's own version.
+
 These are not covered:
 
 - **Bugs.** A fix may change behavior that contradicted this documentation, or
