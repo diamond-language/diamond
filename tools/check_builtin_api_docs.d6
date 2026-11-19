@@ -1,15 +1,18 @@
 # Check that the builtin API pages (docs/api/) cover every method the built-in
-# value types answer, and document nothing they do not.
+# value types and the prelude's classes answer, and document nothing they do not.
 #
 #   build/diamond tools/check_builtin_api_docs.d6 [ROOT]
 #
-# A type's methods come from two places: the VM's native member list for it in
-# src/vm_types.c (NATIVE_MEMBERS_STRING and so on, the list editor completion
-# uses and tests/lsp_test.sh calls on real values), and the prelude extension
-# functions in lib/ named `TYPE_name` or `diamond_TYPE_name`, which the VM
-# finds when a value has no native method of that name. A page documents a
-# method with a `### `name(...)` heading. A trailing `?` or `!` is left out of
-# extension function names, so names are compared without it.
+# A value type's methods come from two places: the VM's native member list for
+# it in src/vm_types.c (NATIVE_MEMBERS_STRING and so on, the list editor
+# completion uses and tests/lsp_test.sh calls on real values), and the prelude
+# extension functions in lib/ named `TYPE_name` or `diamond_TYPE_name`, which
+# the VM finds when a value has no native method of that name. A prelude class
+# or module (Range, Math, ...) contributes the `def`s in its body.
+#
+# A page documents a method with a `### `name(...)` heading, or
+# `### `Class.name(...)` for a class method. A trailing `?` or `!` is left out
+# of extension function names, so names are compared without it.
 #
 # The examples on the pages are run by `make test-docs`; this checks coverage.
 
@@ -38,7 +41,7 @@ INTERNAL = {
   "float": []
 }
 
-HEADING = Regexp.new("^### `([a-z_][a-z0-9_]*[?!]?)")
+HEADING = Regexp.new("^### `([A-Z][A-Za-z]*\\.)?([a-z_][a-z0-9_]*[?!]?)")
 DEFINITION = Regexp.new("^def (diamond_)?([a-z]+)_([a-z0-9_]+[?!]?)[(\\[ ]")
 
 def base(name: String) -> String
@@ -80,26 +83,72 @@ def documented(path: String) -> Array
   return [] unless File.exist?(path)
   File.read(path).split("\n").map() do |line|
     m = HEADING.match(line)
-    m == nil ? nil : m[1]
+    m == nil ? nil : m[2]
   end.compact()
 end
+
+# The public methods of a class or module the prelude defines in d6: its
+# two-space-indented `def`s (`def self.x` for module functions), with
+# `initialize` documented as `new`. Operator methods (`<`, `==`) belong in a
+# page's Operators table, so only named methods are listed.
+def class_methods(root: String, name: String, internal: Array) -> Array
+  opener = Regexp.new("^(class|module) #{name}\\b")
+  method = Regexp.new("^  def (self\\.)?([a-z_][a-z0-9_]*[?!]?)")
+  names = []
+  found = false
+  prelude_files(root).each() do |path|
+    inside = false
+    File.read(path).split("\n").each() do |line|
+      if opener.match?(line)
+        inside = true
+        found = true
+      elsif inside && line == "end"
+        inside = false
+      elsif inside
+        m = method.match(line)
+        next if m == nil || internal.include?(m[2])
+        names.push(m[2] == "initialize" ? "new" : m[2])
+      end
+    end
+  end
+  raise "#{name} is not defined in lib/" unless found
+  names
+end
+
+# Adds a problem for each implemented name without an entry and each entry
+# without an implementation.
+def compare(page: String, implemented: Array, problems: Array)
+  have = implemented.map() do |name| base(name) end.uniq()
+  documented_names = documented("#{ROOT}/docs/api/#{page}")
+  docs = documented_names.map() do |name| base(name) end.uniq()
+  have.sort().each() do |name|
+    problems.push("docs/api/#{page}: no entry for #{name}") unless docs.include?(name)
+  end
+  documented_names.uniq().each() do |name|
+    problems.push("docs/api/#{page}: #{name} is documented but not implemented") unless have.include?(base(name))
+  end
+end
+
+# page, class or module in lib/, methods that are internal plumbing
+CLASSES = [
+  ["range.md", "Range", []],
+  ["enumerable.md", "Enumerable", []],
+  ["comparable.md", "Comparable", []],
+  ["lazy_enumerator.md", "LazyEnumerator", ["initialize", "append"]],
+  ["string_builder.md", "StringBuilder", []],
+  ["math.md", "Math", []],
+  ["json.md", "JSON", []]
+]
 
 source = File.read("#{ROOT}/src/vm_types.c")
 problems = []
 TYPES.each() do |entry|
-  page = "#{ROOT}/docs/api/#{entry[0]}"
-  implemented = native_members(source, entry[1]).concat(prelude_methods(ROOT, entry[2]))
-  have = implemented.map() do |name| base(name) end.uniq()
-  documented_names = documented(page)
-  docs = documented_names.map() do |name| base(name) end.uniq()
-  have.sort().each() do |name|
-    problems.push("docs/api/#{entry[0]}: no entry for #{name}") unless docs.include?(name)
-  end
-  documented_names.uniq().each() do |name|
-    problems.push("docs/api/#{entry[0]}: #{name} is documented but not implemented") unless have.include?(base(name))
-  end
+  compare(entry[0], native_members(source, entry[1]).concat(prelude_methods(ROOT, entry[2])), problems)
+end
+CLASSES.each() do |entry|
+  compare(entry[0], class_methods(ROOT, entry[1], entry[2]), problems)
 end
 
 problems.each() do |problem| warn(problem) end
-puts("builtin API docs: #{TYPES.length()} types checked, #{problems.length()} problems")
+puts("builtin API docs: #{TYPES.length() + CLASSES.length()} pages checked, #{problems.length()} problems")
 exit(problems.length() == 0 ? 0 : 1)

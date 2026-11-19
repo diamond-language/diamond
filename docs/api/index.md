@@ -14,3 +14,13 @@ The [language reference](../syntax.md) explains the rules these methods follow
 - [Hash](hash.md)
 - [Int](int.md)
 - [Float](float.md)
+- [Range](range.md)
+
+## Modules and classes in the prelude
+
+- [Enumerable](enumerable.md)
+- [Comparable](comparable.md)
+- [LazyEnumerator](lazy_enumerator.md)
+- [StringBuilder](string_builder.md)
+- [Math](math.md)
+- [JSON](json.md)

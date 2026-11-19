@@ -38,6 +38,13 @@ api/array.md
 api/hash.md
 api/int.md
 api/float.md
+api/range.md
+api/enumerable.md
+api/comparable.md
+api/lazy_enumerator.md
+api/string_builder.md
+api/math.md
+api/json.md
 
 == Reference: the language
 syntax.md
