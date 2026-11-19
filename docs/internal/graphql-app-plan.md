@@ -1,10 +1,9 @@
 # Plan: schema-first GraphQL apps (`GraphQL::App`)
 
-Status: in progress on branch `graphql-app` (filed 2026-11-17). Steps 1-3 are written
-(graphql 0.3.6): the SDL parser, `GraphQL::App`, and directive middleware with `Fail`. Step 4, the
-Pheint port, is diamond-language/pheint#54 (api.di 1,166 to 670 lines, the same 724 checks
-passing). The roadmap entry is "Schema-first GraphQL apps" under "Grow packages from application
-needs".
+Status: done (filed 2026-11-17, finished 2026-11-19). Steps 1-3 shipped in graphql 0.3.6: the SDL
+parser, `GraphQL::App`, and directive middleware with `Fail`. Step 4, the Pheint port
+(diamond-language/pheint#54: api.di 1,166 to 670 lines, the same 724 checks passing), runs in
+production on d6 1.1.0, which added `File.embed` for the compiled-in schema.
 
 ## The problem
 
