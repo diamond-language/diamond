@@ -1,4 +1,4 @@
-# 1,020 user modules plus Enumerable, Comparable, Math and JSON fill the table;
+# 1,019 user modules plus Enumerable, Comparable, Math, JSON and URI fill the table;
 # AllModules directly includes 255 distinct modules, the per-class include cap.
 module M0
 end
@@ -2034,8 +2034,6 @@ module M1015
 end
 module M1016
 end
-module M1017
-end
 module M1018
 end
 module M1019
@@ -2054,6 +2052,7 @@ class AllModules
   include Comparable
   include Math
   include JSON
+  include URI
   include M769
   include M770
   include M771
@@ -2302,7 +2301,6 @@ class AllModules
   include M1014
   include M1015
   include M1016
-  include M1017
   include M1018
   include M1019
   include M1019

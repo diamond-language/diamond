@@ -15,15 +15,15 @@ Source that compiles and runs on 1.x compiles and runs, with the same results,
 on later 1.x releases. Later releases may add syntax, core methods, classes,
 modules, cuts and command-line options.
 
-A new core class or module can share a name with one a program defines itself.
-That is not a break: rename or remove the program's own version.
-
 These are not covered:
 
 - **Bugs.** A fix may change behavior that contradicted this documentation, or
   that crashed, hung or corrupted data.
 - **Security fixes,** which may tighten what the sandbox, TLS, the HTTP parser or
   the package installer accept.
+- **Names added to the standard library.** A new core class, module, function or
+  method can share a name with one an application defines, and the application
+  may need a small refactor, usually renaming its own definition.
 - **Message text.** Exception classes and the conditions that raise them are
   stable. The wording of error messages, warnings, backtraces and `inspect` output is
   not.
