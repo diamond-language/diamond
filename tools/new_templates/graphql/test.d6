@@ -1,0 +1,71 @@
+# Run with `d6 test/{{name}}_test.d6`, or `bash test.sh` for every test file.
+# The tests call the handler with request hashes, so no server starts.
+require_cut "minitest"
+require "../lib/{{name}}"
+
+def run_tests()
+  # POSTs a query and returns [status, decoded JSON body]. Each test passes a
+  # fresh context, which is where a worker keeps its schema and notes.
+  def post(context: Hash, body: String)
+    request = {"method": "POST", "path": "/graphql", "headers": {}, "body": body}
+    [status, headers, text] = {{Name}}.call(request, context)
+    [status, JSON.parse(text)]
+  end
+
+  def query(context: Hash, text: String, variables: Hash = {})
+    post(context, JSON.stringify({"query": text, "variables": variables}))
+  end
+
+  def test_hello()
+    [status, result] = query({}, "{ hello(name: \"{{name}}\") }")
+    Minitest.assert_equal(200, status)
+    Minitest.assert_equal("Hello, {{name}}!", result["data"]["hello"])
+  end
+
+  def test_add_and_list_notes()
+    context = {}
+    [status, added] = query(context, "mutation($text: String!) { addNote(text: $text) { id text } }",
+                            {"text": "buy milk"})
+    Minitest.assert_equal({"id": "1", "text": "buy milk"}, added["data"]["addNote"])
+    [status, listed] = query(context, "{ notes { id text } }")
+    Minitest.assert_equal([{"id": "1", "text": "buy milk"}], listed["data"]["notes"])
+  end
+
+  def test_missing_note_is_null()
+    [status, result] = query({}, "{ note(id: \"7\") { text } }")
+    Minitest.assert_equal(nil, result["data"]["note"])
+  end
+
+  def test_empty_note_is_refused()
+    [status, result] = query({}, "mutation { addNote(text: \"  \") { id } }")
+    Minitest.assert_equal("BAD_USER_INPUT", result["errors"][0]["extensions"]["code"])
+  end
+
+  def test_unknown_field_is_a_bad_request()
+    [status, result] = query({}, "{ nope }")
+    Minitest.assert_equal("BAD_REQUEST", result["errors"][0]["extensions"]["code"])
+  end
+
+  def test_body_must_be_json()
+    [status, result] = post({}, "not json")
+    Minitest.assert_equal(400, status)
+    Minitest.assert_equal("BAD_REQUEST", result["errors"][0]["extensions"]["code"])
+  end
+
+  def test_schema_is_served()
+    [status, headers, body] = {{Name}}.call({"method": "GET", "path": "/schema.graphql", "headers": {}}, {})
+    Minitest.assert_equal(200, status)
+    Minitest.assert(body.include?("type Note"))
+  end
+
+  suite = Minitest.new()
+  suite.test("hello answers with a greeting", test_hello)
+  suite.test("addNote adds a note that notes lists", test_add_and_list_notes)
+  suite.test("an unknown note id gives null", test_missing_note_is_null)
+  suite.test("an empty note is refused with BAD_USER_INPUT", test_empty_note_is_refused)
+  suite.test("an unknown field is a BAD_REQUEST", test_unknown_field_is_a_bad_request)
+  suite.test("a body that is not JSON answers 400", test_body_must_be_json)
+  suite.test("GET /schema.graphql shows the schema", test_schema_is_served)
+  exit(suite.run() ? 0 : 1)
+end
+run_tests()

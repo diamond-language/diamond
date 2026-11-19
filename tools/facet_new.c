@@ -63,6 +63,30 @@ static constexpr unsigned char WEB_README[] = {
 #embed "new_templates/web/README.md" suffix(,)
     0
 };
+static constexpr unsigned char GRAPHQL_MAIN[] = {
+#embed "new_templates/graphql/main.d6" suffix(,)
+    0
+};
+static constexpr unsigned char GRAPHQL_LIB[] = {
+#embed "new_templates/graphql/lib.d6" suffix(,)
+    0
+};
+static constexpr unsigned char GRAPHQL_SCHEMA[] = {
+#embed "new_templates/graphql/schema.graphql" suffix(,)
+    0
+};
+static constexpr unsigned char GRAPHQL_TEST[] = {
+#embed "new_templates/graphql/test.d6" suffix(,)
+    0
+};
+static constexpr unsigned char GRAPHQL_CUT[] = {
+#embed "new_templates/graphql/Cutfile" suffix(,)
+    0
+};
+static constexpr unsigned char GRAPHQL_README[] = {
+#embed "new_templates/graphql/README.md" suffix(,)
+    0
+};
 static constexpr unsigned char TCP_MAIN[] = {
 #embed "new_templates/tcp/main.d6" suffix(,)
     0
@@ -153,6 +177,13 @@ static const NewFile WEB_FILES[] = {
     {"lib/{{name}}.d6", WEB_LIB, false, false},
     {"test/{{name}}_test.d6", WEB_TEST, false, false}, COMMON_FILES,
 };
+static const NewFile GRAPHQL_FILES[] = {
+    {"Cutfile", GRAPHQL_CUT, false, false}, {"README.md", GRAPHQL_README, false, false},
+    {".gitignore", APP_GITIGNORE, false, false}, {"main.d6", GRAPHQL_MAIN, false, false},
+    {"lib/{{name}}.d6", GRAPHQL_LIB, false, false},
+    {"lib/schema.graphql", GRAPHQL_SCHEMA, false, false},
+    {"test/{{name}}_test.d6", GRAPHQL_TEST, false, false}, COMMON_FILES,
+};
 static const NewFile TCP_FILES[] = {
     {"Cutfile", TCP_CUT, false, false}, {"README.md", TCP_README, false, false},
     {".gitignore", APP_GITIGNORE, false, false}, {"main.d6", TCP_MAIN, false, false},
@@ -181,6 +212,17 @@ static const char *const WEB_RESERVED[] = {
     "HttpRequestError", "HttpSession", "Logger", "RequestLogging", nullptr,
 };
 
+/* A GraphQL project adds the graphql cut and the classes its template
+ * defines beside the project's own: a project named `note` would make
+ * `class Note` collide with the template's `struct Note`. */
+static const char *const GRAPHQL_RESERVED[] = {
+    "gremlin", "rack", "http", "logger", "graphql",
+    "GremlinShutdown", "NonblockingConnection", "ContentNegotiation", "Cors",
+    "RackChain", "RackHeaders", "RateLimit", "SecurityHeaders", "StaticFiles",
+    "HttpRequestError", "HttpSession", "Logger", "RequestLogging",
+    "GraphQL", "Note", "NoteStore", "QueryResolvers", "MutationResolvers", nullptr,
+};
+
 static const struct {
     const char *kind;
     const char *summary;
@@ -191,6 +233,8 @@ static const struct {
     {"cli", "command-line program", CLI_FILES, sizeof CLI_FILES / sizeof CLI_FILES[0], nullptr},
     {"web", "web application (gremlin + rack)", WEB_FILES,
      sizeof WEB_FILES / sizeof WEB_FILES[0], WEB_RESERVED},
+    {"graphql", "GraphQL API (schema-first GraphQL::App, served by gremlin)", GRAPHQL_FILES,
+     sizeof GRAPHQL_FILES / sizeof GRAPHQL_FILES[0], GRAPHQL_RESERVED},
     {"tcp", "line-based TCP server", TCP_FILES, sizeof TCP_FILES / sizeof TCP_FILES[0], nullptr},
     {"udp", "UDP server", UDP_FILES, sizeof UDP_FILES / sizeof UDP_FILES[0], nullptr},
     {"lib", "library cut to publish", LIB_FILES, sizeof LIB_FILES / sizeof LIB_FILES[0], nullptr},
@@ -334,7 +378,7 @@ static bool write_new_file(const char *root, const NewFile *spec, const NewValue
 static void print_new_usage(void) {
     fputs("usage: facet new <kind> <path>\n\nkinds:\n", stderr);
     for (size_t index = 0; index < sizeof KINDS / sizeof KINDS[0]; index++)
-        fprintf(stderr, "  %-4s  %s\n", KINDS[index].kind, KINDS[index].summary);
+        fprintf(stderr, "  %-7s  %s\n", KINDS[index].kind, KINDS[index].summary);
 }
 
 int cmd_new(int argc, char **argv) {

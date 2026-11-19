@@ -334,6 +334,7 @@ must not.
 | --- | --- |
 | `cli` | A command-line program: `main.d6` passes `ARGV` to the project's `main` and exits with the status it returns. |
 | `web` | A web application served by `gremlin`, with `rack` middleware, both runtime dependencies from the registry. |
+| `graphql` | A GraphQL API built schema-first with `GraphQL::App` (the `graphql` cut) and served by `gremlin`. `lib/schema.graphql` holds the schema, which `File.embed` compiles in, so it needs d6 1.1.0 or later. The example keeps notes in memory: `POST /graphql` runs a query, `GET /schema.graphql` shows the schema, and errors carry a code in `extensions.code`. |
 | `tcp` | A line-based TCP server that uses `IO.poll` to serve every client from one thread. |
 | `udp` | A UDP server that answers each datagram. |
 | `lib` | A library cut ready for `facet check`: a full manifest (version `0.1.0`, MIT `LICENSE`), with the maintainer taken from `git config user.name`/`user.email`, or placeholders when those are unset or unusable. |
@@ -359,8 +360,10 @@ for the project's own tests, but a `lib` project's users never install it.
 
 The project's module is the name in CamelCase (`my_app` becomes `MyApp`), so
 `facet new` refuses a name whose module would hide a built-in such as `File`,
-`Time` or `StandardError`, collide with minitest's classes, or, for `web`,
-collide with a dependency cut or one of its classes. `tests/facet_new_test.sh`
+`Time` or `StandardError`, collide with minitest's classes, or, for `web` and
+`graphql`, collide with a dependency cut or one of its classes. A `graphql` project also
+can't take the names of the classes its template defines (`note` would collide with
+`struct Note`). `tests/facet_new_test.sh`
 builds every kind, runs its tests and entry point, and checks that the
 reserved list still matches the compiler and library sources.
 

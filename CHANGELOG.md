@@ -6,6 +6,13 @@ record. From 1.0.0, releases follow the [1.x compatibility policy](docs/compatib
 
 ## Unreleased
 
+### Added
+
+- `facet new graphql <path>` creates a GraphQL API: the schema in `lib/schema.graphql`,
+  compiled in with `File.embed`, resolvers bound by `GraphQL::App`, served by gremlin at
+  `POST /graphql`, and tests that post queries to the handler without starting a server
+  ([packages](docs/packages.md#facet-new)).
+
 ## 1.1.0 — 2026-11-18
 
 The first minor release of 1.x: `File.embed`, schema-first GraphQL apps (graphql 0.3.6),
