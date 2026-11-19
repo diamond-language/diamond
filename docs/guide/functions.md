@@ -63,6 +63,22 @@ puts(box(3))                      # => box: 3x3
 puts(box(3, 4))                   # => box: 3x4
 ```
 
+A typed parameter puts the type before the default:
+
+```ruby
+def repeat(text: String, times: Int = 2)
+  text * times
+end
+
+puts(repeat("ab"))                # => abab
+puts(repeat("ab", 3))             # => ababab
+```
+
+The type is not inferred from the default. `height = width` above accepts
+any value; only `times: Int` makes `repeat("ab", "x")` a compile-time error.
+A default that does not match its declared type is reported when the default
+is used, not when the function is defined.
+
 Any argument can be passed by name. Named arguments can come in any order
 after the positional ones, and can skip over defaults:
 
