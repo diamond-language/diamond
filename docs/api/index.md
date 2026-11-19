@@ -41,3 +41,7 @@ The [language reference](../syntax.md) explains the rules these methods follow
 - [Thread](thread.md)
 - [Channel](channel.md)
 - [Supervisor](supervisor.md)
+
+## Networking
+
+- [TCP, TLS, UDP and DNS](network.md)

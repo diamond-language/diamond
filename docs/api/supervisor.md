@@ -1,6 +1,6 @@
 # Supervisor
 
-[API reference](index.md) · Previous: [Channel](channel.md)
+[API reference](index.md) · Previous: [Channel](channel.md) · Next: [Networking](network.md)
 
 A `Supervisor` runs workers on their own threads and restarts one when it
 crashes with an uncaught exception. A worker that returns normally is not

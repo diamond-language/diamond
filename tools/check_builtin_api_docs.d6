@@ -164,7 +164,8 @@ def documented_functions(path: String, name: String) -> Array
 end
 
 # page, namespace, its parser in src/compiler_builtins.c, and any functions the
-# parser matches some other way (`Fiber.yield` is the `yield` keyword token)
+# parser matches some other way (`Fiber.yield` is the `yield` keyword token),
+# and names the parser compares that are keyword options, not functions
 NAMESPACES = [
   ["file.md", "File", "parse_file_call"],
   ["dir.md", "Dir", "parse_dir_entries_call"],
@@ -178,14 +179,23 @@ NAMESPACES = [
   ["fiber.md", "Fiber", "parse_fiber_call", ["yield"]],
   ["thread.md", "Thread", "parse_thread_new_call"],
   ["channel.md", "Channel", "parse_channel_new_call"],
-  ["supervisor.md", "Supervisor", "parse_supervisor_new_call"]
+  ["supervisor.md", "Supervisor", "parse_supervisor_new_call"],
+  ["network.md", "TCPSocket", "parse_tcp_connect_call"],
+  ["network.md", "TCPServer", "parse_tcp_listen_call"],
+  ["network.md", "TLSSocket", "parse_tls_connect_call"],
+  ["network.md", "TLSServer", "parse_tls_listen_call"],
+  ["network.md", "UDPSocket", "parse_udp_socket_call", [], ["host"]],
+  ["network.md", "DNS", "parse_dns_resolve_call"]
 ]
 
 source = File.read("#{ROOT}/src/vm_types.c")
 builtins = File.read("#{ROOT}/src/compiler_builtins.c")
 problems = []
 NAMESPACES.each() do |entry|
-  have = namespace_functions(builtins, entry[2]).concat(entry.length() > 3 ? entry[3] : [])
+  options = entry.length() > 4 ? entry[4] : []
+  have = namespace_functions(builtins, entry[2]).concat(entry.length() > 3 ? entry[3] : []).reject() do |name|
+    options.include?(name)
+  end
   docs = documented_functions("#{ROOT}/docs/api/#{entry[0]}", entry[1])
   have.each() do |name|
     problems.push("docs/api/#{entry[0]}: no entry for #{entry[1]}.#{name}") unless docs.include?(name)
