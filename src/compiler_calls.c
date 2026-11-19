@@ -639,16 +639,22 @@ static void prepare_contextual_block(Compiler *compiler,
     }
     /* Clone last: `sets` and `callable` can point into the current function's
      * table, whose reserve may move while cloning. Capture every source index
-     * before the first clone, then let the index-aware cloner reacquire it. */
+     * before the first clone, then let the index-aware cloner reacquire it.
+     * Whether `sets` is that table is decided once, here: after a clone
+     * grows it, `sets` is a freed pointer that no longer compares equal, so
+     * each clone is handed the table's current address instead. */
+    const bool sets_are_current=sets==compiler->function->type_sets;
     for(size_t index=0;index<compiler->contextual_block_arity;index++)
         if(parameter_sets[index]!=DIAMOND_NO_TYPE_SET) {
-            const uint16_t cloned=clone_type_set_into_current(compiler,sets,
+            const uint16_t cloned=clone_type_set_into_current(compiler,
+                sets_are_current?compiler->function->type_sets:sets,
                 set_count,parameter_sets[index]);
             if(cloned!=DIAMOND_NO_TYPE_SET)
                 compiler->contextual_block_type_sets[index]=(int32_t)cloned;
         }
     if(return_set!=DIAMOND_NO_TYPE_SET) {
-        const uint16_t cloned=clone_type_set_into_current(compiler,sets,
+        const uint16_t cloned=clone_type_set_into_current(compiler,
+            sets_are_current?compiler->function->type_sets:sets,
             set_count,return_set);
         if(cloned!=DIAMOND_NO_TYPE_SET)
             compiler->contextual_block_return_set=(int32_t)cloned;
