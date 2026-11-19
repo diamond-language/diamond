@@ -259,7 +259,8 @@ static const char *const RESERVED[] = {
     "NoMethodError", "SupervisorError", "SandboxError", "ResourceLimitError",
     "FrozenError",
     /* lib/core.d6 and lib/core/ */
-    "Comparable", "Enumerable", "LazyEnumerator", "Math", "Range", "StringBuilder",
+    "Comparable", "Enumerable", "LazyEnumerator", "MatchData", "Math", "Range",
+    "StringBuilder",
     /* the minitest cut (lib/minitest.d6) */
     "Minitest", "AssertionError", "Skip", nullptr,
 };
