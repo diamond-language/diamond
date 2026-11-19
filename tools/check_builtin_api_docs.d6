@@ -217,6 +217,18 @@ NAMESPACES.each() do |entry|
     problems.push("docs/api/#{entry[0]}: #{entry[1]}.#{name} is documented but not implemented") unless have.include?(name)
   end
 end
+# Every namespace in the compiler's table needs an entry above, so a new one
+# cannot ship undocumented. ProgramBuilder is experimental (docs/compatibility.md).
+UNDOCUMENTED = ["ProgramBuilder"]
+names = File.read("#{ROOT}/src/compiler_names.c")
+table = names.slice(names.index_of("builtin_namespace_calls[]"), names.length())
+table = table.slice(0, table.index_of("\n};"))
+checked = NAMESPACES.map() do |entry| entry[1] end
+table.scan(Regexp.new("\\{\"([A-Z][A-Za-z0-9]*)\",parse_")).each() do |groups|
+  name = groups[0]
+  problems.push("#{name}: a builtin namespace with no docs/api page (add it to NAMESPACES)") unless checked.include?(name) || UNDOCUMENTED.include?(name)
+end
+
 TYPES.each() do |entry|
   compare(entry[0], native_members(source, entry[1]).concat(prelude_methods(ROOT, entry[2])), problems, false)
 end
@@ -225,5 +237,5 @@ CLASSES.each() do |entry|
 end
 
 problems.each() do |problem| warn(problem) end
-puts("builtin API docs: #{TYPES.length() + CLASSES.length() + NAMESPACES.length()} pages checked, #{problems.length()} problems")
+puts("builtin API docs: #{TYPES.length() + CLASSES.length() + NAMESPACES.length()} entries checked, #{problems.length()} problems")
 exit(problems.length() == 0 ? 0 : 1)
