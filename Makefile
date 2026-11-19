@@ -1074,7 +1074,7 @@ test-task-board: $(TARGET)
 # must hold and every block must parse -- see tools/check_doc_examples.d6.
 # The taken-down cuts are not published, so their READMEs are left out.
 DOC_CHECK_UNPUBLISHED := active_auth active_discussion active_karma active_social active_tagging dials
-DOC_CHECK_FILES := $(wildcard docs/*.md) $(wildcard docs/guide/*.md) README.md $(filter-out $(patsubst %,packages/%/README.md,$(DOC_CHECK_UNPUBLISHED)),$(wildcard packages/*/README.md))
+DOC_CHECK_FILES := $(wildcard docs/*.md) $(wildcard docs/guide/*.md) $(wildcard docs/api/*.md) README.md $(filter-out $(patsubst %,packages/%/README.md,$(DOC_CHECK_UNPUBLISHED)),$(wildcard packages/*/README.md))
 test-docs: $(TARGET)
 	COOKIE_SECRET=doc-check-secret-0123456789abcdef $(BUILD_DIR)/diamond tools/check_doc_examples.d6 $(DOC_CHECK_FILES)
 

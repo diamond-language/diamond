@@ -1,0 +1,104 @@
+# Check that the builtin API pages (docs/api/) cover every method the built-in
+# value types answer, and document nothing they do not.
+#
+#   build/diamond tools/check_builtin_api_docs.d6 [ROOT]
+#
+# A type's methods come from two places: the VM's native member list for it in
+# src/vm_types.c (NATIVE_MEMBERS_STRING and so on, the list editor completion
+# uses and tests/lsp_test.sh calls on real values), and the prelude extension
+# functions in lib/ named `TYPE_name` or `diamond_TYPE_name`, which the VM
+# finds when a value has no native method of that name. A page documents a
+# method with a `### `name(...)` heading. A trailing `?` or `!` is left out of
+# extension function names, so names are compared without it.
+#
+# The examples on the pages are run by `make test-docs`; this checks coverage.
+
+ROOT = ARGV.length() > 0 ? ARGV[0] : "."
+
+# page, native list, prelude prefixes
+TYPES = [
+  ["string.md", "NATIVE_MEMBERS_STRING", ["string"]],
+  ["array.md", "NATIVE_MEMBERS_ARRAY", ["array"]],
+  ["hash.md", "NATIVE_MEMBERS_HASH", ["hash"]],
+  ["int.md", "NATIVE_MEMBERS_INT", ["integer", "numeric"]],
+  ["float.md", "NATIVE_MEMBERS_FLOAT", ["float", "numeric"]]
+]
+
+# Prelude functions with a type prefix that are not methods: helpers called
+# with extra leading arguments, typed variants the compiler picks, and the
+# operator bridges (documented in each page's Operators table).
+INTERNAL = {
+  "array": ["each_until", "map_int", "map_string", "map_typed", "swap_first_two", "membership",
+            "member", "op_minus", "op_and", "op_or", "op_times"],
+  "hash": ["each_until", "call_pair"],
+  "string": ["op_times", "split_extended"],
+  "integer": [],
+  "numeric": [],
+  "float": []
+}
+
+HEADING = Regexp.new("^### `([a-z_][a-z0-9_]*[?!]?)")
+DEFINITION = Regexp.new("^def (diamond_)?([a-z]+)_([a-z0-9_]+[?!]?)[(\\[ ]")
+
+def base(name: String) -> String
+  name.end_with?("?") || name.end_with?("!") ? name.slice(0, name.length() - 1) : name
+end
+
+# The quoted names in `static const char *const LIST[]={ ... };`.
+def native_members(source: String, list: String) -> Array
+  start = source.index_of("#{list}[]={")
+  raise "#{list} not found in src/vm_types.c" if start == nil
+  body = source.slice(start, source.length() - start)
+  body = body.slice(0, body.index_of("};"))
+  body.scan(Regexp.new("\"([^\"]+)\"")).map() do |groups| groups[0] end
+end
+
+def prelude_files(root: String) -> Array
+  files = ["#{root}/lib/core.d6"]
+  Dir.entries("#{root}/lib/core").sort().each() do |entry|
+    files.push("#{root}/lib/core/#{entry}") if entry.end_with?(".d6")
+  end
+  files
+end
+
+def prelude_methods(root: String, prefixes: Array) -> Array
+  names = []
+  prelude_files(root).each() do |path|
+    File.read(path).split("\n").each() do |line|
+      m = DEFINITION.match(line)
+      next if m == nil
+      next unless prefixes.include?(m[2])
+      next if INTERNAL[m[2]].include?(base(m[3]))
+      names.push(m[3])
+    end
+  end
+  names
+end
+
+def documented(path: String) -> Array
+  return [] unless File.exist?(path)
+  File.read(path).split("\n").map() do |line|
+    m = HEADING.match(line)
+    m == nil ? nil : m[1]
+  end.compact()
+end
+
+source = File.read("#{ROOT}/src/vm_types.c")
+problems = []
+TYPES.each() do |entry|
+  page = "#{ROOT}/docs/api/#{entry[0]}"
+  implemented = native_members(source, entry[1]).concat(prelude_methods(ROOT, entry[2]))
+  have = implemented.map() do |name| base(name) end.uniq()
+  documented_names = documented(page)
+  docs = documented_names.map() do |name| base(name) end.uniq()
+  have.sort().each() do |name|
+    problems.push("docs/api/#{entry[0]}: no entry for #{name}") unless docs.include?(name)
+  end
+  documented_names.uniq().each() do |name|
+    problems.push("docs/api/#{entry[0]}: #{name} is documented but not implemented") unless have.include?(base(name))
+  end
+end
+
+problems.each() do |problem| warn(problem) end
+puts("builtin API docs: #{TYPES.length()} types checked, #{problems.length()} problems")
+exit(problems.length() == 0 ? 0 : 1)

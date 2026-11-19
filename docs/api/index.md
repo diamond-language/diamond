@@ -1,0 +1,12 @@
+# Builtin API reference
+
+One page per built-in type, listing every method with its signature, what it
+returns and an example. Every example on these pages runs in CI, and a check
+fails the build when a method the runtime implements has no entry here.
+
+The [language reference](../syntax.md) explains the rules these methods follow
+(typing, blocks, errors); this part lists them.
+
+## Values
+
+- [String](string.md)
