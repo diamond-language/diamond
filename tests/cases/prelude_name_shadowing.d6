@@ -1,0 +1,26 @@
+# A program's own definitions win over prelude classes and modules of the same
+# name, so code written before a core name existed keeps compiling when a 1.x
+# release adds it (docs/compatibility.md). MatchData joined the prelude in 1.2.
+# Here the program reopens the prelude's class and module with its own
+# methods; prelude_type_name_shadowing.d6 covers declaring another kind.
+class MatchData
+  def initialize(x: Int)
+    @x = x
+  end
+  def x() = @x
+  def size() = 99
+  def self.make() = MatchData.new(7)
+end
+p(MatchData.new(3).x())
+p(MatchData.make().size())
+p(MatchData.new(1).respond_to?(:pre_match))
+
+module Math
+  def self.sqrt(x) = "own sqrt #{x}"
+end
+p(Math.sqrt(4))
+p(Math.hypot(3, 4))
+
+# Threads copy the program, redefinitions included.
+def in_thread() = MatchData.new(11).x()
+p(Thread.new(in_thread).join())

@@ -475,6 +475,8 @@ static void compile_module_function(Compiler *compiler) {
          * unclaimed carried-over entry can safely skip straight to
          * refreshing it in place instead of reporting it as a spurious
          * duplicate of itself. */
+        hide_prelude_methods(module->singleton_methods,module->singleton_method_count,
+            prelude_module_method_count(compiler,compiler->current_module,true),source->name);
         const bool claiming=!compiler->discovery_pass&&
             module->next_singleton_claim<module->singleton_method_count;
         if(!claiming) {
@@ -1293,6 +1295,8 @@ static bool parse_generic_parent_arguments(Compiler *compiler,DiamondClass *clas
 static void refresh_struct_subclass_methods(Compiler *compiler,DiamondClass *class,
         int index,DiamondSpan name);
 
+static void release_prelude_type_name(Compiler *compiler,const char *stored_name,bool rename_class);
+
 uint16_t compile_class(Compiler *compiler) {
     const bool this_declaration_sealed=compiler->current.kind==DIAMOND_TOKEN_SEALED;
     advance_token(compiler);
@@ -1309,6 +1313,7 @@ uint16_t compile_class(Compiler *compiler) {
     if(!declaration_name(compiler,stored_name,sizeof stored_name,name)) {
         fail(compiler,name,"class name is too long"); return 0;
     }
+    release_prelude_type_name(compiler,stored_name,false);
     const int existing_class=find_class_name(compiler,stored_name);
     /* A class can always be reopened -- see compile_module's identical
      * comment. Only a cross-kind collision stays a hard error. */
@@ -1650,6 +1655,35 @@ static void register_struct_method(Compiler *compiler,DiamondClass *class,
     (void)snprintf(method->name,sizeof method->name,"%s",method_name);
     method->function_index=function_index;
     method->arity=caller_arity;method->required_arity=caller_arity;
+}
+
+/* A program that declares a type under a name the prelude uses for another
+ * kind -- core `class MatchData`, the program's own `module MatchData` or
+ * `struct MatchData(...)` -- gets the name. 1.x may add core classes and
+ * modules (docs/compatibility.md), and a program that already had one by that
+ * name must keep compiling. The prelude entry is renamed to "Name (core)",
+ * which source cannot spell; prelude code reaches it by index, so it keeps
+ * working. A same-kind `class`/`module` reopens the prelude entry instead
+ * (hide_prelude_methods). Renames the prelude class when `rename_class`, the
+ * prelude module otherwise. */
+static void release_prelude_type_name(Compiler *compiler,const char *stored_name,
+        bool rename_class) {
+    const DiamondProgram *prelude=compiler->prelude;
+    if(prelude==nullptr)return;
+    char *target=nullptr;
+    if(rename_class) {
+        const int index=find_class_name(compiler,stored_name);
+        if(index>=0&&(size_t)index<prelude->class_count)
+            target=compiler->program->classes[(size_t)index]->name;
+    } else {
+        const int index=find_module_name(compiler,stored_name);
+        if(index>=0&&(size_t)index<prelude->module_count)
+            target=compiler->program->modules[(size_t)index]->name;
+    }
+    if(target==nullptr)return;
+    char renamed[DIAMOND_MAX_FUNCTION_NAME];
+    snprintf(renamed,sizeof renamed,"%.*s (core)",(int)(sizeof renamed-sizeof " (core)"),stored_name);
+    memcpy(target,renamed,sizeof renamed);
 }
 
 /* Registers the struct's class (or claims the slot discovery reserved for
@@ -2168,6 +2202,8 @@ uint16_t compile_struct(Compiler *compiler) {
     if(!declaration_name(compiler,stored_name,sizeof stored_name,name)) {
         fail(compiler,name,"struct name is too long");return 0;
     }
+    release_prelude_type_name(compiler,stored_name,true);
+    release_prelude_type_name(compiler,stored_name,false);
     if(find_interface_name(compiler,stored_name)>=0||
        find_module_name(compiler,stored_name)>=0) {
         fail(compiler,name,"type name is already defined");return 0;
@@ -2605,6 +2641,7 @@ bool top_level_function_declared(Compiler *compiler,DiamondSpan name) {
  * pass (see the reopen and reset comments below). Returns nullptr on error. */
 static DiamondModule *declare_module(Compiler *compiler,DiamondSpan name,
         const char *stored_name,int *index_out) {
+    release_prelude_type_name(compiler,stored_name,true);
     const int existing_module=find_module_name(compiler,stored_name);
     /* A module can always be reopened -- a second `module Foo ... end`
      * adds to the same module rather than erroring (see docs/syntax.md's

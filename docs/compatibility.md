@@ -15,6 +15,13 @@ Source that compiles and runs on 1.x compiles and runs, with the same results,
 on later 1.x releases. Later releases may add syntax, core methods, classes,
 modules, cuts and command-line options.
 
+A program's own definitions win over names a later release adds. A program
+that defines a class or module with the same name as a new core one reopens
+it, and its methods replace core methods of the same name. A program that
+declares another kind of type under that name (a `struct` or `module` where
+core has a `class`) gets the name outright, and the core type stays out of its
+way.
+
 These are not covered:
 
 - **Bugs.** A fix may change behavior that contradicted this documentation, or

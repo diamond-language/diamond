@@ -400,6 +400,10 @@ typedef struct Compiler {
     /* Editor-only refinement uses a previous completed compile's return
      * facts for forward callees, never its bytecode or checked contracts. */
     const DiamondProgram *tooling_returns;
+    /* The prelude program this one was seeded from (nullptr when compiling the
+     * prelude itself): its classes and modules occupy the first indices, and
+     * their first method entries are its own. See hide_prelude_methods. */
+    const DiamondProgram *prelude;
     ToolingDependencies *tooling_forward_calls;
     ImplicitBegins *implicit_begins;
     /* Shared by both passes (see BlockCaptureUse). capture_record is the
@@ -774,6 +778,9 @@ DIAMOND_INTERNAL bool name_equals(const Compiler *compiler, const char *candidat
 DIAMOND_INTERNAL DiamondFunction *compiler_add_function(Compiler *compiler,
                                                size_t *function_index);
 DIAMOND_INTERNAL int find_class(const Compiler *compiler, DiamondSpan name);
+DIAMOND_INTERNAL size_t prelude_class_method_count(const Compiler *compiler,int class_index,bool singleton);
+DIAMOND_INTERNAL size_t prelude_module_method_count(const Compiler *compiler,int module_index,bool singleton);
+DIAMOND_INTERNAL void hide_prelude_methods(DiamondMethod *methods,size_t count,size_t prelude_count,const char *name);
 DIAMOND_INTERNAL int find_interface(const Compiler *compiler,DiamondSpan name);
 DIAMOND_INTERNAL int find_module(const Compiler *compiler,DiamondSpan name);
 DIAMOND_INTERNAL int find_class_name(const Compiler *compiler,const char *name);

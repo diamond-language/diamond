@@ -1015,6 +1015,11 @@ typedef struct DiamondMethod {
      * arguments before entering the function. */
     const DiamondValue *bound_values;
     uint8_t bound_value_count;
+    /* Declared by the prelude, before ProgramBuilder#mark_prelude (the
+     * self-hosted compiler builds prelude and program in one builder). A
+     * program definition of the same name replaces such an entry instead of
+     * colliding with it, as hide_prelude_methods does for diamond_compile. */
+    bool from_prelude;
 } DiamondMethod;
 
 typedef struct DiamondInterfaceMethod {
