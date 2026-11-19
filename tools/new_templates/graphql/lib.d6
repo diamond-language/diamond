@@ -1,0 +1,108 @@
+# {{name}}: a GraphQL API. lib/schema.graphql says what it serves; the resolver
+# classes here compute the fields that need code. POST /graphql runs a query,
+# GET /schema.graphql shows the schema.
+require_cut "graphql"
+require_cut "rack"
+
+# A note. Its id and text fields resolve by themselves: GraphQL::App calls a
+# value's zero-argument method of the field's name, and an Int ID comes out as
+# a String.
+struct Note(id: Int, text: String)
+end
+
+# The notes, kept in memory. Each gremlin worker has its own context, so with
+# more than one worker each would keep its own list; keep data in a database
+# once it matters.
+class NoteStore
+  def initialize()
+    @notes = []
+  end
+
+  def all() = @notes
+
+  def find(id: Int) = @notes.find() do |note| note.id() == id end
+
+  def add(text: String)
+    note = Note.new(@notes.length() + 1, text)
+    @notes.push(note)
+    note
+  end
+end
+
+# One method per Query field, named after it in snake_case and called as
+# (object, args, context).
+class QueryResolvers
+  def hello(_, args, context) = "Hello, #{args["name"]}!"
+  def notes(_, args, context) = context["notes"].all()
+  def note(_, args, context) = context["notes"].find(args["id"].to_i())
+end
+
+class MutationResolvers
+  def add_note(_, args, context)
+    text = args["text"].strip()
+    if text == "" then GraphQL::Fail.signal("BAD_USER_INPUT", "a note needs some text") end
+    context["notes"].add(text)
+  end
+end
+
+class {{Name}}
+  SCHEMA_TEXT = File.embed("schema.graphql")
+
+  # build() raises one error listing every field that has no way to resolve.
+  def self.schema()
+    GraphQL::App.new(SCHEMA_TEXT)
+      .resolvers("Query", QueryResolvers.new())
+      .resolvers("Mutation", MutationResolvers.new())
+      .build()
+  end
+
+  def self.json(status, value) = [status, {"Content-Type": "application/json"}, JSON.stringify(value)]
+
+  def self.bad_request(message)
+    {{Name}}.json(400, {"errors": [{"message": message, "extensions": {"code": "BAD_REQUEST"}}]})
+  end
+
+  # Runs one request body, {"query": ..., "variables": ..., "operationName": ...}.
+  # Every error in the result carries a code, so a client can branch on
+  # extensions.code and never on the message text.
+  def self.execute(body, context)
+    payload = nil
+    begin
+      payload = JSON.parse(body)
+    rescue JSONError
+      return {{Name}}.bad_request("the body must be JSON")
+    end
+    if !(payload.is_a?(Hash)) || !(payload["query"].is_a?(String))
+      return {{Name}}.bad_request("the body needs a \"query\" string")
+    end
+    variables = payload["variables"].is_a?(Hash) ? payload["variables"] : {}
+    context["schema"] ||= {{Name}}.schema()
+    context["notes"] ||= NoteStore.new()
+    result = context["schema"].execute(payload["query"], variables, context, nil, payload["operationName"])
+    {{Name}}.json(200, GraphQL::Fail.annotate(result))
+  end
+
+  def self.route(request, context)
+    method = request["method"]
+    path = request["path"]
+    if path == "/graphql" && method == "POST"
+      {{Name}}.execute(request["body"], context)
+    elsif path == "/graphql"
+      [405, {"Allow": "POST", "Content-Type": "text/plain; charset=utf-8"}, "POST a JSON query to /graphql\n"]
+    elsif method == "GET" && path == "/schema.graphql"
+      [200, {"Content-Type": "text/plain; charset=utf-8"}, SCHEMA_TEXT]
+    elsif method == "GET" && path == "/health"
+      [200, {"Content-Type": "application/json"}, "{\"status\": \"ok\"}\n"]
+    else
+      [404, {"Content-Type": "text/plain; charset=utf-8"}, "Not found\n"]
+    end
+  end
+
+  # Middleware runs in the order listed, outermost first. SecurityHeaders
+  # adds nosniff, frame and referrer headers the route did not set.
+  def self.build_chain() = rack_compose([SecurityHeaders.call], {{Name}}.route)
+
+  # The handler gremlin calls. Each gremlin worker runs in its own VM, so
+  # RackChain builds the chain once per worker.
+  def self.call(request, context) = rack_run_chain(RackChain.get({{Name}}.build_chain), 0, request, context)
+end

@@ -1,0 +1,20 @@
+# The API {{name}} serves. lib/{{name}}.d6 compiles this file in with File.embed and binds
+# a resolver method to each field that needs one; the rest read the value's own fields.
+type Query {
+  "A greeting, to check that the server answers."
+  hello(name: String = "world"): String!
+  "Every note, oldest first."
+  notes: [Note!]!
+  "One note, or null when there is no note with that id."
+  note(id: ID!): Note
+}
+
+type Mutation {
+  "Adds a note. Empty text is refused with the code BAD_USER_INPUT."
+  addNote(text: String!): Note!
+}
+
+type Note {
+  id: ID!
+  text: String!
+}

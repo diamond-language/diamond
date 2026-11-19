@@ -1,0 +1,10 @@
+# Starts the GraphQL server. PORT and HOST come from the environment; the
+# default host 127.0.0.1 keeps the server private until it sits behind a
+# reverse proxy or HOST says otherwise.
+require_cut "gremlin"
+require "lib/{{name}}"
+
+port = ENV["PORT"] == nil ? 8080 : ENV["PORT"].to_i()
+host = ENV["HOST"] == nil ? "127.0.0.1" : ENV["HOST"]
+puts("{{name}} serving GraphQL at http://#{host}:#{port}/graphql")
+gremlin_serve(port, {{Name}}.call, host: host)

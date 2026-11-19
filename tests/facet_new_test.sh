@@ -44,7 +44,7 @@ export GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null HOME="$work"
 cd "$work"
 
 # --- every kind generates a project whose tests pass ---
-for kind in cli web tcp udp lib; do
+for kind in cli web graphql tcp udp lib; do
     "$facet" new "$kind" "demo_$kind" >/dev/null || fail "facet new $kind"
     [[ -f "demo_$kind/lib/demo_$kind.d6" && -f "demo_$kind/test/demo_${kind}_test.d6" ]] ||
         fail "$kind: missing lib or test file"
@@ -79,6 +79,17 @@ wait_for_tcp "$port" || fail "web server did not start"
 [[ "$(curl -s --max-time 5 "http://127.0.0.1:$port/")" == "Hello from demo_web!" ]] || fail "web GET /"
 [[ "$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 "http://127.0.0.1:$port/nope")" == 404 ]] ||
     fail "web 404"
+stop_server
+ok
+
+port="$(free_port)"
+(builtin cd demo_graphql && PORT="$port" exec "$diamond" main.d6 >/dev/null 2>&1) &
+server_pid=$!
+wait_for_tcp "$port" || fail "graphql server did not start"
+reply="$(curl -s --max-time 5 "http://127.0.0.1:$port/graphql" -d '{"query": "{ hello(name: \"d6\") }"}')"
+[[ "$reply" == '{"data":{"hello":"Hello, d6!"}}' ]] || fail "graphql POST /graphql: $reply"
+curl -s --max-time 5 "http://127.0.0.1:$port/schema.graphql" | grep -q '^type Note {' ||
+    fail "graphql GET /schema.graphql"
 stop_server
 ok
 
@@ -141,6 +152,9 @@ refuses 65 "already exists" new cli demo_cli
 refuses 73 "cannot create" new cli missing_parent/app
 refuses 64 "module Rack" new web rack
 refuses 64 "module SecurityHeaders" new web security_headers
+refuses 64 "already uses" new graphql graphql
+refuses 64 "module GraphQL" new graphql graph_q_l
+refuses 64 "module Note" new graphql note
 [[ ! -e app && ! -e missing_parent ]] || fail "a refused command left files behind"
 "$facet" new web trailing_slash/ >/dev/null && [[ -f trailing_slash/lib/trailing_slash.d6 ]] ||
     fail "a trailing slash on the path"
@@ -163,7 +177,7 @@ names+=" $(grep -oE '\]=\{"[A-Z][A-Za-z0-9]*"' "$root/src/compiler_program.c" | 
 names+=" $(grep -hoE '^\s*(class|module|struct) [A-Z][A-Za-z0-9]*' "$root"/lib/core.d6 "$root"/lib/core/*.d6 "$root/lib/minitest.d6" | awk '{print $2}')"
 count=0
 for name in $names; do
-    for kind in cli web tcp udp lib; do check_reserved "$kind" "$name"; done
+    for kind in cli web graphql tcp udp lib; do check_reserved "$kind" "$name"; done
     count=$((count + 1))
 done
 [[ "$count" -gt 50 ]] || fail "reserved-name extraction found only $count names"
@@ -180,6 +194,27 @@ for dep in $web_deps; do
         check_reserved web "$name"
     done
 done
+
+# A graphql project reserves what a web one does, plus the graphql cut and the classes its
+# template defines next to the project's own.
+graphql_deps="$web_deps graphql"
+for dep in $graphql_deps; do
+    refuses 64 "already uses" new graphql "$dep"
+    for transitive in $(client deps "$root/packages/$dep/Cutfile"); do
+        [[ " $graphql_deps " == *" $transitive "* ]] ||
+            fail "graphql dependency $dep needs $transitive, which is not reserved"
+    done
+    # Only top-level names can collide: graphql nests its classes in `module GraphQL`, so a
+    # project named `app` may define `App` beside `GraphQL::App`.
+    pattern='^\s*(class|module|struct) [A-Z][A-Za-z0-9]*'
+    [[ "$dep" == graphql ]] && pattern='^(class|module|struct) [A-Z][A-Za-z0-9]*'
+    for name in $(grep -rhoE "$pattern" "$root/packages/$dep/lib" | awk '{print $2}' | sort -u); do
+        check_reserved graphql "$name"
+    done
+done
+for name in $(grep -oE '^(class|module|struct) [A-Z][A-Za-z0-9]*' "$root/tools/new_templates/graphql/lib.d6" | awk '{print $2}'); do
+    check_reserved graphql "$name"
+done
 ok
 
 # --- the templates' constraints accept the versions in packages/ ---
@@ -191,9 +226,11 @@ while read -r name wanted; do
     [[ "$(printf '%s\n%s\n' "$wanted" "$have" | sort -V | head -1)" == "$wanted" ]] ||
         fail "a template wants $name ^$wanted, packages/ has older $have"
 done < <(sed -nE 's/^ *"([a-z_0-9]+)": \{"registry": "[^"]*", "version": "\^([0-9.]+)"\}.*/\1 \2/p' \
-    "$root/tools/new_templates/web/Cutfile" "$root/tools/new_templates/common/Cutfile.dev")
-[[ "$(cat "$root/tools/new_templates/web/Cutfile" "$root/tools/new_templates/common/Cutfile.dev" |
-    grep -c '"version": "^')" == 3 ]] || fail "template dependency lines did not parse"
+    "$root/tools/new_templates/web/Cutfile" "$root/tools/new_templates/graphql/Cutfile" \
+    "$root/tools/new_templates/common/Cutfile.dev")
+[[ "$(cat "$root/tools/new_templates/web/Cutfile" "$root/tools/new_templates/graphql/Cutfile" \
+    "$root/tools/new_templates/common/Cutfile.dev" | grep -c '"version": "^')" == 6 ]] ||
+    fail "template dependency lines did not parse"
 ok
 
 echo "facet new tests passed ($pass checks)"
