@@ -26,3 +26,8 @@ The [language reference](../syntax.md) explains the rules these methods follow
 - [StringBuilder](string_builder.md)
 - [Math](math.md)
 - [JSON](json.md)
+
+## Files and the system
+
+- [File](file.md)
+- [Dir](dir.md)

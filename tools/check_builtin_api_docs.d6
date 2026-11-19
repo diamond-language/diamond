@@ -140,8 +140,46 @@ CLASSES = [
   ["json.md", "JSON", []]
 ]
 
+# The function names a native namespace's compiler parser accepts
+# (`File.read` and so on): the `name_equals(compiler,"name",...)` tests in the
+# body of the parser function in src/compiler_builtins.c.
+def namespace_functions(builtins: String, parser: String) -> Array
+  start = builtins.index_of("\nuint16_t #{parser}(Compiler *compiler")
+  raise "#{parser} not found in src/compiler_builtins.c" if start == nil
+  body = builtins.slice(start + 1, builtins.length() - start - 1)
+  body = body.slice(0, body.index_of("\n}\n"))
+  body.scan(Regexp.new("name_equals\\(compiler,\"([a-z_][a-z0-9_]*[?!]?)\"")).map() do |groups| groups[0] end.uniq()
+end
+
+# The `### `Name.function(...)` headings on a page.
+def documented_functions(path: String, name: String) -> Array
+  return [] unless File.exist?(path)
+  heading = Regexp.new("^### `#{name}\\.([a-z_][a-z0-9_]*[?!]?)")
+  File.read(path).split("\n").map() do |line|
+    m = heading.match(line)
+    m == nil ? nil : m[1]
+  end.compact()
+end
+
+# page, namespace, its parser in src/compiler_builtins.c
+NAMESPACES = [
+  ["file.md", "File", "parse_file_call"],
+  ["dir.md", "Dir", "parse_dir_entries_call"]
+]
+
 source = File.read("#{ROOT}/src/vm_types.c")
+builtins = File.read("#{ROOT}/src/compiler_builtins.c")
 problems = []
+NAMESPACES.each() do |entry|
+  have = namespace_functions(builtins, entry[2])
+  docs = documented_functions("#{ROOT}/docs/api/#{entry[0]}", entry[1])
+  have.each() do |name|
+    problems.push("docs/api/#{entry[0]}: no entry for #{entry[1]}.#{name}") unless docs.include?(name)
+  end
+  docs.uniq().each() do |name|
+    problems.push("docs/api/#{entry[0]}: #{entry[1]}.#{name} is documented but not implemented") unless have.include?(name)
+  end
+end
 TYPES.each() do |entry|
   compare(entry[0], native_members(source, entry[1]).concat(prelude_methods(ROOT, entry[2])), problems)
 end
@@ -150,5 +188,5 @@ CLASSES.each() do |entry|
 end
 
 problems.each() do |problem| warn(problem) end
-puts("builtin API docs: #{TYPES.length() + CLASSES.length()} pages checked, #{problems.length()} problems")
+puts("builtin API docs: #{TYPES.length() + CLASSES.length() + NAMESPACES.length()} pages checked, #{problems.length()} problems")
 exit(problems.length() == 0 ? 0 : 1)
