@@ -47,6 +47,10 @@ record. From 1.0.0, releases follow the [1.x compatibility policy](docs/compatib
 - mjolnir 0.4.3: a `:bool` field read back from SQLite or MySQL reached the builder as 0 or 1, so
   a struct field declared `Bool` raised `TypeError` on every read. It now arrives as `false` or
   `true`; schemas without `:bool` fields skip the conversion.
+- `HEAD` works: gremlin 0.5.6 and http 0.2.6 never send a body in the response to `HEAD` (they
+  sent whatever the handler returned), and rack 0.2.5's `HeadAsGet` middleware runs `HEAD` through
+  GET routes with `request["head"]` set. Before, most apps answered `HEAD` with 404. `facet new web`
+  puts `HeadAsGet` in the generated chain.
 
 ## 1.1.0 — 2026-11-18
 

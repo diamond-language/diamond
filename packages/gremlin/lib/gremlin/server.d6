@@ -126,7 +126,9 @@ def gremlin_worker(port, handler, tick_interval = nil, on_tick = nil, limits = n
         # compatible meaning, not a reinterpretation of anything that
         # used to mean something else.
         unless response == nil
-          http_write_response(conn, response)
+          # A HEAD response never carries a body, whatever the handler returned
+          # (rack's HeadAsGet runs HEAD through GET routes).
+          http_write_response(conn, response, request["method"] != "HEAD")
         end
       end
       conn.close()

@@ -1,0 +1,17 @@
+# HeadAsGet: a middleware that runs a HEAD request through the app as a GET,
+# so every GET route answers HEAD too. The handler sees `request["head"]` set
+# and can skip work. The response comes back with its body; the request's
+# method is HEAD again by then, so gremlin and http_serve send the GET's headers
+# and Content-Length and leave the body out.
+class HeadAsGet
+  ## Middleware: a HEAD request reaches the rest of the chain as a GET with
+  ## `request["head"]` set. The server then sends the response without its body.
+  def self.call(request, context, forward)
+    return forward(request, context) unless request["method"] == "HEAD"
+    request["method"] = "GET"
+    request["head"] = true
+    response = forward(request, context)
+    request["method"] = "HEAD"
+    response
+  end
+end

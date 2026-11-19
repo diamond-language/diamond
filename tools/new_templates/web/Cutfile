@@ -2,6 +2,6 @@
   "name": "{{name}}",
   "dependencies": {
     "gremlin": {"registry": "https://cuts.rolld6.codes", "version": "^0.5.1"},
-    "rack": {"registry": "https://cuts.rolld6.codes", "version": "^0.2.0"}
+    "rack": {"registry": "https://cuts.rolld6.codes", "version": "^0.2.5"}
   }
 }
