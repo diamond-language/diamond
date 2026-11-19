@@ -1,6 +1,6 @@
 # Networking
 
-[API reference](index.md) · Previous: [Supervisor](supervisor.md)
+[API reference](index.md) · Previous: [Supervisor](supervisor.md) · Next: [Databases](database.md)
 
 TCP, TLS and UDP sockets, plus DNS lookups. Everything here needs the
 `network` sandbox capability. [Networking and signals](../networking.md)

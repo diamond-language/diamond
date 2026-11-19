@@ -185,7 +185,10 @@ NAMESPACES = [
   ["network.md", "TLSSocket", "parse_tls_connect_call"],
   ["network.md", "TLSServer", "parse_tls_listen_call"],
   ["network.md", "UDPSocket", "parse_udp_socket_call", [], ["host"]],
-  ["network.md", "DNS", "parse_dns_resolve_call"]
+  ["network.md", "DNS", "parse_dns_resolve_call"],
+  ["database.md", "SQLite3", "parse_sqlite3_open_call"],
+  ["database.md", "PostgreSQL", "parse_postgres_open_call"],
+  ["database.md", "MySQL", "parse_mysql_open_call"]
 ]
 
 source = File.read("#{ROOT}/src/vm_types.c")

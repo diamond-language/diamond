@@ -45,3 +45,4 @@ The [language reference](../syntax.md) explains the rules these methods follow
 ## Networking
 
 - [TCP, TLS, UDP and DNS](network.md)
+- [SQLite3, PostgreSQL and MySQL](database.md)

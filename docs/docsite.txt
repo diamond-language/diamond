@@ -57,6 +57,7 @@ api/thread.md
 api/channel.md
 api/supervisor.md
 api/network.md
+api/database.md
 
 == Reference: the language
 syntax.md
