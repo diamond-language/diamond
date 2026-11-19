@@ -68,40 +68,6 @@ typedef struct EnclosingScope {
     int32_t *heap_tooling_type_sets;
 } EnclosingScope;
 
-/* A program's own method replaces a prelude one of the same name in a class
- * or module it reopens. 1.x may add core classes, modules and methods
- * (docs/compatibility.md), so a program that already used one of those names
- * for its own definitions must keep compiling and keep its meaning: a
- * program's `class MatchData ... def initialize(x)` written before MatchData
- * joined the prelude. The prelude entry's name is blanked, so dispatch,
- * respond_to? and the duplicate checks see only the program's method; prelude
- * code that calls the name by name gets the program's version, as a
- * redefinition would. A prelude entry is one of the first `prelude_count`. */
-void hide_prelude_methods(DiamondMethod *methods,size_t count,size_t prelude_count,
-        const char *name) {
-    if(prelude_count>count)prelude_count=count;
-    for(size_t index=0;index<prelude_count;index++)
-        if(!methods[index].included&&strcmp(methods[index].name,name)==0)
-            methods[index].name[0]='\0';
-}
-
-/* How many leading method (or singleton method) entries of a class or module
- * came from the prelude: the prelude's classes and modules are copied into
- * every program first, at the same indices (seed_program_from_template). */
-size_t prelude_class_method_count(const Compiler *compiler,int class_index,bool singleton) {
-    const DiamondProgram *prelude=compiler->prelude;
-    if(prelude==nullptr||class_index<0||(size_t)class_index>=prelude->class_count)return 0;
-    const DiamondClass *class=prelude->classes[(size_t)class_index];
-    return singleton?class->singleton_method_count:class->method_count;
-}
-
-size_t prelude_module_method_count(const Compiler *compiler,int module_index,bool singleton) {
-    const DiamondProgram *prelude=compiler->prelude;
-    if(prelude==nullptr||module_index<0||(size_t)module_index>=prelude->module_count)return 0;
-    const DiamondModule *module=prelude->modules[(size_t)module_index];
-    return singleton?module->singleton_method_count:module->method_count;
-}
-
 /* False (after reporting the error) when the register facts cannot be saved. */
 static bool enclosing_scope_save(Compiler *compiler,EnclosingScope *scope) {
     /* A nested block or def captures every local of this scope by
@@ -792,8 +758,6 @@ static void register_definition_method(Compiler *compiler,DiamondFunction *funct
     if(compiler->current_class>=0&&!module_singleton&&
        !compiler->failed&&at_top_level) {
         DiamondClass *class = compiler->program->classes[(size_t)compiler->current_class];
-        hide_prelude_methods(class->methods,class->method_count,
-            prelude_class_method_count(compiler,compiler->current_class,false),function->name);
         bool duplicate=false;
         size_t duplicate_index=0;
         for(size_t existing=0;existing<class->method_count;existing++)
@@ -845,8 +809,6 @@ static void register_definition_method(Compiler *compiler,DiamondFunction *funct
             compiler->program->classes[(size_t)compiler->current_class];
         DiamondMethod *prescanned=nullptr;
         bool duplicate=false;
-        hide_prelude_methods(class->singleton_methods,class->singleton_method_count,
-            prelude_class_method_count(compiler,compiler->current_class,true),function->name);
         for(size_t existing=0;existing<class->singleton_method_count;existing++) {
             DiamondMethod *method=&class->singleton_methods[existing];
             if(strcmp(method->name,function->name)!=0)continue;
@@ -882,11 +844,6 @@ static void register_definition_method(Compiler *compiler,DiamondFunction *funct
               !compiler->failed&&at_top_level) {
         DiamondModule *module=
             compiler->program->modules[(size_t)compiler->current_module];
-        hide_prelude_methods(module->methods,module->method_count,
-            prelude_module_method_count(compiler,compiler->current_module,false),function->name);
-        if(compiler->module_function_mode)
-            hide_prelude_methods(module->singleton_methods,module->singleton_method_count,
-                prelude_module_method_count(compiler,compiler->current_module,true),function->name);
         for(size_t existing=0;existing<module->method_count;existing++)
             if(!module->methods[existing].included&&
                strcmp(module->methods[existing].name,function->name)==0) {
@@ -947,8 +904,6 @@ static void register_definition_method(Compiler *compiler,DiamondFunction *funct
          * comment on prescan_singleton_signatures/resolve_pending_
          * singleton_fixups -- identical name-based claiming for a `def
          * self.x` signature that scan already found. */
-        hide_prelude_methods(module->singleton_methods,module->singleton_method_count,
-            prelude_module_method_count(compiler,compiler->current_module,true),function->name);
         size_t prescanned=module->singleton_method_count;
         if(compiler->discovery_pass)
             for(size_t index=0;index<module->singleton_method_count;index++)
@@ -1286,8 +1241,6 @@ static bool register_module_function_early(Compiler *compiler,DiamondFunction *f
          * (emit_pending_singleton_function_index) that only this exact
          * moment -- this def's real function_index finally existing --
          * can resolve. */
-        hide_prelude_methods(early_module->singleton_methods,early_module->singleton_method_count,
-            prelude_module_method_count(compiler,compiler->current_module,true),function->name);
         size_t prescanned=early_module->singleton_method_count;
         if(compiler->discovery_pass)
             for(size_t index=0;index<early_module->singleton_method_count;index++)

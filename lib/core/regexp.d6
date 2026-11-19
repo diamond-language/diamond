@@ -1,7 +1,24 @@
 # Regexp's methods beyond the native match/match?/source/options
 # (src/vm_regexp.c), reached as regexp_* the way String's are string_*, and
 # MatchData, the richer match result. Regexp#match keeps returning an Array.
+def regexp_names(re: Regexp) -> Array
+  names = []
+  re.diamond_group_names().each() do |name|
+    names.push(name) if name != nil && !names.include?(name)
+  end
+  names
+end
 
+def regexp_match_data(re: Regexp, text: String, position: Int = 0) -> MatchData | Nil
+  spans = re.diamond_match_spans(text, position)
+  return nil if spans == nil
+  MatchData.new(re, text, spans, re.diamond_group_names())
+end
+
+def string_match_data(text: String, pattern: Regexp | String, position: Int = 0) -> MatchData | Nil
+  re = pattern is String ? Regexp.new(pattern) : pattern
+  re.match_data(text, position)
+end
 
 # One match: the whole match is group 0 and the capture groups follow. Offsets
 # are byte offsets into the matched String, like String#slice's.
@@ -92,23 +109,4 @@ class MatchData
     raise IndexError.new("undefined group name reference: #{name}") if found == nil
     found
   end
-end
-
-def regexp_names(re: Regexp) -> Array
-  names = []
-  re.diamond_group_names().each() do |name|
-    names.push(name) if name != nil && !names.include?(name)
-  end
-  names
-end
-
-def regexp_match_data(re: Regexp, text: String, position: Int = 0) -> MatchData | Nil
-  spans = re.diamond_match_spans(text, position)
-  return nil if spans == nil
-  MatchData.new(re, text, spans, re.diamond_group_names())
-end
-
-def string_match_data(text: String, pattern: Regexp | String, position: Int = 0) -> MatchData | Nil
-  re = pattern is String ? Regexp.new(pattern) : pattern
-  re.match_data(text, position)
 end

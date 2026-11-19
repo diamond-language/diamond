@@ -1008,8 +1008,7 @@ static bool run_compile_pass(const char *source, DiamondProgram *program,
                              const DiamondProgram *tooling_returns,
                              ToolingDependencies *tooling_forward_calls,
                              ImplicitBegins *implicit_begins,
-                             BlockCaptureUses *capture_uses,
-                             const DiamondProgram *prelude) {
+                             BlockCaptureUses *capture_uses) {
     *diagnostic = (DiamondDiagnostic){};
     Compiler compiler = {
         .source = source,
@@ -1028,7 +1027,6 @@ static bool run_compile_pass(const char *source, DiamondProgram *program,
         .discovery_pass = discovery_pass,
         .next_function_claim = function_claim_start,
         .tooling_returns=tooling_returns,
-        .prelude=prelude,
         .tooling_forward_calls=tooling_forward_calls,
         .implicit_begins=implicit_begins,
         .capture_uses=capture_uses,
@@ -1423,7 +1421,7 @@ bool diamond_compile_impl(const char *source, DiamondProgram *program,
     BlockCaptureUses capture_uses={};
     const bool discovered = run_compile_pass(
         source, discovery, &discovery_diagnostic, /*discovery_pass=*/true,
-        function_claim_start, false,nullptr,nullptr,&implicit_begins,&capture_uses,template);
+        function_claim_start, false,nullptr,nullptr,&implicit_begins,&capture_uses);
     if(trace_compile)clock_gettime(CLOCK_MONOTONIC,&trace_discovery_done);
 
     diamond_program_init(program);
@@ -1482,7 +1480,7 @@ bool diamond_compile_impl(const char *source, DiamondProgram *program,
 
     const bool compiled=run_compile_pass(
         source,program,diagnostic,/*discovery_pass=*/false,function_claim_start,
-        debug_mode,tooling_returns,tooling_forward_calls,&implicit_begins,&capture_uses,template);
+        debug_mode,tooling_returns,tooling_forward_calls,&implicit_begins,&capture_uses);
     free(implicit_begins.offsets);free(capture_uses.items);
     if(compiled)
         for(size_t index=0;index<program->interface_count;index++)

@@ -38,12 +38,6 @@ record. From 1.0.0, releases follow the [1.x compatibility policy](docs/compatib
 - `IO.poll(readables, writables, timeout_ms)` restarted its whole timeout after running a
   trapped signal's handler, so a signal could stretch the wait well past `timeout_ms`. It
   now waits only for the time that is left.
-- A program's own class or module now wins over a core one with the same name, as
-  [compatibility](docs/compatibility.md) promises: a program that defined `class MatchData`
-  (core since this release) failed with "duplicate or excessive method definition", and a
-  `struct` or `module` with a core class's name failed with "type name is already defined".
-  Its methods now replace the core ones, and another kind of type takes the name. The
-  self-hosted compiler does the same.
 - mjolnir 0.4.3: a `:bool` field read back from SQLite or MySQL reached the builder as 0 or 1, so
   a struct field declared `Bool` raised `TypeError` on every read. It now arrives as `false` or
   `true`; schemas without `:bool` fields skip the conversion.

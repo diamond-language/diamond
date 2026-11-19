@@ -31,71 +31,6 @@ DiamondProgramBuilder *allocate_program_builder(DiamondVm *vm) {
     return handle;
 }
 
-/* Blanks the prelude entries called `name`, so a program definition replaces
- * them instead of colliding (see DiamondMethod.from_prelude, and
- * hide_prelude_methods for diamond_compile's equivalent). */
-static void builder_hide_prelude_methods(DiamondMethod *methods,size_t count,
-        const char *name,size_t length) {
-    for(size_t index=0;index<count;index++)
-        if(methods[index].from_prelude&&!methods[index].included&&
-           strlen(methods[index].name)==length&&
-           memcmp(methods[index].name,name,length)==0)
-            methods[index].name[0]='\0';
-}
-
-static void builder_mark_methods(DiamondMethod *methods,size_t count) {
-    for(size_t index=0;index<count;index++)methods[index].from_prelude=true;
-}
-
-/* mark_prelude(): everything declared so far is the prelude's. The
- * self-hosted compiler calls it where the program's own source begins. */
-static DiamondVmStatus program_builder_mark_prelude(DiamondProgramBuilder *builder,
-        DiamondProgram *built,uint8_t argc,DiamondValue *result) {
-    if(argc!=0)return DIAMOND_VM_ARITY_ERROR;
-    for(size_t index=0;index<built->class_count;index++) {
-        DiamondClass *class=built->classes[index];
-        builder_mark_methods(class->methods,class->method_count);
-        builder_mark_methods(class->singleton_methods,class->singleton_method_count);
-    }
-    for(size_t index=0;index<built->module_count;index++) {
-        DiamondModule *module=built->modules[index];
-        builder_mark_methods(module->methods,module->method_count);
-        builder_mark_methods(module->singleton_methods,module->singleton_method_count);
-    }
-    builder->prelude_marked=true;
-    builder->prelude_class_count=built->class_count;
-    builder->prelude_module_count=built->module_count;
-    *result=DIAMOND_NIL;return DIAMOND_VM_OK;
-}
-
-/* rename_prelude_type(is_class, index): renames a prelude class (or module)
- * to "Name (core)" when the program declares another kind of type under its
- * name, as release_prelude_type_name does for diamond_compile. Returns
- * whether it was a prelude type. */
-static DiamondVmStatus program_builder_rename_prelude_type(DiamondProgramBuilder *builder,
-        DiamondProgram *built,DiamondValue *registers,uint16_t base,uint8_t argc,
-        DiamondValue *result) {
-    if(argc!=2)return DIAMOND_VM_ARITY_ERROR;
-    if(registers[base].kind!=DIAMOND_VALUE_BOOL||
-       registers[(size_t)base+1].kind!=DIAMOND_VALUE_INT)return DIAMOND_VM_TYPE_ERROR;
-    const bool is_class=registers[base].as.boolean;
-    const int64_t index=registers[(size_t)base+1].as.integer;
-    char *name=nullptr;
-    if(builder->prelude_marked&&index>=0) {
-        if(is_class&&(uint64_t)index<builder->prelude_class_count)
-            name=built->classes[(size_t)index]->name;
-        else if(!is_class&&(uint64_t)index<builder->prelude_module_count)
-            name=built->modules[(size_t)index]->name;
-    }
-    if(name!=nullptr) {
-        char renamed[DIAMOND_MAX_FUNCTION_NAME];
-        snprintf(renamed,sizeof renamed,"%.*s (core)",(int)(sizeof renamed-sizeof " (core)"),name);
-        memcpy(name,renamed,sizeof renamed);
-    }
-    *result=DIAMOND_BOOL(name!=nullptr);return DIAMOND_VM_OK;
-}
-
-
 /* function_index==-1 targets the program's entry function; 0..function_count-1
  * targets program->functions[index]. Returns nullptr on any other value. */
 static DiamondFunction *program_builder_target(DiamondProgram *program,
@@ -715,7 +650,6 @@ static DiamondVmStatus program_builder_declare_method(DiamondVm *vm, DiamondProg
             "declare_method has invalid arguments");
         return DIAMOND_VM_TYPE_ERROR;
     }
-    builder_hide_prelude_methods(class->methods,class->method_count,mname->chars,mname->length);
     for(size_t index=0;index<class->method_count;index++)
         if(!class->methods[index].included&&
            strlen(class->methods[index].name)==mname->length&&
@@ -776,7 +710,6 @@ static DiamondVmStatus program_builder_declare_module_method(DiamondVm *vm, Diam
        arity<0||arity>DIAMOND_MAX_DECLARED_PARAMETERS||required<0||required>arity)
         return DIAMOND_VM_TYPE_ERROR;
     DiamondModule *module=built->modules[(size_t)module_index];
-    builder_hide_prelude_methods(module->methods,module->method_count,name->chars,name->length);
     for(size_t index=0;index<module->method_count;index++)
         if(!module->methods[index].included&&
            strlen(module->methods[index].name)==name->length&&
@@ -843,8 +776,6 @@ static DiamondVmStatus program_builder_declare_class_singleton_method(DiamondVm 
             "declare_class_singleton_method has invalid arguments");
         return DIAMOND_VM_TYPE_ERROR;
     }
-    builder_hide_prelude_methods(class->singleton_methods,class->singleton_method_count,
-        mname->chars,mname->length);
     for(size_t index=0;index<class->singleton_method_count;index++)
         if(strlen(class->singleton_methods[index].name)==mname->length&&
            memcmp(class->singleton_methods[index].name,mname->chars,
@@ -915,8 +846,6 @@ static DiamondVmStatus program_builder_declare_module_singleton_method(DiamondVm
         return DIAMOND_VM_TYPE_ERROR;
     }
     DiamondModule *module=built->modules[(size_t)module_index];
-    builder_hide_prelude_methods(module->singleton_methods,module->singleton_method_count,
-        mname->chars,mname->length);
     for(size_t index=0;index<module->singleton_method_count;index++)
         if(strlen(module->singleton_methods[index].name)==mname->length&&
            memcmp(module->singleton_methods[index].name,mname->chars,
@@ -1263,8 +1192,6 @@ static DiamondVmStatus program_builder_export_module_method(DiamondVm *vm, Diamo
             "module_function target is not defined here");
         return DIAMOND_VM_TYPE_ERROR;
     }
-    builder_hide_prelude_methods(module->singleton_methods,module->singleton_method_count,
-        source->name,strlen(source->name));
     for(size_t index=0;index<module->singleton_method_count;index++)
         if(strcmp(module->singleton_methods[index].name,source->name)==0) {
             snprintf(vm->error,sizeof vm->error,
@@ -2024,12 +1951,6 @@ DiamondVmStatus program_builder_invoke_helper(DiamondVm *vm,
        memcmp(method_name->chars,"set_register_count",
            sizeof("set_register_count")-1)==0)
         return program_builder_set_register_count(vm,built,registers,base,argc,result);
-    if(method_name->length==sizeof("mark_prelude")-1&&
-       memcmp(method_name->chars,"mark_prelude",sizeof("mark_prelude")-1)==0)
-        return program_builder_mark_prelude(builder,built,argc,result);
-    if(method_name->length==sizeof("rename_prelude_type")-1&&
-       memcmp(method_name->chars,"rename_prelude_type",sizeof("rename_prelude_type")-1)==0)
-        return program_builder_rename_prelude_type(builder,built,registers,base,argc,result);
     if(method_name->length==sizeof("declare_class")-1&&
        memcmp(method_name->chars,"declare_class",sizeof("declare_class")-1)==0)
         return program_builder_declare_class(vm,built,registers,base,argc,result);

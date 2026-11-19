@@ -698,12 +698,6 @@ typedef struct DiamondProgramBuilder {
     DiamondSourceBundle *source_bundle;
     uint32_t source_line;
     uint32_t source_column;
-    /* Set by mark_prelude: how many classes and modules the prelude declared,
-     * which a program declaration of another kind may rename (see
-     * rename_prelude_type in src/vm_program_builder.c). */
-    bool prelude_marked;
-    size_t prelude_class_count;
-    size_t prelude_module_count;
 } DiamondProgramBuilder;
 
 #endif
