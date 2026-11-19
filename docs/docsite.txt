@@ -52,6 +52,10 @@ api/dir.md
 api/time.md
 api/regexp.md
 api/process.md
+api/fiber.md
+api/thread.md
+api/channel.md
+api/supervisor.md
 
 == Reference: the language
 syntax.md

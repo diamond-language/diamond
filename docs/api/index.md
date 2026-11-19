@@ -34,3 +34,10 @@ The [language reference](../syntax.md) explains the rules these methods follow
 - [Time](time.md)
 - [Regexp](regexp.md)
 - [Process, Signal and IO](process.md)
+
+## Concurrency
+
+- [Fiber](fiber.md)
+- [Thread](thread.md)
+- [Channel](channel.md)
+- [Supervisor](supervisor.md)
