@@ -50,6 +50,8 @@ api/json.md
 api/file.md
 api/dir.md
 api/time.md
+api/regexp.md
+api/process.md
 
 == Reference: the language
 syntax.md

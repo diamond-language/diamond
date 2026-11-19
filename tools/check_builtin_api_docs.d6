@@ -169,7 +169,11 @@ NAMESPACES = [
   ["dir.md", "Dir", "parse_dir_entries_call"],
   ["time.md", "Time", "parse_time_call"],
   ["array.md", "Array", "parse_array_new_call"],
-  ["hash.md", "Hash", "parse_hash_new_call"]
+  ["hash.md", "Hash", "parse_hash_new_call"],
+  ["regexp.md", "Regexp", "parse_regexp_new_call"],
+  ["process.md", "Process", "parse_process_call"],
+  ["process.md", "Signal", "parse_signal_trap_call"],
+  ["process.md", "IO", "parse_io_poll_call"]
 ]
 
 source = File.read("#{ROOT}/src/vm_types.c")

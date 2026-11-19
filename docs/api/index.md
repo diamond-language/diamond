@@ -32,3 +32,5 @@ The [language reference](../syntax.md) explains the rules these methods follow
 - [File](file.md)
 - [Dir](dir.md)
 - [Time](time.md)
+- [Regexp](regexp.md)
+- [Process, Signal and IO](process.md)
