@@ -31,6 +31,19 @@ h["z"]                                  # => nil
 {"a": 1, "b": 2} == {"b": 2, "a": 1}    # => true
 ```
 
+## Creating Hashes
+
+### `Hash.new(default = nil) -> Hash`
+
+An empty Hash whose missing keys read as `default`. Every missing key returns
+the same `default` object, and reading one does not store it.
+
+```ruby
+counts = Hash.new(0)
+counts["a"] += 1
+counts   # => {"a": 1}
+```
+
 ## Methods
 
 ### `all?() do |key, value| ... end -> Bool`

@@ -79,11 +79,13 @@ def prelude_methods(root: String, prefixes: Array) -> Array
   names
 end
 
-def documented(path: String) -> Array
+# `qualified` keeps `Name.function` headings; value-type pages leave them to the
+# namespace check, since `Array.new` is not an Array method.
+def documented(path: String, qualified: Bool) -> Array
   return [] unless File.exist?(path)
   File.read(path).split("\n").map() do |line|
     m = HEADING.match(line)
-    m == nil ? nil : m[2]
+    m == nil || (m[1] != nil && !qualified) ? nil : m[2]
   end.compact()
 end
 
@@ -117,9 +119,9 @@ end
 
 # Adds a problem for each implemented name without an entry and each entry
 # without an implementation.
-def compare(page: String, implemented: Array, problems: Array)
+def compare(page: String, implemented: Array, problems: Array, qualified: Bool)
   have = implemented.map() do |name| base(name) end.uniq()
-  documented_names = documented("#{ROOT}/docs/api/#{page}")
+  documented_names = documented("#{ROOT}/docs/api/#{page}", qualified)
   docs = documented_names.map() do |name| base(name) end.uniq()
   have.sort().each() do |name|
     problems.push("docs/api/#{page}: no entry for #{name}") unless docs.include?(name)
@@ -165,7 +167,9 @@ end
 NAMESPACES = [
   ["file.md", "File", "parse_file_call"],
   ["dir.md", "Dir", "parse_dir_entries_call"],
-  ["time.md", "Time", "parse_time_call"]
+  ["time.md", "Time", "parse_time_call"],
+  ["array.md", "Array", "parse_array_new_call"],
+  ["hash.md", "Hash", "parse_hash_new_call"]
 ]
 
 source = File.read("#{ROOT}/src/vm_types.c")
@@ -182,10 +186,10 @@ NAMESPACES.each() do |entry|
   end
 end
 TYPES.each() do |entry|
-  compare(entry[0], native_members(source, entry[1]).concat(prelude_methods(ROOT, entry[2])), problems)
+  compare(entry[0], native_members(source, entry[1]).concat(prelude_methods(ROOT, entry[2])), problems, false)
 end
 CLASSES.each() do |entry|
-  compare(entry[0], class_methods(ROOT, entry[1], entry[2]), problems)
+  compare(entry[0], class_methods(ROOT, entry[1], entry[2]), problems, true)
 end
 
 problems.each() do |problem| warn(problem) end

@@ -39,6 +39,20 @@ block (`values.select(is_even)`).
 [1, 2, 3][1..-1]      # => [2, 3]
 ```
 
+## Creating Arrays
+
+### `Array.new(n, fill = nil) -> Array`
+
+### `Array.new(n) do |i| ... end -> Array`
+
+`n` elements, each `fill` or the block's value for its index. Every slot holds
+the same `fill` object, as in Ruby. A negative `n` raises `ArgumentError`.
+
+```ruby
+Array.new(3, 0)                  # => [0, 0, 0]
+Array.new(3) do |i| i * i end    # => [0, 1, 4]
+```
+
 ## Methods
 
 ### `all?() do |x| ... end -> Bool`
