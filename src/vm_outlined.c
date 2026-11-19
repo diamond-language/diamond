@@ -1781,6 +1781,12 @@ DiamondVmStatus outlined_channel_select_send(DiamondVm *vm,const DiamondChunk *c
  * unchanged apart from its macros, so it keeps the operand decoding, sandbox check and error
  * returns it had. The caller applies VM_PROPAGATE to the status. */
 __attribute__((noinline))
+static int64_t io_poll_monotonic_ms(void) {
+    struct timespec now;
+    if(clock_gettime(CLOCK_MONOTONIC,&now)!=0)return 0;
+    return (int64_t)now.tv_sec*1000+now.tv_nsec/1000000;
+}
+
 DiamondVmStatus outlined_io_poll(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
         size_t depth,size_t *ip_ref) {
     size_t ip=*ip_ref;
@@ -1869,6 +1875,7 @@ DiamondVmStatus outlined_io_poll(DiamondVm *vm,const DiamondChunk *chunk,Diamond
             &budget_bounded);
         int poll_result=0;
         DiamondVmStatus interrupt_status=DIAMOND_VM_OK;
+        const int64_t poll_started_ms=io_poll_monotonic_ms();
         errno=0;
         poll_result=poll_watching_signals(vm,fds,fd_count,timeout_ms,
             &interrupt_status);
@@ -1883,14 +1890,21 @@ DiamondVmStatus outlined_io_poll(DiamondVm *vm,const DiamondChunk *chunk,Diamond
          * connection activity happened to wake the poll() up
          * first -- exactly backwards for "let me shut this server
          * down gracefully on Ctrl+C." */
+        /* The retry waits only for what is left of the timeout, so a
+         * signal does not stretch IO.poll(..., 600) to 600 ms past it. */
         while(poll_result<0&&errno==EINTR) {
             bool signal_invoked=false;
             const DiamondVmStatus signal_status=
                 dispatch_pending_signals(vm,chunk,depth,&signal_invoked);
             VM_PROPAGATE_SIGNAL(signal_status);
+            int remaining_ms=timeout_ms;
+            if(timeout_ms>0) {
+                const int64_t elapsed=io_poll_monotonic_ms()-poll_started_ms;
+                remaining_ms=elapsed>=timeout_ms?0:(int)(timeout_ms-elapsed);
+            }
             errno=0;
             poll_result=poll_watching_signals(vm,fds,fd_count,
-                timeout_ms,&interrupt_status);
+                remaining_ms,&interrupt_status);
             VM_PROPAGATE(interrupt_status);
         }
         if(poll_result<0) {

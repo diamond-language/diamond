@@ -878,6 +878,7 @@ DIAMOND_INTERNAL uint16_t parse_dns_resolve_call(Compiler *compiler);
 DIAMOND_INTERNAL uint16_t parse_udp_socket_call(Compiler *compiler);
 DIAMOND_INTERNAL uint16_t parse_signal_trap_call(Compiler *compiler);
 DIAMOND_INTERNAL uint16_t parse_chr_call(Compiler *compiler);
+DIAMOND_INTERNAL uint16_t parse_sleep_call(Compiler *compiler);
 DIAMOND_INTERNAL uint16_t parse_to_float_call(Compiler *compiler);
 DIAMOND_INTERNAL uint16_t parse_to_int_call(Compiler *compiler);
 DIAMOND_INTERNAL uint16_t parse_json_stringify_call(Compiler *compiler);

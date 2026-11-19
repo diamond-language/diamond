@@ -10664,6 +10664,7 @@ class Parser
     return true if name == "to_i"
     return true if name == "to_sym"
     return true if name == "exit"
+    return true if name == "sleep"
     name == "diamond_json_stringify"
   end
 
@@ -10674,6 +10675,7 @@ class Parser
     return self.parse_to_int_call() if name == "to_i"
     return self.parse_json_stringify_call() if name == "diamond_json_stringify"
     return self.parse_exit_call() if name == "exit"
+    return self.parse_sleep_call() if name == "sleep"
     self.parse_to_sym_call()
   end
 
@@ -10698,6 +10700,25 @@ class Parser
     self.emit_register(code)
     self.set_type_fact(destination, Type::NIL)
     destination
+  end
+
+  # `sleep(seconds)`, the current token being the '(': an `Int | Float` check,
+  # then `seconds.diamond_sleep()` (the prelude's numeric_diamond_sleep).
+  # Mirrors compiler_builtins.c's parse_sleep_call.
+  def parse_sleep_call()
+    self.advance_token()
+    self.skip_newlines()
+    seconds = self.parse_expression()
+    self.skip_newlines()
+    if @current.kind() != :right_paren
+      self.fail("expected ')' after sleep's argument")
+      return 0
+    end
+    self.advance_token()
+    self.emit_type_check(seconds, [["Int", nil, nil, -1, nil, nil], ["Float", nil, nil, -1, nil, nil]])
+    result = self.emit_destructure_invoke(seconds, "diamond_sleep", nil)
+    self.set_type_fact(result, Type::NIL)
+    result
   end
 
   # `Array.new(length, fill = nil)` is `[fill] * length`, with the length

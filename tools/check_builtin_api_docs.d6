@@ -37,7 +37,7 @@ INTERNAL = {
   "hash": ["each_until", "call_pair"],
   "string": ["op_times", "split_extended"],
   "integer": ["diamond_array_new", "next"],
-  "numeric": [],
+  "numeric": ["diamond_sleep"],
   "float": []
 }
 

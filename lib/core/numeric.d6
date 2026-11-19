@@ -120,3 +120,20 @@ def integer_diamond_array_new(n: Int, callback: Callable[1]) -> Array
   end
   result
 end
+
+# sleep(seconds), compiled as `seconds.diamond_sleep()` (parse_sleep_call). It
+# waits in IO.poll a slice at a time until the monotonic deadline, so trapped
+# signals run while it waits (a handler can wake the poll early, hence the
+# loop) and a supervisor's stop or sibling restart interrupts it.
+def numeric_diamond_sleep(seconds: Int | Float) -> Nil
+  if seconds < 0 || (seconds is Float && !seconds.finite?())
+    raise ArgumentError.new("sleep needs a finite, non-negative number of seconds, got #{seconds}")
+  end
+  until_time = Time.monotonic() + seconds
+  loop do
+    remaining = until_time - Time.monotonic()
+    break if remaining <= 0
+    IO.poll([], [], min((remaining * 1000).ceil(), 60_000))
+  end
+  nil
+end

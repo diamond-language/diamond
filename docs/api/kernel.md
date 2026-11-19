@@ -54,6 +54,20 @@ Ruby's `exit` it raises nothing: no `ensure` block runs and every other thread
 stops. Another status raises `ArgumentError`, and a non-`Int` raises
 `TypeError`.
 
+### `sleep(seconds) -> Nil`
+
+Pauses for `seconds`, an `Int` or `Float`, measured on the monotonic clock.
+Trapped signals run their handlers during the pause without cutting it short,
+and a supervisor's `stop` or sibling restart interrupts it. A negative,
+infinite or NaN duration raises `ArgumentError`. A program's own `def sleep`
+replaces this one.
+
+```ruby
+start = Time.monotonic()
+sleep(0.01)
+Time.monotonic() - start >= 0.01   # => true
+```
+
 ### `block_given?() -> Bool`
 
 Inside a method that declares `&block`, whether the caller passed a block.

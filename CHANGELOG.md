@@ -17,6 +17,15 @@ record. From 1.0.0, releases follow the [1.x compatibility policy](docs/compatib
   with a signature and an example that CI runs. `tools/check_builtin_api_docs.d6` fails the
   docs check when a builtin has no entry or an entry names something that does not exist
   ([API reference](docs/api/index.md)).
+- `sleep(seconds)` pauses for an `Int` or `Float` number of seconds. Trapped signals run
+  during it and a supervisor can interrupt it; a program's own `def sleep` still takes
+  precedence ([Kernel functions](docs/api/kernel.md)).
+
+### Fixed
+
+- `IO.poll(readables, writables, timeout_ms)` restarted its whole timeout after running a
+  trapped signal's handler, so a signal could stretch the wait well past `timeout_ms`. It
+  now waits only for the time that is left.
 
 ## 1.1.0 — 2026-11-18
 

@@ -2085,6 +2085,7 @@ rm -f "$error_file"
 DIAMOND_BIN="$diamond" bash tests/signal_interrupt.sh
 DIAMOND_BIN="$diamond" bash tests/supervisor_stdin.sh
 bash tests/signal_threads.sh "$diamond"
+DIAMOND_BIN="$diamond" bash tests/sleep_signal.sh
 
 # An untrapped signal still gets the OS default disposition (kills the
 # process) -- Signal.trap is opt-in per signal name, not a blanket
