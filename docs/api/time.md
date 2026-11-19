@@ -145,11 +145,19 @@ Time.utc(2026, 8, 30, 0, 0, 0).localtime("+05:30").utc_offset()   # => 19800
 
 ## Calendar fields
 
-### `year() -> Int`, `month() -> Int`, `day() -> Int`
+### `year() -> Int`
+
+### `month() -> Int`
+
+### `day() -> Int`
 
 The date, with `month` from 1 to 12.
 
-### `hour() -> Int`, `min() -> Int`, `sec() -> Int`
+### `hour() -> Int`
+
+### `min() -> Int`
+
+### `sec() -> Int`
 
 The time of day.
 
@@ -173,19 +181,29 @@ These keep the time of day across daylight-saving changes, unlike adding
 moves the other way. Moving by months or years lands on the last day of a
 shorter month.
 
-### `days_ago(n) -> Time`, `days_from_now(n) -> Time`
+### `days_ago(n) -> Time`
 
-### `weeks_ago(n) -> Time`, `weeks_from_now(n) -> Time`
+### `days_from_now(n) -> Time`
 
-### `months_ago(n) -> Time`, `months_from_now(n) -> Time`
+### `weeks_ago(n) -> Time`
 
-### `years_ago(n) -> Time`, `years_from_now(n) -> Time`
+### `weeks_from_now(n) -> Time`
+
+### `months_ago(n) -> Time`
+
+### `months_from_now(n) -> Time`
+
+### `years_ago(n) -> Time`
+
+### `years_from_now(n) -> Time`
 
 ```ruby
 Time.utc(2026, 3, 31, 0, 0, 0).months_ago(1).iso8601()   # => "2026-02-28T00:00:00Z"
 ```
 
-### `next_weekday(n = 1) -> Time`, `previous_weekday(n = 1) -> Time`
+### `next_weekday(n = 1) -> Time`
+
+### `previous_weekday(n = 1) -> Time`
 
 `n` Monday-to-Friday days later or earlier, skipping weekends.
 
@@ -199,15 +217,25 @@ Each returns the first instant of the period, or the last microsecond of it,
 in the receiver's zone. Weeks start on Monday; quarters start in January,
 April, July and October.
 
-### `beginning_of_day() -> Time`, `end_of_day() -> Time`
+### `beginning_of_day() -> Time`
 
-### `beginning_of_week() -> Time`, `end_of_week() -> Time`
+### `end_of_day() -> Time`
 
-### `beginning_of_month() -> Time`, `end_of_month() -> Time`
+### `beginning_of_week() -> Time`
 
-### `beginning_of_quarter() -> Time`, `end_of_quarter() -> Time`
+### `end_of_week() -> Time`
 
-### `beginning_of_year() -> Time`, `end_of_year() -> Time`
+### `beginning_of_month() -> Time`
+
+### `end_of_month() -> Time`
+
+### `beginning_of_quarter() -> Time`
+
+### `end_of_quarter() -> Time`
+
+### `beginning_of_year() -> Time`
+
+### `end_of_year() -> Time`
 
 ```ruby
 t = Time.utc(2026, 8, 30, 12, 30, 15)
@@ -217,15 +245,23 @@ t.end_of_month().iso8601()         # => "2026-08-31T23:59:59Z"
 
 ## Predicates
 
-### `past?() -> Bool`, `future?() -> Bool`
+### `past?() -> Bool`
+
+### `future?() -> Bool`
 
 Whether the instant is before or after now.
 
-### `today?() -> Bool`, `yesterday?() -> Bool`, `tomorrow?() -> Bool`
+### `today?() -> Bool`
+
+### `yesterday?() -> Bool`
+
+### `tomorrow?() -> Bool`
 
 Whether the date, in the receiver's zone, is today, yesterday or tomorrow.
 
-### `on_weekday?() -> Bool`, `on_weekend?() -> Bool`
+### `on_weekday?() -> Bool`
+
+### `on_weekend?() -> Bool`
 
 Whether the date is Monday to Friday, or Saturday or Sunday.
 

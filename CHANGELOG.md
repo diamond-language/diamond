@@ -25,6 +25,10 @@ record. From 1.0.0, releases follow the [1.x compatibility policy](docs/compatib
   an optional start position. `Regexp#source`, `#options` and `#names` describe a pattern,
   and a Regexp prints as `/pattern/flags` instead of `#<Regexp>`. `match` still returns an
   Array ([Regexp](docs/api/regexp.md), [MatchData](docs/api/match_data.md)).
+- `respond_to?` works on native objects (Channel, File, Regexp, Thread, Time, sockets,
+  database handles, process handles, Tensor), answering from a method list per kind in
+  `src/vm_types.c`. A test calls every listed name on a real object, and the API docs check
+  compares the lists with the reference pages. `Supervisor#child_count` is now documented.
 
 ### Fixed
 

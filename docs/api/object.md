@@ -4,7 +4,10 @@
 
 Every value answers the methods on this page, whatever its type: Strings,
 numbers, collections, `nil`, Booleans, Symbols and instances of your own
-classes. A class can define its own version of any of them.
+classes. A class can define its own version of any of them. Native objects
+(a Channel, File, Regexp, Thread, ...) answer `class`, `is_a?`, `inspect`,
+`nil?`, `public_send`, `respond_to?`, `tap` and `to_s`, but not `deep_freeze`,
+`dup`, `freeze` or `frozen?`.
 
 ```ruby
 class Point
@@ -81,11 +84,13 @@ nil.nil?()   # => true
 
 ### `respond_to?(name) -> Bool`
 
-Whether the value has a method called `name`, a `String` or a `Symbol`.
+Whether the value has a method called `name`, a `String` or a `Symbol`. This works on
+native objects too: a Channel, File or Regexp answers for its own methods.
 
 ```ruby
 "a".respond_to?("upcase")   # => true
 "a".respond_to?(:zzz)       # => false
+Channel.new(1).respond_to?(:send)   # => true
 ```
 
 ### `tap() do |value| ... end -> Value`

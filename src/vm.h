@@ -2507,6 +2507,10 @@ bool diamond_native_method_return_type(uint16_t receiver_type,const char *name,
                                        size_t length,uint16_t *return_type);
 
 size_t diamond_native_member_names(uint16_t receiver_type,const char *const **names);
+/* The methods a native object kind (DiamondObjectKind) answers, and the ones
+ * every native object answers; see src/vm_types.c. Zero for a kind with no list. */
+size_t diamond_native_object_member_names(uint8_t object_kind,const char *const **names);
+size_t diamond_native_object_universal_member_names(const char *const **names);
 
 bool diamond_native_method_satisfies(uint16_t receiver_type,const char *name,
                                      uint8_t arity,uint16_t *return_type);

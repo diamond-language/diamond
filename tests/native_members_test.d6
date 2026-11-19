@@ -1,0 +1,80 @@
+# Calls every name in src/vm_types.c's NATIVE_OBJECT_MEMBERS_* lists on a real
+# object of that kind, with no arguments: the call may succeed or raise (wrong
+# arity, a closed handle), but never "undefined method". Also checks that
+# respond_to? agrees. PostgreSQL and MySQL need a server, so they are left out.
+#
+#   build/diamond tests/native_members_test.d6
+
+SOURCE = File.read("src/vm_types.c")
+
+def members(list: String) -> Array
+  start = SOURCE.index_of("#{list}[]={")
+  raise "#{list} not found in src/vm_types.c" if start == nil
+  body = SOURCE.slice(start, SOURCE.length() - start)
+  body = body.slice(0, body.index_of("};"))
+  body.scan(Regexp.new("\"([^\"]+)\"")).map() do |groups| groups[0] end
+end
+
+def finished() = 1
+
+scratch = "#{ENV["TMPDIR"] || "/tmp"}/d6_native_members_#{Process.run(["sh", "-c", "echo $PPID"]).stdout().strip()}"
+listener = TCPServer.listen_nonblocking(0, host: "127.0.0.1")
+pending = TCPSocket.connect_nonblocking("127.0.0.1", listener.port())
+handshake_socket = TCPSocket.connect_nonblocking("127.0.0.1", listener.port())
+IO.poll([], [handshake_socket], 5000)
+handshake_socket.finish_connect()
+db = SQLite3.open(":memory:")
+handle = Process.spawn(["true"])
+fiber = Fiber.new(finished)
+thread = Thread.new(finished)
+thread.join()
+sup = Supervisor.new()
+
+# Each list with a fresh object to call its names on. Names run in sorted
+# order, so `close` comes before anything that would block on an open handle
+# (a Channel's receive).
+OBJECTS = [
+  ["NATIVE_OBJECT_MEMBERS_FIBER", fiber],
+  ["NATIVE_OBJECT_MEMBERS_THREAD", thread],
+  ["NATIVE_OBJECT_MEMBERS_CHANNEL", Channel.new(1)],
+  ["NATIVE_OBJECT_MEMBERS_SUPERVISOR", sup],
+  ["NATIVE_OBJECT_MEMBERS_FILE", File.open(scratch, "w")],
+  ["NATIVE_OBJECT_MEMBERS_LISTENER", listener],
+  ["NATIVE_OBJECT_MEMBERS_SOCKET", pending],
+  ["NATIVE_OBJECT_MEMBERS_UDP_SOCKET", UDPSocket.bind(0, host: "127.0.0.1")],
+  ["NATIVE_OBJECT_MEMBERS_TLS_SOCKET", TLSSocket.start_handshake(handshake_socket, "localhost")],
+  ["NATIVE_OBJECT_MEMBERS_REGEXP", /(a)/],
+  ["NATIVE_OBJECT_MEMBERS_SQLITE3", db],
+  ["NATIVE_OBJECT_MEMBERS_STATEMENT", db.prepare("SELECT 1")],
+  ["NATIVE_OBJECT_MEMBERS_TENSOR", Tensor.zeros(2, 2)],
+  ["NATIVE_OBJECT_MEMBERS_TIME", Time.now()],
+  ["NATIVE_OBJECT_MEMBERS_PROCESS_RESULT", Process.run(["true"])],
+  ["NATIVE_OBJECT_MEMBERS_PROCESS_HANDLE", handle],
+  ["NATIVE_OBJECT_MEMBERS_PROCESS_STREAM", handle.stdout()]
+]
+
+universal = members("NATIVE_OBJECT_MEMBERS_UNIVERSAL")
+failures = []
+checked = 0
+OBJECTS.each() do |entry|
+  object = entry[1]
+  names = members(entry[0]).concat(universal).uniq().sort()
+  names.each() do |name|
+    checked += 1
+    failures.push("#{entry[0]}: respond_to?(:#{name}) is false") unless object.respond_to?(name)
+    next if name == "tap"
+    begin
+      object.public_send(name.to_sym())
+    rescue error
+      failures.push("#{entry[0]}: #{name}: #{error.message()}") if error.message().include?("undefined method")
+    end
+  end
+  failures.push("#{entry[0]}: respond_to?(:no_such_method) is true") if object.respond_to?(:no_such_method)
+end
+failures.push("Regexp: respond_to?(:match_data) is false") unless /a/.respond_to?(:match_data)
+
+File.delete(scratch) if File.exist?(scratch)
+handle.wait()
+failures.each() do |failure| warn(failure) end
+puts("native members: #{checked} checked, #{failures.length()} failures")
+exit(failures.length() == 0 ? 0 : 1)
