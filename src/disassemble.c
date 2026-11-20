@@ -64,6 +64,8 @@ static const char *file_path_function_name(uint8_t id) {
         case DIAMOND_FILE_PATH_MKDIR_P: return "mkdir_p";
         case DIAMOND_FILE_PATH_TTY: return "tty?";
         case DIAMOND_FILE_PATH_CHMOD: return "chmod";
+        case DIAMOND_FILE_PATH_MKTMPDIR: return "mktmpdir";
+        case DIAMOND_FILE_PATH_DELETE_TREE: return "delete_tree";
         default: return "<invalid file path function>";
     }
 }

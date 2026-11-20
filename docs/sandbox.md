@@ -23,7 +23,7 @@ Every one of these raises `SandboxError` (a rescuable `StandardError`) instead o
 anything:
 
 - `File.open`, `File.publish`, `File.rename`, `File.sync`, `File.chmod`, `File.delete`, `File.exist?`, `File.directory?`, `File.expand_path`
-- `Dir.entries`
+- `Dir.entries`, `Dir.mkdir`, `Dir.mkdir_p`, `Dir.mktmpdir`, `Dir.delete`, `Dir.delete_tree`, `Dir.sync`
 - `ProgramBuilder#expand_source` (it resolves `require` by reading files and returns the text)
 - `TCPSocket.connect`, `TCPServer.listen`/`listen_nonblocking`
 - `UDPSocket.bind`/`.open`
@@ -57,7 +57,7 @@ DIAMOND_SANDBOX=1 DIAMOND_SANDBOX_ALLOW=network d6 app.d6   # filesystem/databas
 
 Five categories, comma-separated when combining more than one:
 
-- `filesystem` -- `File.open`/`.publish`/`.sync`/`.delete`/`.directory?`/`.expand_path`, `Dir.entries`
+- `filesystem` -- `File.open`/`.publish`/`.sync`/`.delete`/`.directory?`/`.expand_path`, every `Dir` function
 - `network` -- `TCPSocket.connect`, `TCPServer.listen`/`listen_nonblocking`,
   `UDPSocket.bind`/`.open`, `TLSSocket.connect`, `TLSServer.listen`
 - `database` -- `SQLite3.open`, `PostgreSQL.open`, `MySQL.open` (kept separate from

@@ -11828,7 +11828,8 @@ class Parser
 
   def dir_path_methods() = [
     ["mkdir", 16, true, Type::STRING], ["mkdir_p", 21, true, Type::STRING],
-    ["delete", 17, false, Type::STRING], ["sync", 18, false, Type::STRING]
+    ["delete", 17, false, Type::STRING], ["sync", 18, false, Type::STRING],
+    ["delete_tree", 25, false, Type::BOOL]
   ]
 
   # `File.embed(path, digest)`, as the loader rewrites `File.embed("relative/path")`, like
@@ -11900,6 +11901,10 @@ class Parser
       self.advance_token()
       return self.parse_file_embed_call(method_token)
     end
+    if namespace == "Dir" && method == "mktmpdir"
+      self.advance_token()
+      return self.parse_dir_mktmpdir_call()
+    end
     table = if namespace == "File" then self.file_path_methods() else self.dir_path_methods() end
     index = 0
     while index < table.length()
@@ -11912,7 +11917,7 @@ class Parser
     end
     if namespace == "Dir"
       if method != "entries"
-        self.fail("expected 'entries', 'mkdir', 'mkdir_p', 'delete' or 'sync' after 'Dir'")
+        self.fail("expected 'entries', 'mkdir', 'mkdir_p', 'mktmpdir', 'delete', 'delete_tree' or 'sync' after 'Dir'")
         return 0
       end
       self.advance_token()
@@ -12029,6 +12034,37 @@ class Parser
     self.emit_instruction3(Opcode::FILE_PATH, destination, path_register, second_register)
     self.emit_byte(id)
     self.set_type_fact(destination, result_type) if result_type != nil
+    destination
+  end
+
+  # `Dir.mktmpdir(prefix = nil)`, as compiler_builtins.c's parse_dir_mktmpdir_call: the
+  # prefix, or a NIL, is the first FILE_PATH operand.
+  def parse_dir_mktmpdir_call()
+    if @current.kind() != :left_paren
+      self.fail("expected '(' after 'Dir.mktmpdir'")
+      return 0
+    end
+    self.advance_token()
+    self.skip_newlines()
+    prefix_register = 0
+    if @current.kind() == :right_paren
+      prefix_register = self.allocate_register()
+      self.emit_instruction1(Opcode::NIL, prefix_register)
+    else
+      prefix_register = self.parse_expression()
+      self.skip_newlines()
+    end
+    if @current.kind() != :right_paren
+      self.fail("expected ')' after Dir.mktmpdir argument")
+      return 0
+    end
+    self.advance_token()
+    second_register = self.allocate_register()
+    self.emit_instruction1(Opcode::NIL, second_register)
+    destination = self.allocate_register()
+    self.emit_instruction3(Opcode::FILE_PATH, destination, prefix_register, second_register)
+    self.emit_byte(24)
+    self.set_type_fact(destination, Type::STRING)
     destination
   end
 

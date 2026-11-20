@@ -8,6 +8,8 @@ record. From 1.0.0, releases follow the [1.x compatibility policy](docs/compatib
 
 ### Added
 
+- `Dir.mktmpdir(prefix = "d6-")` makes a private temporary directory, and `Dir.delete_tree(path)`
+  removes a directory with everything in it (never following a symlink).
 - New cuts: `csv` 0.1.0 (RFC 4180 reading with any one-byte separator, streaming with
   `CSV.foreach`, and `CSV.generate`) and `toml` 0.1.0 (TOML 1.0 `TOML.parse` and `TOML.generate`).
 - `equal?(other)` on every value: whether it is the same object, whatever `==` its class defines.

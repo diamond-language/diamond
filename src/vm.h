@@ -748,6 +748,13 @@ typedef enum {
     /* File.chmod(path, mode): sets the permission bits, following a symlink. Same Int
      * second operand as MKDIR, but required. */
     DIAMOND_FILE_PATH_CHMOD,
+    /* Dir.mktmpdir(prefix = "d6-"): a new private (0700) directory under $TMPDIR, or /tmp,
+     * named prefix + six random characters (mkdtemp). The first operand is the prefix
+     * String or nil, not a path. */
+    DIAMOND_FILE_PATH_MKTMPDIR,
+    /* Dir.delete_tree(path): removes a directory and everything under it, like rm -r.
+     * Symlinks are removed, never followed; a path that is not there returns false. */
+    DIAMOND_FILE_PATH_DELETE_TREE,
 } DiamondFilePathFunction;
 
 typedef enum DiamondMathFunction : uint8_t {

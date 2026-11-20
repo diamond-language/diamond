@@ -346,6 +346,9 @@ Dir.delete("backup")               # rmdir: an empty directory only
   !File.symlink?(p)` is "a regular file that is not a link".
 - `Dir.delete` removes an empty directory; `Dir.sync` flushes the directory
   itself (`File.sync` flushes a file and its parent).
+- `Dir.delete_tree(path)` removes a directory and everything in it (`rm -r`, never
+  following a symlink) and returns `false` when nothing is there. `Dir.mktmpdir(prefix =
+  "d6-")` creates a private directory under `$TMPDIR` (or `/tmp`) and returns its path.
 
 All are gated by the `filesystem` sandbox capability.
 

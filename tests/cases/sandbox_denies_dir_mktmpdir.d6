@@ -1,0 +1,6 @@
+begin
+  Dir.mktmpdir()
+  "escaped"
+rescue error: SandboxError
+  error.message()
+end

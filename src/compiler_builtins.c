@@ -637,6 +637,38 @@ static uint16_t parse_file_delete_arguments(Compiler *compiler) {
     return dest;
 }
 
+/* `Dir.mktmpdir(prefix = nil)`: FILE_PATH with the prefix (or a NIL) as the first
+ * operand, since the call may have no argument at all. */
+static uint16_t parse_dir_mktmpdir_call(Compiler *compiler) {
+    if(compiler->current.kind!=DIAMOND_TOKEN_LEFT_PAREN) {
+        fail(compiler,compiler->current.span,"expected '(' after 'Dir.mktmpdir'");
+        return 0;
+    }
+    advance_token(compiler);
+    skip_newlines(compiler);
+    uint16_t prefix_register=0;
+    if(compiler->current.kind==DIAMOND_TOKEN_RIGHT_PAREN) {
+        prefix_register=allocate_register(compiler);
+        emit_instruction(compiler,DIAMOND_OP_NIL,prefix_register,0,0,1);
+    } else {
+        prefix_register=parse_expression(compiler);
+        skip_newlines(compiler);
+    }
+    if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN) {
+        fail(compiler,compiler->current.span,"expected ')' after Dir.mktmpdir argument");
+        return 0;
+    }
+    advance_token(compiler);
+    const uint16_t second_register=allocate_register(compiler);
+    emit_instruction(compiler,DIAMOND_OP_NIL,second_register,0,0,1);
+    const uint16_t dest=allocate_register(compiler);
+    emit_opcode(compiler,DIAMOND_OP_FILE_PATH);
+    emit_register(compiler,dest);emit_register(compiler,prefix_register);
+    emit_register(compiler,second_register);emit_byte(compiler,(uint8_t)DIAMOND_FILE_PATH_MKTMPDIR);
+    compiler->known_types[dest]=DIAMOND_TYPE_STRING;
+    return dest;
+}
+
 /* `Dir.entries(path)` -- single String argument, mirrors
  * parse_file_delete_arguments's own single-fixed-argument shape
  * exactly. */
@@ -661,10 +693,18 @@ uint16_t parse_dir_entries_call(Compiler *compiler) {
             advance_token(compiler);
             return parse_file_path_unary_call(compiler,DIAMOND_FILE_PATH_DIRSYNC);
         }
+        if(name_equals(compiler,"delete_tree",method,false)) {
+            advance_token(compiler);
+            return parse_file_path_unary_call(compiler,DIAMOND_FILE_PATH_DELETE_TREE);
+        }
+        if(name_equals(compiler,"mktmpdir",method,false)) {
+            advance_token(compiler);
+            return parse_dir_mktmpdir_call(compiler);
+        }
     }
     if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER||
        !name_equals(compiler,"entries",compiler->current.span,false)) {
-        fail(compiler,compiler->current.span,"expected 'entries', 'mkdir', 'mkdir_p', 'delete' or 'sync' after 'Dir'");
+        fail(compiler,compiler->current.span,"expected 'entries', 'mkdir', 'mkdir_p', 'mktmpdir', 'delete', 'delete_tree' or 'sync' after 'Dir'");
         return 0;
     }
     advance_token(compiler); /* consume 'entries' */
@@ -757,7 +797,7 @@ static uint16_t parse_file_path_unary_call(Compiler *compiler,DiamondFilePathFun
     emit_register(compiler,second_register);emit_byte(compiler,(uint8_t)id);
     compiler->known_types[dest]=
         (id==DIAMOND_FILE_PATH_ABSOLUTE||id==DIAMOND_FILE_PATH_DIRECTORY||
-         id==DIAMOND_FILE_PATH_EXIST||id==DIAMOND_FILE_PATH_TTY)?
+         id==DIAMOND_FILE_PATH_EXIST||id==DIAMOND_FILE_PATH_TTY||id==DIAMOND_FILE_PATH_DELETE_TREE)?
         DIAMOND_TYPE_BOOL:DIAMOND_TYPE_STRING;
     return dest;
 }

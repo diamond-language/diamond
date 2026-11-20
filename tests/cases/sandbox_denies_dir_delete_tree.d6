@@ -1,0 +1,6 @@
+begin
+  Dir.delete_tree("/tmp/diamond_sandbox_delete_tree_probe")
+  "escaped"
+rescue error: SandboxError
+  error.message()
+end
