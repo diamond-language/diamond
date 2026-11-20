@@ -68,6 +68,13 @@ def run_tests()
     Minitest.assert_equal(["can't be blank"], changeset.errors()["name"])
   end
 
+  suite.test("validate_format takes a Regexp or its source") do
+    cast = Mjolnir::Changeset.cast(users, nil, {"email": "Ada@Example.com"}, ["email"])
+    Minitest.assert(cast.validate_format("email", /@example\.com\z/i).valid?())
+    Minitest.assert(!cast.validate_format("email", /@example\.com\z/).valid?())
+    Minitest.assert(cast.validate_format("email", "@").valid?())
+  end
+
   suite.run!()
 end
 

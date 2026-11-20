@@ -151,11 +151,11 @@ module Mjolnir
       self
     end
 
-    # `pattern` is a Regexp source string.
-    ## An error when the field does not match the regular expression `pattern`.
-    def validate_format(name, pattern: String, message: String = "has invalid format") -> Changeset
+    ## An error when the field does not match `pattern`, a `Regexp` or its source as a String.
+    def validate_format(name, pattern: String | Regexp, message: String = "has invalid format") -> Changeset
       value = self.get_field(name)
-      if value == nil || Regexp.new(pattern).match?(value) then return self end
+      regexp = if pattern is Regexp then pattern else Regexp.new(pattern) end
+      if value == nil || regexp.match?(value) then return self end
       self.add_error(name, message)
     end
 

@@ -46,14 +46,14 @@ A changeset whitelists and casts untrusted attributes, then validates them. It i
 def user_changeset(users, entity, attrs)
   Mjolnir::Changeset.cast(users, entity, attrs, ["name", "email", "age"])
     .validate_required(["name", "email"])
-    .validate_format("email", "@")
+    .validate_format("email", /@/)
     .unique_constraint("email")
 end
 ```
 
-`cast(schema, entity, attrs, permitted)` takes `nil` for a new row, or the loaded entity to change. Values are coerced to the field's type (`"36"` becomes `36`); `""` becomes `nil`; a value that cannot be coerced is an `"is invalid"` error. Only fields that differ from the entity count as changes.
+`cast(schema, entity, attrs, permitted)` takes `nil` for a new row, or the loaded entity to change. Values are coerced to the field's type (`"36"` becomes `36`); `""` becomes `nil` (so `validate_required` treats it as missing; to store an empty string in a `NOT NULL` column, follow with `put_change(name, "")`); a value that cannot be coerced is an `"is invalid"` error. Only fields that differ from the entity count as changes.
 
-Validations: `validate_required`, `validate_length(name, min, max)`, `validate_format(name, pattern)`, `validate_inclusion(name, list)`, `validate_number(name, min, max)`, plus `add_error` and `put_change`.
+Validations: `validate_required`, `validate_length(name, min, max)`, `validate_format(name, pattern)` (a `Regexp` or its source String), `validate_inclusion(name, list)`, `validate_number(name, min, max)`, plus `add_error` and `put_change`.
 
 ### Writing
 
