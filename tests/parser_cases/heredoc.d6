@@ -1,0 +1,14 @@
+def heredoc_name() = "Ada"
+text = <<~TEXT
+  Hello, #{heredoc_name()}!
+    indented\tescape
+TEXT
+raw = <<~'RAW'
+  \no #{escapes}
+RAW
+pair = [<<~A.strip(), <<~B]
+  one
+A
+  two
+  B
+puts(text + raw + pair.join(","))
