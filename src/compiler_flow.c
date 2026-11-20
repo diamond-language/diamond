@@ -355,7 +355,7 @@ uint16_t parse_if(Compiler *compiler,bool inverted) {
 /* Whether a string token's `#{...}` might hold a `do` block, which the
  * token scans below cannot see into: any interpolation with the word `do`. */
 static bool string_may_hold_block(const Compiler *compiler,DiamondToken token) {
-    if(token.kind!=DIAMOND_TOKEN_STRING)return false;
+    if(token.kind!=DIAMOND_TOKEN_STRING&&token.kind!=DIAMOND_TOKEN_HEREDOC)return false;
     const char *text=compiler->source+token.span.start;
     bool interpolated=false;
     for(size_t index=0;index+1<token.span.length;index++) {
@@ -518,6 +518,7 @@ bool statement_may_capture(const Compiler *compiler,uint64_t *mask) {
             capture_mask_all(mask);
             return true;
         case DIAMOND_TOKEN_STRING:
+        case DIAMOND_TOKEN_HEREDOC:
             if(string_may_hold_block(compiler,token)){capture_mask_all(mask);return true;}
             break;
         case DIAMOND_TOKEN_LEFT_PAREN:

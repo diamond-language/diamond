@@ -175,6 +175,7 @@ static bool regex_allowed(const DiamondLexer *lexer) {
     switch (lexer->previous) {
         case DIAMOND_TOKEN_IDENTIFIER: case DIAMOND_TOKEN_INTEGER: case DIAMOND_TOKEN_FLOAT:
         case DIAMOND_TOKEN_STRING: case DIAMOND_TOKEN_SYMBOL:
+        case DIAMOND_TOKEN_HEREDOC: case DIAMOND_TOKEN_HEREDOC_RAW:
         case DIAMOND_TOKEN_INSTANCE_VARIABLE: case DIAMOND_TOKEN_CLASS_VARIABLE:
         case DIAMOND_TOKEN_RIGHT_PAREN: case DIAMOND_TOKEN_RIGHT_BRACKET:
         case DIAMOND_TOKEN_RIGHT_BRACE: case DIAMOND_TOKEN_END: case DIAMOND_TOKEN_TRUE:
@@ -391,6 +392,68 @@ static DiamondToken scan_colon(DiamondLexer *lexer) {
     return token(lexer, DIAMOND_TOKEN_COLON);
 }
 
+/* `<<~ID` or `<<~'ID'`, with the `<<` just consumed and `~` next. The body starts on the
+ * line after the opener's (or after the previous heredoc's closing line, when one line
+ * opens two) and runs to the line holding ID alone, with any indentation. Lexing then
+ * carries on along the opener's line, and its newline skips past the bodies. Returns
+ * false, consuming nothing more, when what follows `~` is no heredoc name. */
+static bool scan_heredoc(DiamondLexer *lexer, DiamondToken *out) {
+    const char *source = lexer->source;
+    size_t index = lexer->current + 1;
+    const bool raw = source[index] == '\'';
+    if (raw) index++;
+    if (!identifier_start(source[index])) return false;
+    const size_t name = index;
+    while (identifier_part(source[index])) index++;
+    const size_t name_length = index - name;
+    if (raw) {
+        if (source[index] != '\'') return false;
+        index++;
+    }
+    while (lexer->current < index) advance(lexer);
+    size_t body = lexer->heredoc_resume;
+    if (body == 0) {
+        size_t scan = lexer->current;
+        while (source[scan] != '\0' && source[scan] != '\n') scan++;
+        if (source[scan] == '\0') {
+            *out = token(lexer, DIAMOND_TOKEN_ERROR);
+            return true;
+        }
+        body = scan + 1;
+    }
+    size_t line = body;
+    while (source[line] != '\0') {
+        size_t cursor = line;
+        while (source[cursor] == ' ' || source[cursor] == '\t') cursor++;
+        if (strncmp(source + cursor, source + name, name_length) == 0) {
+            size_t after = cursor + name_length;
+            while (source[after] == ' ' || source[after] == '\t' || source[after] == '\r') after++;
+            if (source[after] == '\n' || source[after] == '\0') {
+                const size_t resume = source[after] == '\n' ? after + 1 : after;
+                lexer->heredoc_resume = resume;
+                lexer->heredoc_skip = resume;
+                *out = (DiamondToken){
+                    .kind = raw ? DIAMOND_TOKEN_HEREDOC_RAW : DIAMOND_TOKEN_HEREDOC,
+                    .span = {.start = body, .length = line - body,
+                             .line = lexer->token_line, .column = lexer->token_column},
+                };
+                return true;
+            }
+        }
+        while (source[line] != '\0' && source[line] != '\n') line++;
+        if (source[line] == '\n') line++;
+    }
+    *out = token(lexer, DIAMOND_TOKEN_ERROR);
+    return true;
+}
+
+const char *diamond_lexer_error_message(const char *source, DiamondSpan span) {
+    if (span.length >= 3 && source[span.start] == '<' && source[span.start + 1] == '<' &&
+        source[span.start + 2] == '~')
+        return "heredoc has no closing line (its name alone on a line)";
+    return "unexpected character";
+}
+
 static DiamondToken lexer_scan(DiamondLexer *lexer) {
     skip_whitespace_and_comments(lexer);
 
@@ -488,9 +551,17 @@ static DiamondToken lexer_scan(DiamondLexer *lexer) {
                                                   : DIAMOND_TOKEN_PERCENT);
         case '^':
             return token(lexer, DIAMOND_TOKEN_CARET);
-        case '\n':
+        case '\n': {
+            const DiamondToken newline = token(lexer, DIAMOND_TOKEN_NEWLINE);
+            /* The end of a heredoc opener's line: step over the bodies. */
+            if (lexer->heredoc_skip != 0) {
+                while (lexer->current < lexer->heredoc_skip) advance(lexer);
+                lexer->heredoc_skip = 0;
+                lexer->heredoc_resume = 0;
+            }
             if (newline_continues_chain(lexer)) return diamond_lexer_next(lexer);
-            return token(lexer, DIAMOND_TOKEN_NEWLINE);
+            return newline;
+        }
         case ';':
             return token(lexer, DIAMOND_TOKEN_NEWLINE);
         case '=':
@@ -505,7 +576,12 @@ static DiamondToken lexer_scan(DiamondLexer *lexer) {
                 if (match(lexer, '>')) return token(lexer, DIAMOND_TOKEN_SPACESHIP);
                 return token(lexer, DIAMOND_TOKEN_LESS_EQUAL);
             }
-            if (match(lexer, '<')) return token(lexer, DIAMOND_TOKEN_LESS_LESS);
+            if (match(lexer, '<')) {
+                DiamondToken heredoc;
+                if (lexer->source[lexer->current] == '~' && scan_heredoc(lexer, &heredoc))
+                    return heredoc;
+                return token(lexer, DIAMOND_TOKEN_LESS_LESS);
+            }
             return token(lexer, DIAMOND_TOKEN_LESS);
         case '>':
             if (match(lexer, '=')) return token(lexer, DIAMOND_TOKEN_GREATER_EQUAL);

@@ -1714,7 +1714,8 @@ static bool builtin_type_of(const DiamondProgram *program,const DiamondChunk *ch
     if(start==end) {
         const DiamondToken token=tokens[start];
         uint16_t found=DIAMOND_TYPE_NIL;
-        if(token.kind==DIAMOND_TOKEN_STRING)found=DIAMOND_TYPE_STRING;
+        if(token.kind==DIAMOND_TOKEN_STRING||token.kind==DIAMOND_TOKEN_HEREDOC||
+           token.kind==DIAMOND_TOKEN_HEREDOC_RAW)found=DIAMOND_TYPE_STRING;
         else if(token.kind==DIAMOND_TOKEN_INTEGER)found=DIAMOND_TYPE_INT;
         else if(token.kind==DIAMOND_TOKEN_FLOAT)found=DIAMOND_TYPE_FLOAT;
         else if(token.kind==DIAMOND_TOKEN_IDENTIFIER) {

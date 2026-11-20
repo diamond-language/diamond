@@ -124,32 +124,56 @@ static uint32_t highlight_class(DiamondTokenKind kind, DiamondTokenKind previous
     }
 }
 
+static bool push_highlight(size_t *count, uint32_t css, size_t start, size_t length) {
+    if ((*count + 1) * 3 + 1 > highlight_capacity) {
+        const size_t capacity = highlight_capacity == 0 ? 256 : highlight_capacity * 2;
+        uint32_t *grown = realloc(highlight_buffer, capacity * sizeof *grown);
+        if (grown == nullptr) return false;
+        highlight_buffer = grown;
+        highlight_capacity = capacity;
+    }
+    uint32_t *entry = highlight_buffer + 1 + *count * 3;
+    entry[0] = css;
+    entry[1] = (uint32_t)start;
+    entry[2] = (uint32_t)length;
+    (*count)++;
+    return true;
+}
+
 WASM_EXPORT("diamond_wasm_tokens") uint32_t *diamond_wasm_tokens(const char *source) {
     size_t count = 0;
     DiamondLexer lexer;
     diamond_lexer_init(&lexer, source);
     DiamondTokenKind previous = DIAMOND_TOKEN_EOF;
+    /* A heredoc's span is its body, below the rest of the opener's line, so the bodies wait
+     * for that line's newline to keep the entries in source order. */
+    DiamondSpan bodies[8];
+    size_t body_count = 0;
+    bool ok = true;
     for (;;) {
         const DiamondToken token = diamond_lexer_next(&lexer);
         if (token.kind == DIAMOND_TOKEN_EOF) break;
-        if (token.span.length == 0) break;
-        if (token.kind != DIAMOND_TOKEN_NEWLINE) {
-            if ((count + 1) * 3 + 1 > highlight_capacity) {
-                const size_t capacity = highlight_capacity == 0 ? 256 : highlight_capacity * 2;
-                uint32_t *grown = realloc(highlight_buffer, capacity * sizeof *grown);
-                if (grown == nullptr) break;
-                highlight_buffer = grown;
-                highlight_capacity = capacity;
-            }
-            uint32_t *entry = highlight_buffer + 1 + count * 3;
-            entry[0] = highlight_class(token.kind, previous, source[token.span.start]);
-            entry[1] = (uint32_t)token.span.start;
-            entry[2] = (uint32_t)token.span.length;
-            count++;
+        if (token.kind == DIAMOND_TOKEN_HEREDOC || token.kind == DIAMOND_TOKEN_HEREDOC_RAW) {
+            if (token.span.length > 0 && body_count < sizeof bodies / sizeof bodies[0])
+                bodies[body_count++] = token.span;
+            previous = token.kind;
+            continue;
         }
+        if (token.span.length == 0) break;
+        if (token.kind == DIAMOND_TOKEN_NEWLINE) {
+            for (size_t index = 0; ok && index < body_count; index++)
+                ok = push_highlight(&count, HL_STRING, bodies[index].start, bodies[index].length);
+            body_count = 0;
+        } else {
+            ok = push_highlight(&count, highlight_class(token.kind, previous, source[token.span.start]),
+                token.span.start, token.span.length);
+        }
+        if (!ok) break;
         previous = token.kind;
         if (token.kind == DIAMOND_TOKEN_ERROR) break;
     }
+    for (size_t index = 0; ok && index < body_count; index++)
+        ok = push_highlight(&count, HL_STRING, bodies[index].start, bodies[index].length);
     if (highlight_buffer == nullptr) {
         highlight_buffer = malloc(256 * sizeof *highlight_buffer);
         highlight_capacity = 256;

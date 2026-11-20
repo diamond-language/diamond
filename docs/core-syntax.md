@@ -87,6 +87,38 @@ Strings are double-quoted, with `#{expression}` interpolation. These are the esc
 For example: `"\x89PNG\r\n"`, `"caf\u00e9"`, `"\u{1F600}"`. Any other backslash pair is a
 compile error, so a Windows path needs doubled backslashes: `"C:\\temp"`.
 
+## Heredocs
+
+A heredoc is a String written as the lines below its opener. `<<~NAME` starts one; the
+body is every following line up to the one holding `NAME` alone (indented or not). The
+indentation the body lines share is removed, blank lines aside, so the text can be
+indented with the code around it. The value keeps each line's newline. Escapes and
+`#{}` work as in a `"..."` string, and quotes need no escaping:
+
+```ruby
+name = "Ada"
+page = <<~HTML
+  <p class="greeting">
+    Hello, #{name}!
+  </p>
+HTML
+page   # => "<p class=\"greeting\">\n  Hello, Ada!\n</p>\n"
+```
+
+`<<~'NAME'`, with quotes, is raw: backslashes and `#{` are kept as written.
+
+```ruby
+<<~'PATTERN'.strip()   # => "C:\\temp\\#{x}"
+  C:\temp\#{x}
+PATTERN
+```
+
+The rest of the opener's line is ordinary code, so a heredoc can be an argument or the
+receiver of a call (`puts(<<~TEXT.strip())`). A line that opens two heredocs takes their
+bodies in order. A space and a tab each count as one column of indentation, so mix them
+only if every line uses the same mix. There are no `<<-NAME` or bare
+`<<NAME` forms; `<<~` covers them.
+
 ## Case/when
 
 ```ruby

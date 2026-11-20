@@ -903,10 +903,17 @@ class Parser
     @current_return_type = nil
     @failed = false
     @error_message = nil
-    self.fail("unexpected character") if @current.kind() == :error
+    self.fail(self.error_token_message()) if @current.kind() == :error
   end
 
   def error_message() = @error_message
+
+  # The diagnostic for an :error token, as src/lexer.c's diamond_lexer_error_message.
+  def error_token_message() -> String
+    text = self.token_text(@current)
+    return "heredoc has no closing line (its name alone on a line)" if text.start_with?("<<~")
+    "unexpected character"
+  end
 
   # Parses and emits the whole program into function -1 (the
   # ProgramBuilder's entry function), finishing with a RETURN of the top-level sequence's result.
@@ -953,7 +960,7 @@ class Parser
   def advance_token()
     @previous = @current
     @current = @lexer.next_token()
-    self.fail("unexpected character") if @current.kind() == :error
+    self.fail(self.error_token_message()) if @current.kind() == :error
   end
 
   def skip_newlines()
@@ -1382,7 +1389,7 @@ class Parser
   # token scans below cannot see into. Mirrors compiler_flow.c's
   # string_may_hold_block.
   def string_may_hold_block?(token) -> Bool
-    return false if token.kind() != :string
+    return false if token.kind() != :string && token.kind() != :heredoc
     text = self.token_text(token)
     text.include?("#" + "{") &&
       Regexp.new("(^|[^A-Za-z0-9_])do($|[^A-Za-z0-9_?!])").match(text) != nil
@@ -9312,6 +9319,7 @@ class Parser
     return self.parse_integer() if kind == :integer
     return self.parse_float() if kind == :float
     return self.parse_string() if kind == :string
+    return self.parse_heredoc() if kind == :heredoc || kind == :heredoc_raw
     return self.parse_regex_literal() if kind == :regex
     return self.parse_symbol() if kind == :symbol
     return self.parse_literal() if kind == :true || kind == :false || kind == :nil
@@ -12343,8 +12351,9 @@ class Parser
       (128 | ((value >> 6) & 63)).chr() + (128 | (value & 63)).chr()
   end
 
-  def decode_string_range(start, length)
-    raw = @source.slice(start, length)
+  def decode_string_range(start, length) = self.decode_string_text(@source.slice(start, length))
+
+  def decode_string_text(raw)
     result = ""
     index = 0
     while index < raw.length()
@@ -12535,6 +12544,111 @@ class Parser
       result = self.allocate_register()
       literal = self.add_string("")
       self.emit_instruction2(Opcode::STRING, result, literal)
+    end
+    self.set_type_fact(result, Type::STRING)
+    result
+  end
+
+  # The indentation <<~ removes, as src/compiler.c's heredoc_indent: the fewest leading spaces
+  # and tabs on a body line holding more than whitespace.
+  def heredoc_indent(body)
+    indent = nil
+    body.split("\n", -1).each() do |line|
+      width = 0
+      while width < line.length() && (line[width] == " " || line[width] == "\t")
+        width = width + 1
+      end
+      rest = line.slice(width, line.length() - width)
+      blank = rest == "" || rest == "\r"
+      indent = width if !blank && (indent == nil || width < indent)
+    end
+    indent == nil ? 0 : indent
+  end
+
+  # source[start, start + length) with `indent` leading spaces or tabs dropped after each line
+  # start, as src/compiler.c's add_heredoc_text.
+  def heredoc_text(start, length, indent, body_start)
+    text = ""
+    skip = (start == body_start || @source[start - 1] == "\n") ? indent : 0
+    index = 0
+    while index < length
+      character = @source[start + index]
+      index = index + 1
+      if skip > 0 && (character == " " || character == "\t")
+        skip = skip - 1
+        next
+      end
+      skip = character == "\n" ? indent : 0
+      text = text + character
+    end
+    text
+  end
+
+  # `<<~ID` / `<<~'ID'`, as src/compiler.c's parse_heredoc.
+  def parse_heredoc()
+    span = @previous
+    raw = span.kind() == :heredoc_raw
+    indent = self.heredoc_indent(@source.slice(span.start(), span.length()))
+    finish = span.start() + span.length()
+    piece = span.start()
+    result = nil
+    while !@failed
+      index = raw ? finish : piece
+      while index < finish
+        if @source[index] == "\\" && index + 1 < finish
+          index = index + 2
+          next
+        end
+        break if @source[index] == "#" && index + 1 < finish && @source[index + 1] == "{"
+        index = index + 1
+      end
+      index = finish if index > finish
+      text = self.heredoc_text(piece, index - piece, indent, span.start())
+      literal_register = self.allocate_register()
+      literal = self.add_string(raw ? text : self.decode_string_text(text))
+      self.emit_instruction2(Opcode::STRING, literal_register, literal)
+      if result == nil
+        result = literal_register
+      else
+        joined = self.allocate_register()
+        self.emit_instruction3(Opcode::ADD, joined, result, literal_register)
+        result = joined
+      end
+      break if index >= finish
+
+      line = span.line() + 1
+      line_start = span.start()
+      scan = span.start()
+      while scan < index
+        if @source[scan] == "\n"
+          line = line + 1
+          line_start = scan + 1
+        end
+        scan = scan + 1
+      end
+      column = index - line_start + 3
+      outer_lexer = @lexer
+      outer_current = @current
+      outer_previous = @previous
+      embedded = Lexer.new(@source)
+      embedded.restore_state(index + 2, index + 2, line, column, line, column)
+      @lexer = embedded
+      @current = @lexer.next_token()
+      value = self.parse_expression()
+      if @current.kind() != :right_brace
+        self.fail("expected '}' after interpolation")
+      end
+      close = @current.start()
+      @lexer = outer_lexer
+      @current = outer_current
+      @previous = outer_previous
+      converted = self.allocate_register()
+      self.emit_instruction2(Opcode::TO_STRING, converted, value)
+      joined = self.allocate_register()
+      self.emit_instruction3(Opcode::ADD, joined, result, converted)
+      result = joined
+      piece = close + 1
+      break if piece >= finish
     end
     self.set_type_fact(result, Type::STRING)
     result

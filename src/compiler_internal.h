@@ -766,6 +766,7 @@ DIAMOND_INTERNAL uint16_t define_local_with_register(Compiler *compiler, Diamond
                                             uint16_t preferred_register);
 DIAMOND_INTERNAL uint16_t define_local(Compiler *compiler, DiamondSpan name);
 DIAMOND_INTERNAL uint16_t parse_string(Compiler *compiler);
+DIAMOND_INTERNAL uint16_t parse_heredoc(Compiler *compiler);
 DIAMOND_INTERNAL uint16_t parse_literal(Compiler *compiler);
 DIAMOND_INTERNAL uint16_t parse_identifier(Compiler *compiler);
 DIAMOND_INTERNAL int find_function(const Compiler *compiler, DiamondSpan name);
@@ -1073,6 +1074,9 @@ DIAMOND_INTERNAL void publish_array_spread_tooling_type(Compiler *compiler,uint1
         const uint16_t *suffix,size_t suffix_count);
 DIAMOND_INTERNAL void publish_callable_return_type(Compiler *compiler,uint16_t reg,
         int32_t callable_set_index);
+typedef enum StringTextMode {STRING_TEXT_ESCAPES,STRING_TEXT_REGEX,STRING_TEXT_VERBATIM} StringTextMode;
+DIAMOND_INTERNAL uint16_t add_string_text_mode(Compiler *compiler,const char *text,size_t length,
+                              DiamondSpan span,StringTextMode mode);
 DIAMOND_INTERNAL uint16_t add_string_range_mode(Compiler *compiler,size_t start,size_t length,
                                 DiamondSpan span,bool raw);
 DIAMOND_INTERNAL Precedence token_precedence(DiamondTokenKind kind);

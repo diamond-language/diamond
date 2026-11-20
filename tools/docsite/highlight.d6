@@ -85,11 +85,44 @@ def regex_end(chars: Array, start: Int) -> Int
   index
 end
 
+# The heredoc name after `<<~` at `start` (`<<~NAME` or `<<~'NAME'`) and the index just past
+# the opener, or nil when `start` opens no heredoc.
+def heredoc_opener(chars: Array, start: Int) -> Array | Nil
+  return nil unless start + 3 < chars.length() && chars[start + 1] == "<" && chars[start + 2] == "~"
+  index = start + 3
+  quoted = chars[index] == "'"
+  index += 1 if quoted
+  return nil unless index < chars.length() && identifier_start?(chars[index])
+  name_start = index
+  index += 1 while index < chars.length() && identifier_char?(chars[index])
+  name = chars.slice(name_start, index - name_start).join("")
+  if quoted
+    return nil unless index < chars.length() && chars[index] == "'"
+    index += 1
+  end
+  [name, index]
+end
+
+# The index just past a heredoc body starting at `start`: through the line holding `name` alone.
+def heredoc_end(chars: Array, start: Int, name: String) -> Int
+  index = start
+  while index < chars.length()
+    line_end = index
+    line_end += 1 while line_end < chars.length() && chars[line_end] != "\n"
+    line = chars.slice(index, line_end - index).join("")
+    index = line_end < chars.length() ? line_end + 1 : line_end
+    return index if line.strip() == name
+  end
+  index
+end
+
 def highlight(code: String) -> String
   chars = code.chars()
   out = []
   previous = ""
   after_def = false
+  # Names of heredocs opened on this line; their bodies follow its newline.
+  heredocs = []
   index = 0
   while index < chars.length()
     char = chars[index]
@@ -98,10 +131,26 @@ def highlight(code: String) -> String
       index += 1 while index < chars.length() && chars[index] != "\n"
       out.push(span("tok-comment", chars.slice(start, index - start).join("")))
       next
+    elsif char == "\n" && heredocs.length() > 0
+      out.push(char)
+      index += 1
+      heredocs.each() do |name|
+        body_start = index
+        index = heredoc_end(chars, index, name)
+        out.push(span("tok-str", chars.slice(body_start, index - body_start).join("")))
+      end
+      heredocs = []
+      next
     elsif char == " " || char == "\n" || char == "\t"
       out.push(char)
       index += 1
       next
+    elsif char == "<" && heredoc_opener(chars, index) != nil
+      opener = heredoc_opener(chars, index)
+      heredocs.push(opener[0])
+      index = opener[1]
+      out.push(span("tok-str", chars.slice(start, index - start).join("")))
+      previous = "string"
     elsif char == "\"" || char == "'"
       index = string_end(chars, index)
       out.push(span("tok-str", chars.slice(start, index - start).join("")))

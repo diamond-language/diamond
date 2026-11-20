@@ -148,6 +148,11 @@ typedef enum DiamondTokenKind {
     /* /pattern/flags -- only where an expression can start (see regex_allowed in lexer.c);
      * after a value, a slash is division. The span covers the slashes and flags. */
     DIAMOND_TOKEN_REGEX,
+    /* A heredoc, `<<~ID` (interpolating) or `<<~'ID'` (raw). The span is the body: the
+     * lines after the opener line, up to the line holding ID alone, with the final newline
+     * and the indentation still in. Line and column are the opener's. */
+    DIAMOND_TOKEN_HEREDOC,
+    DIAMOND_TOKEN_HEREDOC_RAW,
 } DiamondTokenKind;
 
 typedef struct DiamondToken {
@@ -164,9 +169,16 @@ typedef struct DiamondLexer {
     size_t token_line;
     size_t token_column;
     DiamondTokenKind previous;
+    /* While a heredoc opener's line is being lexed: where the next heredoc body on this line
+     * starts, and where lexing resumes after the line's newline (past every body). 0 when
+     * there is none. */
+    size_t heredoc_resume;
+    size_t heredoc_skip;
 } DiamondLexer;
 
 void diamond_lexer_init(DiamondLexer *lexer, const char *source);
 DiamondToken diamond_lexer_next(DiamondLexer *lexer);
+/* The diagnostic for an error token: a heredoc without its closing line gets its own. */
+const char *diamond_lexer_error_message(const char *source, DiamondSpan span);
 
 #endif

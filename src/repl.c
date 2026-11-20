@@ -546,8 +546,11 @@ static bool try_compile(const char *source, DiamondProgram *program,
             "<repl>", combined, diagnostic, &bundle, prelude_length + reset_length);
         (void)snprintf(error_buffer, error_buffer_size, "%zu:%zu: error: %s",
                        resolved.line, resolved.column, diagnostic.message);
+        /* A heredoc still waiting for its closing line reports at its opener, which may be
+         * lines back. */
         *out_incomplete = strcmp(resolved.path, "<repl>") == 0 &&
-            resolved.line >= count_lines(source);
+            (resolved.line >= count_lines(source) ||
+             strstr(diagnostic.message, "heredoc has no closing line") != nullptr);
     }
     free(combined);
     diamond_source_bundle_free(&bundle);

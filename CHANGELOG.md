@@ -4,6 +4,33 @@ This file records user-visible capability milestones rather than every
 implementation step; the Git history remains the authoritative fine-grained
 record. From 1.0.0, releases follow the [1.x compatibility policy](docs/compatibility.md).
 
+## Unreleased
+
+What a link checker ran short of.
+
+### Added
+
+- Heredocs: `<<~NAME` takes the lines up to `NAME` with their shared indentation removed,
+  with escapes and `#{}`; `<<~'NAME'` is raw ([core syntax](docs/core-syntax.md#heredocs)).
+  The REPLs, the LSP formatter and every highlighter know them.
+- `URI.parse` returns a `URI::Reference` (RFC 3986 parts, `resolve`, `normalize`, `origin`,
+  `request_target`), and `URI.join(base, reference)` resolves a link as a browser does
+  ([URI](docs/api/uri.md)).
+- `Regexp.escape(text)`, `String#escape_html` and `String#unescape_html`.
+- `Process.executable()`: the path of the running d6, to start another script with it.
+- String literals accept `\a`, `\b`, `\f`, `\v`, `\s` and `\'`, and the escapes are listed in
+  [core syntax](docs/core-syntax.md).
+- http 0.2.7: a relative redirect `Location` resolves against the request; a body without a
+  length stops at the size limit, which `max_body_bytes` sets per request; `http_serve` takes
+  `host`, a `ready` Channel (so port 0 works) and a `stop` Channel.
+- `facet new` app templates start their Cutfile at version 0.1.0, and the cli template prints
+  it for `--version`.
+
+### Changed
+
+- Ruby's `rescue => e` and `rescue Type => e` fail with an error that names d6's `rescue e` and
+  `rescue e: Type`, instead of a confusing one about the `=>`.
+
 ## 1.2.0 — 2026-11-20
 
 What three small applications ran short of: standard streams as values, `Time.strptime`,

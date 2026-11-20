@@ -36,6 +36,8 @@ class Lexer
     @token_line = 1
     @token_column = 1
     @previous = :eof
+    @heredoc_resume = 0
+    @heredoc_skip = 0
   end
 
   def next_token()
@@ -135,11 +137,17 @@ class Lexer
     copy = Lexer.new(@source)
     copy.restore_state(@start, @current, @line, @column, @token_line, @token_column)
     copy.set_previous(@previous)
+    copy.set_heredoc(@heredoc_resume, @heredoc_skip)
     copy
   end
 
   def set_previous(previous)
     @previous = previous
+  end
+
+  def set_heredoc(resume, skip)
+    @heredoc_resume = resume
+    @heredoc_skip = skip
   end
 
   def restore_state(start, current, line, column, token_line, token_column)
@@ -156,7 +164,7 @@ class Lexer
   # Mirrors regex_allowed / scan_regex_literal in src/lexer.c: a slash starts a regex literal only
   # where an expression can begin, and only when the literal closes on its own line.
   def regex_allowed?()
-    [:identifier, :integer, :float, :string, :symbol, :instance_variable, :class_variable,
+    [:identifier, :integer, :float, :string, :heredoc, :heredoc_raw, :symbol, :instance_variable, :class_variable,
      :right_paren, :right_bracket, :right_brace, :end, :true, :false, :nil, :self,
      :regex, :def, :dot, :ampersand_dot].include?(@previous) == false
   end
@@ -257,8 +265,17 @@ class Lexer
     end
     return self.make_token(:caret) if code == "^".ord()
     if code == "\n".ord()
+      newline = self.make_token(:newline)
+      # The end of a heredoc opener's line: step over the bodies, as src/lexer.c.
+      if @heredoc_skip != 0
+        while @current < @heredoc_skip
+          self.advance()
+        end
+        @heredoc_skip = 0
+        @heredoc_resume = 0
+      end
       return self.next_token() if self.newline_continues_chain?()
-      return self.make_token(:newline)
+      return newline
     end
     return self.make_token(:newline) if code == ";".ord()
     if code == "=".ord()
@@ -275,13 +292,74 @@ class Lexer
         return self.make_token(:spaceship) if self.match?(">".ord())
         return self.make_token(:less_equal)
       end
-      return self.make_token(:less_less) if self.match?("<".ord())
+      if self.match?("<".ord())
+        if self.code_at(@current) == "~".ord()
+          heredoc = self.scan_heredoc()
+          return heredoc unless heredoc == nil
+        end
+        return self.make_token(:less_less)
+      end
       return self.make_token(:less)
     end
     if code == ">".ord()
       return self.make_token(:greater_equal) if self.match?("=".ord())
       return self.make_token(:greater_greater) if self.match?(">".ord())
       return self.make_token(:greater)
+    end
+    self.make_token(:error)
+  end
+
+  # `<<~ID` or `<<~'ID'`, as src/lexer.c's scan_heredoc: a :heredoc or :heredoc_raw token whose
+  # span is the body, or nil (nothing consumed) when no heredoc name follows `~`.
+  def scan_heredoc()
+    index = @current + 1
+    raw = self.code_at(index) == "'".ord()
+    index = index + 1 if raw
+    return nil unless self.identifier_start?(self.code_at(index))
+    name_start = index
+    while self.identifier_part?(self.code_at(index))
+      index = index + 1
+    end
+    name = @source.slice(name_start, index - name_start)
+    if raw
+      return nil if self.code_at(index) != "'".ord()
+      index = index + 1
+    end
+    while @current < index
+      self.advance()
+    end
+    body = @heredoc_resume
+    if body == 0
+      scan = @current
+      while scan < @source.length() && self.code_at(scan) != "\n".ord()
+        scan = scan + 1
+      end
+      return self.make_token(:error) if scan >= @source.length()
+      body = scan + 1
+    end
+    line = body
+    while line < @source.length()
+      cursor = line
+      while self.code_at(cursor) == " ".ord() || self.code_at(cursor) == "\t".ord()
+        cursor = cursor + 1
+      end
+      if @source.slice(cursor, name.length()) == name
+        after = cursor + name.length()
+        while self.code_at(after) == " ".ord() || self.code_at(after) == "\t".ord() || self.code_at(after) == "\r".ord()
+          after = after + 1
+        end
+        if after >= @source.length() || self.code_at(after) == "\n".ord()
+          resume = after >= @source.length() ? after : after + 1
+          @heredoc_resume = resume
+          @heredoc_skip = resume
+          kind = raw ? :heredoc_raw : :heredoc
+          return Token.new(kind, body, line - body, @token_line, @token_column)
+        end
+      end
+      while line < @source.length() && self.code_at(line) != "\n".ord()
+        line = line + 1
+      end
+      line = line + 1 if line < @source.length()
     end
     self.make_token(:error)
   end

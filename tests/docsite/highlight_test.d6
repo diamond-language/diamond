@@ -26,6 +26,11 @@ check("def and name", "def greet(name)", "#{kw("def")} <span class=\"tok-fn\">gr
 check("predicate def", "def empty?() = true", "#{kw("def")} <span class=\"tok-fn\">empty?</span>() = #{kw("true")}")
 check("string with interpolation", "\"hi \#{name}\" + 'x'", "#{str("&quot;hi \#{name}&quot;")} + #{str("'x'")}")
 check("escaped quote", "\"a\\\"b\"", str("&quot;a\\&quot;b&quot;"))
+check("heredoc body and closing line", "x = <<~TEXT.strip()\n  hi \#{name} \"q\"\nTEXT\nputs(x)",
+  "x = #{str("&lt;&lt;~TEXT")}.strip()\n#{str("  hi \#{name} &quot;q&quot;\nTEXT\n")}puts(x)")
+check("raw heredoc and two on a line", "f(<<~'A', <<~B)\na\nA\n  b\n  B\n",
+  "f(#{str("&lt;&lt;~'A'")}, #{str("&lt;&lt;~B")})\n#{str("a\nA\n")}#{str("  b\n  B\n")}")
+check("shift is not a heredoc", "x << ~y", "x &lt;&lt; ~y")
 check("numbers", "1_000 + 2.5 - 0x1F", "#{num("1_000")} + #{num("2.5")} - #{num("0x1F")}")
 check("range is not a float", "1..3", "#{num("1")}..#{num("3")}")
 check("comment", "x = 1 # => 1", "x = #{num("1")} <span class=\"tok-comment\"># =&gt; 1</span>")

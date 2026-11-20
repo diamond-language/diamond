@@ -117,6 +117,43 @@
     "strings": {
       "patterns": [
         {
+          "comment": "<<~'NAME' raw heredoc. The opener and closing line are string; the rest of the opener's line is code (the \\G rule); each body line is string (listed first, so it wins at a line start)",
+          "begin": "<<~'([A-Za-z_][A-Za-z0-9_]*)'",
+          "end": "^\\s*\\1\\s*$",
+          "beginCaptures": { "0": { "name": "string.unquoted.heredoc.diamond" } },
+          "endCaptures": { "0": { "name": "string.unquoted.heredoc.diamond" } },
+          "patterns": [
+            { "name": "string.unquoted.heredoc.diamond", "begin": "^", "end": "$" },
+            { "begin": "\\G", "end": "$", "patterns": [{ "include": "$self" }] }
+          ]
+        },
+        {
+          "comment": "<<~NAME heredoc, laid out as the raw one, with escapes and #{} interpolation in the body",
+          "begin": "<<~([A-Za-z_][A-Za-z0-9_]*)",
+          "end": "^\\s*\\1\\s*$",
+          "beginCaptures": { "0": { "name": "string.unquoted.heredoc.diamond" } },
+          "endCaptures": { "0": { "name": "string.unquoted.heredoc.diamond" } },
+          "patterns": [
+            {
+              "name": "string.unquoted.heredoc.diamond",
+              "begin": "^",
+              "end": "$",
+              "patterns": [
+                { "name": "constant.character.escape.diamond", "match": "\\\\." },
+                {
+                  "name": "meta.embedded.line.diamond",
+                  "begin": "#\\{",
+                  "end": "\\}",
+                  "beginCaptures": { "0": { "name": "punctuation.section.embedded.begin.diamond" } },
+                  "endCaptures": { "0": { "name": "punctuation.section.embedded.end.diamond" } },
+                  "patterns": [{ "include": "$self" }]
+                }
+              ]
+            },
+            { "begin": "\\G", "end": "$", "patterns": [{ "include": "$self" }] }
+          ]
+        },
+        {
           "name": "string.quoted.double.diamond",
           "begin": "\"",
           "end": "\"",
