@@ -36,6 +36,9 @@ record. From 1.0.0, releases follow the [1.x compatibility policy](docs/compatib
 
 ### Fixed
 
+- A `TCPSocket`, and a connection that `TCPServer.listen` accepts, sends each `write` at once.
+  Writes waited in a buffer until a `flush`, a read on the same socket or `close`, so a client
+  that wrote a request and then waited on another socket deadlocked with its peer.
 - `IO.poll(readables, writables, timeout_ms)` restarted its whole timeout after running a
   trapped signal's handler, so a signal could stretch the wait well past `timeout_ms`. It
   now waits only for the time that is left.

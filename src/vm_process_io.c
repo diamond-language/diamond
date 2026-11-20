@@ -1787,6 +1787,12 @@ DiamondVmStatus file_invoke_helper(DiamondVm *vm,
     errno=0;
     const size_t written=fwrite(text->chars,1,text->length,writer);
     target_file->write_pending=true;
+    /* A socket sends what it was given at once, as Ruby's do (sync = true): a
+     * request held in stdio's buffer deadlocks a peer waiting for it while
+     * this side waits on a different socket or a timer. */
+    if(target_file->write_stream!=nullptr&&written==text->length&&!ferror(writer)) {
+        if(fflush(writer)==0)target_file->write_pending=false;
+    }
     if(written!=text->length||ferror(writer)) {
         snprintf(vm->error,sizeof vm->error,"write error: %s",strerror(errno));
         return DIAMOND_VM_IO_ERROR;

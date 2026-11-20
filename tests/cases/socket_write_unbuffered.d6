@@ -1,0 +1,24 @@
+# A TCPSocket write reaches the peer at once, without flush, close or a read:
+# the non-blocking peer sees "ping" before the client does anything else.
+server = TCPServer.listen_nonblocking(0, host: "127.0.0.1")
+client = TCPSocket.connect("127.0.0.1", server.port())
+peer = nil
+while peer == nil
+  peer = server.accept()
+end
+client.write("ping")
+received = ""
+attempts = 0
+while received.length() < 4 && attempts < 200
+  begin
+    chunk = peer.read(16)
+    received += chunk if chunk != nil
+  rescue error: WouldBlockError
+    sleep(0.01)
+  end
+  attempts += 1
+end
+client.close()
+peer.close()
+server.close()
+received
