@@ -260,7 +260,7 @@ static const char *const RESERVED[] = {
     "FrozenError",
     /* lib/core.d6 and lib/core/ */
     "Comparable", "Enumerable", "LazyEnumerator", "MatchData", "Math", "Range",
-    "StringBuilder", "URI",
+    "StandardStream", "StringBuilder", "URI",
     /* the minitest cut (lib/minitest.d6) */
     "Minitest", "AssertionError", "Skip", nullptr,
 };
