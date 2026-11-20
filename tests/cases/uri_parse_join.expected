@@ -1,0 +1,13 @@
+39 of 39 references resolve as RFC 3986 says
+["https", "ada:secret", "Example.COM", 443, "/docs/./guide/../api", "lang=d6", "top"]
+https://ada:secret@example.com/docs/api?lang=d6#top
+["https://example.com", 443, "/docs/./guide/../api?lang=d6", true]
+https://ada:secret@Example.COM:443/docs/./guide/../api?lang=d6
+[nil, nil, "../img/logo.png", "v=2", false]
+[::1]
+ada@example.com
+true
+https://rolld6.codes/docs/api/uri.html#parse
+/a b
+bad port in URI: "http://example.com:http/"
+nil

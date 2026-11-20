@@ -95,8 +95,13 @@ end
 # `initialize` documented as `new`. Operator methods (`<`, `==`) belong in a
 # page's Operators table, so only named methods are listed.
 def class_methods(root: String, name: String, internal: Array) -> Array
-  opener = Regexp.new("^(class|module) #{name}\\b")
-  method = Regexp.new("^  def (self\\.)?([a-z_][a-z0-9_]*[?!]?)")
+  # A nested class (`URI::Reference`) is declared inside its module, indented
+  # two spaces per level, with its methods two spaces further in.
+  parts = name.split("::")
+  indent = "  ".repeat(parts.length() - 1)
+  opener = Regexp.new("^#{indent}(class|module) #{parts.last()}\\b")
+  method = Regexp.new("^#{indent}  def (self\\.)?([a-z_][a-z0-9_]*[?!]?)")
+  closer = "#{indent}end"
   names = []
   found = false
   prelude_files(root).each() do |path|
@@ -105,7 +110,7 @@ def class_methods(root: String, name: String, internal: Array) -> Array
       if opener.match?(line)
         inside = true
         found = true
-      elsif inside && line == "end"
+      elsif inside && line == closer
         inside = false
       elsif inside
         m = method.match(line)
@@ -142,7 +147,8 @@ CLASSES = [
   ["match_data.md", "MatchData", ["group_index"]],
   ["math.md", "Math", []],
   ["json.md", "JSON", []],
-  ["uri.md", "URI", ["diamond_encode", "diamond_decode", "diamond_hex_value"]]
+  ["uri.md", ["URI", "URI::Reference"], ["diamond_encode", "diamond_decode", "diamond_hex_value",
+    "diamond_parse", "diamond_remove_dot_segments", "initialize"]]
 ]
 
 # The function names a native namespace's compiler parser accepts
@@ -275,7 +281,11 @@ TYPES.each() do |entry|
   compare(entry[0], native_members(source, entry[1]).concat(prelude_methods(ROOT, entry[2])), problems, false)
 end
 CLASSES.each() do |entry|
-  compare(entry[0], class_methods(ROOT, entry[1], entry[2]), problems, true)
+  # One page can cover several classes, as uri.md covers URI and URI::Reference.
+  names = entry[1] is Array ? entry[1] : [entry[1]]
+  implemented = []
+  names.each() do |name| implemented = implemented.concat(class_methods(ROOT, name, entry[2])) end
+  compare(entry[0], implemented, problems, true)
 end
 NATIVE_OBJECTS.each() do |entry|
   have = native_members(source, entry[0]).concat(prelude_methods(ROOT, entry[1])).map() do |name| base(name) end.uniq()
