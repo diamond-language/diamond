@@ -8,6 +8,8 @@ record. From 1.0.0, releases follow the [1.x compatibility policy](docs/compatib
 
 ### Added
 
+- `equal?(other)` on every value: whether it is the same object, whatever `==` its class defines.
+  Numbers, `nil`, Booleans and Symbols are `equal?` when they hold the same value.
 - A class or module body can set a class variable (`@@cache = {}` beside the `def`s); it runs
   once where the type is defined. Like a constant, a new `Thread` (and so each `threads: N`
   gremlin worker) starts with a copy of its value; values that cannot cross a thread, such as a

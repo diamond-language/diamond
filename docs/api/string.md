@@ -207,6 +207,10 @@ Whether the receiver ends with any of the given strings.
 "main.d6".end_with?(".rb", ".d6")   # => true
 ```
 
+### `equal?(other) -> Bool`
+
+Whether `other` is this same String object; `==` compares the text.
+
 ### `format(values) -> String`
 
 `sprintf`-style formatting. `values` is one value or an `Array` of them; `%`
