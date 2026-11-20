@@ -212,6 +212,16 @@ Whether the receiver ends with any of the given strings.
 
 Whether `other` is this same String object; `==` compares the text.
 
+### `escape_html() -> String`
+
+The text with `&`, `<`, `>`, `"` and `'` written as `&amp;`, `&lt;`, `&gt;`, `&quot;` and
+`&#39;`, so it is safe inside HTML text, a quoted attribute value, or XML. Div templates
+escape `<%= %>` output the same way.
+
+```ruby
+"Tom & Jerry's <b>".escape_html()   # => "Tom &amp; Jerry&#39;s &lt;b&gt;"
+```
+
 ### `format(values) -> String`
 
 `sprintf`-style formatting. `values` is one value or an `Array` of them; `%`
@@ -577,6 +587,16 @@ bytes.
 ```ruby
 "hello".tr("el", "ip")     # => "hippo"
 "hello".tr("aeiou", "*")   # => "h*ll*"
+```
+
+### `unescape_html() -> String`
+
+Decodes character references: numeric ones (`&#233;`, `&#xE9;`) and the named `&amp;`,
+`&lt;`, `&gt;`, `&quot;`, `&apos;` and `&nbsp;`. Other named references, and a reference
+missing its `;`, are left as they are; an invalid code point becomes U+FFFD.
+
+```ruby
+"caf&#233; &amp; &lt;b&gt;".unescape_html()   # => "café & <b>"
 ```
 
 ### `unpack(template) -> Array`

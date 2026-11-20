@@ -2627,6 +2627,49 @@ end
 
 def diamond_string_unpack1(data: String, format: String) = diamond_string_unpack(data, format)[0]
 
+# The text with &, <, >, " and ' written as &amp;, &lt;, &gt;, &quot; and
+# &#39;: safe inside HTML text and quoted attribute values (and XML). The same
+# output as Div's <%= %>.
+def diamond_string_escape_html(text: String) -> String
+  return text if text.index_of("&") == nil && text.index_of("<") == nil && text.index_of(">") == nil &&
+    text.index_of("\"") == nil && text.index_of("'") == nil
+  out = StringBuilder.new()
+  text.each_char() do |char|
+    if char == "&"
+      out.append("&amp;")
+    elsif char == "<"
+      out.append("&lt;")
+    elsif char == ">"
+      out.append("&gt;")
+    elsif char == "\""
+      out.append("&quot;")
+    elsif char == "'"
+      out.append("&#39;")
+    else
+      out.append(char)
+    end
+  end
+  out.to_s()
+end
+
+# Decodes character references: numeric ones (&#233; and &#xE9;) and the
+# named &amp; &lt; &gt; &quot; &apos; and &nbsp;. Anything else, including
+# other named references and a reference without its ";", is left as it is.
+def diamond_string_unescape_html(text: String) -> String
+  return text if text.index_of("&") == nil
+  named = {"amp": "&", "lt": "<", "gt": ">", "quot": "\"", "apos": "'", "nbsp": " "}
+  text.gsub(/&(#[0-9]{1,7}|#[xX][0-9A-Fa-f]{1,6}|[A-Za-z]+);/) do |match|
+    body = match.slice(1, match.length() - 2)
+    if body.start_with?("#")
+      hex = body.start_with?("#x") || body.start_with?("#X")
+      code = hex ? body.slice(2, body.length() - 2).to_i(16) : body.slice(1, body.length() - 1).to_i()
+      code == 0 || code > 0x10FFFF || (code >= 0xD800 && code <= 0xDFFF) ? "�" : [code].pack("U")
+    else
+      named[body] || match
+    end
+  end
+end
+
 ## `STDOUT`, `STDERR` and `STDIN`: the process's standard streams as values, so code can
 ## take "where to write" as an argument (`log(STDERR)`) instead of choosing between
 ## `puts` and `warn`.
