@@ -22,6 +22,9 @@
 #include <sys/stat.h>
 #include <time.h>
 #include <unistd.h>
+#if defined(__APPLE__)
+#include <mach-o/dyld.h>
+#endif
 #include "semver.h"
 
 #ifndef DIAMOND_NO_SQLITE
@@ -757,6 +760,24 @@ DiamondVmStatus outlined_file_path(DiamondVm *vm,const DiamondChunk *chunk,Diamo
             VM_RETURN(DIAMOND_VM_TYPE_ERROR);
         }
         registers[dest]=DIAMOND_BOOL(isatty(descriptor)!=0);
+        HELPER_DONE;
+    }
+    if(selector==DIAMOND_FILE_PATH_EXECUTABLE) {
+        VM_SANDBOX_GUARD("Process.executable", "filesystem");
+        char found[PATH_MAX];
+        bool known=false;
+#if defined(__linux__)
+        const ssize_t count=readlink("/proc/self/exe",found,sizeof found-1);
+        if(count>0&&(size_t)count<sizeof found-1){found[count]='\0';known=true;}
+#elif defined(__APPLE__)
+        char raw[PATH_MAX];
+        uint32_t size=sizeof raw;
+        if(_NSGetExecutablePath(raw,&size)==0&&realpath(raw,found)!=nullptr)known=true;
+#endif
+        if(!known){registers[dest]=DIAMOND_NIL;HELPER_DONE;}
+        DiamondString *text=allocate_string(vm,found,strlen(found));
+        if(text==nullptr)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+        registers[dest]=DIAMOND_OBJECT(text);
         HELPER_DONE;
     }
     if(selector==DIAMOND_FILE_PATH_MKTMPDIR) {

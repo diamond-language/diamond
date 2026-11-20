@@ -11457,6 +11457,29 @@ class Parser
     destination
   end
 
+  # `Process.executable()`: the running executable's path, as compiler_builtins.c's
+  # parse_process_call: FILE_PATH selector 26 over two NIL operands.
+  def parse_process_executable_call()
+    if @current.kind() != :left_paren
+      self.fail("expected '(' after 'Process.executable'")
+      return 0
+    end
+    self.advance_token()
+    if @current.kind() != :right_paren
+      self.fail("Process.executable takes no arguments")
+      return 0
+    end
+    self.advance_token()
+    first = self.allocate_register()
+    self.emit_instruction1(Opcode::NIL, first)
+    second = self.allocate_register()
+    self.emit_instruction1(Opcode::NIL, second)
+    destination = self.allocate_register()
+    self.emit_instruction3(Opcode::FILE_PATH, destination, first, second)
+    self.emit_byte(26)
+    destination
+  end
+
   # `Process.pid()`: this process's id, as compiler_builtins.c's parse_process_call.
   def parse_process_pid_call()
     if @current.kind() != :left_paren
@@ -11481,13 +11504,14 @@ class Parser
   def parse_process_call()
     self.advance_token()
     method = if @current.kind() == :identifier then self.token_text(@current) else "" end
-    if method != "run" && method != "spawn" && method != "pid"
-      self.fail("expected 'run', 'spawn' or 'pid' after 'Process'")
+    if method != "run" && method != "spawn" && method != "pid" && method != "executable"
+      self.fail("expected 'run', 'spawn', 'pid' or 'executable' after 'Process'")
       return 0
     end
     call = "Process.#{method}"
     self.advance_token()
     return self.parse_process_pid_call() if method == "pid"
+    return self.parse_process_executable_call() if method == "executable"
     if @current.kind() != :left_paren
       self.fail("expected '(' after '#{call}'")
       return 0

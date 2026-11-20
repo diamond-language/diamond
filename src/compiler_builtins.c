@@ -2359,7 +2359,7 @@ static uint16_t parse_process_spawn_call(Compiler *compiler) {
 uint16_t parse_process_call(Compiler *compiler) {
     advance_token(compiler); /* consume '.' */
     if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER) {
-        fail(compiler,compiler->current.span,"expected 'run', 'spawn' or 'pid' after 'Process'");
+        fail(compiler,compiler->current.span,"expected 'run', 'spawn', 'pid' or 'executable' after 'Process'");
         return 0;
     }
     const DiamondSpan method=compiler->current.span;
@@ -2389,7 +2389,30 @@ uint16_t parse_process_call(Compiler *compiler) {
         compiler->known_types[dest]=DIAMOND_TYPE_INT;
         return dest;
     }
-    fail(compiler,method,"expected 'run', 'spawn' or 'pid' after 'Process'");
+    if(name_equals(compiler,"executable",method,false)) {
+        advance_token(compiler);
+        if(compiler->current.kind!=DIAMOND_TOKEN_LEFT_PAREN) {
+            fail(compiler,compiler->current.span,"expected '(' after 'Process.executable'");
+            return 0;
+        }
+        advance_token(compiler);
+        if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN) {
+            fail(compiler,compiler->current.span,"Process.executable takes no arguments");
+            return 0;
+        }
+        advance_token(compiler);
+        /* A FILE_PATH selector with two nil operands, so no new opcode. */
+        const uint16_t first=allocate_register(compiler);
+        emit_instruction(compiler,DIAMOND_OP_NIL,first,0,0,1);
+        const uint16_t second=allocate_register(compiler);
+        emit_instruction(compiler,DIAMOND_OP_NIL,second,0,0,1);
+        const uint16_t dest=allocate_register(compiler);
+        emit_opcode(compiler,DIAMOND_OP_FILE_PATH);
+        emit_register(compiler,dest);emit_register(compiler,first);
+        emit_register(compiler,second);emit_byte(compiler,(uint8_t)DIAMOND_FILE_PATH_EXECUTABLE);
+        return dest;
+    }
+    fail(compiler,method,"expected 'run', 'spawn', 'pid' or 'executable' after 'Process'");
     return 0;
 }
 

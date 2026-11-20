@@ -1,0 +1,7 @@
+# Process.executable() is the absolute path of the running d6, so a program can
+# start another script with the same interpreter.
+path = Process.executable()
+puts(path.start_with?("/"))
+puts(File.exist?(path))
+result = Process.run([path, "-e", "puts(6 * 7)"])
+puts(result.stdout().split("\n")[0])

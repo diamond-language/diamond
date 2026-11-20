@@ -54,6 +54,17 @@ This process's id, for a pid file or to tell workers apart in logs.
 Process.pid() > 0   # => true
 ```
 
+### `Process.executable() -> String | Nil`
+
+The absolute path of the running executable, or `nil` on a platform that cannot say. Under
+`d6 script.d6` it is the d6 interpreter, so a program can start another script with the
+same d6 that runs it; in a program `d6 build` made, it is that program. The sandbox counts
+it as filesystem access.
+
+```ruby
+helper = Process.run([Process.executable(), "worker.d6"])
+```
+
 ## ProcessResult
 
 ### `stdout() -> String`

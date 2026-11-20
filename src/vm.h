@@ -757,6 +757,10 @@ typedef enum {
     /* Dir.delete_tree(path): removes a directory and everything under it, like rm -r.
      * Symlinks are removed, never followed; a path that is not there returns false. */
     DIAMOND_FILE_PATH_DELETE_TREE,
+    /* Process.executable(): the absolute path of the running executable (the d6
+     * interpreter, or a program `d6 build` made), or nil when the platform cannot say.
+     * Both operands are nil. */
+    DIAMOND_FILE_PATH_EXECUTABLE,
 } DiamondFilePathFunction;
 
 typedef enum DiamondMathFunction : uint8_t {
