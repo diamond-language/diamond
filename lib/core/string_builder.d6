@@ -7,7 +7,7 @@ class StringBuilder
     @total_length = 0
   end
 
-  def append(piece)
+  def append(piece) -> StringBuilder
     text = "#{piece}"
     @parts << text
     @total_length = @total_length + text.length()

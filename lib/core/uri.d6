@@ -14,20 +14,6 @@ module URI
     URI.diamond_decode(text, false)
   end
 
-  # Splits `text` into its parts (RFC 3986): scheme, userinfo, host, port,
-  # path, query and fragment. A relative reference ("../a.html", "#top")
-  # parses too, with nil for the parts it lacks. Raises ArgumentError when the
-  # port is not a number.
-  def self.parse(text: String) -> URI::Reference
-    URI::Reference.diamond_parse(text)
-  end
-
-  # Resolves `reference` against `base`, as a browser resolves a link against
-  # the page it is on (RFC 3986 section 5.2), and returns the result as text.
-  def self.join(base: String, reference: String) -> String
-    URI.parse(base).resolve(reference).to_s()
-  end
-
   # A form body or query string from a Hash: name=value pairs joined by "&",
   # with spaces as "+". Values are converted with to_s; an Array value repeats
   # the name once per element.
@@ -199,7 +185,7 @@ module URI
     # base (RFC 3986 section 5.2.2): "g", "./g", "../g", "/g", "//h/g", "?q"
     # and "#f" all work as they do in a browser.
     def resolve(reference: String | URI::Reference) -> URI::Reference
-      ref = reference is String ? URI.parse(reference) : reference
+      ref = reference is String ? URI::Reference.diamond_parse(reference) : reference
       if ref.scheme() != nil
         return URI::Reference.new(ref.scheme(), ref.userinfo(), ref.host(), ref.port(),
           URI::Reference.diamond_remove_dot_segments(ref.path()), ref.query(), ref.fragment())
@@ -280,5 +266,19 @@ module URI
       joined = output.join("/")
       absolute ? "/" + joined : joined
     end
+  end
+
+  # Splits `text` into its parts (RFC 3986): scheme, userinfo, host, port,
+  # path, query and fragment. A relative reference ("../a.html", "#top")
+  # parses too, with nil for the parts it lacks. Raises ArgumentError when the
+  # port is not a number.
+  def self.parse(text: String) -> URI::Reference
+    URI::Reference.diamond_parse(text)
+  end
+
+  # Resolves `reference` against `base`, as a browser resolves a link against
+  # the page it is on (RFC 3986 section 5.2), and returns the result as text.
+  def self.join(base: String, reference: String) -> String
+    URI.parse(base).resolve(reference).to_s()
   end
 end
