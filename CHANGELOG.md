@@ -59,6 +59,9 @@ record. From 1.0.0, releases follow the [1.x compatibility policy](docs/compatib
 
 ### Fixed
 
+- toml 0.1.1: a bare word where a value belongs (`currency = USD`) says strings need quotes
+  instead of "invalid number".
+- `facet new graphql` asks for rack ^0.2.5, as `facet new web` does.
 - arel 0.35.6: the README shows aggregates (`Arel.sum`, `count`, ...) with `group`; they were
   only in the API reference.
 - active_record 0.21.4: `Repository#create` (and `Model.create`) return the new row's id, as the

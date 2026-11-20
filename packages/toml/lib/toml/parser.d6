@@ -595,6 +595,11 @@ module TOML
       @pos = start
       self.fail("expected a value, found #{self.describe(self.peek())}") if token.empty?()
       value = TOML.number(token)
+      # A bare word (`currency = USD`) is most likely a string missing its quotes.
+      first = token.getbyte(0)
+      if value == nil && ((first >= 65 && first <= 90) || (first >= 97 && first <= 122))
+        self.fail("expected a value, found #{token}; strings need quotes: \"#{token}\"")
+      end
       self.fail("invalid number #{token.inspect()}") if value == nil
       @pos = start + token.length()
       value

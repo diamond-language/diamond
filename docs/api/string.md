@@ -287,7 +287,7 @@ The position of the first `needle` at or after `start`, or `nil`.
 
 ### `index_of(needle) -> Int | Nil`
 
-The position of the first `needle`, or `nil`.
+The position of the first `needle`, or `nil`. `index(needle, start)` searches from a position.
 
 ```ruby
 "hello".index_of("z")   # => nil
