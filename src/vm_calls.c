@@ -1460,8 +1460,9 @@ DiamondVmStatus diamond_jit_invoke_instance(DiamondVm *vm, const DiamondChunk *c
         *out=DIAMOND_BOOL(false);return DIAMOND_VM_OK;
     }
     if(method_name->length==6&&memcmp(method_name->chars,"equal?",6)==0&&
-       argc==1&&type_argument_count==0&&
+       type_argument_count==0&&
        !class_defines(owner,instance->class,"equal?",6)) {
+        if(argc!=1) return DIAMOND_VM_ARITY_ERROR;
         *out=DIAMOND_BOOL(values_identical(registers[recv],registers[base]));
         return DIAMOND_VM_OK;
     }
@@ -2640,9 +2641,10 @@ DiamondVmStatus diamond_invoke_general(DiamondVm *vm,const DiamondChunk *chunk,
         }
         /* equal?(other) on any built-in value: the same object. */
         if(method_name->length==6&&memcmp(method_name->chars,"equal?",6)==0&&
-           argc==1&&type_argument_count==0&&
+           type_argument_count==0&&
            (registers[recv].kind!=DIAMOND_VALUE_OBJECT||
             registers[recv].as.object->kind!=DIAMOND_OBJECT_INSTANCE)) {
+            if(argc!=1) return DIAMOND_VM_ARITY_ERROR;
             registers[dest]=DIAMOND_BOOL(values_identical(registers[recv],registers[base]));
             return DIAMOND_VM_OK;
         }
