@@ -3362,6 +3362,15 @@ DiamondVmStatus outlined_breakpoint_check(DiamondVm *vm,const DiamondChunk *chun
 
 /* ---- Opcodes compiled code runs through diamond_jit_outlined (src/vm_calls.c) ---- */
 
+static atomic_bool output_pipe_closed;
+
+bool diamond_output_pipe_closed(void) { return atomic_load(&output_pipe_closed); }
+
+/* Records EPIPE from a write to stdout/stderr (see diamond_output_pipe_closed). */
+static void note_output_error(int error) {
+    if(error==EPIPE)atomic_store(&output_pipe_closed,true);
+}
+
 /* DIAMOND_OP_PRINT, moved out of run_chunk's switch so compiled code runs the same body (diamond_jit_outlined). The case body is unchanged
  * apart from its macros. */
 __attribute__((noinline))
@@ -3381,13 +3390,13 @@ DiamondVmStatus outlined_print(DiamondVm *vm,const DiamondChunk *chunk,DiamondVa
     errno=0;
     const size_t written=fwrite(text->chars,1,text->length,out);
     if(written!=text->length||ferror(out)) {
-        snprintf(vm->error,sizeof vm->error,"write error: %s",strerror(errno));
+        note_output_error(errno);snprintf(vm->error,sizeof vm->error,"write error: %s",strerror(errno));
         VM_RETURN(DIAMOND_VM_IO_ERROR);
     }
     if(newline) {
         errno=0;
         if(fputc('\n',out)==EOF||ferror(out)) {
-            snprintf(vm->error,sizeof vm->error,"write error: %s",strerror(errno));
+            note_output_error(errno);snprintf(vm->error,sizeof vm->error,"write error: %s",strerror(errno));
             VM_RETURN(DIAMOND_VM_IO_ERROR);
         }
         /* stdout is fully buffered (not line-buffered) once
@@ -3410,13 +3419,13 @@ DiamondVmStatus outlined_print(DiamondVm *vm,const DiamondChunk *chunk,DiamondVa
          * unconditionally rather than only when isatty(). */
         errno=0;
         if(fflush(out)==EOF) {
-            snprintf(vm->error,sizeof vm->error,"write error: %s",strerror(errno));
+            note_output_error(errno);snprintf(vm->error,sizeof vm->error,"write error: %s",strerror(errno));
             VM_RETURN(DIAMOND_VM_IO_ERROR);
         }
     } else if((flags&DIAMOND_PRINT_FLUSH)!=0) {
         errno=0;
         if(fflush(out)==EOF) {
-            snprintf(vm->error,sizeof vm->error,"write error: %s",strerror(errno));
+            note_output_error(errno);snprintf(vm->error,sizeof vm->error,"write error: %s",strerror(errno));
             VM_RETURN(DIAMOND_VM_IO_ERROR);
         }
     }

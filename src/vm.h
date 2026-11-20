@@ -2492,6 +2492,12 @@ DiamondVmStatus diamond_vm_run(DiamondVm *vm, const DiamondChunk *chunk,
 const char *diamond_vm_status_name(DiamondVmStatus status);
 const char *diamond_vm_error(const DiamondVm *vm);
 
+/* True once puts/print/warn found the reader of stdout or stderr gone (EPIPE), as when
+ * `prog | head` stops reading. The command-line runners then end the program quietly
+ * with status 141 (128 + SIGPIPE), as a C tool killed by SIGPIPE would, instead of
+ * reporting the uncaught IOError on a stream nobody reads. */
+bool diamond_output_pipe_closed(void);
+
 /* How many spawned OS threads (Thread.new workers and supervised children)
  * are still running Diamond code, process-wide. */
 size_t diamond_vm_running_threads(void);

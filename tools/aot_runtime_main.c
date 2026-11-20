@@ -68,13 +68,17 @@ int main(int argc, char **argv) {
     DiamondValue result = DIAMOND_NIL;
     const DiamondVmStatus status = diamond_vm_run(&vm, &chunk, &result);
     if (status != DIAMOND_VM_OK) {
-        fprintf(stderr, "%s: %s\n", argv[0],
-            vm.error[0] != '\0' ? vm.error : diamond_vm_status_name(status));
-        diamond_vm_exit_if_threads_running(70);
+        /* Stdout's reader went away (`prog | head`): end quietly, as SIGPIPE would. */
+        const bool pipe_closed = diamond_output_pipe_closed();
+        if (!pipe_closed)
+            fprintf(stderr, "%s: %s\n", argv[0],
+                vm.error[0] != '\0' ? vm.error : diamond_vm_status_name(status));
+        const int exit_status = pipe_closed ? 141 : 70;
+        diamond_vm_exit_if_threads_running(exit_status);
         diamond_vm_free(&vm);
         diamond_program_free(program);
         free(program);
-        return 70;
+        return exit_status;
     }
     if (diamond_env_flag("DIAMOND_PRINT_RESULT")) {
         diamond_value_print(result);

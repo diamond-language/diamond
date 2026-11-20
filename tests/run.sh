@@ -119,6 +119,25 @@ sandbox_probe='puts(File.read("Makefile").length() > 0)'
 ! DIAMOND_SANDBOX= "$diamond" -e "$sandbox_probe" >/dev/null 2>&1
 ! DIAMOND_SANDBOX=0 "$diamond" --sandbox -e "$sandbox_probe" >/dev/null 2>&1
 [[ "$(jit_first_call_count "$loop_program" DIAMOND_MAX_INSTRUCTIONS=100000000)" == 0 ]]
+# A reader that stops early (`| head`) ends the program quietly with status 141, as
+# SIGPIPE would, while a program can still rescue the IOError itself.
+pipe_err="$(mktemp)"
+pipe_code="$(mktemp)"
+{ "$diamond" -e 'i = 0
+while true
+  puts(i)
+  i += 1
+end' 2>"$pipe_err"; echo "$?" >"$pipe_code"; } | head -1 >/dev/null || true
+[[ "$(<"$pipe_code")" == 141 && ! -s "$pipe_err" ]]
+"$diamond" -e 'begin
+  while true
+    puts("x")
+  end
+rescue error: IOError
+  warn("rescued")
+end' 2>"$pipe_err" | head -1 >/dev/null || true
+[[ "$(<"$pipe_err")" == rescued ]]
+rm -f "$pipe_err" "$pipe_code"
 
 # Once program input has started, option-looking values belong to the script.
 actual="$($diamond -e 'ARGV' -h --version)"
