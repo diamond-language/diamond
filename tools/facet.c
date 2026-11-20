@@ -1055,7 +1055,7 @@ static int cmd_add(int argc, char **argv) {
 
 static void print_usage(void) {
     fputs("usage: facet install\n"
-          "       facet update\n"
+          "       facet update [<name>...]\n"
           "       facet new <kind> <path>     (kinds: cli, web, tcp, udp, lib)\n"
           "       facet init [name]\n"
           "       facet check <cut-directory> [--files]\n"
@@ -1070,10 +1070,11 @@ static void print_usage(void) {
 
 int main(int argc, char **argv) {
     if (argc == 2 && strcmp(argv[1], "install") == 0) {
-        return run_install_or_update(false);
+        return run_install_or_update(false, NULL, 0);
     }
-    if (argc == 2 && strcmp(argv[1], "update") == 0) {
-        return run_install_or_update(true);
+    if (argc >= 2 && strcmp(argv[1], "update") == 0) {
+        /* `facet update a b` moves just those cuts to their newest compatible release. */
+        return run_install_or_update(true, argc > 2 ? argv + 2 : NULL, (size_t)(argc - 2));
     }
     if (argc >= 2 && strcmp(argv[1], "new") == 0) {
         return cmd_new(argc, argv);

@@ -710,6 +710,25 @@ grep -q '"greeter": {"registry": "https://cuts.example/api", "version": "^1.3.0"
 (cd project21_stale && "$facet" install >/dev/null)
 grep -q '"greeter": {"source": "registry", "registry": "https://cuts.example/api", "version": "1.3.0"' project21_stale/Cutfile.lock
 grep -q '1.3.0' project21_stale/cuts/greeter/Cutfile
+
+# facet update keeps a locked registry version that still fits; facet update NAME moves
+# just that cut to its newest compatible release, and refuses a name not in the lock.
+mkdir project21_named
+(cd project21_named && "$facet" init myapp >/dev/null &&
+    "$facet" add greeter --registry https://cuts.example/api --version "^1.0.0" >/dev/null &&
+    "$facet" add logger --registry https://cuts.example/api >/dev/null)
+printf '{"greeter": {"source": "registry", "registry": "https://cuts.example/api", "version": "1.2.3", "sha256": "%s", "size": %s}, "logger": {"source": "registry", "registry": "https://cuts.example/api", "version": "1.0.0", "sha256": "%s", "size": %s}}\n' \
+    "$digest" "$archive_size" "$logger_digest" "$(stat -c %s "$work/registry_logger.tar")" > project21_named/Cutfile.lock
+(cd project21_named && "$facet" update >/dev/null)
+grep -q '"greeter": {"source": "registry", "registry": "https://cuts.example/api", "version": "1.2.3"' project21_named/Cutfile.lock
+(cd project21_named && "$facet" update greeter >/dev/null)
+grep -q '"greeter": {"source": "registry", "registry": "https://cuts.example/api", "version": "1.3.0"' project21_named/Cutfile.lock
+grep -q '"logger": {"source": "registry", "registry": "https://cuts.example/api", "version": "1.0.0"' project21_named/Cutfile.lock
+if (cd project21_named && "$facet" update nope >/dev/null 2>&1); then
+    echo "facet update accepted a cut that is not in the lock" >&2
+    exit 1
+fi
+[[ "$(cd project21_named && "$facet" update nope 2>&1)" == "facet: 'nope' is not in Cutfile.lock" ]]
 export PATH="$saved_path"
 unset FACET_TEST_METADATA FACET_TEST_GREETER_DIGEST FACET_TEST_LOGGER_DIGEST
 unset FACET_TEST_GREETER_ARCHIVE FACET_TEST_LOGGER_ARCHIVE

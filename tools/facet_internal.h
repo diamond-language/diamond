@@ -149,7 +149,7 @@ int cmd_new(int argc, char **argv);
 /* facet_resolve.c */
 bool resolve_full_graph(const FacetManifest *manifest, FacetResolution *resolution,
         const char *scratch_root, char *error, size_t error_size);
-int run_install_or_update(bool force_resolve);
+int run_install_or_update(bool force_resolve, char *const *release, size_t release_count);
 bool registry_latest_version(const char *registry, const char *name, char *out,
         size_t out_size, char *error, size_t error_size);
 
