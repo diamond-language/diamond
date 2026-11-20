@@ -197,6 +197,8 @@ enum {
 enum {
     DIAMOND_PRINT_NEWLINE = 1,
     DIAMOND_PRINT_STDERR = 2,
+    /* Flush the stream after writing, even without a newline (STDOUT.flush, STDERR.print). */
+    DIAMOND_PRINT_FLUSH = 4,
 };
 
 typedef enum DiamondOpCode : uint8_t {

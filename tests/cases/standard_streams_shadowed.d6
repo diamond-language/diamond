@@ -1,0 +1,5 @@
+# A program's own STDOUT constant wins over the built-in stream, even when it is assigned
+# after a function that reads it is defined.
+def show() = STDOUT
+STDOUT = "mine"
+show()

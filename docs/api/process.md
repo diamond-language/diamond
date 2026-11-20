@@ -1,4 +1,4 @@
-# Process, Signal and IO
+# Process, Signal, streams and IO
 
 [API reference](index.md) · Previous: [MatchData](match_data.md)
 
@@ -152,6 +152,57 @@ def shutdown()
 end
 Signal.trap("INT", shutdown)
 ```
+
+## STDOUT, STDERR and STDIN
+
+The standard streams as values, so a function can take where to write as an argument.
+`STDOUT.puts(x)` is `puts(x)` and `STDERR.puts(x)` is `warn(x)`. A program that assigns
+its own `STDOUT` (or `STDERR`, `STDIN`) uses that instead.
+
+<!-- doc-check: skip -->
+```ruby
+def report(out, message) = out.puts("[report] #{message}")
+report(STDERR, "3 rows skipped")
+STDOUT.print("Name: ")
+STDOUT.flush()
+name = STDIN.gets()
+```
+
+### `write(value) -> Int`
+
+Writes `value` as a String, with no newline, and returns the number of bytes. STDERR is
+flushed at once; STDOUT when a newline is written or on `flush`.
+
+### `print(value) -> Nil`
+
+Writes `value` with no newline.
+
+### `puts(value = "") -> Nil`
+
+Writes `value` and a newline, then flushes.
+
+### `flush() -> StandardStream`
+
+Sends anything buffered out, for example a prompt written with `print`, and returns the
+stream.
+
+### `gets() -> String | Nil`
+
+`STDIN` only: the next line without its line ending, or `nil` at the end, like `gets`.
+
+### `read() -> String`
+
+`STDIN` only: the rest of the input, each line ending in `\n`.
+
+### `tty?() -> Bool`
+
+Whether the stream is a terminal, as `IO.tty?`.
+
+### `name() -> Symbol`
+
+`:stdout`, `:stderr` or `:stdin`. Two values for the same stream are `==`.
+
+Writing to `STDIN`, or reading from `STDOUT` or `STDERR`, raises `IOError`.
 
 ## IO
 

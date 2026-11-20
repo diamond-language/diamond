@@ -1930,6 +1930,23 @@ class Parser
     self.emit_closure(function_index, enclosing_locals, name, captures_self, self_register)
   end
 
+  # Whether `name = ...` appears later in the source (compiler.c's discovery pass
+  # knows every constant before it compiles a reference).
+  def constant_assigned_ahead?(name)
+    lookahead = @lexer.clone()
+    token = lookahead.next_token()
+    while token.kind() != :eof && token.kind() != :error
+      if token.kind() == :identifier && self.token_text(token) == name
+        following = lookahead.next_token()
+        return true if following.kind() == :equal
+        token = following
+      else
+        token = lookahead.next_token()
+      end
+    end
+    false
+  end
+
   # compiler.c learns this in its discovery pass. Here a look ahead through the
   # def's indented body has to do; naming itself anywhere in there is enough.
   def nested_def_calls_itself?(name, def_token)
@@ -6326,6 +6343,7 @@ class Parser
     value
   end
 
+# `newline` is true (puts), false (print) or the PRINT flag bits themselves (warn is 3).
   def parse_print_call(newline)
     self.advance_token()
     source = self.parse_expression()
@@ -6338,11 +6356,40 @@ class Parser
     self.emit_byte(Opcode::PRINT)
     self.emit_register(destination)
     self.emit_register(source)
-    self.emit_byte(if newline
-      1
-    else
-      0
-    end)
+    self.emit_byte(if newline == true then 1 elsif newline == false then 0 else newline end)
+    destination
+  end
+
+  # `__diamond_print(value, flags)`, as compiler_builtins.c's parse_diamond_print_call: the
+  # prelude's STDOUT/STDERR objects pass literal PRINT flags.
+  def parse_diamond_print_call()
+    self.advance_token()
+    self.skip_newlines()
+    source = self.parse_expression()
+    self.skip_newlines()
+    if @current.kind() != :comma
+      self.fail("__diamond_print takes a value and literal flags")
+      return 0
+    end
+    self.advance_token()
+    self.skip_newlines()
+    text = if @current.kind() == :integer then self.token_text(@current) else "" end
+    if text.length() != 1 || text < "0" || text > "7"
+      self.fail("__diamond_print flags must be a literal from 0 to 7")
+      return 0
+    end
+    self.advance_token()
+    self.skip_newlines()
+    if @current.kind() != :right_paren
+      self.fail("expected ')' after arguments")
+      return 0
+    end
+    self.advance_token()
+    destination = self.allocate_register()
+    self.emit_byte(Opcode::PRINT)
+    self.emit_register(destination)
+    self.emit_register(source)
+    self.emit_byte(text.to_i())
     destination
   end
 
@@ -9616,6 +9663,27 @@ class Parser
         self.set_type_fact(destination, if name == "ARGV" then Type::ARRAY else Type::HASH end)
         return destination
       end
+      # STDOUT, STDERR and STDIN, like compiler.c's compile_standard_stream_name: a call of
+      # the prelude's diamond_stdout() and friends, unless the program assigns the name.
+      if (name == "STDOUT" || name == "STDERR" || name == "STDIN") && class_entry == nil &&
+         !self.constant_assigned_ahead?(name)
+        stream = self.find_function("diamond_" + name.downcase())
+        if stream != nil
+          stream_closure = self.allocate_register()
+          self.emit_byte(Opcode::CLOSURE)
+          self.emit_register(stream_closure)
+          self.emit_function_index(stream[1])
+          self.emit_byte(0)
+          base = self.allocate_register()
+          destination = self.allocate_register()
+          self.emit_call_opcode(Opcode::CALL_CLOSURE)
+          self.emit_register(destination)
+          self.emit_register(stream_closure)
+          self.emit_register(base)
+          self.emit_byte(0)
+          return destination
+        end
+      end
       first = name.slice(0, 1)
       if first >= "A" && first <= "Z" && class_entry == nil && module_entry == nil
         return self.compile_forward_class_call(@previous) if @current.kind() == :dot
@@ -9835,6 +9903,8 @@ class Parser
     return self.parse_p_call() if name == "p" && self.find_function(name) == nil && !self.class_defines_p?()
     return self.parse_print_call(true) if name == "puts" && self.find_function(name) == nil
     return self.parse_print_call(false) if name == "print" && self.find_function(name) == nil
+    return self.parse_print_call(3) if name == "warn" && self.find_function(name) == nil
+    return self.parse_diamond_print_call() if name == "__diamond_print" && self.find_function(name) == nil
     return self.parse_builtin_scalar_call(name) if self.is_builtin_scalar_target(name)
     return self.parse_math_unary_call(math_unary_id(name)) if self.is_math_unary_target(name)
     return self.parse_math_binary_call(4) if self.is_math_binary_target(name)

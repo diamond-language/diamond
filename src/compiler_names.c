@@ -115,6 +115,10 @@ static bool parse_builtin_function_call(Compiler *compiler, DiamondSpan name,
         *result=parse_print_call(compiler,DIAMOND_PRINT_NEWLINE|DIAMOND_PRINT_STDERR);
         return true;
     }
+    if(name_equals(compiler,"__diamond_print",name,false)) {
+        *result=parse_diamond_print_call(compiler);
+        return true;
+    }
     for(size_t index=0;index<sizeof builtin_function_calls/
             sizeof builtin_function_calls[0];index++)
         if(name_equals(compiler,builtin_function_calls[index].name,name,false)) {

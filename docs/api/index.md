@@ -35,7 +35,7 @@ The [language reference](../syntax.md) explains the rules these methods follow
 - [Time](time.md)
 - [Regexp](regexp.md)
 - [MatchData](match_data.md)
-- [Process, Signal and IO](process.md)
+- [Process, Signal, STDOUT/STDERR/STDIN and IO](process.md)
 
 ## Concurrency
 

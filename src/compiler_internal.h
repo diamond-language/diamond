@@ -886,6 +886,7 @@ DIAMOND_INTERNAL uint16_t parse_to_sym_call(Compiler *compiler);
 DIAMOND_INTERNAL uint16_t parse_math_unary_call(Compiler *compiler, DiamondMathFunction id);
 DIAMOND_INTERNAL uint16_t parse_math_binary_call(Compiler *compiler, DiamondMathFunction id);
 DIAMOND_INTERNAL uint16_t parse_print_call(Compiler *compiler, uint8_t flags);
+DIAMOND_INTERNAL uint16_t parse_diamond_print_call(Compiler *compiler);
 DIAMOND_INTERNAL uint16_t parse_p_call(Compiler *compiler);
 DIAMOND_INTERNAL uint16_t parse_gets_call(Compiler *compiler);
 DIAMOND_INTERNAL uint16_t parse_exit_call(Compiler *compiler);

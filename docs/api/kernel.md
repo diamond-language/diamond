@@ -45,6 +45,9 @@ Writes `value` and a newline to standard error.
 Reads one line from standard input without its line ending (`\n` or `\r\n`),
 or returns `nil` at end of input.
 
+`STDOUT`, `STDERR` and `STDIN` are the same streams as values; see
+[Process, Signal, streams and IO](process.md#stdout-stderr-and-stdin).
+
 ## Program control
 
 ### `exit(status = 0)`

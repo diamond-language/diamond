@@ -1,0 +1,26 @@
+# STDOUT, STDERR and STDIN are values: they can be passed to a function that writes.
+# This case's .expected holds stdout only, so nothing written to STDERR may show up.
+def report(out, message)
+  out.print("[")
+  out.print(message)
+  out.puts("]")
+end
+
+report(STDOUT, "to stdout")
+report(STDERR, "to stderr")
+STDERR.print("no newline on stderr")
+STDERR.flush()
+bytes = STDOUT.write("héllo ")
+STDOUT.flush().puts("after flush")
+streams = [STDOUT, STDERR, STDIN]
+read_stdout = begin
+  STDOUT.gets()
+rescue error: IOError
+  error.message()
+end
+write_stdin = begin
+  STDIN.puts("x")
+rescue error: IOError
+  error.message()
+end
+[bytes, streams.map() do |stream| stream.name() end, STDOUT == STDOUT, STDOUT == STDERR, STDERR.to_s(), read_stdout, write_stdin]

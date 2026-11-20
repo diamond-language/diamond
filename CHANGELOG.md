@@ -8,6 +8,9 @@ record. From 1.0.0, releases follow the [1.x compatibility policy](docs/compatib
 
 ### Added
 
+- `STDOUT`, `STDERR` and `STDIN`: the standard streams as values (`write`, `print`, `puts`, `flush`,
+  `gets`, `read`, `tty?`), so a function can take where to write as an argument.
+  `STDERR.print` writes without a newline, which `warn` could not.
 - `Time.strptime(text, format)` reads a date or time laid out by a `strftime`-style format
   (`"%m/%d/%Y"`, `"%d %b %Y %I:%M %p"`, ...).
 - `Dir.mktmpdir(prefix = "d6-")` makes a private temporary directory, and `Dir.delete_tree(path)`

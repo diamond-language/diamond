@@ -1929,6 +1929,41 @@ uint16_t parse_print_call(Compiler *compiler, uint8_t flags) {
     return dest;
 }
 
+/* `__diamond_print(value, flags)`: PRINT with literal DIAMOND_PRINT_* flags. Only the
+ * prelude's STDOUT/STDERR objects call it; print, puts and warn are the public names. */
+uint16_t parse_diamond_print_call(Compiler *compiler) {
+    advance_token(compiler); /* consume '(' */
+    skip_newlines(compiler);
+    const uint16_t source=parse_expression(compiler);
+    skip_newlines(compiler);
+    if(compiler->current.kind!=DIAMOND_TOKEN_COMMA) {
+        fail(compiler,compiler->current.span,"__diamond_print takes a value and literal flags");
+        return 0;
+    }
+    advance_token(compiler);
+    skip_newlines(compiler);
+    if(compiler->current.kind!=DIAMOND_TOKEN_INTEGER||compiler->current.span.length!=1||
+       compiler->source[compiler->current.span.start]<'0'||compiler->source[compiler->current.span.start]>'7') {
+        fail(compiler,compiler->current.span,"__diamond_print flags must be a literal from 0 to 7");
+        return 0;
+    }
+    const uint8_t flags=(uint8_t)(compiler->source[compiler->current.span.start]-'0');
+    advance_token(compiler);
+    skip_newlines(compiler);
+    if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN) {
+        fail(compiler,compiler->current.span,"expected ')' after arguments");
+        return 0;
+    }
+    advance_token(compiler);
+    const uint16_t dest=allocate_register(compiler);
+    emit_opcode(compiler,DIAMOND_OP_PRINT);
+    emit_register(compiler,dest);
+    emit_register(compiler,source);
+    emit_byte(compiler,flags);
+    compiler->known_types[dest]=DIAMOND_TYPE_NIL;
+    return dest;
+}
+
 /* p(value): puts(value.inspect()) that then evaluates to value, so it can wrap an
  * expression while debugging. Takes exactly one argument; a user-defined `p` (function
  * or local) takes precedence over it, as for puts. */

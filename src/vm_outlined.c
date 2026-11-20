@@ -3413,6 +3413,12 @@ DiamondVmStatus outlined_print(DiamondVm *vm,const DiamondChunk *chunk,DiamondVa
             snprintf(vm->error,sizeof vm->error,"write error: %s",strerror(errno));
             VM_RETURN(DIAMOND_VM_IO_ERROR);
         }
+    } else if((flags&DIAMOND_PRINT_FLUSH)!=0) {
+        errno=0;
+        if(fflush(out)==EOF) {
+            snprintf(vm->error,sizeof vm->error,"write error: %s",strerror(errno));
+            VM_RETURN(DIAMOND_VM_IO_ERROR);
+        }
     }
     registers[destination]=DIAMOND_NIL;HELPER_DONE;
 }

@@ -1,6 +1,6 @@
 # MatchData
 
-[API reference](index.md) · Previous: [Regexp](regexp.md) · Next: [Process, Signal and IO](process.md)
+[API reference](index.md) · Previous: [Regexp](regexp.md) · Next: [Process, Signal, streams and IO](process.md)
 
 A `MatchData` is one match, from `Regexp#match_data` or `String#match_data`.
 Group `0` is the whole match and the capture groups follow it. A group is

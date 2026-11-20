@@ -13,7 +13,7 @@ There are two kinds of TCP connection:
   they do on a file, plus the socket methods below.
 - A non-blocking `Socket`, from `connect_nonblocking` or a
   `listen_nonblocking` listener, never waits. Wait for it with `IO.poll`
-  (see [Process, Signal and IO](process.md)).
+  (see [Process, Signal, streams and IO](process.md)).
 
 ```ruby
 server = TCPServer.listen(0, host: "127.0.0.1")

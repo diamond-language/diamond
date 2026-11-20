@@ -1,0 +1,3 @@
+[to stdout]
+héllo after flush
+[7, [stdout, stderr, stdin], true, false, STDERR, STDOUT is not open for reading, STDIN is not open for writing]
