@@ -127,6 +127,15 @@ revoked afterwards). The published sha256s match `docs/registry-launch-inventory
 `tools/verify_registry_launch.d6` passed for all 22 public cuts. The registry uses mjolnir, not
 active_record, so no redeploy.
 
+http 0.2.7 (#623, gaps from the linkcheck dogfood app: relative redirect `Location`, a size limit
+on close-delimited bodies and `max_body_bytes`, `http_serve` host/ready/stop) was published on
+2026-11-20 UTC from main `fd0ddfd9`, after a verified laptop snapshot
+(`~/diamond-registry-backups/pre-linkcheck-gaps-20261120T195123Z`), with a 30-minute credential for
+`diamond-language` scoped to `publish:http` (id 48, revoked afterwards). The published sha256
+`c654347b6c636f2ab3b67a2b7f6d9bbe95fb6df439fc90661b3d27835c3c84e1` matches
+`docs/registry-launch-inventory.json`, and `tools/verify_registry_launch.d6` passed for all 22 public
+cuts. No redeploy: the registry's own locked dependencies did not change.
+
 Previously `0e482f26c56854c4c41c6c82d093ad04f6569a21` (v1.0.0-rc4, deployed 2026-11-12 UTC (2026-11-11 Pacific)
 with `tools/deploy_registry.sh --revision=v1.0.0-rc4 --force` after its dry run).
 The fresh snapshot at
