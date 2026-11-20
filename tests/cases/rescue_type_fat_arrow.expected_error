@@ -1,0 +1,1 @@
+write 'rescue e: Type' to bind the exception; d6 has no 'rescue Type => e'

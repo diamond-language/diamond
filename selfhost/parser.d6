@@ -7917,6 +7917,18 @@ class Parser
 
   def compile_rescue_clause(exception, retry_target, destination, seen_types)
     self.advance_token()
+    # Ruby's `rescue => e` and `rescue Type => e`, as in compiler_control.c.
+    if @current.kind() == :fat_arrow
+      self.fail("write 'rescue e' to bind the exception; d6 has no 'rescue => e'")
+      return nil
+    end
+    if @current.kind() == :identifier
+      first = self.token_text(@current).slice(0, 1)
+      if first >= "A" && first <= "Z" && @lexer.clone().next_token().kind() == :fat_arrow
+        self.fail("write 'rescue e: Type' to bind the exception; d6 has no 'rescue Type => e'")
+        return nil
+      end
+    end
     rescue_local_count = @locals.length()
     if @current.kind() == :identifier
       @locals.push([self.token_text(@current), exception, false])

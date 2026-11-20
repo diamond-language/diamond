@@ -1,0 +1,6 @@
+# Ruby's 'rescue Type => e' gets an error that shows the d6 spelling.
+begin
+  raise "x"
+rescue StandardError => e
+  puts(e)
+end
