@@ -4,7 +4,13 @@ This file records user-visible capability milestones rather than every
 implementation step; the Git history remains the authoritative fine-grained
 record. From 1.0.0, releases follow the [1.x compatibility policy](docs/compatibility.md).
 
-## Unreleased
+## 1.2.0 — 2026-11-20
+
+What three small applications ran short of: standard streams as values, `Time.strptime`,
+`MatchData`, temporary directories, an API reference for every builtin, `csv` and `toml` cuts,
+and `facet update` taking the newest compatible releases. 1.1 programs run unchanged, apart
+from a quiet exit on a closed output pipe and `facet update` moving to newer releases
+([release notes](docs/release-1.2.0.md)).
 
 ### Added
 
