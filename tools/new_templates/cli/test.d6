@@ -7,11 +7,14 @@ def run_tests()
 
   def test_help_succeeds() = Minitest.assert_equal(0, {{Name}}.main(["--help"]))
 
+  def test_version_comes_from_cutfile() = Minitest.assert_equal("0.1.0", {{Name}}::VERSION)
+
   def test_unknown_option_is_a_usage_error() = Minitest.assert_equal(64, {{Name}}.main(["--bogus"]))
 
   suite = Minitest.new()
   suite.test("greeting names the person", test_greeting)
   suite.test("--help exits 0", test_help_succeeds)
+  suite.test("the version comes from Cutfile", test_version_comes_from_cutfile)
   suite.test("an unknown option exits 64", test_unknown_option_is_a_usage_error)
   exit(suite.run() ? 0 : 1)
 end

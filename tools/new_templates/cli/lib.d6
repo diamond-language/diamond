@@ -1,6 +1,10 @@
 # {{name}}: greets someone by name.
 module {{Name}}
-  def self.usage() -> String = "usage: {{name}} [--help] [NAME]"
+  # The version in Cutfile, read in when the program is compiled, so `--version`
+  # stays in step with it (and with what `d6 build` records).
+  VERSION = JSON.parse(File.embed("../Cutfile"))["version"]
+
+  def self.usage() -> String = "usage: {{name}} [--help] [--version] [NAME]"
 
   def self.greeting(name: String) -> String = "Hello, #{name}!"
 
@@ -9,6 +13,11 @@ module {{Name}}
   def self.main(args: Array) -> Int
     if args.length() == 1 && (args[0] == "--help" || args[0] == "-h")
       puts({{Name}}.usage())
+      return 0
+    end
+
+    if args.length() == 1 && args[0] == "--version"
+      puts("{{name}} " + {{Name}}::VERSION)
       return 0
     end
 
