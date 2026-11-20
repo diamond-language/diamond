@@ -25,6 +25,10 @@
 #if defined(__APPLE__)
 #include <mach-o/dyld.h>
 #endif
+#if defined(__FreeBSD__)
+#include <sys/types.h>
+#include <sys/sysctl.h>
+#endif
 #include "semver.h"
 
 #ifndef DIAMOND_NO_SQLITE
@@ -773,6 +777,10 @@ DiamondVmStatus outlined_file_path(DiamondVm *vm,const DiamondChunk *chunk,Diamo
         char raw[PATH_MAX];
         uint32_t size=sizeof raw;
         if(_NSGetExecutablePath(raw,&size)==0&&realpath(raw,found)!=nullptr)known=true;
+#elif defined(__FreeBSD__)
+        int name[4]={CTL_KERN,KERN_PROC,KERN_PROC_PATHNAME,-1};
+        size_t size=sizeof found;
+        if(sysctl(name,4,found,&size,nullptr,0)==0&&size>1)known=true;
 #endif
         if(!known){registers[dest]=DIAMOND_NIL;HELPER_DONE;}
         DiamondString *text=allocate_string(vm,found,strlen(found));
