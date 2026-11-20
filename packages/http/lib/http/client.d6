@@ -385,6 +385,54 @@ def http_should_follow(status)
 end
 
 # scheme://host:port -- a redirect to another origin (another host, port, or an https -> http downgrade) must not carry credentials.
+# A redirect's Location as an absolute URL, resolved against the request it
+# answers the way a browser resolves a link (RFC 3986 section 5.2): absolute,
+# "//host/path", "/path", "?query" and a relative "next.html" or "../up" all
+# work. A fragment is dropped; it never reaches the server.
+def http_resolve_location(parsed, location)
+  location = location.strip()
+  hash = location.index_of("#")
+  location = location.slice(0, hash) unless hash == nil
+  return location if location.index_of("://") != nil
+  return "#{parsed["scheme"]}:#{location}" if location.start_with?("//")
+  origin = "#{parsed["scheme"]}://#{parsed["host"]}"
+  origin = "#{origin}:#{parsed["port"]}" unless parsed["port"] == parsed["default_port"]
+  path = parsed["path"]
+  question = path.index_of("?")
+  path = path.slice(0, question) unless question == nil
+  return origin + path + location if location.start_with?("?")
+  return origin + path if location == ""
+  target = if location.start_with?("/")
+    location
+  else
+    slash = path.rindex("/")
+    directory = if slash == nil then "/" else path.slice(0, slash + 1) end
+    directory + location
+  end
+  query = ""
+  question = target.index_of("?")
+  unless question == nil
+    query = target.slice(question, target.length() - question)
+    target = target.slice(0, question)
+  end
+  output = []
+  segments = target.split("/", -1)
+  segments.each_with_index() do |segment, index|
+    last = index == segments.length() - 1
+    if segment == "."
+      output.push("") if last
+    elsif segment == ".."
+      output.pop() if output.length() > 1
+      output.push("") if last
+    else
+      output.push(segment)
+    end
+  end
+  joined = output.join("/")
+  joined = "/" + joined unless joined.start_with?("/")
+  origin + joined + query
+end
+
 def http_origin(parsed)
   "#{parsed["scheme"]}://#{parsed["host"]}:#{parsed["port"]}"
 end
@@ -436,11 +484,7 @@ def http_request(method, url, headers = {}, body = "", options = {})
     if remaining <= 0
       raise IOError.new("too many redirects following #{url}")
     end
-    next_url = if location.index_of("://") == nil
-      "#{parsed["scheme"]}://#{parsed["host"]}:#{parsed["port"]}#{location}"
-    else
-      location
-    end
+    next_url = http_resolve_location(parsed, location)
     next_parsed = http_parse_url(next_url)
     origin = http_origin(parsed)
     next_origin = http_origin(next_parsed)
@@ -618,11 +662,7 @@ class HttpSession
     follow = @options["follow_redirects"]
     location = response["headers"]["location"]
     if follow == true && http_should_follow(response["status"]) && location != nil
-      next_url = if location.index_of("://") == nil
-        "#{parsed["scheme"]}://#{parsed["host"]}:#{parsed["port"]}#{location}"
-      else
-        location
-      end
+      next_url = http_resolve_location(parsed, location)
       if redirects_left <= 0
         raise IOError.new("too many redirects following #{url}")
       end

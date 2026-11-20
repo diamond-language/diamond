@@ -490,6 +490,8 @@ def run()
     method = request["method"]
     if path == "/start"
       [302, {"Location": "/final"}, ""]
+    elsif path == "/docs/old"
+      [301, {"Location": "../final#top"}, ""]
     elsif path == "/final" && method == "GET"
       [200, {"Content-Type": "text/plain"}, "redirected"]
     elsif path == "/preserve" && method == "PUT"
@@ -519,11 +521,13 @@ puts(followed["status"])
 puts(followed["body"])
 preserved = http_put("http://127.0.0.1:$redirect_port/preserve", "keepme", {}, {"follow_redirects": true})
 puts(preserved["body"])
+relative = http_get("http://127.0.0.1:$redirect_port/docs/old", {}, {"follow_redirects": true})
+puts(relative["body"])
 CLIENTEOF
 )")"
 kill "$redirect_pid" 2>/dev/null || true
 wait "$redirect_pid" 2>/dev/null || true
-[[ "$redirect_response" == $'302\n200\nredirected\npreserved:keepme\nnil' ]]
+[[ "$redirect_response" == $'302\n200\nredirected\npreserved:keepme\nredirected\nnil' ]]
 rm -f "$redirect_out"
 
 # Client: HttpSession's cookie jar (a Set-Cookie value comes back on
