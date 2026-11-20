@@ -9,9 +9,9 @@ record. From 1.0.0, releases follow the [1.x compatibility policy](docs/compatib
 ### Added
 
 - A class or module body can set a class variable (`@@cache = {}` beside the `def`s); it runs
-  once where the type is defined. A new `Thread` (and so each `threads: N` gremlin worker)
-  starts with copies of the class variables already set, instead of all `nil`; values that
-  cannot cross a thread, such as a database handle, still start as `nil`.
+  once where the type is defined. Like a constant, a new `Thread` (and so each `threads: N`
+  gremlin worker) starts with a copy of its value; values that cannot cross a thread, such as a
+  database handle, start as `nil`. Class variables set by methods stay per thread, as before.
 - `facet new graphql <path>` creates a GraphQL API: the schema in `lib/schema.graphql`,
   compiled in with `File.embed`, resolvers bound by `GraphQL::App`, served by gremlin at
   `POST /graphql`, and tests that post queries to the handler without starting a server

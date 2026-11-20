@@ -2101,7 +2101,8 @@ struct DiamondVm {
      * own class_variables[]/class_variable_count name table does at
      * compile time -- see that field's own comment. Per-VM, not
      * per-DiamondProgram: a spawned Thread starts with deep copies of the
-     * parent's (copy_namespace_constants_into_vm) and changes only its own,
+     * ones a class body set (class_variable_body_set,
+     * copy_namespace_constants_into_vm), nil for the rest, and changes only its own,
      * so `threads: N` gives each worker independent class variables
      * (see docs/threads.md).
      * A pointer, allocated lazily (get_cvar_helper/set_cvar_helper,
@@ -2127,6 +2128,15 @@ struct DiamondVm {
      * (one past the highest slot set). The GC marks only that prefix: the
      * table is sized for DIAMOND_MAX_CLASSES classes, almost all unused. */
     size_t class_variable_extent;
+    /* Which class_variables slots a class or module body set (`@@x = {}`
+     * beside the defs), same indexing; nullptr until one does. Only these
+     * are copied into a spawned Thread, like constants: one set at run time
+     * stays the parent's own (docs/threads.md). A body is the only code a
+     * top-level chunk can write a class variable from, so set_cvar_helper
+     * marks a slot when the writing chunk's code is entry_code. */
+    bool *class_variable_body_set;
+    /* The code diamond_vm_run last started (the program's top level). */
+    const uint8_t *entry_code;
     DiamondValue exception;
     bool has_exception;
     /* Every run_chunk activation gets the next serial; block closures

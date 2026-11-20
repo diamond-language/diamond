@@ -1,1 +1,1 @@
-[{last: 12}, 100, [core], [13, [core, thread]]]
+[{last: 12}, 100, [core], true, [13, [core, thread], nil]]

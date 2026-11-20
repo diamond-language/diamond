@@ -449,8 +449,8 @@ variables (each module has its own). `@@cvar` outside any class or module
 (a bare top-level `def`) is a compile error — there's no implicit global
 scope it could fall back to. That's also why a `threads: N` server (see
 `packages/gremlin/README.md`) can't use a class variable to share state
-across `Thread.new`-spawned workers: each spawned thread starts with its
-own copy of every class variable already set, and changes only that copy,
+across `Thread.new`-spawned workers: each spawned thread gets its own class variables (a copy of the ones
+a class body set, nil for the rest), and changes only those,
 the same way it gets its own heap and its own everything else (see
 `docs/threads.md`) —
 consistent, not a special case, but worth knowing going in if the goal

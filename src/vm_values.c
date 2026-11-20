@@ -431,17 +431,25 @@ void copy_namespace_constants_into_vm(const DiamondVm *parent, DiamondVm *child,
         child->namespace_constants[index]=copy;
         child->namespace_constant_initialized[index]=true;
     }
-    /* Class variables start as copies of the parent's, so one set in a class
-     * body (`@@cache = {}`) or before the thread started is there too. Each
-     * VM still keeps its own from then on; a value that cannot cross stays
-     * nil in the child. */
-    if(parent->class_variables==nullptr||parent->class_variable_extent==0)return;
+    /* Class variables a class body set (`@@cache = {}`) are copied like
+     * constants, their current value; each VM keeps its own from then on,
+     * and a value that cannot cross stays nil in the child. One set only at
+     * run time stays the parent's own. */
+    if(parent->class_variable_body_set==nullptr||parent->class_variables==nullptr)return;
     if(child->class_variables==nullptr) {
         child->class_variables=calloc((size_t)DIAMOND_MAX_CLASSES*DIAMOND_MAX_CLASS_VARIABLES,
             sizeof(DiamondValue));
         if(child->class_variables==nullptr)return;
     }
+    if(child->class_variable_body_set==nullptr) {
+        child->class_variable_body_set=calloc((size_t)DIAMOND_MAX_CLASSES*
+            DIAMOND_MAX_CLASS_VARIABLES,sizeof(bool));
+        if(child->class_variable_body_set==nullptr)return;
+    }
     for(size_t index=0;index<parent->class_variable_extent;index++) {
+        if(!parent->class_variable_body_set[index])continue;
+        /* A thread this one spawns gets it too. */
+        child->class_variable_body_set[index]=true;
         if(parent->class_variables[index].kind==DIAMOND_VALUE_NIL)continue;
         DiamondValue copy=DIAMOND_NIL;
         if(!copy_value_into_vm(child,parent->class_variables[index],nullptr,

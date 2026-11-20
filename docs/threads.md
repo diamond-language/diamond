@@ -69,17 +69,17 @@ raises `ThreadError`.
 
 ## Per-thread initialization
 
-A new thread starts with copies of the class variables already set when it
-starts, including ones a class body sets (`@@cache = {}`). Each thread changes
-its own copies from then on. A class variable holding a value that cannot cross
-(a database handle, a socket, an object with one in a field) starts as `nil` in
-the child. Initialize repositories, clients, and other services that hold
-resources separately in each worker; a lazy per-thread accessor is usually the
-simplest pattern.
+Runtime mutations made before `Thread.new` are not copied into the new heap.
+In particular, a class variable a method sets in the parent (a `configure`
+call) remains unset in the child. A class variable that a class body sets
+(`@@cache = {}` beside the `def`s) is the exception: like a constant, the
+thread gets a copy of its value when it starts, and changes only its own copy.
+A value that cannot cross (a database handle, a socket) is `nil` there.
+Initialize repositories, clients, and other mutable services separately in
+each worker; a lazy per-thread accessor is usually the simplest pattern.
 
 This also applies to multi-threaded Gremlin servers: startup configuration in
-the calling thread reaches every request worker only as far as it is copyable
-class variables and constants. Program
+the calling thread does not configure every request worker. Program
 definitions are available in every thread, so top-level methods, classes, and
 modules can be called normally. It is their mutable runtime state that remains
 isolated.
@@ -93,8 +93,8 @@ the boundary (a `File`, a `Socket`, ...), is unset in that thread, and reading
 it there raises `uninitialized constant`. The copy is the thread's own, like
 an argument: mutating a constant's array in one thread does not show in
 another. A `Supervisor` child gets the constants defined when `add_child` ran, a fresh copy
-for every restart. Class variables are copied the same way, when the thread
-starts.
+for every restart. Class variables a class body set are copied the same way,
+when the thread starts.
 
 ## Results and exceptions
 
