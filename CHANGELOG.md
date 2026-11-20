@@ -8,9 +8,8 @@ record. From 1.0.0, releases follow the [1.x compatibility policy](docs/compatib
 
 ### Added
 
-- `facet update <name>...` moves the named cuts to the newest release their constraint allows.
-  Plain `facet update` keeps each locked registry version that still fits, which the docs had
-  described as moving to the newest versions.
+- `facet update` moves every registry cut to the newest release its constraint allows; it had
+  kept each locked version that still fit. `facet update <name>...` moves only the named cuts.
 - jobs 0.2.4: `Jobs.create_tables(db)` creates the `jobs` and `recurring_jobs` tables and the poll
   index when missing (statements in `Jobs::SCHEMA`); apps copied the SQL from the README.
 - `STDOUT`, `STDERR` and `STDIN`: the standard streams as values (`write`, `print`, `puts`, `flush`,

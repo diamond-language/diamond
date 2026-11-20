@@ -258,11 +258,10 @@ different commit, `facet install` says so and resolves again, keeping each
 locked registry version that still fits. A changed tag or branch is not
 visible in the lock, which records only the commit; `facet update` picks it up.
 `facet update` always re-resolves from `Cutfile` (picking up anything a tracked branch has
-moved to) and rewrites the lock, but a locked registry version that still fits its
-constraint stays, so an update never moves a cut you did not ask about.
-`facet update <name>...` moves the named cuts to the newest release their constraint
-allows (a name must already be in the lock); changing the constraint in `Cutfile` moves
-a cut too.
+moved to), moves every registry cut to the newest release its constraint allows, and
+rewrites the lock. `facet update <name>...` moves only the named cuts (a name must already
+be in the lock) and keeps every other locked version that still fits, as `facet install`
+does when it re-resolves.
 
 New Git locks mark each entry with `"source": "git"`. Older Git locks without
 that key remain readable. Registry entries use `"source": "registry"` plus
@@ -382,7 +381,7 @@ facet add <name> [--dev] --git <url> (--tag <ref> | --branch <ref> | --commit <r
 Without `--git`, the dependency comes from a registry: `--registry`, or the
 public registry at `https://cuts.rolld6.codes`. Without `--version`, `facet add`
 asks the registry for the newest release that is not yanked and writes `^` plus
-that version, so `facet update <name>` takes compatible releases only.
+that version, so `facet update` takes compatible releases only.
 
 `--dev` adds the dependency to `Cutfile.dev` instead, creating it if needed
 (see "Development dependencies" above); the name must not already be in either

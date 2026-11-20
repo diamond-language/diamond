@@ -4,9 +4,10 @@
 #endif
 #include "facet_internal.h"
 
-/* During `facet update`, a still-compatible registry lock is preferred over
- * an otherwise newer candidate. This keeps updates reproducible while still
- * allowing an explicit manifest constraint change to move the version. */
+/* While `facet install` re-resolves (Cutfile changed) and during `facet update <name>...`,
+ * a still-compatible registry lock is preferred over a newer candidate, so adding one
+ * dependency or updating one cut moves nothing else. Plain `facet update` sets no
+ * preference: every cut moves to the newest release its constraint allows. */
 static const FacetResolution *registry_update_preference = NULL;
 /* `facet update <name>...`: these cuts ignore the preference above and move to the newest
  * release their constraint allows. */
@@ -1224,8 +1225,10 @@ int run_install_or_update(bool force_resolve, char *const *release, size_t relea
         resolution = previous;
     } else if (ok) {
         /* Keep locked registry versions that still fit, so adding one dependency does
-         * not upgrade the others. */
-        registry_update_preference = has_lock ? &previous : NULL;
+         * not upgrade the others -- except under plain `facet update`, which takes the
+         * newest compatible release of everything. */
+        const bool update_everything = force_resolve && release_count == 0;
+        registry_update_preference = has_lock && !update_everything ? &previous : NULL;
         registry_update_release = release;
         registry_update_release_count = release_count;
         ok = resolve_full_graph(&manifest, &resolution, scratch_root, error, sizeof error) &&

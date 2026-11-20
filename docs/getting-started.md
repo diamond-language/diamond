@@ -313,8 +313,8 @@ accepts any 0.5.x but not 0.6.0. `facet install` fetches what `Cutfile` asks
 for into `cuts/` and records the exact versions and digests in `Cutfile.lock`.
 Commit `Cutfile.lock` and leave `cuts/` out of version control (the generated
 `.gitignore` does); `facet install` recreates `cuts/` from the lock, and
-`facet update <name>` moves a cut to the newest version its constraint allows (plain
-`facet update` keeps every locked version that still fits). Constraints,
+`facet update` moves to the newest versions the constraints allow (`facet update <name>`
+just the named cuts). Constraints,
 git dependencies and publishing your own cut: [packages](packages.md).
 
 A web project starts with two dependencies, so install them before running it:
