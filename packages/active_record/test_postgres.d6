@@ -121,7 +121,7 @@ def run_tests()
     conditions["country"] = "UK"
     Minitest.assert_equal(2, repository.where(db, conditions).length())
 
-    Minitest.assert_equal(1, repository.create(db, {"name": "Marie", "country": "France"}))
+    Minitest.assert_equal(4, repository.create(db, {"name": "Marie", "country": "France"}))
     Minitest.assert_equal(4, repository.all(db).length())
 
     Minitest.assert_equal(1, repository.update(db, 1, {"country": "England"}))

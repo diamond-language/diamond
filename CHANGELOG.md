@@ -44,6 +44,9 @@ record. From 1.0.0, releases follow the [1.x compatibility policy](docs/compatib
 
 ### Fixed
 
+- active_record 0.21.4: `Repository#create` (and `Model.create`) return the new row's id, as the
+  README's quick start always said; they returned the affected row count, 1, which looked right
+  only for the first row of a table.
 - A `TCPSocket`, and a connection that `TCPServer.listen` accepts, sends each `write` at once.
   Writes waited in a buffer until a `flush`, a read on the same socket or `close`, so a client
   that wrote a request and then waited on another socket deadlocked with its peer.

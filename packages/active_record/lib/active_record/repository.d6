@@ -186,18 +186,22 @@ module ActiveRecord
     def relation() -> Relation[T] = Relation.new(Arel.from(@table), @mapper, @visitor, self)
 
     ## Validates, runs `before_save`, inserts the row, runs `after_save`, and returns
-    ## the affected row count. Read the new id from `db.last_insert_row_id()`.
-    def create(db, attributes: Hash) -> Int
+    ## the new row's id: the primary key the attributes gave, or else
+    ## `db.last_insert_row_id()`, read before `after_save` runs (a hook that inserts
+    ## another row would change it).
+    def create(db, attributes: Hash)
       self.validate!(attributes)
       final_attributes = attributes
       unless @before_save == nil
         final_attributes = @before_save(db, attributes, :create)
       end
-      result = Arel.insert_into(@table).values(final_attributes).execute(db, @visitor)
+      Arel.insert_into(@table).values(final_attributes).execute(db, @visitor)
+      id = final_attributes[@id_column]
+      id = db.last_insert_row_id() if id == nil
       unless @after_save == nil
         @after_save(db, final_attributes, :create)
       end
-      result
+      id
     end
 
     ## Validates (with `id` as `exclude_id`), runs `before_save`, updates the row with

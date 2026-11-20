@@ -1,0 +1,19 @@
+# Repository#create returns the new row's id: read before an after_save hook
+# that inserts another row, and the given key when the attributes name one.
+require "../../packages/active_record/lib/active_record"
+
+def log_insert(db, attributes, on)
+  db.execute("INSERT INTO audit (note) VALUES (?)", ["created #{attributes["name"]}"])
+end
+
+def as_row(row) = row
+
+db = SQLite3.open(":memory:")
+db.execute("CREATE TABLE authors (id INTEGER PRIMARY KEY, name TEXT)")
+db.execute("CREATE TABLE audit (id INTEGER PRIMARY KEY, note TEXT)")
+db.execute("INSERT INTO audit (note) VALUES ('a'), ('b'), ('c')")
+authors = ActiveRecord::Repository.new(Arel.table("authors"), as_row, "id", nil, nil, nil, log_insert)
+first = authors.create(db, {"name": "Ada"})
+second = authors.create(db, {"name": "Grace"})
+chosen = authors.create(db, {"id": 40, "name": "Marie"})
+[first, second, chosen, authors.find(db, second)["name"], db.query("SELECT COUNT(*) AS n FROM audit")[0]["n"]]
