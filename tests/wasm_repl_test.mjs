@@ -145,6 +145,18 @@ expect('File.read sees page files', 'File.read("/helper.d6")', equals('def helpe
   expect('Mjolnir through require_cut', mjolnir, equals('[Ada]'));
 }
 
+expect('heredoc across lines', ['x = <<~TEXT', '  hi #{1 + 1}', '    there', 'TEXT', 'x'],
+  equals('hi 2\n  there\n'));
+{
+  const segments = repl.highlight('x = <<~A.strip()\n  body #{y}\nA\nputs(x)\n');
+  const body = segments.find((segment) => segment.text === '  body #{y}\n');
+  const after = segments.find((segment) => segment.text === 'puts');
+  if (!body || body.cls !== 'tok-str' || !after) {
+    failures++;
+    console.error(`FAIL heredoc highlight: ${JSON.stringify(segments)}`);
+  }
+}
+
 // The session survives every failure above.
 expect('still alive', ['TCPSocket.connect("example.com", 80)', '1 + 1'], equals('2'));
 

@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Highlighting for heredocs (`<<~NAME` and raw `<<~'NAME'`).
+
 ## 0.8.0
 
 - First Marketplace and Open VSX release, as `rolld6.d6`.

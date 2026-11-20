@@ -48,7 +48,8 @@ void advance_token(Compiler *compiler) {
     compiler->previous = compiler->current;
     compiler->current = diamond_lexer_next(&compiler->lexer);
     if (compiler->current.kind == DIAMOND_TOKEN_ERROR) {
-        fail(compiler, compiler->current.span, "unexpected character");
+        fail(compiler, compiler->current.span,
+            diamond_lexer_error_message(compiler->source, compiler->current.span));
     }
 }
 
@@ -1521,10 +1522,12 @@ static size_t utf8_encode_code_point(unsigned long code_point,char out[4]) {
     return 4;
 }
 
-/* raw: regex literal text -- bytes are kept as written (the regex engine reads its own escapes),
- * except that \/ stands for a plain slash. */
-uint16_t add_string_range_mode(Compiler *compiler,size_t start,size_t length,
-                                DiamondSpan span,bool raw) {
+/* A string constant decoded from `text`. STRING_TEXT_ESCAPES reads backslash escapes as a
+ * string literal does; STRING_TEXT_REGEX keeps bytes as written (the regex engine reads its own
+ * escapes), except that \/ stands for a plain slash; STRING_TEXT_VERBATIM keeps every byte. */
+uint16_t add_string_text_mode(Compiler *compiler,const char *text,size_t length,
+                              DiamondSpan span,StringTextMode mode) {
+    const bool raw=mode==STRING_TEXT_REGEX;
     if (compiler->function->string_count == DIAMOND_MAX_STRING_CONSTANTS) {
         fail(compiler, span, "function has too many string literals");
         return 0;
@@ -1539,27 +1542,35 @@ uint16_t add_string_range_mode(Compiler *compiler,size_t start,size_t length,
     DiamondStringConstant temporary={.chars=buffer};
     DiamondStringConstant *string=&temporary;
     for(size_t index=0;index<length;index++) {
-        char character=compiler->source[start+index];
+        char character=text[index];
         char encoded[4];
         size_t encoded_length=0;
-        if(raw) {
+        if(mode==STRING_TEXT_VERBATIM) {
+            /* every byte as written */
+        } else         if(raw) {
             if(character=='\\'&&index+1<length) {
-                if(compiler->source[start+index+1]=='/')character=compiler->source[start+(++index)];
+                if(text[index+1]=='/')character=text[++index];
                 else {
-                    encoded[0]=character;encoded[1]=compiler->source[start+(++index)];
+                    encoded[0]=character;encoded[1]=text[++index];
                     encoded_length=2;
                 }
             }
         } else if (character == '\\') {
             index++;
             if(index==length) {fail(compiler,span,"incomplete string escape");return 0;}
-            character=compiler->source[start+index];
+            character=text[index];
             switch (character) {
                 case 'n': character = '\n'; break;
                 case 'r': character = '\r'; break;
                 case 't': character = '\t'; break;
                 case '0': character = '\0'; break;
                 case 'e': character = '\x1b'; break;
+                case 'a': character = '\a'; break;
+                case 'b': character = '\b'; break;
+                case 'f': character = '\f'; break;
+                case 'v': character = '\v'; break;
+                case 's': character = ' '; break;
+                case '\'': character = '\''; break;
                 case '"': character = '"'; break;
                 case '\\': character = '\\'; break;
                 case '#': character = '#'; break;
@@ -1567,8 +1578,8 @@ uint16_t add_string_range_mode(Compiler *compiler,size_t start,size_t length,
                     /* \xH or \xHH: one byte, as in Ruby. */
                     unsigned value=0;size_t digits=0;
                     while(digits<2&&index+1<length&&
-                          isxdigit((unsigned char)compiler->source[start+index+1])) {
-                        value=value*16+hex_digit_value(compiler->source[start+index+1]);
+                          isxdigit((unsigned char)text[index+1])) {
+                        value=value*16+hex_digit_value(text[index+1]);
                         index++;digits++;
                     }
                     if(digits==0) {fail(compiler,span,"\\x needs a hex digit");return 0;}
@@ -1578,15 +1589,15 @@ uint16_t add_string_range_mode(Compiler *compiler,size_t start,size_t length,
                 case 'u': {
                     /* \uHHHH or \u{H...}: a code point, stored as UTF-8. */
                     unsigned long value=0;size_t digits=0;
-                    const bool braced=index+1<length&&compiler->source[start+index+1]=='{';
+                    const bool braced=index+1<length&&text[index+1]=='{';
                     if(braced)index++;
                     while((braced?digits<6:digits<4)&&index+1<length&&
-                          isxdigit((unsigned char)compiler->source[start+index+1])) {
-                        value=value*16+hex_digit_value(compiler->source[start+index+1]);
+                          isxdigit((unsigned char)text[index+1])) {
+                        value=value*16+hex_digit_value(text[index+1]);
                         index++;digits++;
                     }
                     if(braced) {
-                        if(index+1>=length||compiler->source[start+index+1]!='}') {
+                        if(index+1>=length||text[index+1]!='}') {
                             fail(compiler,span,"\\u{ needs hex digits and a closing }");
                             return 0;
                         }
@@ -1599,9 +1610,16 @@ uint16_t add_string_range_mode(Compiler *compiler,size_t start,size_t length,
                     encoded_length=utf8_encode_code_point(value,encoded);
                     break;
                 }
-                default:
-                    fail(compiler, span, "unsupported string escape");
+                default: {
+                    char message[96];
+                    if((unsigned char)character>=0x20&&(unsigned char)character<0x7f)
+                        snprintf(message,sizeof message,
+                            "unsupported string escape '\\%c' (write \\\\ for a backslash)",character);
+                    else
+                        snprintf(message,sizeof message,"unsupported string escape");
+                    fail(compiler,span,message);
                     return 0;
+                }
             }
         }
         if(encoded_length==0) {encoded[0]=character;encoded_length=1;}
@@ -1615,6 +1633,12 @@ uint16_t add_string_range_mode(Compiler *compiler,size_t start,size_t length,
     if(!diamond_function_set_string(compiler->function,compiler->function->string_count,
             string->chars,string->length)) {fail(compiler,span,"out of memory storing string");return 0;}
     return (uint16_t)compiler->function->string_count++;
+}
+
+uint16_t add_string_range_mode(Compiler *compiler,size_t start,size_t length,
+                                DiamondSpan span,bool raw) {
+    return add_string_text_mode(compiler,compiler->source+start,length,span,
+        raw?STRING_TEXT_REGEX:STRING_TEXT_ESCAPES);
 }
 
 uint16_t add_string_range(Compiler *compiler,size_t start,size_t length,
@@ -2236,6 +2260,100 @@ uint16_t parse_string(Compiler *compiler) {
     compiler->known_types[result]=DIAMOND_TYPE_STRING;return result;
 }
 
+/* The indentation <<~ removes: the fewest leading spaces and tabs on any body line that
+ * holds more than whitespace. Each space or tab counts as one. */
+static size_t heredoc_indent(const char *body,size_t length) {
+    size_t indent=SIZE_MAX;
+    size_t index=0;
+    while(index<length) {
+        size_t width=0;
+        while(index+width<length&&(body[index+width]==' '||body[index+width]=='\t'))width++;
+        const size_t content=index+width;
+        const bool blank=content>=length||body[content]=='\n'||
+            (body[content]=='\r'&&(content+1>=length||body[content+1]=='\n'));
+        if(!blank&&width<indent)indent=width;
+        while(index<length&&body[index]!='\n')index++;
+        index++;
+    }
+    return indent==SIZE_MAX?0:indent;
+}
+
+/* One literal stretch of a heredoc body, source[start, start+length), with `indent` leading
+ * spaces or tabs dropped after each line start, as a string constant. */
+static uint16_t add_heredoc_text(Compiler *compiler,size_t start,size_t length,size_t indent,
+        DiamondSpan span,bool raw) {
+    char *text=malloc(length+1);
+    if(text==nullptr){fail(compiler,span,"out of memory reading heredoc");return 0;}
+    size_t used=0;
+    size_t skip=start==span.start||compiler->source[start-1]=='\n'?indent:0;
+    for(size_t index=0;index<length;index++) {
+        const char character=compiler->source[start+index];
+        if(skip>0&&(character==' '||character=='\t')){skip--;continue;}
+        skip=character=='\n'?indent:0;
+        text[used++]=character;
+    }
+    const uint16_t constant=add_string_text_mode(compiler,text,used,span,
+        raw?STRING_TEXT_VERBATIM:STRING_TEXT_ESCAPES);
+    free(text);
+    return constant;
+}
+
+/* `<<~ID` / `<<~'ID'`: the body, less its common indentation, as a String. A raw body keeps
+ * every byte; otherwise escapes and `#{...}` work as in a "..." literal. */
+uint16_t parse_heredoc(Compiler *compiler) {
+    const DiamondSpan span=compiler->previous.span;
+    const bool raw=compiler->previous.kind==DIAMOND_TOKEN_HEREDOC_RAW;
+    const size_t indent=heredoc_indent(compiler->source+span.start,span.length);
+    const size_t end=span.start+span.length;
+    size_t piece=span.start;
+    uint16_t result=UINT16_MAX;
+    while(!compiler->failed) {
+        size_t index=raw?end:piece;
+        while(index<end) {
+            if(compiler->source[index]=='\\'&&index+1<end){index+=2;continue;}
+            if(compiler->source[index]=='#'&&index+1<end&&compiler->source[index+1]=='{')break;
+            index++;
+        }
+        if(index>end)index=end;
+        const uint16_t literal_register=allocate_register(compiler);
+        const uint16_t literal=add_heredoc_text(compiler,piece,index-piece,indent,span,raw);
+        emit_instruction(compiler,DIAMOND_OP_STRING,literal_register,literal,0,2);
+        if(result==UINT16_MAX)result=literal_register;
+        else {
+            const uint16_t joined=allocate_register(compiler);
+            emit_instruction(compiler,DIAMOND_OP_ADD,joined,result,literal_register,3);
+            result=joined;
+        }
+        if(index>=end)break;
+        /* The interpolation's own line and column, for its diagnostics. */
+        size_t line=span.line+1,line_start=span.start;
+        for(size_t scan=span.start;scan<index;scan++)
+            if(compiler->source[scan]=='\n'){line++;line_start=scan+1;}
+        const size_t column=index-line_start+3;
+        DiamondLexer outer_lexer=compiler->lexer;
+        const DiamondToken outer_current=compiler->current;
+        const DiamondToken outer_previous=compiler->previous;
+        DiamondLexer embedded={.source=compiler->source,.current=index+2,.start=index+2,
+            .line=line,.column=column,.token_line=line,.token_column=column};
+        compiler->lexer=embedded;
+        compiler->current=diamond_lexer_next(&compiler->lexer);
+        const uint16_t value=parse_expression(compiler);
+        if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_BRACE)
+            fail(compiler,compiler->current.span,"expected '}' after interpolation");
+        const size_t close=compiler->current.span.start;
+        compiler->lexer=outer_lexer;compiler->current=outer_current;
+        compiler->previous=outer_previous;
+        const uint16_t converted=allocate_register(compiler);
+        emit_instruction(compiler,DIAMOND_OP_TO_STRING,converted,value,0,2);
+        const uint16_t joined=allocate_register(compiler);
+        emit_instruction(compiler,DIAMOND_OP_ADD,joined,result,converted,3);
+        result=joined;piece=close+1;
+        if(piece>=end)break;
+    }
+    compiler->known_types[result]=DIAMOND_TYPE_STRING;
+    return result;
+}
+
 uint16_t parse_symbol(Compiler *compiler) {
     const DiamondSpan span=compiler->previous.span;
     const DiamondSpan name_span={.start=span.start+1,.length=span.length-1,
@@ -2287,6 +2405,34 @@ static void fail_undefined_name(Compiler *compiler,DiamondSpan name) {
     fail(compiler,name,message);
 }
 
+/* A call to the prelude's top-level function `function_name` with `argc` arguments, as
+ * CLOSURE + CALL_CLOSURE. Returns the result register, or 0 when the prelude has no such
+ * function (as in a bare compile without the prelude). */
+uint16_t emit_prelude_function_call(Compiler *compiler,const char *function_name,
+        const uint16_t *args,size_t argc) {
+    for(size_t index=compiler->program->function_count;index>0;index--) {
+        const DiamondFunction *function=compiler->program->functions[index-1];
+        if(function->owner_class!=DIAMOND_OWNER_NONE||function->nested||
+           strcmp(function->name,function_name)!=0)continue;
+        const uint16_t closure=allocate_register(compiler);
+        emit_opcode(compiler,DIAMOND_OP_CLOSURE);
+        emit_register(compiler,closure);
+        emit_function_index(compiler,index-1);
+        emit_byte(compiler,0);
+        const uint16_t base=allocate_register(compiler);
+        for(size_t arg=1;arg<argc;arg++)(void)allocate_register(compiler);
+        for(size_t arg=0;arg<argc;arg++)
+            emit_instruction(compiler,DIAMOND_OP_MOVE,(uint16_t)(base+arg),args[arg],0,2);
+        const uint16_t destination=allocate_register(compiler);
+        emit_opcode(compiler,DIAMOND_OP_CALL_CLOSURE);
+        emit_register(compiler,destination);
+        emit_register(compiler,closure);
+        emit_register(compiler,base);emit_byte(compiler,(uint8_t)argc);
+        return destination;
+    }
+    return 0;
+}
+
 /* `STDOUT`/`STDERR`/`STDIN` as a call to the prelude's diamond_stdout()/... Returns 0 when
  * `name` is none of them (or the prelude function is missing, as in a bare compile). */
 static uint16_t compile_standard_stream_name(Compiler *compiler,DiamondSpan name) {
@@ -2295,24 +2441,7 @@ static uint16_t compile_standard_stream_name(Compiler *compiler,DiamondSpan name
     for(size_t which=0;which<3;which++) {
         const size_t length=strlen(names[which][0]);
         if(name.length!=length||memcmp(compiler->source+name.start,names[which][0],length)!=0)continue;
-        for(size_t index=compiler->program->function_count;index>0;index--) {
-            const DiamondFunction *function=compiler->program->functions[index-1];
-            if(function->owner_class!=DIAMOND_OWNER_NONE||function->nested||
-               strcmp(function->name,names[which][1])!=0)continue;
-            const uint16_t closure=allocate_register(compiler);
-            emit_opcode(compiler,DIAMOND_OP_CLOSURE);
-            emit_register(compiler,closure);
-            emit_function_index(compiler,index-1);
-            emit_byte(compiler,0);
-            const uint16_t base=allocate_register(compiler);
-            const uint16_t destination=allocate_register(compiler);
-            emit_opcode(compiler,DIAMOND_OP_CALL_CLOSURE);
-            emit_register(compiler,destination);
-            emit_register(compiler,closure);
-            emit_register(compiler,base);emit_byte(compiler,0);
-            return destination;
-        }
-        return 0;
+        return emit_prelude_function_call(compiler,names[which][1],nullptr,0);
     }
     return 0;
 }

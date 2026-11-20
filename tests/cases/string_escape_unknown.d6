@@ -1,0 +1,2 @@
+# An escape d6 does not know names itself and says how to write a backslash.
+puts("C:\\new\\q\query")

@@ -350,6 +350,24 @@ static uint16_t close_begin_frame(Compiler *compiler,const BeginFrame *frame,uin
         }
         saw_rescue=true;
         advance_token(compiler);
+        /* Ruby's `rescue => e` and `rescue Type => e`, which d6 spells `rescue e` and
+         * `rescue e: Type`. */
+        if(compiler->current.kind==DIAMOND_TOKEN_FAT_ARROW) {
+            fail(compiler,compiler->current.span,
+                 "write 'rescue e' to bind the exception; d6 has no 'rescue => e'");
+            return destination;
+        }
+        if(compiler->current.kind==DIAMOND_TOKEN_IDENTIFIER&&
+           compiler->current.span.length>0&&
+           isupper((unsigned char)compiler->source[compiler->current.span.start])) {
+            DiamondLexer lookahead=compiler->lexer;
+            const DiamondToken after=diamond_lexer_next(&lookahead);
+            if(after.kind==DIAMOND_TOKEN_FAT_ARROW) {
+                fail(compiler,compiler->current.span,
+                     "write 'rescue e: Type' to bind the exception; d6 has no 'rescue Type => e'");
+                return destination;
+            }
+        }
         compiler->function->code[handler_type_operand]=0;
         const size_t rescue_local_count=compiler->local_count;
         if(compiler->current.kind==DIAMOND_TOKEN_IDENTIFIER) {

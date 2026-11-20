@@ -1,0 +1,7 @@
+&lt;a href=&quot;/x?a=1&amp;b=2&quot;&gt;Tom &amp; Jerry&#39;s&lt;/a&gt;
+plain text
+""
+café & <b> 😀 "q" '
+&copy; stays, &amp without a semicolon stays, � is invalid
+true
+nil

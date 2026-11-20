@@ -29,6 +29,29 @@ end
 run()
 ```
 
+## Serving from a thread
+
+`http_serve(port, handler, host, ready, stop)` takes three optional arguments after the
+handler. `host` is the address to listen on, `ready` is a Channel that gets the port once the
+server listens (pass port 0 for any free one), and closing the `stop` Channel makes it
+return. Together they let a program, such as a test, run a server on its own thread:
+
+```ruby
+require_cut "http"
+
+def hello(request) = [200, {"Content-Type": "text/plain"}, "hello #{request["path"]}"]
+
+ready = Channel.new(1)
+stop = Channel.new(1)
+server = Thread.new(http_serve, 0, hello, "127.0.0.1", ready, stop)
+port = ready.receive()
+http_get("http://127.0.0.1:#{port}/x")["body"]   # => "hello /x"
+stop.close()
+server.join()
+```
+
+The handler must be a top-level function, as every thread entry point is.
+
 ## Making requests
 
 `http_get`, `http_post`, `http_put`, `http_patch`, `http_delete`, `http_head`, and
@@ -48,6 +71,8 @@ posted = http_post("http://127.0.0.1:8080/items", "name=widget",
 ```
 
 `http_request(method, url, headers = {}, body = "", options = {})` is the general form.
+Its `options` include timeouts, `follow_redirects`, and `max_body_bytes`, the largest
+response body it will read (25 MiB by default; a longer one raises `IOError`).
 `https://` URLs are supported. To fetch a URL a user supplied, check it first with the
 [`network_safety`](https://github.com/diamond-language/d6/tree/main/packages/network_safety) cut.
 

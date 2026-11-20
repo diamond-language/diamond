@@ -3133,6 +3133,20 @@ count=$((count + 1))
 send '{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"'"$fmt_string_uri"'"}}}'
 read_message >/dev/null
 
+# A heredoc body is string content too: "      deep  " keeps its indentation and its
+# trailing spaces, including on the body's first line.
+fmt_heredoc_uri="file:///fmt_heredoc.d6"
+send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$fmt_heredoc_uri"'","text":"def f()\n  x = <<~T\n      deep  \n  T\n  x\nend"}}}'
+read_message >/dev/null
+
+send '{"jsonrpc":"2.0","id":1870,"method":"textDocument/formatting","params":{"textDocument":{"uri":"'"$fmt_heredoc_uri"'"},"options":{"tabSize":2,"insertSpaces":true}}}'
+response="$(read_message)"
+[[ "$response" == '{"jsonrpc":"2.0","id":1870,"result":[]}' ]] || { echo "heredoc formatting: $response" >&2; exit 1; }
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"'"$fmt_heredoc_uri"'"}}}'
+read_message >/dev/null
+
 # A method chain continued on leading-dot lines: the chain lines print one level
 # deeper than the statement, and a `do` body one level deeper again. Already
 # correct here, so no edits; the flush-left copy gets its `.map` line fixed.

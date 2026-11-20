@@ -7,8 +7,9 @@ returns a new value and leaves the receiver unchanged. Positions, lengths and
 case conversion work on bytes, so a multi-byte character counts as several
 (`"é".length()` is `2`), and `upcase`/`downcase` change ASCII letters only.
 
-Literals are written `"text"`, with `#{expr}` interpolation and the usual
-backslash escapes. Positions start at `0`; where a method takes an index, a
+Literals are written `"text"`, with `#{expr}` interpolation and backslash
+escapes (`\n`, `\t`, `\f`, `\xHH`, `\u{H...}` and the rest, listed in
+[core syntax](../core-syntax.md)). Positions start at `0`; where a method takes an index, a
 negative one counts from the end.
 
 ## Operators
@@ -210,6 +211,16 @@ Whether the receiver ends with any of the given strings.
 ### `equal?(other) -> Bool`
 
 Whether `other` is this same String object; `==` compares the text.
+
+### `escape_html() -> String`
+
+The text with `&`, `<`, `>`, `"` and `'` written as `&amp;`, `&lt;`, `&gt;`, `&quot;` and
+`&#39;`, so it is safe inside HTML text, a quoted attribute value, or XML. Div templates
+escape `<%= %>` output the same way.
+
+```ruby
+"Tom & Jerry's <b>".escape_html()   # => "Tom &amp; Jerry&#39;s &lt;b&gt;"
+```
 
 ### `format(values) -> String`
 
@@ -576,6 +587,16 @@ bytes.
 ```ruby
 "hello".tr("el", "ip")     # => "hippo"
 "hello".tr("aeiou", "*")   # => "h*ll*"
+```
+
+### `unescape_html() -> String`
+
+Decodes character references: numeric ones (`&#233;`, `&#xE9;`) and the named `&amp;`,
+`&lt;`, `&gt;`, `&quot;`, `&apos;` and `&nbsp;`. Other named references, and a reference
+missing its `;`, are left as they are; an invalid code point becomes U+FFFD.
+
+```ruby
+"caf&#233; &amp; &lt;b&gt;".unescape_html()   # => "café & <b>"
 ```
 
 ### `unpack(template) -> Array`

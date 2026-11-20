@@ -1,0 +1,10 @@
+# Regexp.escape backslashes every metacharacter, so the escaped text matches
+# itself literally.
+text = "a.b*c?(d)[e]{f}^$|\\/-# x"
+escaped = Regexp.escape(text)
+puts(escaped)
+puts(Regexp.new("\\A" + escaped + "\\z").match?(text))
+puts(Regexp.new(Regexp.escape("1+1=2")).match?("is 1+1=2?"))
+puts(Regexp.new(Regexp.escape("1+1=2")).match?("is 11=2?"))
+puts(Regexp.escape("tab\there\nnewline"))
+puts(Regexp.escape("plain"))

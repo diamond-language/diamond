@@ -334,7 +334,7 @@ must not.
 
 | Kind | What it creates |
 | --- | --- |
-| `cli` | A command-line program: `main.d6` passes `ARGV` to the project's `main` and exits with the status it returns. |
+| `cli` | A command-line program: `main.d6` passes `ARGV` to the project's `main` and exits with the status it returns. `--version` prints the Cutfile's version, which `File.embed` reads in at compile time. |
 | `web` | A web application served by `gremlin`, with `rack` middleware, both runtime dependencies from the registry. |
 | `graphql` | A GraphQL API built schema-first with `GraphQL::App` (the `graphql` cut) and served by `gremlin`. `lib/schema.graphql` holds the schema, which `File.embed` compiles in, so it needs d6 1.1.0 or later. The example keeps notes in memory: `POST /graphql` runs a query, `GET /schema.graphql` shows the schema, and errors carry a code in `extensions.code`. |
 | `tcp` | A line-based TCP server that uses `IO.poll` to serve every client from one thread. |
@@ -345,7 +345,8 @@ Every kind shares one layout:
 
 ```text
 <name>/
-  Cutfile
+  Cutfile              the name and version 0.1.0 (which `d6 build` records), plus
+                       any dependencies
   Cutfile.dev          minitest, a development dependency
   README.md
   .gitignore

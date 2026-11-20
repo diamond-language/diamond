@@ -35,7 +35,8 @@ end
 
 `begin ... rescue ... end` catches exceptions raised inside it. Write
 `rescue name: Type` to catch one class (and its subclasses) and bind the
-exception to `name`:
+exception to `name` (Ruby's `rescue Type => name` is a compile error that
+suggests this form):
 
 ```ruby
 class NotFound < StandardError

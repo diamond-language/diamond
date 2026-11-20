@@ -903,10 +903,17 @@ class Parser
     @current_return_type = nil
     @failed = false
     @error_message = nil
-    self.fail("unexpected character") if @current.kind() == :error
+    self.fail(self.error_token_message()) if @current.kind() == :error
   end
 
   def error_message() = @error_message
+
+  # The diagnostic for an :error token, as src/lexer.c's diamond_lexer_error_message.
+  def error_token_message() -> String
+    text = self.token_text(@current)
+    return "heredoc has no closing line (its name alone on a line)" if text.start_with?("<<~")
+    "unexpected character"
+  end
 
   # Parses and emits the whole program into function -1 (the
   # ProgramBuilder's entry function), finishing with a RETURN of the top-level sequence's result.
@@ -953,7 +960,7 @@ class Parser
   def advance_token()
     @previous = @current
     @current = @lexer.next_token()
-    self.fail("unexpected character") if @current.kind() == :error
+    self.fail(self.error_token_message()) if @current.kind() == :error
   end
 
   def skip_newlines()
@@ -1382,7 +1389,7 @@ class Parser
   # token scans below cannot see into. Mirrors compiler_flow.c's
   # string_may_hold_block.
   def string_may_hold_block?(token) -> Bool
-    return false if token.kind() != :string
+    return false if token.kind() != :string && token.kind() != :heredoc
     text = self.token_text(token)
     text.include?("#" + "{") &&
       Regexp.new("(^|[^A-Za-z0-9_])do($|[^A-Za-z0-9_?!])").match(text) != nil
@@ -7917,6 +7924,18 @@ class Parser
 
   def compile_rescue_clause(exception, retry_target, destination, seen_types)
     self.advance_token()
+    # Ruby's `rescue => e` and `rescue Type => e`, as in compiler_control.c.
+    if @current.kind() == :fat_arrow
+      self.fail("write 'rescue e' to bind the exception; d6 has no 'rescue => e'")
+      return nil
+    end
+    if @current.kind() == :identifier
+      first = self.token_text(@current).slice(0, 1)
+      if first >= "A" && first <= "Z" && @lexer.clone().next_token().kind() == :fat_arrow
+        self.fail("write 'rescue e: Type' to bind the exception; d6 has no 'rescue Type => e'")
+        return nil
+      end
+    end
     rescue_local_count = @locals.length()
     if @current.kind() == :identifier
       @locals.push([self.token_text(@current), exception, false])
@@ -9300,6 +9319,7 @@ class Parser
     return self.parse_integer() if kind == :integer
     return self.parse_float() if kind == :float
     return self.parse_string() if kind == :string
+    return self.parse_heredoc() if kind == :heredoc || kind == :heredoc_raw
     return self.parse_regex_literal() if kind == :regex
     return self.parse_symbol() if kind == :symbol
     return self.parse_literal() if kind == :true || kind == :false || kind == :nil
@@ -9667,22 +9687,8 @@ class Parser
       # the prelude's diamond_stdout() and friends, unless the program assigns the name.
       if (name == "STDOUT" || name == "STDERR" || name == "STDIN") && class_entry == nil &&
          !self.constant_assigned_ahead?(name)
-        stream = self.find_function("diamond_" + name.downcase())
-        if stream != nil
-          stream_closure = self.allocate_register()
-          self.emit_byte(Opcode::CLOSURE)
-          self.emit_register(stream_closure)
-          self.emit_function_index(stream[1])
-          self.emit_byte(0)
-          base = self.allocate_register()
-          destination = self.allocate_register()
-          self.emit_call_opcode(Opcode::CALL_CLOSURE)
-          self.emit_register(destination)
-          self.emit_register(stream_closure)
-          self.emit_register(base)
-          self.emit_byte(0)
-          return destination
-        end
+        destination = self.emit_prelude_function_call("diamond_" + name.downcase(), [])
+        return destination if destination != 0
       end
       first = name.slice(0, 1)
       if first >= "A" && first <= "Z" && class_entry == nil && module_entry == nil
@@ -11459,6 +11465,29 @@ class Parser
     destination
   end
 
+  # `Process.executable()`: the running executable's path, as compiler_builtins.c's
+  # parse_process_call: FILE_PATH selector 26 over two NIL operands.
+  def parse_process_executable_call()
+    if @current.kind() != :left_paren
+      self.fail("expected '(' after 'Process.executable'")
+      return 0
+    end
+    self.advance_token()
+    if @current.kind() != :right_paren
+      self.fail("Process.executable takes no arguments")
+      return 0
+    end
+    self.advance_token()
+    first = self.allocate_register()
+    self.emit_instruction1(Opcode::NIL, first)
+    second = self.allocate_register()
+    self.emit_instruction1(Opcode::NIL, second)
+    destination = self.allocate_register()
+    self.emit_instruction3(Opcode::FILE_PATH, destination, first, second)
+    self.emit_byte(26)
+    destination
+  end
+
   # `Process.pid()`: this process's id, as compiler_builtins.c's parse_process_call.
   def parse_process_pid_call()
     if @current.kind() != :left_paren
@@ -11483,13 +11512,14 @@ class Parser
   def parse_process_call()
     self.advance_token()
     method = if @current.kind() == :identifier then self.token_text(@current) else "" end
-    if method != "run" && method != "spawn" && method != "pid"
-      self.fail("expected 'run', 'spawn' or 'pid' after 'Process'")
+    if method != "run" && method != "spawn" && method != "pid" && method != "executable"
+      self.fail("expected 'run', 'spawn', 'pid' or 'executable' after 'Process'")
       return 0
     end
     call = "Process.#{method}"
     self.advance_token()
     return self.parse_process_pid_call() if method == "pid"
+    return self.parse_process_executable_call() if method == "executable"
     if @current.kind() != :left_paren
       self.fail("expected '(' after '#{call}'")
       return 0
@@ -11697,10 +11727,58 @@ class Parser
     destination
   end
 
+  # A call of the prelude's top-level function `name` with the values in `args`, like
+  # compiler.c's emit_prelude_function_call. Returns 0 when there is no such function.
+  def emit_prelude_function_call(name, args)
+    function = self.find_function(name)
+    return 0 if function == nil
+    function_closure = self.allocate_register()
+    self.emit_byte(Opcode::CLOSURE)
+    self.emit_register(function_closure)
+    self.emit_function_index(function[1])
+    self.emit_byte(0)
+    base = self.allocate_register()
+    (args.length() - 1).times() do self.allocate_register() end
+    args.each_with_index() do |arg, index|
+      self.emit_instruction2(Opcode::MOVE, base + index, arg)
+    end
+    destination = self.allocate_register()
+    self.emit_call_opcode(Opcode::CALL_CLOSURE)
+    self.emit_register(destination)
+    self.emit_register(function_closure)
+    self.emit_register(base)
+    self.emit_byte(args.length())
+    destination
+  end
+
   def parse_regexp_new_call()
     self.advance_token()
+    # Regexp.escape(text): the prelude's diamond_escape_regexp, as in compiler_builtins.c.
+    if @current.kind() == :identifier && self.token_text(@current) == "escape"
+      self.advance_token()
+      if @current.kind() != :left_paren
+        self.fail("expected '(' after 'Regexp.escape'")
+        return 0
+      end
+      self.advance_token()
+      self.skip_newlines()
+      text = self.parse_expression()
+      self.skip_newlines()
+      if @current.kind() != :right_paren
+        self.fail("Regexp.escape takes one argument")
+        return 0
+      end
+      self.advance_token()
+      destination = self.emit_prelude_function_call("diamond_escape_regexp", [text])
+      if destination == 0
+        self.fail("Regexp.escape needs the prelude")
+        return 0
+      end
+      self.set_type_fact(destination, Type::STRING)
+      return destination
+    end
     if @current.kind() != :identifier || self.token_text(@current) != "new"
-      self.fail("expected 'new' after 'Regexp'")
+      self.fail("expected 'new' or 'escape' after 'Regexp'")
       return 0
     end
     self.advance_token()
@@ -12273,8 +12351,9 @@ class Parser
       (128 | ((value >> 6) & 63)).chr() + (128 | (value & 63)).chr()
   end
 
-  def decode_string_range(start, length)
-    raw = @source.slice(start, length)
+  def decode_string_range(start, length) = self.decode_string_text(@source.slice(start, length))
+
+  def decode_string_text(raw)
     result = ""
     index = 0
     while index < raw.length()
@@ -12292,6 +12371,16 @@ class Parser
           result = result + 0.chr()
         elsif escape == "e"
           result = result + 27.chr()
+        elsif escape == "a"
+          result = result + 7.chr()
+        elsif escape == "b"
+          result = result + 8.chr()
+        elsif escape == "f"
+          result = result + 12.chr()
+        elsif escape == "v"
+          result = result + 11.chr()
+        elsif escape == "s"
+          result = result + " "
         elsif escape == "x"
           value = 0
           digits = 0
@@ -12320,8 +12409,10 @@ class Parser
             self.fail("invalid \\u escape")
           end
           result = result + self.utf8_escape(digits.to_i(16)) unless @failed
-        elsif escape == "\"" || escape == "\\" || escape == "#"
+        elsif escape == "\"" || escape == "\\" || escape == "#" || escape == "'"
           result = result + escape
+        elsif escape.ord() >= 32 && escape.ord() < 127
+          self.fail("unsupported string escape '\\#{escape}' (write \\\\ for a backslash)")
         else
           self.fail("unsupported string escape")
         end
@@ -12453,6 +12544,111 @@ class Parser
       result = self.allocate_register()
       literal = self.add_string("")
       self.emit_instruction2(Opcode::STRING, result, literal)
+    end
+    self.set_type_fact(result, Type::STRING)
+    result
+  end
+
+  # The indentation <<~ removes, as src/compiler.c's heredoc_indent: the fewest leading spaces
+  # and tabs on a body line holding more than whitespace.
+  def heredoc_indent(body)
+    indent = nil
+    body.split("\n", -1).each() do |line|
+      width = 0
+      while width < line.length() && (line[width] == " " || line[width] == "\t")
+        width = width + 1
+      end
+      rest = line.slice(width, line.length() - width)
+      blank = rest == "" || rest == "\r"
+      indent = width if !blank && (indent == nil || width < indent)
+    end
+    indent == nil ? 0 : indent
+  end
+
+  # source[start, start + length) with `indent` leading spaces or tabs dropped after each line
+  # start, as src/compiler.c's add_heredoc_text.
+  def heredoc_text(start, length, indent, body_start)
+    text = ""
+    skip = (start == body_start || @source[start - 1] == "\n") ? indent : 0
+    index = 0
+    while index < length
+      character = @source[start + index]
+      index = index + 1
+      if skip > 0 && (character == " " || character == "\t")
+        skip = skip - 1
+        next
+      end
+      skip = character == "\n" ? indent : 0
+      text = text + character
+    end
+    text
+  end
+
+  # `<<~ID` / `<<~'ID'`, as src/compiler.c's parse_heredoc.
+  def parse_heredoc()
+    span = @previous
+    raw = span.kind() == :heredoc_raw
+    indent = self.heredoc_indent(@source.slice(span.start(), span.length()))
+    finish = span.start() + span.length()
+    piece = span.start()
+    result = nil
+    while !@failed
+      index = raw ? finish : piece
+      while index < finish
+        if @source[index] == "\\" && index + 1 < finish
+          index = index + 2
+          next
+        end
+        break if @source[index] == "#" && index + 1 < finish && @source[index + 1] == "{"
+        index = index + 1
+      end
+      index = finish if index > finish
+      text = self.heredoc_text(piece, index - piece, indent, span.start())
+      literal_register = self.allocate_register()
+      literal = self.add_string(raw ? text : self.decode_string_text(text))
+      self.emit_instruction2(Opcode::STRING, literal_register, literal)
+      if result == nil
+        result = literal_register
+      else
+        joined = self.allocate_register()
+        self.emit_instruction3(Opcode::ADD, joined, result, literal_register)
+        result = joined
+      end
+      break if index >= finish
+
+      line = span.line() + 1
+      line_start = span.start()
+      scan = span.start()
+      while scan < index
+        if @source[scan] == "\n"
+          line = line + 1
+          line_start = scan + 1
+        end
+        scan = scan + 1
+      end
+      column = index - line_start + 3
+      outer_lexer = @lexer
+      outer_current = @current
+      outer_previous = @previous
+      embedded = Lexer.new(@source)
+      embedded.restore_state(index + 2, index + 2, line, column, line, column)
+      @lexer = embedded
+      @current = @lexer.next_token()
+      value = self.parse_expression()
+      if @current.kind() != :right_brace
+        self.fail("expected '}' after interpolation")
+      end
+      close = @current.start()
+      @lexer = outer_lexer
+      @current = outer_current
+      @previous = outer_previous
+      converted = self.allocate_register()
+      self.emit_instruction2(Opcode::TO_STRING, converted, value)
+      joined = self.allocate_register()
+      self.emit_instruction3(Opcode::ADD, joined, result, converted)
+      result = joined
+      piece = close + 1
+      break if piece >= finish
     end
     self.set_type_fact(result, Type::STRING)
     result

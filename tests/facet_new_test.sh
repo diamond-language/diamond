@@ -65,6 +65,8 @@ done
 
 # --- the entry points run ---
 [[ "$("$diamond" demo_cli/main.d6 Ada)" == "Hello, Ada!" ]] || fail "cli greeting"
+# --version reads the Cutfile version, from any working directory.
+[[ "$(builtin cd / && "$diamond" "$work/demo_cli/main.d6" --version)" == "demo_cli 0.1.0" ]] || fail "cli --version"
 set +e
 "$diamond" demo_cli/main.d6 --bogus 2>/dev/null
 status=$?
@@ -174,7 +176,9 @@ check_reserved() {
 names="$(sed -n '/^builtin_namespace_calls\[\]=/,/^};/p' "$root/src/compiler_names.c" | grep -oE '"[A-Z][A-Za-z0-9]*"' | tr -d '"')"
 names+=" $(sed -n '/{"Int",DIAMOND_TYPE_INT}/,/};/p' "$root/src/compiler.c" | grep -oE '"[A-Z][A-Za-z0-9]*"' | tr -d '"')"
 names+=" $(grep -oE '\]=\{"[A-Z][A-Za-z0-9]*"' "$root/src/compiler_program.c" | grep -oE '[A-Z][A-Za-z0-9]*')"
-names+=" $(grep -hoE '^\s*(class|module|struct) [A-Z][A-Za-z0-9]*' "$root"/lib/core.d6 "$root"/lib/core/*.d6 "$root/lib/minitest.d6" | awk '{print $2}')"
+# Top-level declarations only: a class nested in a module (URI::Reference) leaves the
+# bare name free.
+names+=" $(grep -hoE '^(class|module|struct) [A-Z][A-Za-z0-9]*' "$root"/lib/core.d6 "$root"/lib/core/*.d6 "$root/lib/minitest.d6" | awk '{print $2}')"
 count=0
 for name in $names; do
     for kind in cli web graphql tcp udp lib; do check_reserved "$kind" "$name"; done

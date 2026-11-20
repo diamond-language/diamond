@@ -241,7 +241,7 @@ end
 # feature). Bounded by the same http_max_body_size() the Content-Length
 # path already enforces, checked per chunk rather than after accumulating
 # an oversized body.
-def http_read_chunked_body(conn)
+def http_read_chunked_body(conn, limit = http_max_body_size())
   builder = StringBuilder.new()
   loop do
     size_line = conn.gets()
@@ -260,8 +260,8 @@ def http_read_chunked_body(conn)
       end
       break
     end
-    if builder.length() + chunk_size > http_max_body_size()
-      raise IOError.new("chunked response body exceeds maximum of #{http_max_body_size()}")
+    if builder.length() + chunk_size > limit
+      raise IOError.new("chunked response body exceeds maximum of #{limit}")
     end
     builder.append(conn.read(chunk_size))
     conn.gets() # the bare CRLF following each chunk's data
@@ -274,20 +274,32 @@ end
 # among chunked/Content-Length/read-to-EOF exactly as before -- this is
 # the one piece of http_request's old body-reading logic, unchanged
 # apart from also recognizing chunked encoding.
-def http_read_body(conn, response_headers)
+def http_read_body(conn, response_headers, limit = http_max_body_size())
   if response_headers["transfer-encoding"] == "chunked"
-    return http_read_chunked_body(conn)
+    return http_read_chunked_body(conn, limit)
   end
   content_length = response_headers["content-length"]
   if content_length != nil
     length = content_length.to_i()
-    if length > http_max_body_size()
+    if length > limit
       conn.close()
-      raise IOError.new("response Content-Length #{length} exceeds maximum of #{http_max_body_size()}")
+      raise IOError.new("response Content-Length #{length} exceeds maximum of #{limit}")
     end
     return conn.read(length)
   end
-  conn.read()
+  # No length: the body runs until the server closes the connection. Read it in
+  # pieces so a huge or endless body stops at the limit instead of filling memory.
+  builder = StringBuilder.new()
+  loop do
+    piece = conn.read(65536)
+    break if piece == nil || piece == ""
+    if builder.length() + piece.length() > limit
+      conn.close()
+      raise IOError.new("response body exceeds maximum of #{limit}")
+    end
+    builder.append(piece)
+  end
+  builder.to_s()
 end
 
 # Undoes Content-Encoding: gzip/deflate (Gzip.decompress auto-detects
@@ -316,7 +328,7 @@ end
 # share it. `host` is used for both the Host header and TLS SNI (already
 # baked into `conn` by the time this runs); a non-default port is
 # appended to Host, matching what a browser sends.
-def http_send(conn, method, parsed, headers, body)
+def http_send(conn, method, parsed, headers, body, limit = http_max_body_size())
   host_header = parsed["host"]
   unless parsed["port"] == parsed["default_port"]
     host_header = "#{host_header}:#{parsed["port"]}"
@@ -362,7 +374,7 @@ def http_send(conn, method, parsed, headers, body)
     collect_response_header(line)
   end
 
-  response_body = if method == "HEAD" then "" else http_read_body(conn, response_headers) end
+  response_body = if method == "HEAD" then "" else http_read_body(conn, response_headers, limit) end
   {"status": status, "headers": response_headers, "body": response_body}
 end
 
@@ -385,6 +397,61 @@ def http_should_follow(status)
 end
 
 # scheme://host:port -- a redirect to another origin (another host, port, or an https -> http downgrade) must not carry credentials.
+# A redirect's Location as an absolute URL, resolved against the request it
+# answers the way a browser resolves a link (RFC 3986 section 5.2): absolute,
+# "//host/path", "/path", "?query" and a relative "next.html" or "../up" all
+# work. A fragment is dropped; it never reaches the server.
+# The most body bytes a response may have: options["max_body_bytes"], else
+# http_max_body_size() (25 MiB).
+def http_body_limit(options)
+  limit = options["max_body_bytes"]
+  if limit == nil then http_max_body_size() else limit end
+end
+
+def http_resolve_location(parsed, location)
+  location = location.strip()
+  hash = location.index_of("#")
+  location = location.slice(0, hash) unless hash == nil
+  return location if location.index_of("://") != nil
+  return "#{parsed["scheme"]}:#{location}" if location.start_with?("//")
+  origin = "#{parsed["scheme"]}://#{parsed["host"]}"
+  origin = "#{origin}:#{parsed["port"]}" unless parsed["port"] == parsed["default_port"]
+  path = parsed["path"]
+  question = path.index_of("?")
+  path = path.slice(0, question) unless question == nil
+  return origin + path + location if location.start_with?("?")
+  return origin + path if location == ""
+  target = if location.start_with?("/")
+    location
+  else
+    slash = path.rindex("/")
+    directory = if slash == nil then "/" else path.slice(0, slash + 1) end
+    directory + location
+  end
+  query = ""
+  question = target.index_of("?")
+  unless question == nil
+    query = target.slice(question, target.length() - question)
+    target = target.slice(0, question)
+  end
+  output = []
+  segments = target.split("/", -1)
+  segments.each_with_index() do |segment, index|
+    last = index == segments.length() - 1
+    if segment == "."
+      output.push("") if last
+    elsif segment == ".."
+      output.pop() if output.length() > 1
+      output.push("") if last
+    else
+      output.push(segment)
+    end
+  end
+  joined = output.join("/")
+  joined = "/" + joined unless joined.start_with?("/")
+  origin + joined + query
+end
+
 def http_origin(parsed)
   "#{parsed["scheme"]}://#{parsed["host"]}:#{parsed["port"]}"
 end
@@ -420,11 +487,13 @@ end
 ## - `json`: send this value as a JSON body
 ## - `multipart_fields`, `multipart_files`: send a `multipart/form-data` body
 ## - `follow_redirects` (default `false`) and `max_redirects` (default 5)
+## - `max_body_bytes` (default 25 MiB): a longer response body raises IOError, whether
+##   it has a Content-Length, is chunked, or runs until the connection closes
 def http_request(method, url, headers = {}, body = "", options = {})
   parsed = http_parse_url(url)
   prepared = http_prepare_headers_and_body(headers, body, options)
   conn = http_connect(parsed["scheme"], parsed["host"], parsed["port"], options)
-  response = http_send(conn, method, parsed, prepared["headers"], prepared["body"])
+  response = http_send(conn, method, parsed, prepared["headers"], prepared["body"], http_body_limit(options))
   conn.close()
   response["body"] = http_maybe_decompress(response["body"], response["headers"], options)
 
@@ -436,11 +505,7 @@ def http_request(method, url, headers = {}, body = "", options = {})
     if remaining <= 0
       raise IOError.new("too many redirects following #{url}")
     end
-    next_url = if location.index_of("://") == nil
-      "#{parsed["scheme"]}://#{parsed["host"]}:#{parsed["port"]}#{location}"
-    else
-      location
-    end
+    next_url = http_resolve_location(parsed, location)
     next_parsed = http_parse_url(next_url)
     origin = http_origin(parsed)
     next_origin = http_origin(next_parsed)
@@ -601,14 +666,14 @@ class HttpSession
     response = nil
     if cached == nil
       conn = http_connect(parsed["scheme"], parsed["host"], parsed["port"], options)
-      response = http_send(conn, method, parsed, request_headers, prepared["body"])
+      response = http_send(conn, method, parsed, request_headers, prepared["body"], http_body_limit(options))
       @connections[key] = conn
     else
       begin
-        response = http_send(cached, method, parsed, request_headers, prepared["body"])
+        response = http_send(cached, method, parsed, request_headers, prepared["body"], http_body_limit(options))
       rescue error: IOError
         conn = http_connect(parsed["scheme"], parsed["host"], parsed["port"], options)
-        response = http_send(conn, method, parsed, request_headers, prepared["body"])
+        response = http_send(conn, method, parsed, request_headers, prepared["body"], http_body_limit(options))
         @connections[key] = conn
       end
     end
@@ -618,11 +683,7 @@ class HttpSession
     follow = @options["follow_redirects"]
     location = response["headers"]["location"]
     if follow == true && http_should_follow(response["status"]) && location != nil
-      next_url = if location.index_of("://") == nil
-        "#{parsed["scheme"]}://#{parsed["host"]}:#{parsed["port"]}#{location}"
-      else
-        location
-      end
+      next_url = http_resolve_location(parsed, location)
       if redirects_left <= 0
         raise IOError.new("too many redirects following #{url}")
       end

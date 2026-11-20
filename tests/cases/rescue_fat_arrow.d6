@@ -1,0 +1,6 @@
+# Ruby's 'rescue => e' gets an error that shows the d6 spelling.
+begin
+  raise "x"
+rescue => e
+  puts(e)
+end

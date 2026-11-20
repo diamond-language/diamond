@@ -864,6 +864,9 @@ uint16_t parse_prefix(Compiler *compiler) {
             return parse_float(compiler);
         case DIAMOND_TOKEN_STRING:
             return parse_string(compiler);
+        case DIAMOND_TOKEN_HEREDOC:
+        case DIAMOND_TOKEN_HEREDOC_RAW:
+            return parse_heredoc(compiler);
         case DIAMOND_TOKEN_REGEX:
             return parse_regex_literal(compiler);
         case DIAMOND_TOKEN_SYMBOL:

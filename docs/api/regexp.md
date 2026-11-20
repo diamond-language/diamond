@@ -32,6 +32,17 @@ Regexp.new("hello", 1).match?("HELLO")   # => true
 Regexp.new("a/b", 1 | 2).to_s()          # => "/a\\/b/mi"
 ```
 
+### `Regexp.escape(text) -> String`
+
+`text` with every metacharacter backslashed, so a pattern built from it matches the text
+literally. Tabs, newlines and the other whitespace escapes come back as `\t`, `\n`, `\r`,
+`\f` and `\v`, and a space as `\ ` (so it survives extended mode).
+
+```ruby
+Regexp.escape("1+1=2?")                                 # => "1\\+1=2\\?"
+Regexp.new("^" + Regexp.escape("a.b") + "$").match?("axb")   # => false
+```
+
 ## Methods
 
 ### `match(text) -> Array | Nil`

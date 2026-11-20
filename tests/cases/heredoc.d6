@@ -1,0 +1,40 @@
+# <<~NAME starts a heredoc: the lines after this one, up to NAME alone on a line, with
+# their common indentation removed. Escapes and #{} work as in "..." strings.
+name = "Ada"
+greeting = <<~TEXT
+  Hello, #{name}!
+    indented two more
+  Tab:\tend
+TEXT
+print(greeting)
+
+# <<~'NAME' is raw: no escapes, no interpolation.
+raw = <<~'RAW'
+  C:\path\#{not_interpolated}
+  RAW
+print(raw)
+
+# The rest of the opener's line carries on; a line can open two heredocs.
+pair = [<<~A.strip(), <<~B.upcase()]
+  first
+A
+  second
+B
+puts(pair.inspect())
+
+# Blank lines don't count toward the indentation, and quotes need no escaping.
+html = <<~HTML
+
+    <p class="note">"quoted"</p>
+
+  HTML
+puts(html.inspect())
+
+# A heredoc as an argument, then more code on later lines.
+def shout(text: String) -> String = text.upcase()
+puts(shout(<<~X))
+  quiet
+X
+puts(<<~EMPTY.length())
+EMPTY
+puts("after")

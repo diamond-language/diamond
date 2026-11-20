@@ -1,0 +1,6 @@
+# Process.executable() is the absolute path of the running executable. (The case
+# runner runs cases inside its own binary, so tests/run.sh checks that d6 can start
+# itself with it.)
+path = Process.executable()
+puts(path.start_with?("/"))
+puts(File.exist?(path))

@@ -490,6 +490,8 @@ def run()
     method = request["method"]
     if path == "/start"
       [302, {"Location": "/final"}, ""]
+    elsif path == "/docs/old"
+      [301, {"Location": "../final#top"}, ""]
     elsif path == "/final" && method == "GET"
       [200, {"Content-Type": "text/plain"}, "redirected"]
     elsif path == "/preserve" && method == "PUT"
@@ -519,11 +521,13 @@ puts(followed["status"])
 puts(followed["body"])
 preserved = http_put("http://127.0.0.1:$redirect_port/preserve", "keepme", {}, {"follow_redirects": true})
 puts(preserved["body"])
+relative = http_get("http://127.0.0.1:$redirect_port/docs/old", {}, {"follow_redirects": true})
+puts(relative["body"])
 CLIENTEOF
 )")"
 kill "$redirect_pid" 2>/dev/null || true
 wait "$redirect_pid" 2>/dev/null || true
-[[ "$redirect_response" == $'302\n200\nredirected\npreserved:keepme\nnil' ]]
+[[ "$redirect_response" == $'302\n200\nredirected\npreserved:keepme\nredirected\nnil' ]]
 rm -f "$redirect_out"
 
 # Client: HttpSession's cookie jar (a Set-Cookie value comes back on
@@ -674,4 +678,72 @@ wait "$origin_a_pid" "$origin_b_pid" 2>/dev/null || true
 [[ "$origin_response" == $'b-saw:nil\na-saw:Bearer secret\nb-saw:nil\nplain: IOError\nsession: IOError\n{}' ]]
 rm -f "$origin_a_out" "$origin_b_out"
 
-echo "17 http package tests passed"
+# Client: a body with no Content-Length runs until the server closes the
+# connection. It is read in pieces, so a small one still arrives whole while
+# one over max_body_bytes raises IOError instead of filling memory.
+eof_port=19332
+eof_out="$(mktemp)"
+eof_src="$(cat <<'HTTPEOF'
+server = TCPServer.listen(19332, host: "127.0.0.1")
+loop do
+  conn = server.accept()
+  request_line = conn.gets()
+  loop do
+    line = conn.gets()
+    break if line == nil || line == ""
+  end
+  # The port probe connects without sending a request.
+  if request_line == nil
+    conn.close()
+    next
+  end
+  body = request_line.include?("/short") ? "short body" : "x".repeat(200000)
+  conn.write("HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\n" + body)
+  conn.close()
+end
+HTTPEOF
+)"
+"$diamond" -e "$eof_src" > "$eof_out" 2>&1 &
+eof_pid=$!
+wait_for_port "$eof_port"
+{ exec 3<&- 3>&-; } 2>/dev/null || true
+eof_response="$(timeout 10 "$diamond" -e "$(cat <<CLIENTEOF
+require "./lib/http"
+puts(http_get("http://127.0.0.1:$eof_port/short")["body"])
+begin
+  http_get("http://127.0.0.1:$eof_port/long", {}, {"max_body_bytes": 100000})
+  puts("no error")
+rescue e: IOError
+  puts(e.message())
+end
+CLIENTEOF
+)" 2>&1)"
+kill "$eof_pid" 2>/dev/null || true
+wait "$eof_pid" 2>/dev/null || true
+[[ "$eof_response" == $'short body\nresponse body exceeds maximum of 100000\nnil' ]] || { echo "eof body test: ${eof_response:0:200}" >&2; exit 1; }
+rm -f "$eof_out"
+
+# Server: port 0 with a ready Channel, a host, and a stop Channel, so a
+# program (a test, say) can run a server on a thread of its own and end it.
+inprocess_response="$(timeout 15 "$diamond" -e "$(cat <<'CLIENTEOF'
+require "./lib/http"
+def hello(request) = [200, {"Content-Type": "text/plain"}, "hello #{request["path"]}"]
+ready = Channel.new(1)
+stop = Channel.new(1)
+server = Thread.new(http_serve, 0, hello, "127.0.0.1", ready, stop)
+port = ready.receive()
+puts(port > 0)
+puts(http_get("http://127.0.0.1:#{port}/a")["body"])
+stop.close()
+server.join()
+begin
+  http_get("http://127.0.0.1:#{port}/b", {}, {"connect_timeout_ms": 1000})
+  puts("still serving")
+rescue e
+  puts("stopped")
+end
+CLIENTEOF
+)" 2>&1)"
+[[ "$inprocess_response" == $'true\nhello /a\nstopped\nnil' ]] || { echo "in-process server test: $inprocess_response" >&2; exit 1; }
+
+echo "19 http package tests passed"

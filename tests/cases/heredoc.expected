@@ -1,0 +1,11 @@
+Hello, Ada!
+  indented two more
+Tab:	end
+C:\path\#{not_interpolated}
+["first", "SECOND\n"]
+"\n<p class=\"note\">\"quoted\"</p>\n\n"
+QUIET
+
+0
+after
+nil

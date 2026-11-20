@@ -1,0 +1,8 @@
+# Every backslash escape a double-quoted string accepts, shown as the bytes it
+# produces.
+escapes = ["\n", "\r", "\t", "\0", "\e", "\a", "\b", "\f", "\v", "\s", "\"", "\\", "\#", "\'",
+  "\x41", "\x7", "é", "\u{1F600}"]
+escapes.each() do |text|
+  puts("#{text.inspect()} #{text.bytes().inspect()}")
+end
+puts("form\ffeed".split("\f").inspect())

@@ -1038,7 +1038,8 @@ static bool run_compile_pass(const char *source, DiamondProgram *program,
     diamond_lexer_init(&compiler.lexer, source);
     compiler.current = diamond_lexer_next(&compiler.lexer);
     if(compiler.current.kind==DIAMOND_TOKEN_ERROR)
-        fail(&compiler,compiler.current.span,"unexpected character");
+        fail(&compiler,compiler.current.span,
+            diamond_lexer_error_message(source,compiler.current.span));
 
     const uint16_t result = compile_sequence(&compiler);
     if (!compiler.failed && compiler.current.kind != DIAMOND_TOKEN_EOF) {

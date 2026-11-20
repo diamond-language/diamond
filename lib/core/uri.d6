@@ -96,3 +96,189 @@ module URI
     out.to_s()
   end
 end
+
+module URI
+  # One parsed URI or relative reference. Parts that are absent are nil, except
+  # the path, which is "" when empty. The scheme is lower-cased; the host is kept
+  # as written (normalize lower-cases it).
+  class Reference
+    def initialize(scheme: String | Nil, userinfo: String | Nil, host: String | Nil,
+        port: Int | Nil, path: String, query: String | Nil, fragment: String | Nil)
+      @scheme = scheme
+      @userinfo = userinfo
+      @host = host
+      @port = port
+      @path = path
+      @query = query
+      @fragment = fragment
+    end
+
+    def self.diamond_parse(text: String) -> URI::Reference
+      m = text.match_data(/\A(?:([A-Za-z][A-Za-z0-9+.\-]*):)?(?:\/\/([^\/?#]*))?([^?#]*)(?:\?([^#]*))?(?:#(.*))?\z/m)
+      raise ArgumentError.new("not a URI: #{text.inspect()}") if m == nil
+      scheme = m[1] == nil ? nil : m[1].downcase()
+      userinfo = nil
+      host = nil
+      port = nil
+      authority = m[2]
+      if authority != nil
+        at = authority.rindex("@")
+        if at != nil
+          userinfo = authority.slice(0, at)
+          authority = authority.slice(at + 1, authority.length() - at - 1)
+        end
+        host = authority
+        colon = authority.rindex(":")
+        # A colon inside "[...]" belongs to an IPv6 address, not a port.
+        if colon != nil && colon > (authority.rindex("]") || -1)
+          digits = authority.slice(colon + 1, authority.length() - colon - 1)
+          host = authority.slice(0, colon)
+          if digits != ""
+            raise ArgumentError.new("bad port in URI: #{text.inspect()}") unless digits.match?(/\A[0-9]+\z/)
+            port = digits.to_i()
+          end
+        end
+      end
+      URI::Reference.new(scheme, userinfo, host, port, m[3], m[4], m[5])
+    end
+
+    def scheme() -> String | Nil = @scheme
+
+    def userinfo() -> String | Nil = @userinfo
+
+    def host() -> String | Nil = @host
+
+    # The port written in the URI, or nil when there is none (see default_port).
+    def port() -> Int | Nil = @port
+
+    def path() -> String = @path
+
+    def query() -> String | Nil = @query
+
+    def fragment() -> String | Nil = @fragment
+
+    # Whether it has a scheme: "https://x/" does, "../a" and "//x/a" do not.
+    def absolute?() -> Bool = @scheme != nil
+
+    # 80 for http and ws, 443 for https and wss, else nil.
+    def default_port() -> Int | Nil
+      return 80 if @scheme == "http" || @scheme == "ws"
+      return 443 if @scheme == "https" || @scheme == "wss"
+      nil
+    end
+
+    # "scheme://host[:port]", the port only when it is not the default; nil
+    # without a scheme or host.
+    def origin() -> String | Nil
+      return nil if @scheme == nil || @host == nil
+      port = @port == nil || @port == self.default_port() ? "" : ":#{@port}"
+      "#{@scheme}://#{@host.downcase()}#{port}"
+    end
+
+    # The path and query as an HTTP request line wants them: "/" for an empty path.
+    def request_target() -> String
+      path = @path == "" ? "/" : @path
+      @query == nil ? path : "#{path}?#{@query}"
+    end
+
+    # `reference` (a String or URI::Reference) resolved against this one, the
+    # base (RFC 3986 section 5.2.2): "g", "./g", "../g", "/g", "//h/g", "?q"
+    # and "#f" all work as they do in a browser.
+    def resolve(reference: String | URI::Reference) -> URI::Reference
+      ref = reference is String ? URI::Reference.diamond_parse(reference) : reference
+      if ref.scheme() != nil
+        return URI::Reference.new(ref.scheme(), ref.userinfo(), ref.host(), ref.port(),
+          URI::Reference.diamond_remove_dot_segments(ref.path()), ref.query(), ref.fragment())
+      end
+      if ref.host() != nil
+        return URI::Reference.new(@scheme, ref.userinfo(), ref.host(), ref.port(),
+          URI::Reference.diamond_remove_dot_segments(ref.path()), ref.query(), ref.fragment())
+      end
+      if ref.path() == ""
+        query = ref.query() == nil ? @query : ref.query()
+        return URI::Reference.new(@scheme, @userinfo, @host, @port, @path, query, ref.fragment())
+      end
+      path = ref.path()
+      unless path.start_with?("/")
+        if @host != nil && @path == ""
+          path = "/" + path
+        else
+          slash = @path.rindex("/")
+          path = slash == nil ? path : @path.slice(0, slash + 1) + path
+        end
+      end
+      URI::Reference.new(@scheme, @userinfo, @host, @port, URI::Reference.diamond_remove_dot_segments(path), ref.query(), ref.fragment())
+    end
+
+    # The same reference in a canonical form, for comparing two links: scheme and
+    # host lower-cased, the default port dropped, "." and ".." segments removed,
+    # and "/" for an empty path when there is a host.
+    def normalize() -> URI::Reference
+      port = @port == self.default_port() ? nil : @port
+      host = @host == nil ? nil : @host.downcase()
+      path = URI::Reference.diamond_remove_dot_segments(@path)
+      path = "/" if path == "" && host != nil
+      URI::Reference.new(@scheme, @userinfo, host, port, path, @query, @fragment)
+    end
+
+    # A copy with a different fragment (nil removes it).
+    def with_fragment(fragment: String | Nil) -> URI::Reference
+      URI::Reference.new(@scheme, @userinfo, @host, @port, @path, @query, fragment)
+    end
+
+    def to_s() -> String
+      out = StringBuilder.new()
+      out.append("#{@scheme}:") if @scheme != nil
+      if @host != nil
+        out.append("//")
+        out.append("#{@userinfo}@") if @userinfo != nil
+        out.append(@host)
+        out.append(":#{@port}") if @port != nil
+      end
+      out.append(@path)
+      out.append("?#{@query}") if @query != nil
+      out.append("##{@fragment}") if @fragment != nil
+      out.to_s()
+    end
+
+    def inspect() -> String = "#<URI::Reference #{self.to_s()}>"
+
+    def ==(other) -> Bool = other is URI::Reference && other.to_s() == self.to_s()
+
+    # RFC 3986 section 5.2.4.
+    def self.diamond_remove_dot_segments(path: String) -> String
+      return path unless path.include?(".")
+      absolute = path.start_with?("/")
+      segments = path.split("/", -1)
+      segments.shift() if absolute
+      output = []
+      last_index = segments.length() - 1
+      segments.each_with_index() do |segment, index|
+        if segment == "."
+          output.push("") if index == last_index
+        elsif segment == ".."
+          output.pop() if output.length() > 0
+          output.push("") if index == last_index
+        else
+          output.push(segment)
+        end
+      end
+      joined = output.join("/")
+      absolute ? "/" + joined : joined
+    end
+  end
+
+  # Splits `text` into its parts (RFC 3986): scheme, userinfo, host, port,
+  # path, query and fragment. A relative reference ("../a.html", "#top")
+  # parses too, with nil for the parts it lacks. Raises ArgumentError when the
+  # port is not a number.
+  def self.parse(text: String) -> URI::Reference
+    URI::Reference.diamond_parse(text)
+  end
+
+  # Resolves `reference` against `base`, as a browser resolves a link against
+  # the page it is on (RFC 3986 section 5.2), and returns the result as text.
+  def self.join(base: String, reference: String) -> String
+    URI.parse(base).resolve(reference).to_s()
+  end
+end

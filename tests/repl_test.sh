@@ -133,6 +133,25 @@ response="$(read_until_prompt)"
 [[ "$response" == $'b\nnil\n{> ' ]]
 count=$((count + 1))
 
+# --- a heredoc keeps reading until its closing line, though its error is lines back ---
+
+for line in 'note = <<~TEXT' '  first' '    second'; do
+    printf '%s\n' "$line" >&"${REPL[1]}"
+    response="$(read_until_prompt)"
+    [[ "$response" == "... " ]]
+    count=$((count + 1))
+done
+
+printf 'TEXT\n' >&"${REPL[1]}"
+response="$(read_until_prompt)"
+[[ "$response" == *"{> " ]]
+count=$((count + 1))
+
+printf 'note.inspect()\n' >&"${REPL[1]}"
+response="$(read_until_prompt)"
+[[ "$response" == *'first\n  second\n'*"{> " ]]
+count=$((count + 1))
+
 # --- multi-line function definitions, then calling the defined function ---
 
 printf 'def add(a, b)\n' >&"${REPL[1]}"

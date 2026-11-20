@@ -1,0 +1,9 @@
+# escape_html makes text safe inside HTML; unescape_html decodes character
+# references.
+puts("<a href=\"/x?a=1&b=2\">Tom & Jerry's</a>".escape_html())
+puts("plain text".escape_html())
+puts("".escape_html().inspect())
+puts("caf&#233; &amp; &lt;b&gt; &#x1F600; &quot;q&quot; &apos;".unescape_html())
+puts("&copy; stays, &amp without a semicolon stays, &#0; is invalid".unescape_html())
+text = "if (a < b && c > d) { say(\"hi\") }"
+puts(text.escape_html().unescape_html() == text)

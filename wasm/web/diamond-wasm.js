@@ -271,6 +271,8 @@ export class DiamondRepl {
   static #incomplete(error, source) {
     const match = /^(\d+):\d+: error:/.exec(error);
     if (!match) return false;
+    // A heredoc still waiting for its closing line reports at its opener, lines back.
+    if (error.includes('heredoc has no closing line')) return true;
     // A diagnostic past the last newline-terminated line is the parser running off the end of
     // the input: an unfinished entry. One on an existing line is a real error.
     const terminated = source.split('\n').length - 1;

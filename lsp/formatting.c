@@ -164,6 +164,8 @@ static bool is_value_end_kind(DiamondTokenKind kind) {
         case DIAMOND_TOKEN_INTEGER:
         case DIAMOND_TOKEN_FLOAT:
         case DIAMOND_TOKEN_STRING:
+        case DIAMOND_TOKEN_HEREDOC:
+        case DIAMOND_TOKEN_HEREDOC_RAW:
         case DIAMOND_TOKEN_SYMBOL:
         case DIAMOND_TOKEN_INSTANCE_VARIABLE:
         case DIAMOND_TOKEN_CLASS_VARIABLE:
@@ -668,8 +670,11 @@ static bool leading_already_correct(const char *content,size_t leading,size_t ta
  * re-indenting or trimming it would change the program's value. */
 static bool inside_string_token(const DiamondToken *tokens,size_t token_count,size_t position) {
     for(size_t index=0;index<token_count;index++) {
-        if(tokens[index].kind!=DIAMOND_TOKEN_STRING)continue;
-        if(tokens[index].span.start<position&&
+        if(tokens[index].kind!=DIAMOND_TOKEN_STRING&&tokens[index].kind!=DIAMOND_TOKEN_HEREDOC&&
+           tokens[index].kind!=DIAMOND_TOKEN_HEREDOC_RAW)continue;
+        /* A heredoc span is its body, which starts at a line start: that line is inside too. */
+        const bool heredoc=tokens[index].kind!=DIAMOND_TOKEN_STRING;
+        if((heredoc?tokens[index].span.start<=position:tokens[index].span.start<position)&&
            position<tokens[index].span.start+tokens[index].span.length)return true;
     }
     return false;
