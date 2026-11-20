@@ -2150,7 +2150,7 @@ static uint16_t parse_time_build_call(Compiler *compiler,uint8_t mode) {
     }
     advance_token(compiler);skip_newlines(compiler);
     const bool fixed=mode==1;
-    const size_t expected=fixed?7:6;uint16_t arguments[7];size_t count=0;
+    const size_t expected=fixed?7:(mode==3?2:6);uint16_t arguments[7];size_t count=0;
     while(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN) {
         if(count==expected) {
             fail(compiler,compiler->current.span,"too many Time constructor arguments");
@@ -2163,7 +2163,7 @@ static uint16_t parse_time_build_call(Compiler *compiler,uint8_t mode) {
     if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN||count!=expected) {
         fail(compiler,compiler->current.span,
             fixed?"Time.fixed expects offset plus six calendar fields":
-                  "Time.utc expects six calendar fields");
+                  (mode==3?"Time.strptime expects a String and a format":"Time.utc expects six calendar fields"));
         return 0;
     }
     advance_token(compiler);
@@ -2216,6 +2216,9 @@ uint16_t parse_time_call(Compiler *compiler) {
     }
     if(name_equals(compiler,"local",method,false)) {
         advance_token(compiler);return parse_time_build_call(compiler,2);
+    }
+    if(name_equals(compiler,"strptime",method,false)) {
+        advance_token(compiler);return parse_time_build_call(compiler,3);
     }
     fail(compiler,method,
         "expected a Time constructor after 'Time'");

@@ -1,0 +1,23 @@
+# Time.strptime reads dates and times laid out by a strftime-style format.
+bank = Time.strptime("11/03/2026", "%m/%d/%Y")
+european = Time.strptime("03/11/2026", "%d/%m/%Y")
+named = Time.strptime("Nov 3, 2026 7:05 pm", "%b %e, %Y %I:%M %p")
+full_name = Time.strptime("3 MARCH 26", "%d %B %y")
+zoned = Time.strptime("2026-11-03 23:30:00 +0530", "%F %T %z")
+utc = Time.strptime("2026-11-03T23:30:00Z", "%Y-%m-%dT%H:%M:%S%z")
+spaced = Time.strptime("2026-11-03   12", "%Y-%m-%d %H")
+
+def error_of(text, format)
+  begin
+    Time.strptime(text, format)
+    "parsed"
+  rescue error: ArgumentError
+    error.message()
+  end
+end
+
+[bank.strftime("%Y-%m-%d %H:%M:%S"), bank.utc?(), european.strftime("%Y-%m-%d"),
+ named.strftime("%Y-%m-%d %H:%M"), full_name.strftime("%Y-%m-%d"),
+ zoned.iso8601(), utc.iso8601(), spaced.hour(),
+ error_of("11/31/2026", "%m/%d/%Y"), error_of("2026-11", "%Y-%m"), error_of("11/03/2026x", "%m/%d/%Y"),
+ error_of("13:00 pm", "%Y %I:%M %p"), error_of("2026", "%Q")]

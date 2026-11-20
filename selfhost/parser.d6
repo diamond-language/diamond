@@ -11064,7 +11064,7 @@ class Parser
   def parse_time_call()
     self.advance_token()
     method = if @current.kind() == :identifier then self.token_text(@current) else "" end
-    build_mode = ["utc", "fixed", "local"].index(method)
+    build_mode = ["utc", "fixed", "local", "strptime"].index(method)
     if method == "monotonic" || method == "now" || method == "utc_now"
       self.advance_token()
       if @current.kind() != :left_paren
@@ -11106,7 +11106,7 @@ class Parser
     end
     self.advance_token()
     self.skip_newlines()
-    expected = if build_mode == 1 then 7 else 6 end
+    expected = if build_mode == 1 then 7 elsif build_mode == 3 then 2 else 6 end
     arguments = []
     while @current.kind() != :right_paren && !@failed
       if arguments.length() == expected
@@ -11123,6 +11123,8 @@ class Parser
     if @current.kind() != :right_paren || arguments.length() != expected
       self.fail(if build_mode == 1
         "Time.fixed expects offset plus six calendar fields"
+      elsif build_mode == 3
+        "Time.strptime expects a String and a format"
       else
         "Time.utc expects six calendar fields"
       end)
