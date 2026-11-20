@@ -95,6 +95,15 @@ revoked afterwards). The published sha256s match `docs/registry-launch-inventory
 `tools/verify_registry_launch.d6` passed for all 20 public cuts. The running registry keeps its
 bundled http/gremlin/rack until its next deploy.
 
+cookies 0.2.6, gremlin 0.5.7, mjolnir 0.4.4 and websocket 0.2.4 (#616, the chat dogfood gaps:
+`Csrf` form field, partial gremlin `limits`, `validate_format` with a Regexp, a WebSocket client)
+were published on 2026-11-20 UTC from main `5086f918`, after a verified laptop snapshot
+(`~/diamond-registry-backups/pre-chat-gaps-cuts-20261120T043238Z`), with one 30-minute credential
+for `diamond-language` scoped to `publish:` each of the four (id 45, revoked afterwards). The
+published sha256s match `docs/registry-launch-inventory.json`, and `tools/verify_registry_launch.d6`
+passed for all 20 public cuts. The running registry keeps its bundled cookies/gremlin until its
+next deploy.
+
 Previously `0e482f26c56854c4c41c6c82d093ad04f6569a21` (v1.0.0-rc4, deployed 2026-11-12 UTC (2026-11-11 Pacific)
 with `tools/deploy_registry.sh --revision=v1.0.0-rc4 --force` after its dry run).
 The fresh snapshot at
