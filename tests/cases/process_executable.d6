@@ -1,7 +1,6 @@
-# Process.executable() is the absolute path of the running d6, so a program can
-# start another script with the same interpreter.
+# Process.executable() is the absolute path of the running executable. (The case
+# runner runs cases inside its own binary, so tests/run.sh checks that d6 can start
+# itself with it.)
 path = Process.executable()
 puts(path.start_with?("/"))
 puts(File.exist?(path))
-result = Process.run([path, "-e", "puts(6 * 7)"])
-puts(result.stdout().split("\n")[0])

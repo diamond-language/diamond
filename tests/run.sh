@@ -33,6 +33,10 @@ export DIAMOND_NO_CACHE=1
 export DIAMOND_PRINT_RESULT=1
 
 diamond=./build/diamond
+# Process.executable() names this d6, so a program can start another script with it.
+executable_output="$("$diamond" -e 'puts(Process.run([Process.executable(), "-e", "puts(6 * 7)"]).stdout().split("\n")[0])')"
+[[ "$executable_output" == $'42\nnil' ]] || { echo "Process.executable spawn: $executable_output" >&2; exit 1; }
+
 diamond_abs="$(realpath "$diamond")"
 run_cases_abs="$(realpath ./build/run_cases)"
 
