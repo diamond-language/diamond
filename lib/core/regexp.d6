@@ -110,3 +110,30 @@ class MatchData
     found
   end
 end
+
+# Regexp.escape(text): text with every regexp metacharacter backslashed, so
+# Regexp.new(Regexp.escape(text)) matches text literally. Newlines, tabs and
+# the other whitespace escapes come back as \n, \t, \r, \f and \v.
+def diamond_escape_regexp(text: String) -> String
+  out = StringBuilder.new()
+  text.each_char() do |char|
+    if char == "\n"
+      out.append("\\n")
+    elsif char == "\t"
+      out.append("\\t")
+    elsif char == "\r"
+      out.append("\\r")
+    elsif char == "\x0c"
+      out.append("\\f")
+    elsif char == "\x0b"
+      out.append("\\v")
+    elsif char == " "
+      out.append("\\ ")
+    elsif ".*?+^$|()[]{}\\/-#".include?(char)
+      out.append("\\" + char)
+    else
+      out.append(char)
+    end
+  end
+  out.to_s()
+end

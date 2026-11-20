@@ -9667,22 +9667,8 @@ class Parser
       # the prelude's diamond_stdout() and friends, unless the program assigns the name.
       if (name == "STDOUT" || name == "STDERR" || name == "STDIN") && class_entry == nil &&
          !self.constant_assigned_ahead?(name)
-        stream = self.find_function("diamond_" + name.downcase())
-        if stream != nil
-          stream_closure = self.allocate_register()
-          self.emit_byte(Opcode::CLOSURE)
-          self.emit_register(stream_closure)
-          self.emit_function_index(stream[1])
-          self.emit_byte(0)
-          base = self.allocate_register()
-          destination = self.allocate_register()
-          self.emit_call_opcode(Opcode::CALL_CLOSURE)
-          self.emit_register(destination)
-          self.emit_register(stream_closure)
-          self.emit_register(base)
-          self.emit_byte(0)
-          return destination
-        end
+        destination = self.emit_prelude_function_call("diamond_" + name.downcase(), [])
+        return destination if destination != 0
       end
       first = name.slice(0, 1)
       if first >= "A" && first <= "Z" && class_entry == nil && module_entry == nil
@@ -11697,10 +11683,58 @@ class Parser
     destination
   end
 
+  # A call of the prelude's top-level function `name` with the values in `args`, like
+  # compiler.c's emit_prelude_function_call. Returns 0 when there is no such function.
+  def emit_prelude_function_call(name, args)
+    function = self.find_function(name)
+    return 0 if function == nil
+    function_closure = self.allocate_register()
+    self.emit_byte(Opcode::CLOSURE)
+    self.emit_register(function_closure)
+    self.emit_function_index(function[1])
+    self.emit_byte(0)
+    base = self.allocate_register()
+    (args.length() - 1).times() do self.allocate_register() end
+    args.each_with_index() do |arg, index|
+      self.emit_instruction2(Opcode::MOVE, base + index, arg)
+    end
+    destination = self.allocate_register()
+    self.emit_call_opcode(Opcode::CALL_CLOSURE)
+    self.emit_register(destination)
+    self.emit_register(function_closure)
+    self.emit_register(base)
+    self.emit_byte(args.length())
+    destination
+  end
+
   def parse_regexp_new_call()
     self.advance_token()
+    # Regexp.escape(text): the prelude's diamond_escape_regexp, as in compiler_builtins.c.
+    if @current.kind() == :identifier && self.token_text(@current) == "escape"
+      self.advance_token()
+      if @current.kind() != :left_paren
+        self.fail("expected '(' after 'Regexp.escape'")
+        return 0
+      end
+      self.advance_token()
+      self.skip_newlines()
+      text = self.parse_expression()
+      self.skip_newlines()
+      if @current.kind() != :right_paren
+        self.fail("Regexp.escape takes one argument")
+        return 0
+      end
+      self.advance_token()
+      destination = self.emit_prelude_function_call("diamond_escape_regexp", [text])
+      if destination == 0
+        self.fail("Regexp.escape needs the prelude")
+        return 0
+      end
+      self.set_type_fact(destination, Type::STRING)
+      return destination
+    end
     if @current.kind() != :identifier || self.token_text(@current) != "new"
-      self.fail("expected 'new' after 'Regexp'")
+      self.fail("expected 'new' or 'escape' after 'Regexp'")
       return 0
     end
     self.advance_token()

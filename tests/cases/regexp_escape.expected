@@ -1,0 +1,7 @@
+a\.b\*c\?\(d\)\[e\]\{f\}\^\$\|\\\/\-\#\ x
+true
+true
+false
+tab\there\nnewline
+plain
+nil

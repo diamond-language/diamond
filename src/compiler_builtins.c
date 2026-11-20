@@ -1198,9 +1198,34 @@ uint16_t parse_mysql_open_call(Compiler *compiler) {
 
 uint16_t parse_regexp_new_call(Compiler *compiler) {
     advance_token(compiler); /* consume '.' */
+    /* Regexp.escape(text): the prelude's diamond_escape_regexp. */
+    if(compiler->current.kind==DIAMOND_TOKEN_IDENTIFIER&&
+       name_equals(compiler,"escape",compiler->current.span,false)) {
+        advance_token(compiler);
+        if(compiler->current.kind!=DIAMOND_TOKEN_LEFT_PAREN) {
+            fail(compiler,compiler->current.span,"expected '(' after 'Regexp.escape'");
+            return 0;
+        }
+        advance_token(compiler);
+        skip_newlines(compiler);
+        const uint16_t text=parse_expression(compiler);
+        skip_newlines(compiler);
+        if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN) {
+            fail(compiler,compiler->current.span,"Regexp.escape takes one argument");
+            return 0;
+        }
+        advance_token(compiler);
+        const uint16_t dest=emit_prelude_function_call(compiler,"diamond_escape_regexp",&text,1);
+        if(dest==0) {
+            fail(compiler,compiler->previous.span,"Regexp.escape needs the prelude");
+            return 0;
+        }
+        compiler->known_types[dest]=DIAMOND_TYPE_STRING;
+        return dest;
+    }
     if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER||
        !name_equals(compiler,"new",compiler->current.span,false)) {
-        fail(compiler,compiler->current.span,"expected 'new' after 'Regexp'");
+        fail(compiler,compiler->current.span,"expected 'new' or 'escape' after 'Regexp'");
         return 0;
     }
     advance_token(compiler); /* consume 'new' */

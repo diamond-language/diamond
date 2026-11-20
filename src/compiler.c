@@ -2287,6 +2287,34 @@ static void fail_undefined_name(Compiler *compiler,DiamondSpan name) {
     fail(compiler,name,message);
 }
 
+/* A call to the prelude's top-level function `function_name` with `argc` arguments, as
+ * CLOSURE + CALL_CLOSURE. Returns the result register, or 0 when the prelude has no such
+ * function (as in a bare compile without the prelude). */
+uint16_t emit_prelude_function_call(Compiler *compiler,const char *function_name,
+        const uint16_t *args,size_t argc) {
+    for(size_t index=compiler->program->function_count;index>0;index--) {
+        const DiamondFunction *function=compiler->program->functions[index-1];
+        if(function->owner_class!=DIAMOND_OWNER_NONE||function->nested||
+           strcmp(function->name,function_name)!=0)continue;
+        const uint16_t closure=allocate_register(compiler);
+        emit_opcode(compiler,DIAMOND_OP_CLOSURE);
+        emit_register(compiler,closure);
+        emit_function_index(compiler,index-1);
+        emit_byte(compiler,0);
+        const uint16_t base=allocate_register(compiler);
+        for(size_t arg=1;arg<argc;arg++)(void)allocate_register(compiler);
+        for(size_t arg=0;arg<argc;arg++)
+            emit_instruction(compiler,DIAMOND_OP_MOVE,(uint16_t)(base+arg),args[arg],0,2);
+        const uint16_t destination=allocate_register(compiler);
+        emit_opcode(compiler,DIAMOND_OP_CALL_CLOSURE);
+        emit_register(compiler,destination);
+        emit_register(compiler,closure);
+        emit_register(compiler,base);emit_byte(compiler,(uint8_t)argc);
+        return destination;
+    }
+    return 0;
+}
+
 /* `STDOUT`/`STDERR`/`STDIN` as a call to the prelude's diamond_stdout()/... Returns 0 when
  * `name` is none of them (or the prelude function is missing, as in a bare compile). */
 static uint16_t compile_standard_stream_name(Compiler *compiler,DiamondSpan name) {
@@ -2295,24 +2323,7 @@ static uint16_t compile_standard_stream_name(Compiler *compiler,DiamondSpan name
     for(size_t which=0;which<3;which++) {
         const size_t length=strlen(names[which][0]);
         if(name.length!=length||memcmp(compiler->source+name.start,names[which][0],length)!=0)continue;
-        for(size_t index=compiler->program->function_count;index>0;index--) {
-            const DiamondFunction *function=compiler->program->functions[index-1];
-            if(function->owner_class!=DIAMOND_OWNER_NONE||function->nested||
-               strcmp(function->name,names[which][1])!=0)continue;
-            const uint16_t closure=allocate_register(compiler);
-            emit_opcode(compiler,DIAMOND_OP_CLOSURE);
-            emit_register(compiler,closure);
-            emit_function_index(compiler,index-1);
-            emit_byte(compiler,0);
-            const uint16_t base=allocate_register(compiler);
-            const uint16_t destination=allocate_register(compiler);
-            emit_opcode(compiler,DIAMOND_OP_CALL_CLOSURE);
-            emit_register(compiler,destination);
-            emit_register(compiler,closure);
-            emit_register(compiler,base);emit_byte(compiler,0);
-            return destination;
-        }
-        return 0;
+        return emit_prelude_function_call(compiler,names[which][1],nullptr,0);
     }
     return 0;
 }

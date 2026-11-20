@@ -868,6 +868,8 @@ DIAMOND_INTERNAL uint16_t parse_sqlite3_open_call(Compiler *compiler);
 DIAMOND_INTERNAL uint16_t parse_postgres_open_call(Compiler *compiler);
 DIAMOND_INTERNAL uint16_t parse_mysql_open_call(Compiler *compiler);
 DIAMOND_INTERNAL uint16_t parse_regexp_new_call(Compiler *compiler);
+DIAMOND_INTERNAL uint16_t emit_prelude_function_call(Compiler *compiler,const char *function_name,
+    const uint16_t *args,size_t argc);
 DIAMOND_INTERNAL uint16_t parse_program_builder_new_call(Compiler *compiler);
 DIAMOND_INTERNAL uint16_t parse_tcp_connect_call(Compiler *compiler);
 DIAMOND_INTERNAL uint16_t parse_tcp_listen_call(Compiler *compiler);
