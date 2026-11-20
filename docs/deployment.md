@@ -293,8 +293,8 @@ target doesn't have.
 
 Build on a machine with the target's distro and architecture. For Skindicate,
 the production droplet has one CPU core and 1 GB of RAM, so **never compile
-on the droplet**. Its [deployment runbook](https://github.com/matrix9180/skindicate.dia/blob/main/DEPLOYMENT.md)
-builds on a local Ubuntu 26.04 VM with `build_vm.sh`, then uploads the finished
+on the droplet**. Its deployment runbook (DEPLOYMENT.md in the private Skindicate
+repository) builds on a local Ubuntu 26.04 VM with `build_vm.sh`, then uploads the finished
 binary with `deploy_prebuilt.sh`. The upload script updates tracked static
 assets and restarts the service; it does not build on the droplet.
 
