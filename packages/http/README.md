@@ -29,6 +29,29 @@ end
 run()
 ```
 
+## Serving from a thread
+
+`http_serve(port, handler, host, ready, stop)` takes three optional arguments after the
+handler. `host` is the address to listen on, `ready` is a Channel that gets the port once the
+server listens (pass port 0 for any free one), and closing the `stop` Channel makes it
+return. Together they let a program, such as a test, run a server on its own thread:
+
+```ruby
+require_cut "http"
+
+def hello(request) = [200, {"Content-Type": "text/plain"}, "hello #{request["path"]}"]
+
+ready = Channel.new(1)
+stop = Channel.new(1)
+server = Thread.new(http_serve, 0, hello, "127.0.0.1", ready, stop)
+port = ready.receive()
+http_get("http://127.0.0.1:#{port}/x")["body"]   # => "hello /x"
+stop.close()
+server.join()
+```
+
+The handler must be a top-level function, as every thread entry point is.
+
 ## Making requests
 
 `http_get`, `http_post`, `http_put`, `http_patch`, `http_delete`, `http_head`, and

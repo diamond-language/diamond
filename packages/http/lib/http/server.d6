@@ -158,12 +158,25 @@ def http_write_response(conn, response, send_body: Bool = true)
   conn.write(body) if send_body
 end
 
-## Accepts connections on `port` forever, one at a time. Each request Hash is passed
-## to `handler`, which returns `[status, headers, body]`; the connection is closed
-## after the response. No keep-alive or chunked responses.
-def http_serve(port, handler: Callable[1])
-  server = TCPServer.listen(port)
+## Accepts connections on `port` one at a time. Each request Hash is passed to
+## `handler`, which returns `[status, headers, body]`; the connection is closed after
+## the response. No keep-alive or chunked responses.
+##
+## - `host`: the address to listen on (all of them by default; "127.0.0.1" keeps it local).
+## - `ready`: a Channel that receives the port once the server listens, which is how a
+##   caller learns the port when `port` is 0 (any free port).
+## - `stop`: a Channel; closing it (or sending on it) makes the server return.
+##
+## Without `stop` it serves forever.
+def http_serve(port, handler: Callable[1], host = nil, ready = nil, stop = nil)
+  server = if host == nil then TCPServer.listen(port) else TCPServer.listen(port, host: host) end
+  ready.send(server.port()) unless ready == nil
   loop do
+    unless stop == nil
+      break if stop.closed?() || stop.size() > 0
+      # Wake every 100 ms to look at `stop`.
+      next unless IO.poll([server], [], 100)["readable"][0]
+    end
     conn = server.accept()
     request = http_parse_request(conn)
     unless request == nil
@@ -173,5 +186,7 @@ def http_serve(port, handler: Callable[1])
     end
     conn.close()
   end
+  server.close()
+  nil
 end
 

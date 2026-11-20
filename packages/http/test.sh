@@ -723,4 +723,27 @@ wait "$eof_pid" 2>/dev/null || true
 [[ "$eof_response" == $'short body\nresponse body exceeds maximum of 100000\nnil' ]] || { echo "eof body test: ${eof_response:0:200}" >&2; exit 1; }
 rm -f "$eof_out"
 
-echo "18 http package tests passed"
+# Server: port 0 with a ready Channel, a host, and a stop Channel, so a
+# program (a test, say) can run a server on a thread of its own and end it.
+inprocess_response="$(timeout 15 "$diamond" -e "$(cat <<'CLIENTEOF'
+require "./lib/http"
+def hello(request) = [200, {"Content-Type": "text/plain"}, "hello #{request["path"]}"]
+ready = Channel.new(1)
+stop = Channel.new(1)
+server = Thread.new(http_serve, 0, hello, "127.0.0.1", ready, stop)
+port = ready.receive()
+puts(port > 0)
+puts(http_get("http://127.0.0.1:#{port}/a")["body"])
+stop.close()
+server.join()
+begin
+  http_get("http://127.0.0.1:#{port}/b", {}, {"connect_timeout_ms": 1000})
+  puts("still serving")
+rescue e
+  puts("stopped")
+end
+CLIENTEOF
+)" 2>&1)"
+[[ "$inprocess_response" == $'true\nhello /a\nstopped\nnil' ]] || { echo "in-process server test: $inprocess_response" >&2; exit 1; }
+
+echo "19 http package tests passed"
