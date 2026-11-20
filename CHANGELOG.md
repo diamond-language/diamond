@@ -45,6 +45,8 @@ record. From 1.0.0, releases follow the [1.x compatibility policy](docs/compatib
 - A `TCPSocket`, and a connection that `TCPServer.listen` accepts, sends each `write` at once.
   Writes waited in a buffer until a `flush`, a read on the same socket or `close`, so a client
   that wrote a request and then waited on another socket deadlocked with its peer.
+- `facet new web` and `facet new graphql` ask for gremlin `^0.5.7`, so a new project gets partial
+  `limits`; the web README's command comments line up.
 - mjolnir 0.4.4: `validate_format` takes a `Regexp` as well as a source String. The README says
   how to store an empty string, which `cast` turns into `nil`.
 - websocket 0.2.4: `websocket_connect(url)` is a client for `ws://` and `wss://` URLs. `receive`
