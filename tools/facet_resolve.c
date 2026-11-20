@@ -8,6 +8,16 @@
  * an otherwise newer candidate. This keeps updates reproducible while still
  * allowing an explicit manifest constraint change to move the version. */
 static const FacetResolution *registry_update_preference = NULL;
+/* `facet update <name>...`: these cuts ignore the preference above and move to the newest
+ * release their constraint allows. */
+static char *const *registry_update_release = NULL;
+static size_t registry_update_release_count = 0;
+
+static bool released_from_lock(const char *name) {
+    for (size_t index = 0; index < registry_update_release_count; index++)
+        if (strcmp(registry_update_release[index], name) == 0) return true;
+    return false;
+}
 
 /* A cut name seen with a `version` constraint from at least one
  * requester, not yet resolved to one concrete tag -- see
@@ -497,7 +507,7 @@ static bool registry_best_version(const FacetPendingSemver *entry,
     bool found = false;
     Semver best = {0};
     char preferred[FACET_MAX_REF] = {0};
-    if (registry_update_preference != NULL) {
+    if (registry_update_preference != NULL && !released_from_lock(entry->name)) {
         for (size_t index = 0; index < registry_update_preference->count; index++) {
             const FacetResolved *locked = &registry_update_preference->packages[index];
             if (locked->source == FACET_SOURCE_REGISTRY &&
@@ -1175,7 +1185,7 @@ static bool lock_covers_manifest(const FacetResolution *lock, const FacetManifes
     return true;
 }
 
-int run_install_or_update(bool force_resolve) {
+int run_install_or_update(bool force_resolve, char *const *release, size_t release_count) {
     char error[512] = {0};
     if (!file_exists(project_manifest_path())) {
         fprintf(stderr, "facet: no Cutfile found in the current directory\n");
@@ -1196,6 +1206,15 @@ int run_install_or_update(bool force_resolve) {
         (!has_lock || parse_lockfile(lock_path, &previous, error, sizeof error)) &&
         parse_project_manifest(&manifest, error, sizeof error);
     bool resolve = force_resolve || !has_lock;
+    for (size_t index = 0; ok && has_lock && index < release_count; index++) {
+        bool locked = false;
+        for (size_t package = 0; package < previous.count && !locked; package++)
+            locked = strcmp(previous.packages[package].name, release[index]) == 0;
+        if (!locked) {
+            (void)snprintf(error, sizeof error, "'%s' is not in %s", release[index], lock_path);
+            ok = false;
+        }
+    }
     if (ok && !resolve && !lock_covers_manifest(&previous, &manifest)) {
         printf("facet: %s changed since %s was written; resolving\n",
                project_manifest_path(), lock_path);
@@ -1207,9 +1226,13 @@ int run_install_or_update(bool force_resolve) {
         /* Keep locked registry versions that still fit, so adding one dependency does
          * not upgrade the others. */
         registry_update_preference = has_lock ? &previous : NULL;
+        registry_update_release = release;
+        registry_update_release_count = release_count;
         ok = resolve_full_graph(&manifest, &resolution, scratch_root, error, sizeof error) &&
              write_lockfile(FACET_LOCK, &resolution, error, sizeof error);
         registry_update_preference = NULL;
+        registry_update_release = NULL;
+        registry_update_release_count = 0;
         /* The new lock replaces one under the former name. */
         if (ok && strcmp(lock_path, FACET_LOCK) != 0) (void)remove(lock_path);
     }
