@@ -91,7 +91,11 @@ gremlin_serve(8080, app)
   HTTP; the browser sees HTTPS, so the cookie works. Pass `secure: false` only for a
   production deployment with no TLS at all.
 - `Csrf.call` allows `GET`, `HEAD`, and `OPTIONS`; any other method must send the
-  session's token in an `x-csrf-token` request header, or it gets a 403. A plain HTML
-  form needs a little script that copies `Csrf.token(request)` into that header.
+  session's token, or it gets a 403. Send it in an `x-csrf-token` request header
+  (from scripts), or as a `csrf_token` field of a urlencoded or multipart form (a
+  hidden field holding `Csrf.token(request)`, such as div's
+  `Div.hidden_field_tag("csrf_token", token)`). `CookieSession.call` passes a `nil`
+  response, from a handler that took over the connection such as a WebSocket, straight
+  through.
 - `Flash.set` stores a value for the next request only; a value set and read within
   one request reads back `nil`.

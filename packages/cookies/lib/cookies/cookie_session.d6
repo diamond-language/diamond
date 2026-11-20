@@ -87,6 +87,9 @@ class CookieSession
     session["_flash_next"] = {}
     request["session"] = session
     response = forward(request, context)
+    # nil: the handler took over the connection (a WebSocket) and already
+    # answered; there is no response to put the cookie on.
+    return nil if response == nil
     [status, headers, body] = response
     encoded = EncryptedCookies.encrypt(JSON.stringify(session), @@secret)
     set_cookie_value = cookie_serialize(cookie_name, encoded, {"path": "/", "secure": @@secure})
