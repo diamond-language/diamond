@@ -13,8 +13,8 @@ run_case() {
     local script="$1"
     "$diamond" -e "require \"$(pwd)/lib/jobs\"
 db = SQLite3.open(\":memory:\")
-db.execute(\"CREATE TABLE jobs (id INTEGER PRIMARY KEY, kind TEXT NOT NULL, payload TEXT NOT NULL, queue TEXT NOT NULL DEFAULT 'default', status TEXT NOT NULL DEFAULT 'pending', run_at INTEGER NOT NULL, attempts INTEGER NOT NULL DEFAULT 0, max_attempts INTEGER NOT NULL DEFAULT 5, last_error TEXT, locked_at INTEGER, created_at INTEGER NOT NULL, finished_at INTEGER)\")
-db.execute(\"CREATE TABLE recurring_jobs (id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE, kind TEXT NOT NULL, payload TEXT NOT NULL, queue TEXT NOT NULL DEFAULT 'default', every_seconds INTEGER NOT NULL, next_run_at INTEGER NOT NULL, created_at INTEGER NOT NULL)\")
+Jobs.create_tables(db)
+Jobs.create_tables(db)
 $script"
 }
 
@@ -159,5 +159,11 @@ enqueued = db.query("SELECT COUNT(*) AS c FROM jobs")[0]["c"]
 "#{first_worker} #{second_worker} #{enqueued}"
 ')"
 assert_eq "$actual" "true false 0"
+
+# --- create_tables makes both tables and the poll index, and is safe to call again ---
+actual="$(run_case '
+db.query("SELECT name FROM sqlite_master WHERE type IN (?, ?) AND name NOT LIKE ? ORDER BY name", ["table", "index", "sqlite_%"]).map() do |row| row["name"] end.join(" ")
+')"
+assert_eq "$actual" "jobs jobs_poll_idx recurring_jobs"
 
 echo "$count jobs tests passed"

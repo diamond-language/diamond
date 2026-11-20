@@ -14,7 +14,19 @@ facet install
 
 This installs the cut into `cuts/jobs/`; load it with `require_cut "jobs"`.
 
-## SQL schema
+## Tables
+
+The queue lives in two tables of your database. `Jobs.create_tables(db)` creates them (and the
+poll index) when they are missing, so call it at startup or from a migration:
+
+```ruby
+require_cut "jobs"
+
+db = SQLite3.open("app.db")
+Jobs.create_tables(db)
+```
+
+The statements are in `Jobs::SCHEMA`; this is what they create:
 
 ```sql
 CREATE TABLE jobs (

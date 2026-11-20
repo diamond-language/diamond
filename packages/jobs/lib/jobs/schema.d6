@@ -1,0 +1,25 @@
+# The tables the queue and worker read and write. They are kept here, next to
+# the code that depends on their columns, so an app can create them with one
+# call instead of copying the SQL out of the README.
+module Jobs
+  ## The `CREATE TABLE IF NOT EXISTS` statements for `jobs` and `recurring_jobs`
+  ## (SQLite), in order.
+  SCHEMA = [
+    "CREATE TABLE IF NOT EXISTS jobs (id INTEGER PRIMARY KEY, kind TEXT NOT NULL, payload TEXT NOT NULL, " +
+      "queue TEXT NOT NULL DEFAULT 'default', status TEXT NOT NULL DEFAULT 'pending', run_at INTEGER NOT NULL, " +
+      "attempts INTEGER NOT NULL DEFAULT 0, max_attempts INTEGER NOT NULL DEFAULT 5, last_error TEXT, " +
+      "locked_at INTEGER, created_at INTEGER NOT NULL, finished_at INTEGER)",
+    "CREATE INDEX IF NOT EXISTS jobs_poll_idx ON jobs(status, queue, run_at)",
+    "CREATE TABLE IF NOT EXISTS recurring_jobs (id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE, " +
+      "kind TEXT NOT NULL, payload TEXT NOT NULL, queue TEXT NOT NULL DEFAULT 'default', " +
+      "every_seconds INTEGER NOT NULL, next_run_at INTEGER NOT NULL, created_at INTEGER NOT NULL)"
+  ]
+
+  ## Creates the `jobs` and `recurring_jobs` tables and the poll index when they are
+  ## missing; tables that already exist are left alone. Call it at startup or from a
+  ## migration.
+  def self.create_tables(db)
+    SCHEMA.each() do |statement| db.execute(statement) end
+    nil
+  end
+end

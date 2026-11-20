@@ -44,6 +44,8 @@ record. From 1.0.0, releases follow the [1.x compatibility policy](docs/compatib
 
 ### Fixed
 
+- jobs 0.2.4: `Jobs.create_tables(db)` creates the `jobs` and `recurring_jobs` tables and the poll
+  index when missing (statements in `Jobs::SCHEMA`); apps copied the SQL from the README.
 - arel 0.35.6: the README shows aggregates (`Arel.sum`, `count`, ...) with `group`; they were
   only in the API reference.
 - active_record 0.21.4: `Repository#create` (and `Model.create`) return the new row's id, as the
