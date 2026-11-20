@@ -119,6 +119,25 @@ sandbox_probe='puts(File.read("Makefile").length() > 0)'
 ! DIAMOND_SANDBOX= "$diamond" -e "$sandbox_probe" >/dev/null 2>&1
 ! DIAMOND_SANDBOX=0 "$diamond" --sandbox -e "$sandbox_probe" >/dev/null 2>&1
 [[ "$(jit_first_call_count "$loop_program" DIAMOND_MAX_INSTRUCTIONS=100000000)" == 0 ]]
+# A reader that stops early (`| head`) ends the program quietly with status 141, as
+# SIGPIPE would, while a program can still rescue the IOError itself.
+pipe_err="$(mktemp)"
+pipe_code="$(mktemp)"
+{ "$diamond" -e 'i = 0
+while true
+  puts(i)
+  i += 1
+end' 2>"$pipe_err"; echo "$?" >"$pipe_code"; } | head -1 >/dev/null || true
+[[ "$(<"$pipe_code")" == 141 && ! -s "$pipe_err" ]]
+"$diamond" -e 'begin
+  while true
+    puts("x")
+  end
+rescue error: IOError
+  warn("rescued")
+end' 2>"$pipe_err" | head -1 >/dev/null || true
+[[ "$(<"$pipe_err")" == rescued ]]
+rm -f "$pipe_err" "$pipe_code"
 
 # Once program input has started, option-looking values belong to the script.
 actual="$($diamond -e 'ARGV' -h --version)"
@@ -2836,20 +2855,8 @@ fi
 grep -q "to_i argument must be a Float" "$error_file"
 rm -f "$error_file"
 
-# puts/print write failures (a closed pipe reader, EPIPE) now raise a
-# rescuable IOError instead of being silently ignored (the previous
-# behavior: fwrite/fputc/fflush return values were never checked) or
-# killing the process outright (SIGPIPE is already ignored process-wide,
-# not just for the TLS write path -- see docs/io.md -- so a write past a
-# closed pipe reader surfaces as a plain, catchable EPIPE here too).
-error_file="$(mktemp)"
-if "$diamond" -e $'i = 0\nwhile i < 1000000\n  puts("line #{i}")\n  i = i + 1\nend' \
-    2>"$error_file" | head -n1 >/dev/null; then
-    :
-fi
-grep -q "write error:" "$error_file"
-rm -f "$error_file"
-
+# A stdout write failure (a closed pipe reader, EPIPE) raises a rescuable IOError; the
+# uncaught case is checked near the top of this file (quiet exit, status 141).
 error_file="$(mktemp)"
 if "$diamond" -e $'i = 0\ncaught = false\nbegin\n  while i < 1000000\n    puts("line #{i}")\n    i = i + 1\n  end\nrescue e: IOError\n  caught = true\nend\nunless caught\n  raise "not caught"\nend' \
     2>"$error_file" | head -n1 >/dev/null; then

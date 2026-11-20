@@ -135,7 +135,7 @@ repository.delete(db, 1)
 | `inheritance_column` | Single-table-inheritance column, if any. |
 | `association_reflections` | Array of `AssociationReflection`. See [Associations](#associations). |
 
-Methods: `all(db)`, `find(db, id)` (returns `nil` when absent), `where(db, conditions_hash)`, `relation()`, `create(db, attributes)`, `update(db, id, attributes, expected_lock_version = nil)`, `delete(db, id)`, `find_in_batches(db, callback, batch_size = 1000)`, `find_each(db, callback, batch_size = 1000)`.
+Methods: `all(db)`, `find(db, id)` (returns `nil` when absent), `where(db, conditions_hash)`, `relation()`, `create(db, attributes)` (returns the new row's id), `update(db, id, attributes, expected_lock_version = nil)`, `delete(db, id)`, `find_in_batches(db, callback, batch_size = 1000)`, `find_each(db, callback, batch_size = 1000)`.
 
 `find_in_batches`/`find_each` page by primary key (`WHERE id > last_id ORDER BY id LIMIT n`), not by `OFFSET`, so they stay fast and don't skip or repeat rows if the table changes while you iterate.
 

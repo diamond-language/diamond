@@ -1,0 +1,31 @@
+# Dir.mktmpdir makes a private directory under TMPDIR; Dir.delete_tree removes a
+# directory with everything in it, deletes a symlink without following it, and
+# returns false when the path is already gone.
+dir = Dir.mktmpdir("ledger-")
+named = File.basename(dir).start_with?("ledger-") && File.dirname(dir) == (ENV["TMPDIR"] || "/tmp").chomp("/")
+plain = Dir.mktmpdir()
+Dir.mkdir_p("#{dir}/a/b/c")
+File.write("#{dir}/a/b/c/deep.txt", "x")
+File.write("#{dir}/top.txt", "y")
+Dir.mkdir("#{plain}/keep")
+File.write("#{plain}/keep/precious.txt", "z")
+Process.run(["ln", "-s", "#{plain}/keep", "#{dir}/a/link"])
+linked = File.symlink?("#{dir}/a/link")
+removed = Dir.delete_tree(dir)
+again = Dir.delete_tree(dir)
+survived = File.read("#{plain}/keep/precious.txt")
+refused = begin
+  Dir.delete_tree("#{plain}/keep/precious.txt")
+  "deleted a file"
+rescue error: IOError
+  error.message().end_with?("Not a directory")
+end
+bad_prefix = begin
+  Dir.mktmpdir("a/b")
+  "allowed"
+rescue error: TypeError
+  error.message()
+end
+mode = File.mode(plain)
+Dir.delete_tree(plain)
+[linked, named, File.basename(plain).start_with?("d6-"), mode == 0o700, removed, again, File.exist?(dir), survived, refused, bad_prefix, File.exist?(plain)]

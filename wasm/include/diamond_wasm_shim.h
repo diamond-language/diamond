@@ -2,6 +2,7 @@
 #define WASM_SHIM_H
 #include <stdlib.h>
 int mkstemp(char *);
+char *mkdtemp(char *);
 
 char *realpath(const char *, char *);
 #endif

@@ -150,12 +150,11 @@ module ActiveRecord
             db, self.id(), self.to_attributes(), @attributes[lock_column])
         end
       else
-        self.repository().create(db, self.to_attributes())
         # Without this, @attributes never gains an id_column key, so
         # #persisted?/#id (and therefore a later #save or #destroy) would
         # keep treating this instance as brand new forever after its very
         # first, successful #save.
-        @attributes[self.repository().id_column()] = db.last_insert_row_id()
+        @attributes[self.repository().id_column()] = self.repository().create(db, self.to_attributes())
       end
     end
 

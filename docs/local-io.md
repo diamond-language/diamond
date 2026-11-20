@@ -73,6 +73,10 @@ rescue e: IOError
 end
 ```
 
+When nothing rescues it and the failed write was to stdout or stderr (`d6 prog.d6 | head`),
+the program ends quietly with status 141, as a C tool killed by SIGPIPE does, instead of
+printing the error to a terminal that asked for less output.
+
 ## stderr: `warn`
 
 ```ruby
@@ -346,6 +350,9 @@ Dir.delete("backup")               # rmdir: an empty directory only
   !File.symlink?(p)` is "a regular file that is not a link".
 - `Dir.delete` removes an empty directory; `Dir.sync` flushes the directory
   itself (`File.sync` flushes a file and its parent).
+- `Dir.delete_tree(path)` removes a directory and everything in it (`rm -r`, never
+  following a symlink) and returns `false` when nothing is there. `Dir.mktmpdir(prefix =
+  "d6-")` creates a private directory under `$TMPDIR` (or `/tmp`) and returns its path.
 
 All are gated by the `filesystem` sandbox capability.
 

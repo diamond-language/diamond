@@ -37,6 +37,11 @@ def run_tests()
     end
   end
 
+  def test_bare_word_hints_at_quotes()
+    Minitest.assert_equal("line 1, column 12: expected a value, found USD; strings need quotes: \"USD\"",
+                          parse_error("currency = USD").message())
+  end
+
   def test_strings()
     doc = TOML.parse("a = \"tab\\tquote\\\" \\u00e9 \\U0001F600\"\nb = 'C:\\path'\n")
     Minitest.assert_equal("tab\tquote\" é 😀", doc["a"])
@@ -153,6 +158,7 @@ def run_tests()
   suite.test("scalars", test_scalars)
   suite.test("integers", test_integers)
   suite.test("floats", test_floats)
+  suite.test("a bare word hints at quotes", test_bare_word_hints_at_quotes)
   suite.test("bad numbers", test_bad_numbers)
   suite.test("strings", test_strings)
   suite.test("multi-line strings", test_multiline_strings)

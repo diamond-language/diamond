@@ -2287,6 +2287,36 @@ static void fail_undefined_name(Compiler *compiler,DiamondSpan name) {
     fail(compiler,name,message);
 }
 
+/* `STDOUT`/`STDERR`/`STDIN` as a call to the prelude's diamond_stdout()/... Returns 0 when
+ * `name` is none of them (or the prelude function is missing, as in a bare compile). */
+static uint16_t compile_standard_stream_name(Compiler *compiler,DiamondSpan name) {
+    static const char *const names[3][2]={{"STDOUT","diamond_stdout"},{"STDERR","diamond_stderr"},
+        {"STDIN","diamond_stdin"}};
+    for(size_t which=0;which<3;which++) {
+        const size_t length=strlen(names[which][0]);
+        if(name.length!=length||memcmp(compiler->source+name.start,names[which][0],length)!=0)continue;
+        for(size_t index=compiler->program->function_count;index>0;index--) {
+            const DiamondFunction *function=compiler->program->functions[index-1];
+            if(function->owner_class!=DIAMOND_OWNER_NONE||function->nested||
+               strcmp(function->name,names[which][1])!=0)continue;
+            const uint16_t closure=allocate_register(compiler);
+            emit_opcode(compiler,DIAMOND_OP_CLOSURE);
+            emit_register(compiler,closure);
+            emit_function_index(compiler,index-1);
+            emit_byte(compiler,0);
+            const uint16_t base=allocate_register(compiler);
+            const uint16_t destination=allocate_register(compiler);
+            emit_opcode(compiler,DIAMOND_OP_CALL_CLOSURE);
+            emit_register(compiler,destination);
+            emit_register(compiler,closure);
+            emit_register(compiler,base);emit_byte(compiler,0);
+            return destination;
+        }
+        return 0;
+    }
+    return 0;
+}
+
 uint16_t parse_identifier(Compiler *compiler) {
     const int local = find_local(compiler, compiler->previous.span);
     if (local < 0) {
@@ -2335,6 +2365,11 @@ uint16_t parse_identifier(Compiler *compiler) {
                 compiler->program->functions[(size_t)function_index]);
             return destination;
         }
+        /* STDOUT, STDERR and STDIN, when the program defines no constant of that name, are
+         * the prelude's StandardStream objects, made by diamond_stdout() and friends (the
+         * prelude's own top-level constants do not reach the program). */
+        const uint16_t standard_stream=compile_standard_stream_name(compiler,compiler->previous.span);
+        if(standard_stream!=0||compiler->failed)return standard_stream;
         if(compiler->discovery_pass) {
             note_self_reference(compiler,compiler->previous.span);
             const uint16_t destination=allocate_register(compiler);

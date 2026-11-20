@@ -197,6 +197,8 @@ enum {
 enum {
     DIAMOND_PRINT_NEWLINE = 1,
     DIAMOND_PRINT_STDERR = 2,
+    /* Flush the stream after writing, even without a newline (STDOUT.flush, STDERR.print). */
+    DIAMOND_PRINT_FLUSH = 4,
 };
 
 typedef enum DiamondOpCode : uint8_t {
@@ -748,6 +750,13 @@ typedef enum {
     /* File.chmod(path, mode): sets the permission bits, following a symlink. Same Int
      * second operand as MKDIR, but required. */
     DIAMOND_FILE_PATH_CHMOD,
+    /* Dir.mktmpdir(prefix = "d6-"): a new private (0700) directory under $TMPDIR, or /tmp,
+     * named prefix + six random characters (mkdtemp). The first operand is the prefix
+     * String or nil, not a path. */
+    DIAMOND_FILE_PATH_MKTMPDIR,
+    /* Dir.delete_tree(path): removes a directory and everything under it, like rm -r.
+     * Symlinks are removed, never followed; a path that is not there returns false. */
+    DIAMOND_FILE_PATH_DELETE_TREE,
 } DiamondFilePathFunction;
 
 typedef enum DiamondMathFunction : uint8_t {
@@ -2482,6 +2491,12 @@ DiamondVmStatus diamond_vm_run(DiamondVm *vm, const DiamondChunk *chunk,
                                DiamondValue *result);
 const char *diamond_vm_status_name(DiamondVmStatus status);
 const char *diamond_vm_error(const DiamondVm *vm);
+
+/* True once puts/print/warn found the reader of stdout or stderr gone (EPIPE), as when
+ * `prog | head` stops reading. The command-line runners then end the program quietly
+ * with status 141 (128 + SIGPIPE), as a C tool killed by SIGPIPE would, instead of
+ * reporting the uncaught IOError on a stream nobody reads. */
+bool diamond_output_pipe_closed(void);
 
 /* How many spawned OS threads (Thread.new workers and supervised children)
  * are still running Diamond code, process-wide. */

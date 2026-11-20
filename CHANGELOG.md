@@ -8,6 +8,15 @@ record. From 1.0.0, releases follow the [1.x compatibility policy](docs/compatib
 
 ### Added
 
+- jobs 0.2.4: `Jobs.create_tables(db)` creates the `jobs` and `recurring_jobs` tables and the poll
+  index when missing (statements in `Jobs::SCHEMA`); apps copied the SQL from the README.
+- `STDOUT`, `STDERR` and `STDIN`: the standard streams as values (`write`, `print`, `puts`, `flush`,
+  `gets`, `read`, `tty?`), so a function can take where to write as an argument.
+  `STDERR.print` writes without a newline, which `warn` could not.
+- `Time.strptime(text, format)` reads a date or time laid out by a `strftime`-style format
+  (`"%m/%d/%Y"`, `"%d %b %Y %I:%M %p"`, ...).
+- `Dir.mktmpdir(prefix = "d6-")` makes a private temporary directory, and `Dir.delete_tree(path)`
+  removes a directory with everything in it (never following a symlink).
 - New cuts: `csv` 0.1.0 (RFC 4180 reading with any one-byte separator, streaming with
   `CSV.foreach`, and `CSV.generate`) and `toml` 0.1.0 (TOML 1.0 `TOML.parse` and `TOML.generate`).
 - `equal?(other)` on every value: whether it is the same object, whatever `==` its class defines.
@@ -42,8 +51,22 @@ record. From 1.0.0, releases follow the [1.x compatibility policy](docs/compatib
   ([URI](docs/api/uri.md)). Web apps no longer need their own form decoder.
 - `Process.pid()` returns this process's id ([Process](docs/api/process.md)).
 
+### Changed
+
+- A program whose output reader goes away (`d6 prog.d6 | head`) ends quietly with status 141,
+  as a C tool killed by SIGPIPE does, instead of reporting an uncaught `IOError` with a
+  backtrace. The `IOError` is still raised first, so `rescue` and `ensure` run.
+
 ### Fixed
 
+- toml 0.1.1: a bare word where a value belongs (`currency = USD`) says strings need quotes
+  instead of "invalid number".
+- `facet new graphql` asks for rack ^0.2.5, as `facet new web` does.
+- arel 0.35.6: the README shows aggregates (`Arel.sum`, `count`, ...) with `group`; they were
+  only in the API reference.
+- active_record 0.21.4: `Repository#create` (and `Model.create`) return the new row's id, as the
+  README's quick start always said; they returned the affected row count, 1, which looked right
+  only for the first row of a table.
 - A `TCPSocket`, and a connection that `TCPServer.listen` accepts, sends each `write` at once.
   Writes waited in a buffer until a `flush`, a read on the same socket or `close`, so a client
   that wrote a request and then waited on another socket deadlocked with its peer.

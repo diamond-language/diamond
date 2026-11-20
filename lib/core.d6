@@ -2626,3 +2626,92 @@ def diamond_string_unpack(data: String, format: String) -> Array
 end
 
 def diamond_string_unpack1(data: String, format: String) = diamond_string_unpack(data, format)[0]
+
+## `STDOUT`, `STDERR` and `STDIN`: the process's standard streams as values, so code can
+## take "where to write" as an argument (`log(STDERR)`) instead of choosing between
+## `puts` and `warn`.
+class StandardStream
+  def initialize(name: Symbol)
+    @name = name
+  end
+
+  ## `:stdout`, `:stderr` or `:stdin`.
+  def name() -> Symbol = @name
+
+  ## Writes `value` as a String, with no newline, and returns the bytes written. STDERR is
+  ## flushed at once; STDOUT when a newline is written or by `flush`.
+  def write(value) -> Int
+    text = value.to_s()
+    if @name == :stdout
+      __diamond_print(text, 0)
+    elsif @name == :stderr
+      __diamond_print(text, 6)
+    else
+      raise IOError.new("STDIN is not open for writing")
+    end
+    text.bytesize()
+  end
+
+  ## Writes `value` with no newline.
+  def print(value) -> Nil
+    self.write(value)
+    nil
+  end
+
+  ## Writes `value` and a newline, then flushes, like `puts` and `warn`.
+  def puts(value = "") -> Nil
+    if @name == :stdout
+      puts(value)
+    elsif @name == :stderr
+      warn(value)
+    else
+      raise IOError.new("STDIN is not open for writing")
+    end
+    nil
+  end
+
+  ## Sends anything buffered to the terminal, pipe or file. Use it after `print` when a
+  ## prompt must appear before reading input.
+  def flush() -> StandardStream
+    if @name == :stdout
+      __diamond_print("", 4)
+    elsif @name == :stderr
+      __diamond_print("", 6)
+    end
+    self
+  end
+
+  ## The next line of input without its line ending, or nil at the end, like `gets` (STDIN
+  ## only).
+  def gets() -> String | Nil
+    raise IOError.new("#{self.inspect()} is not open for reading") if @name != :stdin
+    gets()
+  end
+
+  ## The rest of the input as one String, each line ending in `\n` (STDIN only).
+  def read() -> String
+    raise IOError.new("#{self.inspect()} is not open for reading") if @name != :stdin
+    parts = []
+    line = gets()
+    while line != nil
+      parts.push(line)
+      parts.push("\n")
+      line = gets()
+    end
+    parts.join("")
+  end
+
+  ## Whether the stream is a terminal, as `IO.tty?`.
+  def tty?() -> Bool = IO.tty?(@name)
+
+  ## Two values for the same stream are equal.
+  def ==(other) -> Bool = other is StandardStream && other.name() == @name
+
+  def to_s() -> String = @name.to_s().upcase()
+  def inspect() -> String = self.to_s()
+end
+
+# The compiler turns a bare STDOUT, STDERR or STDIN into a call of these.
+def diamond_stdout() -> StandardStream = StandardStream.new(:stdout)
+def diamond_stderr() -> StandardStream = StandardStream.new(:stderr)
+def diamond_stdin() -> StandardStream = StandardStream.new(:stdin)

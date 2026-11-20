@@ -176,13 +176,17 @@ static int run_compiled_chunk(const char *name, DiamondChunk chunk, DiamondBytec
     }
     if (status != DIAMOND_VM_OK) {
         const char *detail=diamond_vm_error(&vm);
-        fprintf(stderr, "%s: runtime error: %s\n", name,
-                detail != nullptr ? detail : diamond_vm_status_name(status));
-        diamond_vm_exit_if_threads_running(70);
+        /* Stdout's reader went away (`d6 prog.d6 | head`): end quietly, as SIGPIPE would. */
+        const bool pipe_closed=diamond_output_pipe_closed();
+        if(!pipe_closed)
+            fprintf(stderr, "%s: runtime error: %s\n", name,
+                    detail != nullptr ? detail : diamond_vm_status_name(status));
+        const int exit_status=pipe_closed?141:70;
+        diamond_vm_exit_if_threads_running(exit_status);
         diamond_vm_free(&vm);
         free(owned_buffer);
         diamond_source_bundle_free(bundle);
-        return 70;
+        return exit_status;
     }
 
     if (diamond_run_source_prints_result()) {

@@ -16,6 +16,10 @@ them.
 
 Writes `value` to standard output, as interpolation shows it, with no newline.
 
+When whatever reads standard output stops reading (`d6 prog.d6 | head`), writing raises
+`IOError`; if nothing rescues it, the program ends quietly with status 141, as a C
+tool killed by SIGPIPE does.
+
 ### `puts(value)`
 
 Writes `value` and a newline to standard output. It takes one argument; an
@@ -44,6 +48,9 @@ Writes `value` and a newline to standard error.
 
 Reads one line from standard input without its line ending (`\n` or `\r\n`),
 or returns `nil` at end of input.
+
+`STDOUT`, `STDERR` and `STDIN` are the same streams as values; see
+[Process, Signal, streams and IO](process.md#stdout-stderr-and-stdin).
 
 ## Program control
 

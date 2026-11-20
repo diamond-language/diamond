@@ -582,6 +582,98 @@ static DiamondVmStatus dir_mkdir_p_helper(DiamondVm *vm,const DiamondString *pat
     return DIAMOND_VM_OK;
 }
 
+/* Dir.delete_tree: removes `name` (relative to the directory `parent`) and, when it
+ * is a directory, everything under it. Directories are opened with O_NOFOLLOW and
+ * entries removed relative to their directory's descriptor, so a symlink is removed
+ * as a link and never followed, even one swapped in while the walk runs. Returns 0
+ * or the errno of the first failure. */
+static int dir_delete_tree_at(int parent,const char *name,unsigned depth) {
+    if(depth>4096)return ELOOP;
+    if(unlinkat(parent,name,0)==0)return 0;
+    if(errno!=EISDIR&&errno!=EPERM)return errno;
+    const int directory=openat(parent,name,O_RDONLY|O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC);
+    if(directory<0)return errno;
+    DIR *listing=fdopendir(directory);
+    if(listing==nullptr) {
+        const int saved=errno;
+        close(directory);
+        return saved;
+    }
+    int failure=0;
+    errno=0;
+    for(struct dirent *entry=readdir(listing);entry!=nullptr&&failure==0;entry=readdir(listing)) {
+        if(strcmp(entry->d_name,".")!=0&&strcmp(entry->d_name,"..")!=0)
+            failure=dir_delete_tree_at(directory,entry->d_name,depth+1);
+        errno=0;
+    }
+    if(failure==0&&errno!=0)failure=errno;
+    closedir(listing);
+    if(failure==0&&unlinkat(parent,name,AT_REMOVEDIR)!=0)failure=errno;
+    return failure;
+}
+
+/* Dir.delete_tree(path): false when nothing is there; a path that is not a
+ * directory (a file, or a symlink even to a directory) is refused rather than
+ * removed, since the caller asked for a directory. */
+static DiamondVmStatus dir_delete_tree_helper(DiamondVm *vm,const DiamondString *path,bool *removed) {
+    struct stat found;
+    *removed=false;
+    if(lstat(path->chars,&found)!=0) {
+        if(errno==ENOENT)return DIAMOND_VM_OK;
+        snprintf(vm->error,sizeof vm->error,"cannot delete '%.*s': %s",
+            (int)path->length,path->chars,strerror(errno));
+        return DIAMOND_VM_IO_ERROR;
+    }
+    const int failure=S_ISDIR(found.st_mode)?dir_delete_tree_at(AT_FDCWD,path->chars,0):ENOTDIR;
+    if(failure!=0) {
+        snprintf(vm->error,sizeof vm->error,"cannot delete '%.*s': %s",
+            (int)path->length,path->chars,strerror(failure));
+        return DIAMOND_VM_IO_ERROR;
+    }
+    *removed=true;
+    return DIAMOND_VM_OK;
+}
+
+/* Dir.mktmpdir(prefix): mkdtemp under $TMPDIR (or /tmp). The prefix names the
+ * directory, so it may not hold a '/' or a NUL. */
+static DiamondVmStatus dir_mktmpdir_helper(DiamondVm *vm,DiamondValue prefix_value,DiamondValue *result) {
+    const char *prefix="d6-";
+    size_t prefix_length=3;
+    if(prefix_value.kind!=DIAMOND_VALUE_NIL) {
+        if(prefix_value.kind!=DIAMOND_VALUE_OBJECT||prefix_value.as.object->kind!=DIAMOND_OBJECT_STRING) {
+            snprintf(vm->error,sizeof vm->error,"Dir.mktmpdir prefix must be a String");
+            return DIAMOND_VM_TYPE_ERROR;
+        }
+        const DiamondString *text=(const DiamondString *)prefix_value.as.object;
+        if(memchr(text->chars,'/',text->length)!=nullptr||memchr(text->chars,'\0',text->length)!=nullptr) {
+            snprintf(vm->error,sizeof vm->error,"Dir.mktmpdir prefix must not contain '/' or a NUL byte");
+            return DIAMOND_VM_TYPE_ERROR;
+        }
+        prefix=text->chars;
+        prefix_length=text->length;
+    }
+    const char *base=getenv("TMPDIR");
+    if(base==nullptr||base[0]=='\0')base="/tmp";
+    size_t base_length=strlen(base);
+    while(base_length>1&&base[base_length-1]=='/')base_length--;
+    char template[PATH_MAX];
+    const int written=snprintf(template,sizeof template,"%.*s/%.*sXXXXXX",
+        (int)base_length,base,(int)prefix_length,prefix);
+    if(written<0||(size_t)written>=sizeof template) {
+        snprintf(vm->error,sizeof vm->error,"Dir.mktmpdir path is too long");
+        return DIAMOND_VM_IO_ERROR;
+    }
+    if(mkdtemp(template)==nullptr) {
+        snprintf(vm->error,sizeof vm->error,"cannot create a temporary directory in '%.*s': %s",
+            (int)base_length,base,strerror(errno));
+        return DIAMOND_VM_IO_ERROR;
+    }
+    DiamondString *made=allocate_string(vm,template,(size_t)written);
+    if(made==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
+    *result=DIAMOND_OBJECT(made);
+    return DIAMOND_VM_OK;
+}
+
 /* A String argument of a SemVer method as C text. Embedded NUL is reported through
  * `has_nul`, since no valid version or range contains one. */
 static bool semver_argument(DiamondVm *vm,DiamondValue value,const DiamondString **text,bool *has_nul) {
@@ -665,6 +757,13 @@ DiamondVmStatus outlined_file_path(DiamondVm *vm,const DiamondChunk *chunk,Diamo
             VM_RETURN(DIAMOND_VM_TYPE_ERROR);
         }
         registers[dest]=DIAMOND_BOOL(isatty(descriptor)!=0);
+        HELPER_DONE;
+    }
+    if(selector==DIAMOND_FILE_PATH_MKTMPDIR) {
+        VM_SANDBOX_GUARD("Dir.mktmpdir", "filesystem");
+        DiamondValue made=DIAMOND_NIL;
+        VM_PROPAGATE(dir_mktmpdir_helper(vm,registers[arg1],&made));
+        registers[dest]=made;
         HELPER_DONE;
     }
     if(registers[arg1].kind!=DIAMOND_VALUE_OBJECT||
@@ -828,6 +927,13 @@ DiamondVmStatus outlined_file_path(DiamondVm *vm,const DiamondChunk *chunk,Diamo
             }
             path_result=registers[arg1];
             break;
+        case DIAMOND_FILE_PATH_DELETE_TREE: {
+            VM_SANDBOX_GUARD("Dir.delete_tree", "filesystem");
+            bool removed=false;
+            path_status=dir_delete_tree_helper(vm,path,&removed);
+            path_result=DIAMOND_BOOL(removed);
+            break;
+        }
         case DIAMOND_FILE_PATH_DIRSYNC: {
             VM_SANDBOX_GUARD("Dir.sync", "filesystem");
             const int directory=open(path->chars,O_RDONLY|O_DIRECTORY|O_CLOEXEC);
@@ -3256,6 +3362,15 @@ DiamondVmStatus outlined_breakpoint_check(DiamondVm *vm,const DiamondChunk *chun
 
 /* ---- Opcodes compiled code runs through diamond_jit_outlined (src/vm_calls.c) ---- */
 
+static atomic_bool output_pipe_closed;
+
+bool diamond_output_pipe_closed(void) { return atomic_load(&output_pipe_closed); }
+
+/* Records EPIPE from a write to stdout/stderr (see diamond_output_pipe_closed). */
+static void note_output_error(int error) {
+    if(error==EPIPE)atomic_store(&output_pipe_closed,true);
+}
+
 /* DIAMOND_OP_PRINT, moved out of run_chunk's switch so compiled code runs the same body (diamond_jit_outlined). The case body is unchanged
  * apart from its macros. */
 __attribute__((noinline))
@@ -3275,13 +3390,13 @@ DiamondVmStatus outlined_print(DiamondVm *vm,const DiamondChunk *chunk,DiamondVa
     errno=0;
     const size_t written=fwrite(text->chars,1,text->length,out);
     if(written!=text->length||ferror(out)) {
-        snprintf(vm->error,sizeof vm->error,"write error: %s",strerror(errno));
+        note_output_error(errno);snprintf(vm->error,sizeof vm->error,"write error: %s",strerror(errno));
         VM_RETURN(DIAMOND_VM_IO_ERROR);
     }
     if(newline) {
         errno=0;
         if(fputc('\n',out)==EOF||ferror(out)) {
-            snprintf(vm->error,sizeof vm->error,"write error: %s",strerror(errno));
+            note_output_error(errno);snprintf(vm->error,sizeof vm->error,"write error: %s",strerror(errno));
             VM_RETURN(DIAMOND_VM_IO_ERROR);
         }
         /* stdout is fully buffered (not line-buffered) once
@@ -3304,7 +3419,13 @@ DiamondVmStatus outlined_print(DiamondVm *vm,const DiamondChunk *chunk,DiamondVa
          * unconditionally rather than only when isatty(). */
         errno=0;
         if(fflush(out)==EOF) {
-            snprintf(vm->error,sizeof vm->error,"write error: %s",strerror(errno));
+            note_output_error(errno);snprintf(vm->error,sizeof vm->error,"write error: %s",strerror(errno));
+            VM_RETURN(DIAMOND_VM_IO_ERROR);
+        }
+    } else if((flags&DIAMOND_PRINT_FLUSH)!=0) {
+        errno=0;
+        if(fflush(out)==EOF) {
+            note_output_error(errno);snprintf(vm->error,sizeof vm->error,"write error: %s",strerror(errno));
             VM_RETURN(DIAMOND_VM_IO_ERROR);
         }
     }

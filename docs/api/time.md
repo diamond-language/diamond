@@ -73,6 +73,21 @@ or a date that does not exist, raises `ArgumentError`.
 Time.parse("2026-08-30T12:30:00-07:00").utc().iso8601()   # => "2026-08-30T19:30:00Z"
 ```
 
+### `Time.strptime(text, format) -> Time`
+
+Reads `text` laid out by `format`, which uses `strftime`'s directives: `%Y`, `%y`, `%m`,
+`%d`, `%e`, `%H`, `%I` with `%p`, `%M`, `%S`, `%b`/`%B`/`%h` (a month name, full or
+short, any case), `%z` (`Z`, `+HH:MM` or `+HHMM`), `%F`, `%T` and `%%`. A space matches
+any run of spaces, and every other character matches itself. The whole text must match,
+and the format needs a year, month and day; the time of day defaults to midnight. With
+`%z` the result keeps that offset; without it, the result is local time. A mismatch, or
+a date that does not exist, raises `ArgumentError`.
+
+```ruby
+Time.strptime("11/03/2026", "%m/%d/%Y").strftime("%Y-%m-%d")   # => "2026-11-03"
+Time.strptime("3 Nov 2026 7:05 pm +0100", "%d %b %Y %I:%M %p %z").iso8601()   # => "2026-11-03T19:05:00+01:00"
+```
+
 ### `Time.monotonic() -> Float`
 
 Seconds from an unspecified starting point that never goes backwards. It is

@@ -221,8 +221,156 @@ DiamondVmStatus time_parse_helper(DiamondVm *vm,DiamondValue input,
     *out_result=DIAMOND_OBJECT(time);return DIAMOND_VM_OK;
 }
 
+/* Reads up to `most` digits (at least one) at chars[*at]. */
+static bool strptime_number(const char *chars,size_t length,size_t *at,int most,int64_t *out) {
+    int64_t value=0;int count=0;
+    while(*at<length&&count<most&&chars[*at]>='0'&&chars[*at]<='9') {
+        value=value*10+(chars[*at]-'0');(*at)++;count++;
+    }
+    *out=value;
+    return count>0;
+}
+
+static const char *const strptime_months[12]={"january","february","march","april","may","june",
+    "july","august","september","october","november","december"};
+
+/* A month name, full or its first three letters, in any case. */
+static bool strptime_month_name(const char *chars,size_t length,size_t *at,int64_t *out) {
+    for(int month=0;month<12;month++) {
+        const char *name=strptime_months[month];
+        const size_t full=strlen(name);
+        size_t matched=0;
+        while(matched<full&&*at+matched<length&&
+              (chars[*at+matched]|0x20)==name[matched])matched++;
+        if(matched==full||matched==3) {
+            /* "mar" must not swallow the start of a longer word ("marble"). */
+            const size_t end=*at+matched;
+            const bool letter_follows=end<length&&((chars[end]|0x20)>='a'&&(chars[end]|0x20)<='z');
+            if(matched==full||!letter_follows) {
+                *at=end;*out=month+1;return true;
+            }
+        }
+    }
+    return false;
+}
+
+/* Time.strptime(text, format): `format` uses strftime's directives (%Y %m %d %e %H %M %S %I
+ * %p %y %b %B %h %z %F %T %%); a space matches any run of whitespace, anything else
+ * itself. The text must match all of the format, and a year, month and day are required.
+ * With %z the result has that offset (Z is UTC); without, it is local time, as Ruby's. */
+static DiamondVmStatus time_strptime_helper(DiamondVm *vm,DiamondValue text_value,DiamondValue format_value,
+        DiamondValue *out_result) {
+    if(text_value.kind!=DIAMOND_VALUE_OBJECT||text_value.as.object->kind!=DIAMOND_OBJECT_STRING||
+       format_value.kind!=DIAMOND_VALUE_OBJECT||format_value.as.object->kind!=DIAMOND_OBJECT_STRING) {
+        snprintf(vm->error,sizeof vm->error,"Time.strptime takes a String and a format String");
+        return DIAMOND_VM_TYPE_ERROR;
+    }
+    const DiamondString *text=(const DiamondString *)text_value.as.object;
+    const DiamondString *format_string=(const DiamondString *)format_value.as.object;
+    int64_t year=-1,month=-1,day=-1,hour=0,minute=0,second=0;
+    int pm=-1;bool twelve_hour=false,has_zone=false,utc=false;int32_t offset=0;
+    const char *chars=text->chars;const size_t length=text->length;
+    size_t at=0;bool matched=true;
+    /* %F and %T expand in place, so walk a small stack of format strings. */
+    const char *formats[2]={format_string->chars,nullptr};size_t lengths[2]={format_string->length,0};
+    size_t positions[2]={0,0};int level=0;
+    while(matched) {
+        if(positions[level]>=lengths[level]) {
+            if(level==0)break;
+            level--;continue;
+        }
+        const char *format=formats[level];
+        const char directive_start=format[positions[level]++];
+        if(directive_start==' ') {
+            while(at<length&&(chars[at]==' '||chars[at]=='\t'))at++;
+            continue;
+        }
+        if(directive_start!='%'||positions[level]>=lengths[level]) {
+            if(at<length&&chars[at]==directive_start)at++;else matched=false;
+            continue;
+        }
+        const char directive=format[positions[level]++];
+        switch(directive) {
+            case 'Y': matched=strptime_number(chars,length,&at,4,&year); break;
+            case 'y': {
+                int64_t two=0;matched=strptime_number(chars,length,&at,2,&two);
+                year=two<69?2000+two:1900+two; break;
+            }
+            case 'm': matched=strptime_number(chars,length,&at,2,&month); break;
+            case 'e': if(at<length&&chars[at]==' ')at++; [[fallthrough]];
+            case 'd': matched=strptime_number(chars,length,&at,2,&day); break;
+            case 'H': matched=strptime_number(chars,length,&at,2,&hour); break;
+            case 'I': matched=strptime_number(chars,length,&at,2,&hour);twelve_hour=true; break;
+            case 'M': matched=strptime_number(chars,length,&at,2,&minute); break;
+            case 'S': matched=strptime_number(chars,length,&at,2,&second); break;
+            case 'p':
+                if(at+1<length&&(chars[at+1]|0x20)=='m'&&((chars[at]|0x20)=='a'||(chars[at]|0x20)=='p')) {
+                    pm=(chars[at]|0x20)=='p';at+=2;
+                } else matched=false;
+                break;
+            case 'b': case 'B': case 'h': matched=strptime_month_name(chars,length,&at,&month); break;
+            case 'z': {
+                if(at<length&&chars[at]=='Z') {
+                    at++;utc=true;has_zone=true;offset=0;break;
+                }
+                /* +HH:MM or +HHMM */
+                char spelled[6];size_t used=0;
+                if(at+5<=length&&(chars[at]=='+'||chars[at]=='-')) {
+                    if(at+6<=length&&chars[at+3]==':') {
+                        memcpy(spelled,chars+at,6);used=6;
+                    } else {
+                        spelled[0]=chars[at];spelled[1]=chars[at+1];spelled[2]=chars[at+2];
+                        spelled[3]=':';spelled[4]=chars[at+3];spelled[5]=chars[at+4];used=5;
+                    }
+                }
+                matched=used>0&&parse_time_utc_offset_chars(spelled,6,&offset);
+                if(matched) {
+                    at+=used;has_zone=true;
+                }
+                break;
+            }
+            case 'F': case 'T':
+                if(level==1) {
+                    matched=false;break;
+                }
+                formats[1]=directive=='F'?"%Y-%m-%d":"%H:%M:%S";lengths[1]=8;positions[1]=0;level=1;
+                break;
+            case '%': if(at<length&&chars[at]=='%')at++;else matched=false; break;
+            default:
+                snprintf(vm->error,sizeof vm->error,"Time.strptime does not know the directive %%%c",directive);
+                return DIAMOND_VM_ARITY_ERROR;
+        }
+    }
+    if(matched&&at!=length)matched=false;
+    if(matched&&(year<0||month<0||day<0)) {
+        snprintf(vm->error,sizeof vm->error,"Time.strptime needs a year, month and day in the format, got '%.*s'",
+            (int)(format_string->length<64?format_string->length:64),format_string->chars);
+        return DIAMOND_VM_ARITY_ERROR;
+    }
+    if(matched&&twelve_hour) {
+        if(hour<1||hour>12)matched=false;
+        else if(pm==1&&hour<12)hour+=12;
+        else if(pm==0&&hour==12)hour=0;
+    }
+    if(!matched) {
+        snprintf(vm->error,sizeof vm->error,"Time.strptime: '%.*s' does not match '%.*s'",
+            (int)(length<64?length:64),chars,
+            (int)(format_string->length<64?format_string->length:64),format_string->chars);
+        return DIAMOND_VM_ARITY_ERROR;
+    }
+    if(has_zone&&!utc) {
+        const DiamondValue fields[7]={DIAMOND_INT(offset),DIAMOND_INT(year),DIAMOND_INT(month),
+            DIAMOND_INT(day),DIAMOND_INT(hour),DIAMOND_INT(minute),DIAMOND_INT(second)};
+        return time_build_helper(vm,fields,1,out_result);
+    }
+    const DiamondValue fields[6]={DIAMOND_INT(year),DIAMOND_INT(month),DIAMOND_INT(day),
+        DIAMOND_INT(hour),DIAMOND_INT(minute),DIAMOND_INT(second)};
+    return time_build_helper(vm,fields,utc?0:2,out_result);
+}
+
 DiamondVmStatus time_build_helper(DiamondVm *vm,const DiamondValue *arguments,
         uint8_t mode,DiamondValue *out_result) {
+    if(mode==3)return time_strptime_helper(vm,arguments[0],arguments[1],out_result);
     const bool fixed=mode==1;
     int32_t utc_offset=0;size_t field_start=0;
     if(fixed) {

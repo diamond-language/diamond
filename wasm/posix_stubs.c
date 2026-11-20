@@ -84,3 +84,4 @@ int sigaction(int signal_number, const struct sigaction *action, struct sigactio
 }
 
 int mkstemp(char *pattern) { (void)pattern; UNSUPPORTED_INT(); }
+char *mkdtemp(char *pattern) { (void)pattern; errno = ENOSYS; return NULL; }

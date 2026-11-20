@@ -637,6 +637,38 @@ static uint16_t parse_file_delete_arguments(Compiler *compiler) {
     return dest;
 }
 
+/* `Dir.mktmpdir(prefix = nil)`: FILE_PATH with the prefix (or a NIL) as the first
+ * operand, since the call may have no argument at all. */
+static uint16_t parse_dir_mktmpdir_call(Compiler *compiler) {
+    if(compiler->current.kind!=DIAMOND_TOKEN_LEFT_PAREN) {
+        fail(compiler,compiler->current.span,"expected '(' after 'Dir.mktmpdir'");
+        return 0;
+    }
+    advance_token(compiler);
+    skip_newlines(compiler);
+    uint16_t prefix_register=0;
+    if(compiler->current.kind==DIAMOND_TOKEN_RIGHT_PAREN) {
+        prefix_register=allocate_register(compiler);
+        emit_instruction(compiler,DIAMOND_OP_NIL,prefix_register,0,0,1);
+    } else {
+        prefix_register=parse_expression(compiler);
+        skip_newlines(compiler);
+    }
+    if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN) {
+        fail(compiler,compiler->current.span,"expected ')' after Dir.mktmpdir argument");
+        return 0;
+    }
+    advance_token(compiler);
+    const uint16_t second_register=allocate_register(compiler);
+    emit_instruction(compiler,DIAMOND_OP_NIL,second_register,0,0,1);
+    const uint16_t dest=allocate_register(compiler);
+    emit_opcode(compiler,DIAMOND_OP_FILE_PATH);
+    emit_register(compiler,dest);emit_register(compiler,prefix_register);
+    emit_register(compiler,second_register);emit_byte(compiler,(uint8_t)DIAMOND_FILE_PATH_MKTMPDIR);
+    compiler->known_types[dest]=DIAMOND_TYPE_STRING;
+    return dest;
+}
+
 /* `Dir.entries(path)` -- single String argument, mirrors
  * parse_file_delete_arguments's own single-fixed-argument shape
  * exactly. */
@@ -661,10 +693,18 @@ uint16_t parse_dir_entries_call(Compiler *compiler) {
             advance_token(compiler);
             return parse_file_path_unary_call(compiler,DIAMOND_FILE_PATH_DIRSYNC);
         }
+        if(name_equals(compiler,"delete_tree",method,false)) {
+            advance_token(compiler);
+            return parse_file_path_unary_call(compiler,DIAMOND_FILE_PATH_DELETE_TREE);
+        }
+        if(name_equals(compiler,"mktmpdir",method,false)) {
+            advance_token(compiler);
+            return parse_dir_mktmpdir_call(compiler);
+        }
     }
     if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER||
        !name_equals(compiler,"entries",compiler->current.span,false)) {
-        fail(compiler,compiler->current.span,"expected 'entries', 'mkdir', 'mkdir_p', 'delete' or 'sync' after 'Dir'");
+        fail(compiler,compiler->current.span,"expected 'entries', 'mkdir', 'mkdir_p', 'mktmpdir', 'delete', 'delete_tree' or 'sync' after 'Dir'");
         return 0;
     }
     advance_token(compiler); /* consume 'entries' */
@@ -757,7 +797,7 @@ static uint16_t parse_file_path_unary_call(Compiler *compiler,DiamondFilePathFun
     emit_register(compiler,second_register);emit_byte(compiler,(uint8_t)id);
     compiler->known_types[dest]=
         (id==DIAMOND_FILE_PATH_ABSOLUTE||id==DIAMOND_FILE_PATH_DIRECTORY||
-         id==DIAMOND_FILE_PATH_EXIST||id==DIAMOND_FILE_PATH_TTY)?
+         id==DIAMOND_FILE_PATH_EXIST||id==DIAMOND_FILE_PATH_TTY||id==DIAMOND_FILE_PATH_DELETE_TREE)?
         DIAMOND_TYPE_BOOL:DIAMOND_TYPE_STRING;
     return dest;
 }
@@ -1889,6 +1929,41 @@ uint16_t parse_print_call(Compiler *compiler, uint8_t flags) {
     return dest;
 }
 
+/* `__diamond_print(value, flags)`: PRINT with literal DIAMOND_PRINT_* flags. Only the
+ * prelude's STDOUT/STDERR objects call it; print, puts and warn are the public names. */
+uint16_t parse_diamond_print_call(Compiler *compiler) {
+    advance_token(compiler); /* consume '(' */
+    skip_newlines(compiler);
+    const uint16_t source=parse_expression(compiler);
+    skip_newlines(compiler);
+    if(compiler->current.kind!=DIAMOND_TOKEN_COMMA) {
+        fail(compiler,compiler->current.span,"__diamond_print takes a value and literal flags");
+        return 0;
+    }
+    advance_token(compiler);
+    skip_newlines(compiler);
+    if(compiler->current.kind!=DIAMOND_TOKEN_INTEGER||compiler->current.span.length!=1||
+       compiler->source[compiler->current.span.start]<'0'||compiler->source[compiler->current.span.start]>'7') {
+        fail(compiler,compiler->current.span,"__diamond_print flags must be a literal from 0 to 7");
+        return 0;
+    }
+    const uint8_t flags=(uint8_t)(compiler->source[compiler->current.span.start]-'0');
+    advance_token(compiler);
+    skip_newlines(compiler);
+    if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN) {
+        fail(compiler,compiler->current.span,"expected ')' after arguments");
+        return 0;
+    }
+    advance_token(compiler);
+    const uint16_t dest=allocate_register(compiler);
+    emit_opcode(compiler,DIAMOND_OP_PRINT);
+    emit_register(compiler,dest);
+    emit_register(compiler,source);
+    emit_byte(compiler,flags);
+    compiler->known_types[dest]=DIAMOND_TYPE_NIL;
+    return dest;
+}
+
 /* p(value): puts(value.inspect()) that then evaluates to value, so it can wrap an
  * expression while debugging. Takes exactly one argument; a user-defined `p` (function
  * or local) takes precedence over it, as for puts. */
@@ -2110,7 +2185,7 @@ static uint16_t parse_time_build_call(Compiler *compiler,uint8_t mode) {
     }
     advance_token(compiler);skip_newlines(compiler);
     const bool fixed=mode==1;
-    const size_t expected=fixed?7:6;uint16_t arguments[7];size_t count=0;
+    const size_t expected=fixed?7:(mode==3?2:6);uint16_t arguments[7];size_t count=0;
     while(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN) {
         if(count==expected) {
             fail(compiler,compiler->current.span,"too many Time constructor arguments");
@@ -2123,7 +2198,7 @@ static uint16_t parse_time_build_call(Compiler *compiler,uint8_t mode) {
     if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN||count!=expected) {
         fail(compiler,compiler->current.span,
             fixed?"Time.fixed expects offset plus six calendar fields":
-                  "Time.utc expects six calendar fields");
+                  (mode==3?"Time.strptime expects a String and a format":"Time.utc expects six calendar fields"));
         return 0;
     }
     advance_token(compiler);
@@ -2176,6 +2251,9 @@ uint16_t parse_time_call(Compiler *compiler) {
     }
     if(name_equals(compiler,"local",method,false)) {
         advance_token(compiler);return parse_time_build_call(compiler,2);
+    }
+    if(name_equals(compiler,"strptime",method,false)) {
+        advance_token(compiler);return parse_time_build_call(compiler,3);
     }
     fail(compiler,method,
         "expected a Time constructor after 'Time'");

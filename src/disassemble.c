@@ -64,6 +64,8 @@ static const char *file_path_function_name(uint8_t id) {
         case DIAMOND_FILE_PATH_MKDIR_P: return "mkdir_p";
         case DIAMOND_FILE_PATH_TTY: return "tty?";
         case DIAMOND_FILE_PATH_CHMOD: return "chmod";
+        case DIAMOND_FILE_PATH_MKTMPDIR: return "mktmpdir";
+        case DIAMOND_FILE_PATH_DELETE_TREE: return "delete_tree";
         default: return "<invalid file path function>";
     }
 }
@@ -1276,7 +1278,7 @@ static bool disassemble_io_and_conversions(DisassemblyWalk *walk) {
             out_printf(stream,"%-18s r%u, r%u, mode=%u\n","TIME_BUILD",
                 checked_register(chunk,stream,read_operand(chunk,offset+1),&valid),
                 checked_register_range(chunk,stream,read_operand(chunk,offset+3),
-                    chunk->code[offset+5]==1?7:6,&valid),chunk->code[offset+5]);
+                    chunk->code[offset+5]==1?7:(chunk->code[offset+5]==3?2:6),&valid),chunk->code[offset+5]);
             offset+=6;break;
         case DIAMOND_OP_SEMVER: {
             if(!require_bytes(stream,chunk,offset,8)){valid=false;offset=chunk->code_count;break;}
