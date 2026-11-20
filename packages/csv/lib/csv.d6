@@ -1,0 +1,78 @@
+## Reads and writes CSV (comma-separated values, RFC 4180), with any one-byte
+## separator such as `"\t"` or `";"`.
+require "./csv/reader"
+require "./csv/writer"
+
+module CSV
+  ## Every row of `text`, each an `Array` of `String`s. Quoted fields may hold
+  ## separators, `""` for a quote, and line breaks. Blank lines are skipped.
+  ## Raises `CSV::MalformedError` for a quoted field that never closes or text
+  ## after a closing quote.
+  def self.parse(text: String, separator: String = ",") -> Array
+    reader = CSV::Reader.new(separator)
+    rows = reader.feed(text)
+    rows.concat(reader.finish())
+  end
+
+  ## Like `parse`, but the first row names the columns and every other row
+  ## becomes a `Hash` from column name to value. A row with fewer fields than
+  ## the header gives `nil` for the missing columns; one with more raises
+  ## `CSV::MalformedError`.
+  def self.parse_records(text: String, separator: String = ",") -> Array
+    rows = CSV.parse(text, separator)
+    return [] if rows.empty?()
+    headers = rows[0]
+    records = []
+    index = 1
+    while index < rows.length()
+      records.push(CSV.to_record(headers, rows[index], index + 1))
+      index += 1
+    end
+    records
+  end
+
+  ## Calls the block with each row of the file at `path`, reading it in 64 KiB
+  ## chunks so a large file never has to fit in memory.
+  def self.foreach(path: String, separator: String = ",", &block)
+    reader = CSV::Reader.new(separator)
+    file = File.open(path, "r")
+    begin
+      while true
+        chunk = file.read(65536)
+        break if chunk == nil || chunk.empty?()
+        reader.feed(chunk).each() do |row| block(row) end
+      end
+      reader.finish().each() do |row| block(row) end
+    ensure
+      file.close()
+    end
+    nil
+  end
+
+  ## Like `foreach`, but the first row names the columns and the block gets
+  ## each later row as a `Hash`, as `parse_records` builds them.
+  def self.foreach_record(path: String, separator: String = ",", &block)
+    headers = nil
+    number = 0
+    CSV.foreach(path, separator) do |row|
+      number += 1
+      if headers == nil
+        headers = row
+      else
+        block(CSV.to_record(headers, row, number))
+      end
+    end
+    nil
+  end
+
+  def self.to_record(headers: Array, row: Array, number: Int) -> Hash
+    if row.length() > headers.length()
+      raise CSV::MalformedError.new("row #{number} has #{row.length()} fields but the header has #{headers.length()}")
+    end
+    record = {}
+    headers.each_with_index() do |name, column|
+      record[name] = if column < row.length() then row[column] else nil end
+    end
+    record
+  end
+end

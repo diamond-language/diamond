@@ -1,0 +1,54 @@
+module CSV
+  # A field needs quotes when it holds the separator, a quote or a line break,
+  # or starts or ends with a space (which some readers would otherwise trim).
+  def self.needs_quotes?(text: String, separator: String) -> Bool
+    return false if text.empty?()
+    text.include?(separator) || text.include?("\"") || text.include?("\n") ||
+      text.include?("\r") || text.start_with?(" ") || text.end_with?(" ")
+  end
+
+  ## One field as CSV text: `nil` becomes an empty field, other values their
+  ## `to_s` form, quoted (with inner quotes doubled) when needed.
+  def self.format_field(value, separator: String = ",") -> String
+    return "" if value == nil
+    text = "#{value}"
+    return text unless CSV.needs_quotes?(text, separator)
+    "\"" + text.gsub("\"", "\"\"") + "\""
+  end
+
+  ## One row as a line of CSV, ending in `line_ending`.
+  def self.generate_line(row: Array, separator: String = ",", line_ending: String = "\n") -> String
+    CSV.separator_byte(separator)
+    fields = row.map() do |value| CSV.format_field(value, separator) end
+    fields.join(separator) + line_ending
+  end
+
+  ## An `Array` of rows as CSV text, one line per row. Pass
+  ## `line_ending: "\r\n"` for the RFC 4180 form some Windows tools expect.
+  def self.generate(rows: Array, separator: String = ",", line_ending: String = "\n") -> String
+    CSV.separator_byte(separator)
+    out = StringBuilder.new()
+    rows.each() do |row|
+      out.append(CSV.generate_line(row, separator, line_ending))
+    end
+    out.to_s()
+  end
+
+  ## An `Array` of `Hash`es as CSV with a header row. `headers` picks and orders
+  ## the columns; by default they are the first record's keys. A key a record
+  ## lacks gives an empty field.
+  def self.generate_records(records: Array, headers: Array | Nil = nil, separator: String = ",",
+                            line_ending: String = "\n") -> String
+    columns = headers
+    if columns == nil
+      columns = if records.empty?() then [] else records[0].keys() end
+    end
+    out = StringBuilder.new()
+    out.append(CSV.generate_line(columns, separator, line_ending))
+    records.each() do |record|
+      row = columns.map() do |column| record[column] end
+      out.append(CSV.generate_line(row, separator, line_ending))
+    end
+    out.to_s()
+  end
+end

@@ -1,0 +1,1 @@
+{"name": "toml", "version": "0.1.0", "summary": "Read and write TOML 1.0 configuration files", "license": "MIT", "maintainers": [{"name": "Chad 'Matrix9180' Ingram", "contact": "https://github.com/diamond-language/d6"}]}

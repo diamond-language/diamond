@@ -2,6 +2,7 @@
   "active_record": "0.21.3",
   "arel": "0.35.5",
   "cookies": "0.2.6",
+  "csv": "0.1.0",
   "database_config": "0.2.4",
   "div": "0.3.3",
   "graphql": "0.3.6",
@@ -18,5 +19,6 @@
   "rack": "0.2.5",
   "redis": "0.2.4",
   "registry": "0.3.2",
+  "toml": "0.1.0",
   "websocket": "0.2.4"
 }

@@ -455,6 +455,7 @@ with `facet` like any other cut. The public ones each have a page under
 | `arel` | Immutable SQL query builder with dialect visitors |
 | `cancellation` | Cooperative cancellation tokens, deadlines, and task scopes |
 | `cookies` | Cookie parsing, signing, encryption, and session helpers |
+| `csv` | Read and write CSV, including files too large to load at once |
 | `database_config` | Load JSON database configuration and open a connection |
 | `dials` | HTTP routing and controller responses |
 | `div` | Compile view templates into d6 source |
@@ -472,6 +473,7 @@ with `facet` like any other cut. The public ones each have a page under
 | `rack` | Compose HTTP request middleware |
 | `redis` | Redis client using RESP2 and RESP3 |
 | `registry` | Cut registry storage primitives |
+| `toml` | Read and write TOML 1.0 configuration files |
 | `websocket` | WebSocket handshake and frame handling |
 
 ## What's deliberately out of scope so far

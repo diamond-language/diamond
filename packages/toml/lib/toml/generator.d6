@@ -1,0 +1,118 @@
+module TOML
+  ## Raised by `TOML.generate` for a value TOML can't hold, such as `nil`.
+  class GenerateError < StandardError
+    attr_reader message: String
+    def initialize(message: String)
+      @message = message
+    end
+  end
+
+  def self.format_float(value: Float) -> String
+    return "nan" if value.nan?()
+    return "inf" if value == 1.0 / 0.0
+    return "-inf" if value == -1.0 / 0.0
+    text = value.to_s()
+    # TOML needs a decimal point or an exponent to read it back as a float.
+    text = text + ".0" unless text.include?(".") || text.include?("e")
+    text
+  end
+
+  def self.format_time(value: Time) -> String
+    text = if value.to_f() == value.to_i().to_f() then value.iso8601() else value.iso8601(6) end
+    # TOML needs a four-digit year; iso8601 writes the year 1 as "1".
+    year_end = text.index_of("-")
+    text = "0" * (4 - year_end) + text if year_end != nil && year_end < 4
+    text
+  end
+
+  # A value written inline: after `key = `, inside an array, or inside an inline table.
+  def self.format_value(value, path: String) -> String
+    raise TOML::GenerateError.new("#{path} is nil, and TOML has no null") if value == nil
+    return TOML.format_string(value) if value.is_a?(String)
+    return "#{value}" if value == true || value == false
+    if value.is_a?(Int)
+      if value > 9223372036854775807 || value < -9223372036854775808
+        raise TOML::GenerateError.new("#{path} doesn't fit in TOML's 64-bit integers")
+      end
+      return "#{value}"
+    end
+    return TOML.format_float(value) if value.is_a?(Float)
+    return TOML.format_time(value) if value.is_a?(Time)
+    if value.is_a?(Array)
+      items = []
+      value.each_with_index() do |item, index|
+        items.push(TOML.format_value(item, "#{path}[#{index}]"))
+      end
+      return "[" + items.join(", ") + "]"
+    end
+    if value.is_a?(Hash)
+      pairs = []
+      value.keys().each() do |key|
+        pairs.push(TOML.format_key(key) + " = " + TOML.format_value(value[key], "#{path}.#{TOML.format_key(key)}"))
+      end
+      return if pairs.empty?() then "{}" else "{ " + pairs.join(", ") + " }" end
+    end
+    raise TOML::GenerateError.new("#{path} is a #{value.class()}, which TOML can't hold")
+  end
+
+  # An array that becomes [[header]] sections: non-empty, and only Hashes.
+  def self.table_array?(value) -> Bool
+    return false unless value.is_a?(Array) && !value.empty?()
+    value.all?() do |item| item.is_a?(Hash) end
+  end
+
+  # Writes tables into one StringBuilder. A class rather than a recursive
+  # module function: those fail to compile here (see the issue tracker).
+  class Writer
+    def initialize()
+      @out = StringBuilder.new()
+    end
+
+    def to_s() -> String
+      @out.to_s()
+    end
+
+    def write_table(table: Hash, path: Array, header: String) -> Nil
+      out = @out
+      simple = []
+      nested = []
+      table.keys().each() do |key|
+        value = table[key]
+        if value.is_a?(Hash) || TOML.table_array?(value)
+          nested.push(key)
+        else
+          simple.push(key)
+        end
+      end
+      # A table with nothing of its own but sub-tables needs no header of its own.
+      if header != "" && (!simple.empty?() || nested.empty?())
+        out.append("\n") if out.length() > 0
+        out.append(header).append("\n")
+      end
+      simple.each() do |key|
+        name = TOML.display_path(path + [key])
+        out.append(TOML.format_key(key)).append(" = ").append(TOML.format_value(table[key], name)).append("\n")
+      end
+      index = 0
+      while index < nested.length()
+        key = nested[index]
+        value = table[key]
+        child_path = path + [key]
+        name = TOML.display_path(child_path)
+        if value.is_a?(Hash)
+          self.write_table(value, child_path, "[#{name}]")
+        else
+          item_index = 0
+          while item_index < value.length()
+            out.append("\n") if out.length() > 0
+            out.append("[[#{name}]]\n")
+            self.write_table(value[item_index], child_path, "")
+            item_index += 1
+          end
+        end
+        index += 1
+      end
+      nil
+    end
+  end
+end
