@@ -111,6 +111,14 @@ revoked afterwards). The published sha256s match `docs/registry-launch-inventory
 `tools/verify_registry_launch.d6` passed for all 22 public cuts. The registry loads neither, so no
 redeploy.
 
+active_record 0.21.4, arel 0.35.6, jobs 0.2.4 and toml 0.1.1 (#618, gaps from the ledger dogfood
+app) were published on 2026-11-20 UTC from main `40262415`, after a verified laptop snapshot
+(`~/diamond-registry-backups/pre-ledger-gaps-20261120T063953Z`), with one 30-minute credential for
+`diamond-language` scoped to `publish:arel,publish:active_record,publish:jobs,publish:toml` (id 47,
+revoked afterwards). The published sha256s match `docs/registry-launch-inventory.json`, and
+`tools/verify_registry_launch.d6` passed for all 22 public cuts. The registry uses mjolnir, not
+active_record, so no redeploy.
+
 Previously `0e482f26c56854c4c41c6c82d093ad04f6569a21` (v1.0.0-rc4, deployed 2026-11-12 UTC (2026-11-11 Pacific)
 with `tools/deploy_registry.sh --revision=v1.0.0-rc4 --force` after its dry run).
 The fresh snapshot at
