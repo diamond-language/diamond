@@ -73,6 +73,10 @@ rescue e: IOError
 end
 ```
 
+When nothing rescues it and the failed write was to stdout or stderr (`d6 prog.d6 | head`),
+the program ends quietly with status 141, as a C tool killed by SIGPIPE does, instead of
+printing the error to a terminal that asked for less output.
+
 ## stderr: `warn`
 
 ```ruby
