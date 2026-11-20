@@ -104,6 +104,13 @@ published sha256s match `docs/registry-launch-inventory.json`, and `tools/verify
 passed for all 20 public cuts. The running registry keeps its bundled cookies/gremlin until its
 next deploy.
 
+csv 0.1.0 and toml 0.1.0, two new cuts (#617), were published on 2026-11-20 UTC from main
+`9a561b36`, after a verified laptop snapshot (`~/diamond-registry-backups/pre-csv-toml-20261120T052428Z`),
+with one 30-minute credential for `diamond-language` scoped to `publish:csv,publish:toml` (id 46,
+revoked afterwards). The published sha256s match `docs/registry-launch-inventory.json`, and
+`tools/verify_registry_launch.d6` passed for all 22 public cuts. The registry loads neither, so no
+redeploy.
+
 Previously `0e482f26c56854c4c41c6c82d093ad04f6569a21` (v1.0.0-rc4, deployed 2026-11-12 UTC (2026-11-11 Pacific)
 with `tools/deploy_registry.sh --revision=v1.0.0-rc4 --force` after its dry run).
 The fresh snapshot at
