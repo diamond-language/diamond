@@ -44,6 +44,16 @@ Freezes the value and everything inside it.
 A shallow, unfrozen copy. Numbers, `nil`, Booleans and Symbols return
 themselves.
 
+### `equal?(other) -> Bool`
+
+Whether `other` is the same object, whatever `==` the class defines. Numbers,
+`nil`, Booleans and Symbols are `equal?` when they hold the same value.
+
+```diamond
+a = [1]
+[a == [1], a.equal?([1]), a.equal?(a)] # => [true, false, true]
+```
+
 ### `freeze() -> Value`
 
 Makes the value read-only and returns it. Changing a frozen Array, Hash or

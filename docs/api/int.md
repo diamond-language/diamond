@@ -112,6 +112,10 @@ seen   # => [3, 2, 1]
 
 The receiver.
 
+### `equal?(other) -> Bool`
+
+Whether `other` is an `Int` with the same value (`3.equal?(3.0)` is `false`).
+
 ### `even?() -> Bool`
 
 Whether the receiver is divisible by 2.

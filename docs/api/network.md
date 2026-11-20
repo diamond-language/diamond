@@ -44,6 +44,12 @@ Raises `IOError` when every attempt fails. `options` is a Hash with
 `"recv_buffer_bytes"` and `"send_buffer_bytes"`; a timed-out read or write
 raises `IOError`.
 
+The connection reads and writes like a [File](file.md), except that `write`
+sends its text at once, with no `flush` needed; a connection that
+`TCPServer.listen`'s `accept` returns does the same. `read(n)` waits for `n`
+bytes or the end of the stream. To take whatever has arrived, use a
+non-blocking `Socket` instead.
+
 ### `TCPSocket.connect_nonblocking(address, port) -> Socket`
 
 Starts connecting to a numeric IPv4 or IPv6 address and returns at once. A

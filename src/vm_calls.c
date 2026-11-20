@@ -1371,6 +1371,31 @@ static DiamondVmStatus check_instance_method_visibility(DiamondVm *vm,const Diam
  * `site` identifies the bytecode instruction for monomorphic quickening, as
  * in diamond_jit_get_ivar. Helpers propagate statuses explicitly because
  * VM_RETURN/VM_PROPAGATE only apply inside run_chunk. */
+/* equal?(other): the same object, whatever `==` a class defines. Values
+ * without identity (nil, booleans, numbers, class references) are the same
+ * when they hold the same thing; a Float compares its bits, so NaN is equal?
+ * to itself as in Ruby. */
+static bool values_identical(DiamondValue left, DiamondValue right) {
+    if(left.kind!=right.kind)return false;
+    switch(left.kind) {
+    case DIAMOND_VALUE_BOOL: return left.as.boolean==right.as.boolean;
+    case DIAMOND_VALUE_INT: return left.as.integer==right.as.integer;
+    case DIAMOND_VALUE_FLOAT: return memcmp(&left.as.real,&right.as.real,sizeof left.as.real)==0;
+    case DIAMOND_VALUE_OBJECT:
+        if(left.as.object==right.as.object)return true;
+        /* A Symbol is its name: two `:x` literals are the same symbol. */
+        if(left.as.object->kind==DIAMOND_OBJECT_SYMBOL&&
+           right.as.object->kind==DIAMOND_OBJECT_SYMBOL) {
+            const DiamondSymbol *a=(const DiamondSymbol *)left.as.object;
+            const DiamondSymbol *b=(const DiamondSymbol *)right.as.object;
+            return a->length==b->length&&memcmp(a->chars,b->chars,a->length)==0;
+        }
+        return false;
+    case DIAMOND_VALUE_CLASS: return left.as.class_index==right.as.class_index;
+    default: return true;
+    }
+}
+
 /* Whether `class` (or an ancestor) defines `name`: diamond_jit_invoke_instance's
  * universal-method checks (tap, to_s, dup, respond_to?, ...), each reached
  * only once the call's name matched. Out of line: inlined there, the method
@@ -1433,6 +1458,13 @@ DiamondVmStatus diamond_jit_invoke_instance(DiamondVm *vm, const DiamondChunk *c
     if(method_name->length==4&&memcmp(method_name->chars,"nil?",4)==0&&
        argc==0&&!class_defines(owner,instance->class,"nil?",4)) {
         *out=DIAMOND_BOOL(false);return DIAMOND_VM_OK;
+    }
+    if(method_name->length==6&&memcmp(method_name->chars,"equal?",6)==0&&
+       type_argument_count==0&&
+       !class_defines(owner,instance->class,"equal?",6)) {
+        if(argc!=1) return DIAMOND_VM_ARITY_ERROR;
+        *out=DIAMOND_BOOL(values_identical(registers[recv],registers[base]));
+        return DIAMOND_VM_OK;
     }
     /* Every object answers to_s(), with the text interpolation gives it,
      * unless its class defines its own. */
@@ -2605,6 +2637,15 @@ DiamondVmStatus diamond_invoke_general(DiamondVm *vm,const DiamondChunk *chunk,
            (registers[recv].kind!=DIAMOND_VALUE_OBJECT||
             registers[recv].as.object->kind!=DIAMOND_OBJECT_INSTANCE)) {
             registers[dest]=DIAMOND_BOOL(registers[recv].kind==DIAMOND_VALUE_NIL);
+            return DIAMOND_VM_OK;
+        }
+        /* equal?(other) on any built-in value: the same object. */
+        if(method_name->length==6&&memcmp(method_name->chars,"equal?",6)==0&&
+           type_argument_count==0&&
+           (registers[recv].kind!=DIAMOND_VALUE_OBJECT||
+            registers[recv].as.object->kind!=DIAMOND_OBJECT_INSTANCE)) {
+            if(argc!=1) return DIAMOND_VM_ARITY_ERROR;
+            registers[dest]=DIAMOND_BOOL(values_identical(registers[recv],registers[base]));
             return DIAMOND_VM_OK;
         }
         /* Callable#arity: how many arguments it declares (its

@@ -192,6 +192,37 @@ post_right = {"method": "POST", "headers": {"x-csrf-token": session["csrf_token"
 [[ "$actual" == "403|403|200|handled" ]]
 count=$((count + 1))
 
+
+# --- Csrf.call: a form posts the token in a csrf_token field, urlencoded or
+# --- multipart; a wrong field, or a field in a body of another type, is refused
+actual="$(run_case '
+def app(request, context)
+  [200, {}, "handled"]
+end
+session = {}
+Csrf.call({"method": "GET", "headers": {}, "session": session}, {}, app)
+token = session["csrf_token"]
+form = "application/x-www-form-urlencoded"
+def post(session, type, body, app) = Csrf.call({"method": "POST", "headers": {"content-type": type}, "body": body, "session": session}, {}, app)[0]
+urlencoded = post(session, form, "name=ada&csrf_token=#{token}", app)
+wrong = post(session, form, "csrf_token=beef&name=ada", app)
+multipart = post(session, "multipart/form-data; boundary=XX",
+  "--XX\r\nContent-Disposition: form-data; name=\"csrf_token\"\r\n\r\n#{token}\r\n--XX--\r\n", app)
+json = post(session, "application/json", "{\"csrf_token\": \"#{token}\"}", app)
+"#{urlencoded}|#{wrong}|#{multipart}|#{json}"
+')"
+[[ "$actual" == "200|403|200|403" ]]
+count=$((count + 1))
+
+# --- CookieSession passes a nil response (a handler that took over the
+# --- connection, such as a WebSocket) straight through
+actual="$(run_case '
+CookieSession.configure(secret: "0123456789abcdef0123456789abcdef", secure: false)
+def taken_over(request, context) = nil
+CookieSession.call({"method": "GET", "headers": {}}, {}, taken_over) == nil
+')"
+[[ "$actual" == "true" ]]
+count=$((count + 1))
 # --- Flash: a message set on one request is readable on the next one
 # --- (via CookieSession's own rotation), then gone on the one after
 # --- that; reading it back within the *same* request that set it stays

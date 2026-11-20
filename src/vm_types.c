@@ -114,30 +114,30 @@ static const DiamondNativeMethod DIAMOND_NATIVE_METHODS[]={
  * real value, so a name listed here that the VM does not implement fails CI. */
 static const char *const NATIVE_MEMBERS_STRING[]={
     "bytes","capitalize","chars","chomp","count","deep_freeze","delete","downcase",
-    "dup","empty?","end_with?","format","freeze","frozen?","getbyte","gsub",
+    "dup","empty?","end_with?","equal?","format","freeze","frozen?","getbyte","gsub",
     "include?","index_of","inspect","length","ljust","lstrip","match","match?","nil?","ord",
     "partition","repeat","reverse","rjust","rstrip","scan","size","slice","split",
     "start_with?","strip","sub","tap","to_f","to_i","to_s","tr","upcase"};
 static const char *const NATIVE_MEMBERS_ARRAY[]={
     "all?","any?","clear","compact","concat","count","deep_freeze","delete",
     "delete_at","drop","dup","each","each_cons","each_slice","each_with_index",
-    "empty?","find","first","first_or","flat_map","flatten","freeze","frozen?",
+    "empty?","equal?","find","first","first_or","flat_map","flatten","freeze","frozen?",
     "group_by","include?","index_of","inspect","join","last","last_or","lazy","length","map",
     "max","max_by","min","min_by","nil?","partition","pop","push","reduce","reject",
     "reverse","sample","select","shuffle","size","slice","sort","sort_by","sum",
     "take","tally","tap","to_a","to_s","uniq","zip"};
 static const char *const NATIVE_MEMBERS_HASH[]={
     "all?","any?","clear","compact","count","deep_freeze","default","delete","dup","each",
-    "each_with_index","empty?","fetch","find","freeze","frozen?","group_by",
+    "each_with_index","empty?","equal?","fetch","find","freeze","frozen?","group_by",
     "include?","include_key?","inspect","key_at","keys","lazy","length","map","map_values",
     "max_by","merge","min_by","nil?","partition","reduce","reject","select","size",
     "slice","sort","sort_by","sum","tap","to_a","to_s","value_at","values"};
 static const char *const NATIVE_MEMBERS_INT[]={
-    "abs","ago","chr","day","days","deep_freeze","downto","dup","freeze","from_now",
+    "abs","ago","chr","day","days","deep_freeze","downto","dup","equal?","freeze","from_now",
     "frozen?","hour","hours","inspect","minute","minutes","nil?","second","seconds","tap",
     "times","to_f","to_i","to_s","upto","week","weeks"};
 static const char *const NATIVE_MEMBERS_FLOAT[]={
-    "abs","ago","ceil","day","days","deep_freeze","dup","floor","freeze","from_now",
+    "abs","ago","ceil","day","days","deep_freeze","dup","equal?","floor","freeze","from_now",
     "frozen?","hour","hours","inspect","minute","minutes","nil?","round","second","seconds",
     "tap","to_f","to_i","to_s","week","weeks"};
 
@@ -148,7 +148,7 @@ static const char *const NATIVE_MEMBERS_FLOAT[]={
  * (regexp_*, lib/core/regexp.d6) are found by name instead, like String's.
  * Every kind also answers NATIVE_OBJECT_MEMBERS_UNIVERSAL. */
 static const char *const NATIVE_OBJECT_MEMBERS_UNIVERSAL[]={
-    "inspect","nil?","public_send","respond_to?","tap","to_s"};
+    "equal?","inspect","nil?","public_send","respond_to?","tap","to_s"};
 static const char *const NATIVE_OBJECT_MEMBERS_FIBER[]={"alive?","resume","status"};
 static const char *const NATIVE_OBJECT_MEMBERS_THREAD[]={"alive?","join"};
 static const char *const NATIVE_OBJECT_MEMBERS_CHANNEL[]={

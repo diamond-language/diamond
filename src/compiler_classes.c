@@ -1125,6 +1125,11 @@ static void compile_class_body(Compiler *compiler, DiamondClass *class) {
                      "class constants must begin with an uppercase letter");break;
             }
             (void)compile_assignment(compiler);
+        } else if(compiler->current.kind==DIAMOND_TOKEN_CLASS_VARIABLE&&
+                  assignment_ahead(compiler)) {
+            /* `@@count = 0` in the body: runs once, where the type is
+             * defined, like a constant. */
+            (void)compile_assignment(compiler);
         } else if(compiler->current.kind==DIAMOND_TOKEN_INCLUDE) {
             advance_token(compiler);
             if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER) {
@@ -2830,6 +2835,11 @@ uint16_t compile_module(Compiler *compiler) {
                 fail(compiler,constant_name,
                      "module constants must begin with an uppercase letter");break;
             }
+            (void)compile_assignment(compiler);
+        } else if(compiler->current.kind==DIAMOND_TOKEN_CLASS_VARIABLE&&
+                  assignment_ahead(compiler)) {
+            /* `@@count = 0` in the body: runs once, where the type is
+             * defined, like a constant. */
             (void)compile_assignment(compiler);
         } else if(compiler->current.kind==DIAMOND_TOKEN_INCLUDE) {
             if(!compile_module_include(compiler,module,index))break;

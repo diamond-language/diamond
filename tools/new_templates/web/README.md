@@ -6,7 +6,7 @@ A web application written in [d6](https://rolld6.codes), served by
 
 ```sh
 facet install              # fetch gremlin, rack and minitest into cuts/
-d6 main.d6            # http://127.0.0.1:8080
+d6 main.d6                 # http://127.0.0.1:8080
 bash test.sh               # run the tests
 ```
 

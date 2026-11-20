@@ -8,11 +8,13 @@ class WebSocketConnection
   # `max_message_size` bounds a whole message, fragments included; websocket_max_frame_size() alone only bounds each frame, so a peer could
   # send endless non-final fragments and grow the buffer without limit.
   ## Wraps an upgraded connection. `max_message_size` bounds a whole message, fragments
-  ## included. `websocket_accept` returns one of these.
-  def initialize(conn, max_message_size = websocket_max_message_size())
+  ## included. `websocket_accept` returns one of these; `websocket_connect` returns one
+  ## with `client: true`, which masks what it sends and expects unmasked frames back.
+  def initialize(conn, max_message_size = websocket_max_message_size(), client: Bool = false)
     @conn = conn
     @closed = false
     @max_message_size = max_message_size
+    @client = client
   end
 
   ## Sends a text message.
@@ -29,7 +31,25 @@ class WebSocketConnection
     if @closed
       raise IOError.new("cannot write to a closed WebSocketConnection")
     end
-    @conn.write(websocket_encode_frame(opcode, payload))
+    @conn.write(websocket_encode_frame(opcode, payload, @client))
+    # A client's socket is a plain TCPSocket or TLSSocket; flushing keeps a
+    # frame from waiting in a buffer on runtimes before writes were sent at once.
+    @conn.flush() if @client && @conn is File
+  end
+
+  # The next frame from the peer, or nil when the peer vanished between
+  # frames. A server's peer must mask (RFC 6455 section 5.1) and a client's
+  # must not (section 5.1 again: a client closes on a masked frame).
+  def read_peer_frame()
+    header = websocket_read_frame_start(@conn)
+    return nil if header == nil
+    frame = websocket_read_frame_rest(@conn, header)
+    if @client && frame["masked"]
+      raise IOError.new("WebSocket server frame was masked (RFC 6455 section 5.1)")
+    elsif !@client && !frame["masked"]
+      raise IOError.new("WebSocket client frame was not masked (RFC 6455 section 5.1)")
+    end
+    frame
   end
 
   ## Whether the connection has closed.
@@ -77,14 +97,20 @@ class WebSocketConnection
   # frame after a fragment is always its continuation.
   ## Waits for the next message and returns `{"opcode", "data"}` (`opcode` is
   ## `websocket_opcode_text()` or `websocket_opcode_binary()`), or `nil` once the peer has
-  ## closed the connection.
+  ## closed the connection, with a Close frame or by going away between messages.
   def receive()
     message_opcode = nil
     buffer = StringBuilder.new()
     fragmenting = false
     received = 0
     loop do
-      frame = websocket_read_frame(@conn)
+      frame = self.read_peer_frame()
+      if frame == nil
+        # The peer went away without the close handshake.
+        @closed = true
+        @conn.close()
+        return nil
+      end
       opcode = frame["opcode"]
       if opcode >= 8 && (frame["payload"].length() > 125 || !frame["fin"])
         raise IOError.new("WebSocket control frame must be final and carry at most 125 bytes (RFC 6455 section 5.5)")
@@ -160,8 +186,8 @@ class WebSocketConnection
       @closed = true
       begin
         loop do
-          frame = websocket_read_frame(@conn)
-          if frame["opcode"] == websocket_opcode_close()
+          frame = self.read_peer_frame()
+          if frame == nil || frame["opcode"] == websocket_opcode_close()
             break
           end
         end

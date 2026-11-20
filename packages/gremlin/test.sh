@@ -681,6 +681,24 @@ rescue error: ArgumentError
   puts(error.message())
 end")"
 [[ "$actual" == *'return_after_shutdown requires threads = 1'* ]]
+# A partial limits Hash takes the defaults for the keys it leaves out; an
+# unknown key or a bad value is refused by name before binding.
+actual="$("$diamond" -e "require \"$package_root/lib/gremlin\"
+def handler(request, context)
+  [200, {}, \"ok\"]
+end
+complete = gremlin_complete_limits({\"body_bytes\": 50})
+puts(\"#{complete[\"body_bytes\"]} #{complete[\"timeout_seconds\"]} #{complete.length()}\")
+[{\"timeout_secs\": 5}, {\"connections\": 0}].each() do |limits|
+  begin
+    gremlin_serve(18999, handler, 1, nil, nil, limits)
+  rescue error: ArgumentError
+    puts(error.message())
+  end
+end")"
+[[ "$actual" == *'50 30 6'* ]]
+[[ "$actual" == *'unknown Gremlin limit "timeout_secs"'* ]]
+[[ "$actual" == *'Gremlin limit "connections" must be a positive integer, got 0'* ]]
 # A shutdown signal that lands after the worker loop's "requested and no
 # connections" check but before its poll leaves a poll with nothing to wait on
 # (the listener is closed and out of the list). That poll used to sleep out the

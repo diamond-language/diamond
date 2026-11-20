@@ -493,6 +493,7 @@ void diamond_vm_free(DiamondVm *vm) {
     vm->pool_bytes=0;
     free_adopted_programs(vm->adopted_programs);
     free(vm->class_variables);
+    free(vm->class_variable_body_set);
     free(vm->namespace_constants);
     free(vm->namespace_constant_initialized);
     free(vm->gc_protected);
@@ -2268,6 +2269,7 @@ DiamondVmStatus diamond_vm_run(DiamondVm *vm, const DiamondChunk *chunk,
     }
     for (size_t index=0;index<vm->rewritten_site_count;index++)
         ((uint8_t *)(void *)vm->rewritten_sites[index])[0]=(uint8_t)DIAMOND_OP_INVOKE;
+    vm->entry_code=chunk->code;
     vm->rewritten_site_count=0;
     vm->error[0]='\0';
     vm->has_exception=false;

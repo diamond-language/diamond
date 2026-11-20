@@ -22,9 +22,9 @@
       "archive": "cookies.tar",
       "dependencies": {},
       "name": "cookies",
-      "sha256": "c791b4e0eaf0f7facf85fa86f6229a348ad90c51e8f1498f1efe92b4b7e585bb",
-      "size": 32256,
-      "version": "0.2.5"
+      "sha256": "4fb8299d3b85853e84e0de5cf3cf56b46b3fb06f8168b539827fc9bd2c965d37",
+      "size": 33792,
+      "version": "0.2.6"
     },
     {
       "archive": "database_config.tar",
@@ -84,9 +84,9 @@
         "logger": "^0.5.0"
       },
       "name": "gremlin",
-      "sha256": "ac05d33488319311b72938494da27de356415e9d086804f31e7b2c9aadafea51",
-      "size": 60928,
-      "version": "0.5.6"
+      "sha256": "0c9b1a8aac052170c4c182e53ecf8805f6e3ef924ff329f55d37816628e11942",
+      "size": 61952,
+      "version": "0.5.7"
     },
     {
       "archive": "jobs.tar",
@@ -118,9 +118,9 @@
         "arel": "^0.35.0"
       },
       "name": "mjolnir",
-      "sha256": "92f2b14f97a09f29d6fca11ad7bc2c968c9d67b0c55ca319e83013fe2e97786c",
+      "sha256": "fa01bea7b0e7cada146f0795b0059012cf16128297c9ccda110b88756335ecf7",
       "size": 53760,
-      "version": "0.4.3"
+      "version": "0.4.4"
     },
     {
       "archive": "multipart.tar",
@@ -170,9 +170,9 @@
       "archive": "websocket.tar",
       "dependencies": {},
       "name": "websocket",
-      "sha256": "ebe69e09502336d62f19f36f94183be7bb95f3b4c49863eb3d228c8e0fb4578a",
-      "size": 36352,
-      "version": "0.2.3"
+      "sha256": "5e8ebb3f189a03a5e50ed5faaf42cd5ec3135e6c7b2c381e102b810499fb95e0",
+      "size": 44544,
+      "version": "0.2.4"
     }
   ],
   "format": 1

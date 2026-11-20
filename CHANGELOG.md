@@ -8,6 +8,12 @@ record. From 1.0.0, releases follow the [1.x compatibility policy](docs/compatib
 
 ### Added
 
+- `equal?(other)` on every value: whether it is the same object, whatever `==` its class defines.
+  Numbers, `nil`, Booleans and Symbols are `equal?` when they hold the same value.
+- A class or module body can set a class variable (`@@cache = {}` beside the `def`s); it runs
+  once where the type is defined. Like a constant, a new `Thread` (and so each `threads: N`
+  gremlin worker) starts with a copy of its value; values that cannot cross a thread, such as a
+  database handle, start as `nil`. Class variables set by methods stay per thread, as before.
 - `facet new graphql <path>` creates a GraphQL API: the schema in `lib/schema.graphql`,
   compiled in with `File.embed`, resolvers bound by `GraphQL::App`, served by gremlin at
   `POST /graphql`, and tests that post queries to the handler without starting a server
@@ -36,6 +42,23 @@ record. From 1.0.0, releases follow the [1.x compatibility policy](docs/compatib
 
 ### Fixed
 
+- A `TCPSocket`, and a connection that `TCPServer.listen` accepts, sends each `write` at once.
+  Writes waited in a buffer until a `flush`, a read on the same socket or `close`, so a client
+  that wrote a request and then waited on another socket deadlocked with its peer.
+- `facet new web` and `facet new graphql` ask for gremlin `^0.5.7`, so a new project gets partial
+  `limits`; the web README's command comments line up.
+- mjolnir 0.4.4: `validate_format` takes a `Regexp` as well as a source String. The README says
+  how to store an empty string, which `cast` turns into `nil`.
+- websocket 0.2.4: `websocket_connect(url)` is a client for `ws://` and `wss://` URLs. `receive`
+  returns `nil` when the peer goes away between messages (a closed tab) instead of raising, and
+  `websocket_origin_allowed?(request)` checks a browser upgrade's `Origin` against its `Host`.
+- gremlin 0.5.7: a `limits` Hash may give only some keys; the rest take
+  `GREMLIN_DEFAULT_LIMITS`, and an unknown key or bad value raises naming it. Before, a partial
+  Hash failed with "Gremlin limits must be positive integers". The README no longer warns that
+  limits cut WebSockets off (`websocket_accept` clears the deadline).
+- cookies 0.2.6: `Csrf.call` also takes the token from a `csrf_token` form field (urlencoded
+  or multipart), the hidden field div's docs show, instead of only an `x-csrf-token` header.
+  `CookieSession.call` passes a `nil` response (a WebSocket handler) through instead of failing.
 - `IO.poll(readables, writables, timeout_ms)` restarted its whole timeout after running a
   trapped signal's handler, so a signal could stretch the wait well past `timeout_ms`. It
   now waits only for the time that is left.

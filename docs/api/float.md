@@ -89,6 +89,10 @@ The receiver; numbers are always immutable.
 
 The receiver.
 
+### `equal?(other) -> Bool`
+
+Whether `other` is a `Float` with the same value; `NaN` is `equal?` to itself.
+
 ### `fdiv(other) -> Float`
 
 The same as `/`.

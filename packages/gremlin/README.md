@@ -44,15 +44,19 @@ limits = {"line_bytes": 8192, "header_bytes": 32768, "header_count": 100,
 gremlin_serve(8080, handler, 1, nil, nil, limits)
 ```
 
-All six values must be positive integers. Omitting limits preserves existing
-behavior. Each limited connection receives a generated `request_id` in its
+Each value must be a positive integer. Leave out any key to take its default
+from `GREMLIN_DEFAULT_LIMITS` (8192, 32768, 100, 1 MiB, 1024 connections and
+30 seconds); an unknown key raises `ArgumentError` naming it. Without
+`limits`, nothing is bounded: request lines, headers and bodies may be any
+size, connections are unlimited and none times out. Each limited connection receives a generated `request_id` in its
 request hash. Parser failures return JSON errors and `X-Request-ID`; deadline
 and capacity failures close the socket and log an event. Accept batches are
 bounded so busy listeners yield back to existing connections. Deadline polling
 continues even with no socket activity. These are I/O deadlines from accept,
 not preemption of synchronous handlers; stalled response writes also expire.
-Long-lived protocols such as WebSockets should not use this policy without
-accounting for the connection lifetime limit.
+A WebSocket is not cut off by `timeout_seconds`: `websocket_accept` clears the
+connection's deadline once the upgrade is answered. It still counts toward
+`connections` for as long as it is open.
 
 ## Binding to one address
 

@@ -173,6 +173,10 @@ Whether there are no entries.
 {}.empty?()   # => true
 ```
 
+### `equal?(other) -> Bool`
+
+Whether `other` is this same Hash object; `==` compares the entries.
+
 ### `except(key, ...) -> Hash`
 
 The entries without the given keys, up to six.

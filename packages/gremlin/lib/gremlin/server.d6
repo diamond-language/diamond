@@ -453,13 +453,37 @@ end
 # supplied; skipping `threads` while naming `tick_interval`/`on_tick`
 # leaves a gap and fails to compile ("missing argument"), not a bug in
 # this function itself.
+## The limits `gremlin_serve` uses for any key a `limits` Hash leaves out.
+GREMLIN_DEFAULT_LIMITS = {"line_bytes": 8192, "header_bytes": 32768, "header_count": 100,
+  "body_bytes": 1048576, "connections": 1024, "timeout_seconds": 30}
+
+# `limits` with every key present: the given values, checked, over the defaults. An
+# unknown key or a value that is not a positive Int raises, naming the key.
+def gremlin_complete_limits(limits)
+  complete = {}
+  GREMLIN_DEFAULT_LIMITS.each() do |key, value|
+    complete[key] = value
+  end
+  limits.each() do |key, value|
+    name = key.to_s()
+    unless GREMLIN_DEFAULT_LIMITS.has_key?(name)
+      raise ArgumentError.new("unknown Gremlin limit #{name.inspect()} (known: #{GREMLIN_DEFAULT_LIMITS.keys().join(", ")})")
+    end
+    unless value is Int && value >= 1
+      raise ArgumentError.new("Gremlin limit #{name.inspect()} must be a positive integer, got #{value.inspect()}")
+    end
+    complete[name] = value
+  end
+  complete
+end
+
 ## Serves HTTP on `port`, handling each connection in its own fiber. `handler` takes
 ## `(request, context)` and returns `[status, headers, body]`; `context` is private to
 ## its worker. Optional arguments:
 ##
 ## - `threads`: worker threads, each its own VM (so `handler` must not capture variables)
 ## - `tick_interval`, `on_tick`: a callback every `tick_interval` seconds in each worker
-## - `limits`: `{"line_bytes", "header_bytes", "header_count", "body_bytes", "connections", "timeout_seconds"}` for bounded parsing and per-worker connection limits
+## - `limits`: any of `{"line_bytes", "header_bytes", "header_count", "body_bytes", "connections", "timeout_seconds"}` for bounded parsing and per-worker connection limits; keys left out take `GREMLIN_DEFAULT_LIMITS`
 ## - `return_after_shutdown`: return after draining instead of exiting (one worker)
 ## - `shutdown_token`, `shutdown_timeout`: drain when a `cancellation` token is cancelled, then return
 ## - `host`: listen on one address only, such as `"127.0.0.1"`
@@ -475,12 +499,7 @@ def gremlin_serve(port, handler: Callable[2], threads = 1, tick_interval = nil, 
   end
   GremlinShutdown.configure(shutdown_token, shutdown_timeout)
   GremlinShutdown.return_after_shutdown(return_after_shutdown || shutdown_token != nil)
-  if limits != nil
-    ["line_bytes", "header_bytes", "header_count", "body_bytes", "connections", "timeout_seconds"].each() do |key|
-      unless limits[key] is Int then raise ArgumentError.new("Gremlin limits must be positive integers") end
-      if limits[key] < 1 then raise ArgumentError.new("Gremlin limits must be positive integers") end
-    end
-  end
+  limits = gremlin_complete_limits(limits) if limits != nil
   if threads < 1
     raise ArgumentError.new("gremlin_serve threads must be at least 1")
   end

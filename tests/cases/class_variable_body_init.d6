@@ -1,0 +1,42 @@
+# A class or module body can set a class variable. A Thread starts with a copy
+# of the ones a body set, like constants, and keeps its own from then on; one
+# set only at run time (Config.mark) stays the parent's and is nil there.
+class Counter
+  @@count = 10
+  @@seen = {}
+  def self.bump()
+    @@count += 1
+    @@seen["last"] = @@count
+    @@count
+  end
+  def self.seen() = @@seen
+end
+
+class Other
+  @@count = 100
+  def self.count() = @@count
+end
+
+module Registry
+  @@names = ["core"]
+  def self.add(name) = @@names.push(name)
+  def self.names() = @@names
+end
+
+class Config
+  def self.mark()
+    @@marked = true
+  end
+  def self.marked() = @@marked
+end
+
+def in_thread()
+  Registry.add("thread")
+  [Counter.bump(), Registry.names(), Config.marked()]
+end
+
+Config.mark()
+Counter.bump()
+Counter.bump()
+from_thread = Thread.new(in_thread).join()
+[Counter.seen(), Other.count(), Registry.names(), Config.marked(), from_thread]

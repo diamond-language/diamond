@@ -243,6 +243,10 @@ Whether there are no elements.
 [].empty?()   # => true
 ```
 
+### `equal?(other) -> Bool`
+
+Whether `other` is this same Array object; `==` compares the elements.
+
 ### `fill(value) -> Array`
 
 Sets every element of the receiver to `value` and returns it.

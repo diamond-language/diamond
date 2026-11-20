@@ -3139,6 +3139,9 @@ class Parser
     while !@failed && @current.kind() != :end
       if @current.kind() == :def
         self.compile_method()
+      elsif @current.kind() == :class_variable && self.assignment_ahead?()
+        # `@@count = 0` in the body runs where the class is defined.
+        self.compile_assignment()
       elsif @current.kind() == :identifier && self.assignment_ahead?()
         self.compile_module_constant(name)
       elsif attribute_keyword?(@current.kind())
@@ -3874,6 +3877,9 @@ class Parser
           self.compile_module_include()
         elsif @current.kind() == :alias_method
           self.compile_alias_method()
+        elsif @current.kind() == :class_variable && self.assignment_ahead?()
+          # `@@count = 0` in the body runs where the module is defined.
+          self.compile_assignment()
         elsif self.assignment_ahead?()
           self.compile_module_constant(name)
         else
