@@ -44,6 +44,8 @@ record. From 1.0.0, releases follow the [1.x compatibility policy](docs/compatib
 
 ### Fixed
 
+- arel 0.35.6: the README shows aggregates (`Arel.sum`, `count`, ...) with `group`; they were
+  only in the API reference.
 - active_record 0.21.4: `Repository#create` (and `Model.create`) return the new row's id, as the
   README's quick start always said; they returned the affected row count, 1, which looked right
   only for the first row of a table.

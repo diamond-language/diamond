@@ -58,6 +58,31 @@ Arel.update(people).set({"age": 37}).where(people.column("name").eq("Ada")).exec
 Arel.delete_from(people).where(people.column("age").lt(18)).execute(db)
 ```
 
+## Totals and grouping
+
+`Arel.count`, `count_distinct`, `sum`, `avg`, `min` and `max` build aggregate functions, and
+`Arel.as` names a result column. Combine them with `group` (and `having`) for per-group totals:
+
+```ruby
+require_cut "arel"
+
+db = SQLite3.open(":memory:")
+db.execute("CREATE TABLE spending (id INTEGER PRIMARY KEY, category TEXT, cents INTEGER)")
+db.execute("INSERT INTO spending (category, cents) VALUES ('food', 450), ('food', 1200), ('rent', 90000)")
+
+spending = Arel.table("spending")
+total = Arel.sum(spending.column("cents"))
+Arel.from(spending)
+  .project([spending.column("category"), Arel.as(total, "total"), Arel.as(Arel.count(spending.column("id")), "rows")])
+  .group([spending.column("category")])
+  .order(Arel.desc(total))
+  .to_a(db)
+# => [{"category": "rent", "total": 90000, "rows": 1}, {"category": "food", "total": 1650, "rows": 2}]
+```
+
+`Arel.function(name, arguments)` calls any other SQL function, and `Arel.sql(fragment, params)`
+writes a fragment as is (never from user input).
+
 Most applications put a repository on top of this; see [`active_record`](https://github.com/diamond-language/d6/tree/main/packages/active_record).
 
 ## Notes
