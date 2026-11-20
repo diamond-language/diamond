@@ -114,17 +114,34 @@ end
 
 # Reads exactly one frame's raw header + payload off `conn`, applying
 # the mask if the frame declared one -- but, unlike websocket_read_frame
-# below, does not require a mask to be present. Split out from
-# websocket_read_frame so this package's own test suite can decode a
-# *server*-written (therefore unmasked) frame too, such as the Pong this
-# package writes back in reply to a Ping -- something no code inside
-# this package ever legitimately needs to do outside of testing, since a
-# real server only ever reads client frames. Blocks (via `conn`'s own
-# Fiber-yield, never the OS thread) until the full frame has arrived or
-# the connection goes away mid-frame (IOError, from websocket_read_exact
-# above).
-def websocket_read_frame_bytes(conn)
-  header = websocket_read_exact(conn, 2)
+# below, does not require a mask to be present, so it decodes a
+# server-written (unmasked) frame too. WebSocketConnection itself reads
+# through websocket_read_frame_start/_rest and checks masking per side
+# (#read_peer_frame). Blocks (via `conn`'s own Fiber-yield, never the OS
+# thread) until the full frame has arrived or the connection goes away
+# mid-frame (IOError, from websocket_read_exact above).
+def websocket_read_frame_bytes(conn) = websocket_read_frame_rest(conn, websocket_read_exact(conn, 2))
+
+# The two header bytes that start the next frame, or nil when the connection
+# ended (EOF, or a reset that makes the read raise IOError) before a frame
+# began: a peer that vanished without a Close frame, such as a closed browser
+# tab. A connection that ends partway through a header still raises.
+def websocket_read_frame_start(conn)
+  header = nil
+  begin
+    header = conn.read(2)
+  rescue error: IOError
+    return nil
+  end
+  return nil if header == nil || header.length() == 0
+  if header.length() != 2
+    raise IOError.new("WebSocket connection closed mid-frame")
+  end
+  header
+end
+
+# The rest of a frame whose two header bytes have been read.
+def websocket_read_frame_rest(conn, header)
   byte0 = header[0].ord()
   byte1 = header[1].ord()
   fin = (byte0 & 128) != 0

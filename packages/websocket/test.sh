@@ -215,17 +215,9 @@ check(oversized_rejected, "expected an oversized frame length to be rejected")
 # never surfaced from #receive itself.
 conn = FakeConn.new(websocket_encode_frame(websocket_opcode_ping(), "ping-payload", true))
 ws = WebSocketConnection.new(conn)
-ping_answered = false
-begin
-  ws.receive()
-rescue error: IOError
-  # #receive loops back for the *next* frame after answering the Ping,
-  # and the fake input is now exhausted -- exactly the short-read
-  # IOError websocket_read_exact raises, not a bug in the Ping handling
-  # itself. What matters here is what got written before this point.
-  ping_answered = true
-end
-check(ping_answered, "expected #receive to keep looping (and hit end of fake input) after answering a Ping")
+# #receive loops back for the *next* frame after answering the Ping; the fake
+# input is then exhausted, which reads as the peer going away (nil).
+check(ws.receive() == nil, "expected #receive to keep looping after a Ping, then end with the input")
 pong_frame = websocket_read_frame_bytes(FakeConn.new(conn.written()))
 check(pong_frame["opcode"] == websocket_opcode_pong(), "expected a Pong reply to a Ping")
 check(pong_frame["masked"] == false, "a server-sent frame must never be masked")
@@ -381,6 +373,56 @@ ws.force_close()
 delivered = websocket_try_send_text(ws, "too late")
 check(!delivered, "expected a send to an already-closed connection to fail immediately")
 
+# A peer that goes away between messages, without a Close frame, ends
+# #receive with nil and closes the connection; one that stops mid-frame is
+# still an error.
+conn = FakeConn.new("")
+ws = WebSocketConnection.new(conn)
+check(ws.receive() == nil, "expected nil when the peer vanishes between frames")
+check(ws.closed?() && conn.closed?(), "expected a vanished peer to close the connection")
+truncated = websocket_encode_frame(websocket_opcode_text(), "cut short", true).slice(0, 5)
+truncated_rejected = false
+begin
+  WebSocketConnection.new(FakeConn.new(truncated)).receive()
+rescue error: IOError
+  truncated_rejected = true
+end
+check(truncated_rejected, "expected a frame cut off mid-way to raise")
+
+# Client mode masks what it sends, reads the server's unmasked frames, and
+# refuses a masked one.
+conn = FakeConn.new(websocket_encode_frame(websocket_opcode_text(), "from server"))
+client = WebSocketConnection.new(conn, websocket_max_message_size(), client: true)
+check(client.receive()["data"] == "from server", "expected a client to read an unmasked frame")
+client.send_text("from client")
+sent = websocket_read_frame(FakeConn.new(conn.written()))
+check(sent["payload"] == "from client", "expected a client frame to be masked and decodable")
+masked_rejected = false
+begin
+  WebSocketConnection.new(FakeConn.new(websocket_encode_frame(websocket_opcode_text(), "x", true)),
+    websocket_max_message_size(), client: true).receive()
+rescue error: IOError
+  masked_rejected = true
+end
+check(masked_rejected, "expected a client to refuse a masked server frame")
+
+# Origin checks: same host by default, an explicit list when given, and no
+# Origin (not a browser) allowed.
+same = {"headers": {"origin": "https://chat.test:8443", "host": "chat.test:8443"}}
+check(websocket_origin_allowed?(same), "expected a same-host Origin to pass")
+check(!websocket_origin_allowed?({"headers": {"origin": "https://evil.test", "host": "chat.test"}}), "expected a foreign Origin to fail")
+check(websocket_origin_allowed?({"headers": {"host": "chat.test"}}), "expected a request without Origin to pass")
+check(websocket_origin_allowed?({"headers": {"origin": "https://app.test"}}, ["https://app.test"]), "expected a listed Origin to pass")
+check(!websocket_origin_allowed?(same, ["https://app.test"]), "expected an unlisted Origin to fail")
+check(websocket_split_url("ws://[::1]:9000/x?y") == [false, "::1", 9000, "[::1]:9000", "/x?y"], "expected an IPv6 URL to split")
+bad_url = false
+begin
+  websocket_split_url("http://example.com/")
+rescue error: ArgumentError
+  bad_url = true
+end
+check(bad_url, "expected a non-ws URL to be refused")
+
 puts("all unit checks passed")
 DIEOF
 )" >"$unit_out" 2>&1; then
@@ -396,10 +438,6 @@ echo "websocket unit checks passed"
 # socket by Node's own standards-compliant global WebSocket client --
 # the one thing part 1 above can't prove, since every check there is
 # this package talking to itself.
-if ! command -v node >/dev/null 2>&1; then
-    echo "node not found on PATH -- skipping live interop test" >&2
-    exit 0
-fi
 
 wait_for_port() {
     local port="$1"
@@ -424,9 +462,12 @@ def run()
       loop do
         message = ws.receive()
         if message == nil
+          context["ended"] = (context["ended"] || 0) + 1
           break
         end
-        if message["opcode"] == websocket_opcode_text()
+        if message["data"] == "ended?"
+          ws.send_text(context["ended"].to_s())
+        elsif message["opcode"] == websocket_opcode_text()
           ws.send_text(message["data"])
         else
           ws.send_binary(message["data"])
@@ -445,6 +486,57 @@ timeout 10 "$diamond" "$out.d6" >"$out" 2>&1 &
 pid=$!
 wait_for_port "$port"
 { exec 3<&- 3>&-; } 2>/dev/null || true
+
+# d6's own client: a round trip and a clean close, then a client that drops
+# its socket without a Close frame. The server's receive must end both with
+# nil (it counts them) rather than raising on the second.
+client_out="$(mktemp)"
+cat >"$client_out.d6" <<DIEOF
+require "$package_root/lib/websocket"
+ws = websocket_connect("ws://127.0.0.1:$port/echo", {"Origin": "http://127.0.0.1:$port"})
+ws.send_text("hello from d6")
+echo = ws.receive()
+raise "bad echo #{echo}" unless echo["data"] == "hello from d6" && echo["opcode"] == websocket_opcode_text()
+ws.close()
+dropped = websocket_connect("ws://127.0.0.1:$port/echo")
+dropped.send_text("going away")
+dropped.receive()
+dropped.force_close()
+ended = ""
+attempts = 0
+while ended != "2" && attempts < 100
+  probe = websocket_connect("ws://127.0.0.1:$port/echo")
+  probe.send_text("ended?")
+  ended = probe.receive()["data"]
+  probe.force_close()
+  attempts += 1
+  Channel.new(1).wait_readable([], Time.monotonic() + 0.02) if ended != "2"
+end
+raise "server saw #{ended} ended connections, expected 2" unless ended == "2"
+refused = false
+begin
+  websocket_connect("ws://127.0.0.1:$port/missing")
+rescue error: IOError
+  refused = true
+end
+raise "expected a 404 to refuse the upgrade" unless refused
+puts("d6 client round trip OK")
+DIEOF
+if ! timeout 20 "$diamond" "$client_out.d6" >"$client_out" 2>&1; then
+    cat "$client_out" "$out"
+    kill "$pid" 2>/dev/null || true
+    exit 1
+fi
+cat "$client_out"
+rm -f "$client_out" "$client_out.d6"
+
+if ! command -v node >/dev/null 2>&1; then
+    echo "node not found on PATH -- skipping live interop test" >&2
+    kill "$pid" 2>/dev/null || true
+    wait "$pid" 2>/dev/null || true
+    rm -f "$out" "$out.d6"
+    exit 0
+fi
 
 node_out="$(mktemp)"
 node -e "

@@ -45,6 +45,9 @@ record. From 1.0.0, releases follow the [1.x compatibility policy](docs/compatib
 - A `TCPSocket`, and a connection that `TCPServer.listen` accepts, sends each `write` at once.
   Writes waited in a buffer until a `flush`, a read on the same socket or `close`, so a client
   that wrote a request and then waited on another socket deadlocked with its peer.
+- websocket 0.2.4: `websocket_connect(url)` is a client for `ws://` and `wss://` URLs. `receive`
+  returns `nil` when the peer goes away between messages (a closed tab) instead of raising, and
+  `websocket_origin_allowed?(request)` checks a browser upgrade's `Origin` against its `Host`.
 - gremlin 0.5.7: a `limits` Hash may give only some keys; the rest take
   `GREMLIN_DEFAULT_LIMITS`, and an unknown key or bad value raises naming it. Before, a partial
   Hash failed with "Gremlin limits must be positive integers". The README no longer warns that

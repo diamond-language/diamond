@@ -118,3 +118,110 @@ def websocket_accept(conn, request)
   WebSocketConnection.new(conn)
 end
 
+
+## Whether a browser may open this WebSocket: the request's `Origin` must be one of
+## `allowed` (origins such as `"https://example.com"`) or, without `allowed`, name the same
+## host as its `Host` header over `http://` or `https://`. A WebSocket upgrade carries
+## cookies but no CSRF token, so check this before `websocket_accept`. A request with no
+## `Origin` (not from a browser) is allowed.
+def websocket_origin_allowed?(request, allowed = nil)
+  origin = request["headers"]["origin"]
+  return true if origin == nil
+  return allowed.include?(origin) if allowed != nil
+  host = request["headers"]["host"]
+  host != nil && (origin == "http://#{host}" || origin == "https://#{host}")
+end
+
+# Splits a ws:// or wss:// URL into [tls, host, port, authority, path]. The
+# authority (host, and port when given) is what the Host header carries.
+def websocket_split_url(url)
+  tls = false
+  rest = nil
+  if url.start_with?("ws://")
+    rest = url.slice(5, url.length() - 5)
+  elsif url.start_with?("wss://")
+    tls = true
+    rest = url.slice(6, url.length() - 6)
+  else
+    raise ArgumentError.new("WebSocket URL must start with ws:// or wss://: #{url}")
+  end
+  slash = rest.index_of("/")
+  authority = if slash == nil then rest else rest.slice(0, slash) end
+  path = if slash == nil then "/" else rest.slice(slash, rest.length() - slash) end
+  host = authority
+  port_text = nil
+  if authority.start_with?("[")
+    close = authority.index_of("]")
+    raise ArgumentError.new("WebSocket URL has an unterminated IPv6 address: #{url}") if close == nil
+    host = authority.slice(1, close - 1)
+    after = authority.slice(close + 1, authority.length() - close - 1)
+    port_text = after.slice(1, after.length() - 1) if after.start_with?(":")
+  else
+    colon = authority.index_of(":")
+    if colon != nil
+      host = authority.slice(0, colon)
+      port_text = authority.slice(colon + 1, authority.length() - colon - 1)
+    end
+  end
+  raise ArgumentError.new("WebSocket URL has no host: #{url}") if host.empty?()
+  port = if tls then 443 else 80 end
+  if port_text != nil
+    port = port_text.to_i()
+    raise ArgumentError.new("WebSocket URL has a bad port: #{url}") if port < 1 || port > 65535 || port.to_s() != port_text
+  end
+  [tls, host, port, authority, path]
+end
+
+## Connects to a `ws://` or `wss://` URL and returns a client `WebSocketConnection`
+## (`send_text`, `receive`, `close` as on the server side). `headers` adds request
+## headers, such as `{"Origin": "https://example.com"}` or a `Cookie`; `options` goes to
+## `TCPSocket.connect` or `TLSSocket.connect` (timeouts, CA files). Raises `IOError` if the
+## server does not accept the upgrade.
+def websocket_connect(url, headers = {}, options = nil)
+  [tls, host, port, authority, path] = websocket_split_url(url)
+  socket = if tls then TLSSocket.connect(host, port, options) else TCPSocket.connect(host, port, options) end
+  key = Base64.encode(SecureRandom.bytes(16))
+  request = StringBuilder.new()
+  request.append("GET #{path} HTTP/1.1\r\nHost: #{authority}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n")
+  request.append("Sec-WebSocket-Key: #{key}\r\nSec-WebSocket-Version: 13\r\n")
+  headers.each() do |name, value|
+    request.append("#{name}: #{value}\r\n")
+  end
+  request.append("\r\n")
+  begin
+    socket.write(request.to_s())
+    socket.flush() if socket is File
+    # The response head, a byte at a time so no frame bytes after it are taken.
+    head = StringBuilder.new()
+    length = 0
+    tail = ""
+    while tail != "\r\n\r\n"
+      byte = socket.read(1)
+      raise IOError.new("WebSocket server closed the connection during the handshake") if byte == nil || byte.empty?()
+      length += 1
+      raise IOError.new("WebSocket handshake response head is over 16384 bytes") if length > 16384
+      head.append(byte)
+      tail = (tail + byte)
+      tail = tail.slice(tail.length() - 4, 4) if tail.length() > 4
+    end
+    lines = head.to_s().split("\r\n")
+    status = lines[0]
+    unless status.start_with?("HTTP/1.1 101")
+      raise IOError.new("WebSocket server refused the upgrade: #{status}")
+    end
+    accept = nil
+    lines.each() do |line|
+      colon = line.index_of(":")
+      if colon != nil && line.slice(0, colon).strip().downcase() == "sec-websocket-accept"
+        accept = line.slice(colon + 1, line.length() - colon - 1).strip()
+      end
+    end
+    unless accept == websocket_accept_key(key)
+      raise IOError.new("WebSocket server answered with a wrong Sec-WebSocket-Accept")
+    end
+  rescue error: IOError
+    socket.close()
+    raise error
+  end
+  WebSocketConnection.new(socket, websocket_max_message_size(), client: true)
+end
