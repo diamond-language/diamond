@@ -48,6 +48,8 @@ posted = http_post("http://127.0.0.1:8080/items", "name=widget",
 ```
 
 `http_request(method, url, headers = {}, body = "", options = {})` is the general form.
+Its `options` include timeouts, `follow_redirects`, and `max_body_bytes`, the largest
+response body it will read (25 MiB by default; a longer one raises `IOError`).
 `https://` URLs are supported. To fetch a URL a user supplied, check it first with the
 [`network_safety`](https://github.com/diamond-language/d6/tree/main/packages/network_safety) cut.
 
