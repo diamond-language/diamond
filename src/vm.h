@@ -2100,10 +2100,10 @@ struct DiamondVm {
      * DIAMOND_MAX_FIELDS + slot], slot assigned exactly as DiamondClass's
      * own class_variables[]/class_variable_count name table does at
      * compile time -- see that field's own comment. Per-VM, not
-     * per-DiamondProgram: every spawned Thread's fresh diamond_vm_init
-     * gets its own nullptr copy, so `threads: N` gives each worker its
-     * own independent class variables, consistent with every other piece
-     * of state a spawned Thread never shares (see docs/threads.md).
+     * per-DiamondProgram: a spawned Thread starts with deep copies of the
+     * parent's (copy_namespace_constants_into_vm) and changes only its own,
+     * so `threads: N` gives each worker independent class variables
+     * (see docs/threads.md).
      * A pointer, allocated lazily (get_cvar_helper/set_cvar_helper,
      * src/vm.c) on first actual GET_CVAR/SET_CVAR rather than embedded
      * inline here, deliberately: DIAMOND_MAX_CLASSES * DIAMOND_MAX_FIELDS

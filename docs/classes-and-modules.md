@@ -431,7 +431,9 @@ Counter.count()  # => 2
 `def self.` method, and `initialize` call in a class — a plain per-class
 slot, not a per-instance field. Reading one that's never been assigned
 gives `nil`, the same default an instance field gets; there's no
-separate declaration step. Two different classes' own `@@x` never
+separate declaration step. The class body can set one (`@@count = 0`
+beside the `def`s), which runs once where the class is defined, like a
+constant. Two different classes' own `@@x` never
 collide, even with the same name — each class gets its own slot.
 `@@cvar[index] = value` and `@ivar[index] = value` (indexed assignment
 into the variable itself, as opposed to reassigning the whole variable)
@@ -447,9 +449,10 @@ variables (each module has its own). `@@cvar` outside any class or module
 (a bare top-level `def`) is a compile error — there's no implicit global
 scope it could fall back to. That's also why a `threads: N` server (see
 `packages/gremlin/README.md`) can't use a class variable to share state
-across `Thread.new`-spawned workers: each spawned thread gets its own
-completely independent copy of every class variable, the same way it
-gets its own heap and its own everything else (see `docs/threads.md`) —
+across `Thread.new`-spawned workers: each spawned thread starts with its
+own copy of every class variable already set, and changes only that copy,
+the same way it gets its own heap and its own everything else (see
+`docs/threads.md`) —
 consistent, not a special case, but worth knowing going in if the goal
 is one counter shared across all workers rather than one counter per
 worker.
