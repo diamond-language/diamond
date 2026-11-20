@@ -5,7 +5,15 @@ The corrected A record is **142.93.192.149**. External health and catalog
 requests succeeded. Since 2026-09-25 nginx terminates TLS with certbot
 certificates (see "Proxy and certificates" below); Caddy was retired.
 
-Runtime revision: `8fc5a2d5c239ebc84ba87b9ea1f6d4b24b4ee758` (tag v1.1.0 on `main`, deployed
+Runtime revision: `6372c57446c836bf32c5b3eb34ca8de6263c8def` (tag v1.2.0 on `main`, deployed
+2026-11-20 UTC (17:19) with `tools/deploy_registry.sh --revision=v1.2.0` after its dry run; the
+upgrade check reported REQUIRED because the gremlin, http and mjolnir code the registry loads
+changed, plus 32 runtime files). Health ok, `DIAMOND_JIT=1` kept, and all 22 public cuts passed
+resolve, digest, load and reinstall; the verified pre-upgrade snapshot is
+`~/diamond-registry-backups/cutbackup-2026-11-20-091539-pre-6372c574`. The cuts that changed for
+1.2.0 were published before the release (credentials 46 and 47, below), so none was published with it.
+
+Previous runtime revision: `8fc5a2d5c239ebc84ba87b9ea1f6d4b24b4ee758` (tag v1.1.0 on `main`, deployed
 2026-11-19 UTC (09:22) with `tools/deploy_registry.sh --revision=v1.1.0` after its dry run; the
 upgrade check reported REQUIRED because 14 runtime files the registry loads changed). Health ok,
 `DIAMOND_JIT=1` kept, and all 20 public cuts passed resolve, digest, load and reinstall; the
