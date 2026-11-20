@@ -12326,6 +12326,16 @@ class Parser
           result = result + 0.chr()
         elsif escape == "e"
           result = result + 27.chr()
+        elsif escape == "a"
+          result = result + 7.chr()
+        elsif escape == "b"
+          result = result + 8.chr()
+        elsif escape == "f"
+          result = result + 12.chr()
+        elsif escape == "v"
+          result = result + 11.chr()
+        elsif escape == "s"
+          result = result + " "
         elsif escape == "x"
           value = 0
           digits = 0
@@ -12354,8 +12364,10 @@ class Parser
             self.fail("invalid \\u escape")
           end
           result = result + self.utf8_escape(digits.to_i(16)) unless @failed
-        elsif escape == "\"" || escape == "\\" || escape == "#"
+        elsif escape == "\"" || escape == "\\" || escape == "#" || escape == "'"
           result = result + escape
+        elsif escape.ord() >= 32 && escape.ord() < 127
+          self.fail("unsupported string escape '\\#{escape}' (write \\\\ for a backslash)")
         else
           self.fail("unsupported string escape")
         end

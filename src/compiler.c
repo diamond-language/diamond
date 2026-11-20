@@ -1560,6 +1560,12 @@ uint16_t add_string_range_mode(Compiler *compiler,size_t start,size_t length,
                 case 't': character = '\t'; break;
                 case '0': character = '\0'; break;
                 case 'e': character = '\x1b'; break;
+                case 'a': character = '\a'; break;
+                case 'b': character = '\b'; break;
+                case 'f': character = '\f'; break;
+                case 'v': character = '\v'; break;
+                case 's': character = ' '; break;
+                case '\'': character = '\''; break;
                 case '"': character = '"'; break;
                 case '\\': character = '\\'; break;
                 case '#': character = '#'; break;
@@ -1599,9 +1605,16 @@ uint16_t add_string_range_mode(Compiler *compiler,size_t start,size_t length,
                     encoded_length=utf8_encode_code_point(value,encoded);
                     break;
                 }
-                default:
-                    fail(compiler, span, "unsupported string escape");
+                default: {
+                    char message[96];
+                    if((unsigned char)character>=0x20&&(unsigned char)character<0x7f)
+                        snprintf(message,sizeof message,
+                            "unsupported string escape '\\%c' (write \\\\ for a backslash)",character);
+                    else
+                        snprintf(message,sizeof message,"unsupported string escape");
+                    fail(compiler,span,message);
                     return 0;
+                }
             }
         }
         if(encoded_length==0) {encoded[0]=character;encoded_length=1;}

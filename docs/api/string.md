@@ -7,8 +7,9 @@ returns a new value and leaves the receiver unchanged. Positions, lengths and
 case conversion work on bytes, so a multi-byte character counts as several
 (`"é".length()` is `2`), and `upcase`/`downcase` change ASCII letters only.
 
-Literals are written `"text"`, with `#{expr}` interpolation and the usual
-backslash escapes. Positions start at `0`; where a method takes an index, a
+Literals are written `"text"`, with `#{expr}` interpolation and backslash
+escapes (`\n`, `\t`, `\f`, `\xHH`, `\u{H...}` and the rest, listed in
+[core syntax](../core-syntax.md)). Positions start at `0`; where a method takes an index, a
 negative one counts from the end.
 
 ## Operators

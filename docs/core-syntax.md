@@ -73,10 +73,19 @@ never run, and the loop evaluates to `nil`. The statement must be an assignment 
 (not `return`, `break`, `next`, a declaration or a block-form `if`/`while`), only one modifier is
 allowed per statement, and `begin ... end while cond` (a body that runs first) is not supported.
 
-Strings are double-quoted, with `#{expression}` interpolation and the
-escapes `\n`, `\r`, `\t`, `\0`, `\e` (escape), `\"`, `\\`, `\#`,
-`\xHH` (one byte), and `\uHHHH` or `\u{H...}` (a Unicode code point,
-stored as UTF-8): `"\x89PNG\r\n"`, `"caf\u00e9"`, `"\u{1F600}"`.
+Strings are double-quoted, with `#{expression}` interpolation. These are the escapes:
+
+| Escape | Byte or text |
+|---|---|
+| `\n`, `\r`, `\t` | newline, carriage return, tab |
+| `\0`, `\a`, `\b`, `\e`, `\f`, `\v` | NUL, bell, backspace, escape, form feed, vertical tab |
+| `\s` | a space |
+| `\"`, `\'`, `\\`, `\#` | the character itself |
+| `\xH`, `\xHH` | one byte, from one or two hex digits |
+| `\uHHHH`, `\u{H...}` | a Unicode code point, stored as UTF-8 |
+
+For example: `"\x89PNG\r\n"`, `"caf\u00e9"`, `"\u{1F600}"`. Any other backslash pair is a
+compile error, so a Windows path needs doubled backslashes: `"C:\\temp"`.
 
 ## Case/when
 
