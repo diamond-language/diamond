@@ -4,9 +4,11 @@ This file records user-visible capability milestones rather than every
 implementation step; the Git history remains the authoritative fine-grained
 record. From 1.0.0, releases follow the [1.x compatibility policy](docs/compatibility.md).
 
-## Unreleased
+## 1.3.0 — 2026-11-20
 
-What a link checker ran short of.
+What a link checker ran short of: heredocs, `URI.parse` and `URI.join`, the `html` cut with
+CSS selectors, HTML and regexp escaping, and `String#index` without quadratic copying. 1.2
+programs run unchanged ([release notes](docs/release-1.3.0.md)).
 
 ### Added
 
