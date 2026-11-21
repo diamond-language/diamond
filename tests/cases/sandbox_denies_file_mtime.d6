@@ -1,0 +1,6 @@
+begin
+  File.mtime("README.md")
+  "escaped"
+rescue error: SandboxError
+  error.message()
+end

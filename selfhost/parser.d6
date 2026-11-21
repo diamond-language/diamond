@@ -12051,6 +12051,15 @@ class Parser
       self.advance_token()
       return self.parse_file_embed_call(method_token)
     end
+    if namespace == "File" && method == "mtime"
+      # FILE_PATH selector 27 gives Float epoch seconds; TIME_AT makes the Time.
+      self.advance_token()
+      seconds = self.parse_file_path_call("File.mtime", 27, false, Type::FLOAT)
+      return 0 if @failed
+      destination = self.allocate_register()
+      self.emit_instruction2(Opcode::TIME_AT, destination, seconds)
+      return destination
+    end
     if namespace == "Dir" && method == "mktmpdir"
       self.advance_token()
       return self.parse_dir_mktmpdir_call()
@@ -12089,7 +12098,7 @@ class Parser
     end
     return self.parse_file_join_call() if method == "join"
     if method != "open"
-      self.fail("unknown File method (expected open/read/write/copy/size/sha256/mode/exist?/file?/" +
+      self.fail("unknown File method (expected open/read/write/copy/size/sha256/mtime/mode/exist?/file?/" +
         "symlink?/delete/rename/publish/sync/join/dirname/basename/extname/absolute?/directory?/expand_path)")
       return 0
     end

@@ -318,7 +318,7 @@ All three are recognized in the compiler the same way `File.open`/
 same name). See [Sandbox mode](sandbox.md) for how `--sandbox` gates
 all three under its `filesystem` capability.
 
-### Files and directories: `File.copy`, `File.size`, `File.sha256`, `File.file?`, `File.symlink?`, `Dir.mkdir`, `Dir.delete`, `Dir.sync`
+### Files and directories: `File.copy`, `File.size`, `File.mtime`, `File.sha256`, `File.file?`, `File.symlink?`, `Dir.mkdir`, `Dir.delete`, `Dir.sync`
 
 <!-- doc-check: skip -->
 ```ruby
@@ -343,6 +343,8 @@ Dir.delete("backup")               # rmdir: an empty directory only
   source must be a regular file.
 - `File.sha256(path)` is the lowercase hex SHA-256 of the file, read in chunks so a large file never has to fit in memory (`Digest.sha256(File.read(path))` gives the same digest).
 - `File.mode(path)` is the permission bits as an `Int` (`File.mode(p) & 0o077 == 0` for a private file).
+- `File.mtime(path)` is when the file was last modified, as a `Time`. Comparing it with an earlier
+  reading is the cheap way to notice a change; `File.sha256` reads the whole file.
 - `File.chmod(path, mode)` sets the permission bits and returns the path. It follows a symlink, and raises `IOError` when the file is missing or not yours.
 - `File.size` reads the size through a symlink and raises `IOError` when the
   path cannot be read. `File.file?` and `File.symlink?` read as `false`, not an

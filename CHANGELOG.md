@@ -10,6 +10,7 @@ record. From 1.0.0, releases follow the [1.x compatibility policy](docs/compatib
 
 - `facet add` takes several names: `facet add toml csv http`.
 - `File.join` takes Arrays of parts, so `File.join(*parts)` and `File.join(root, parts)` work.
+- `File.mtime(path)`: when a file was last modified, as a `Time`.
 
 ### Fixed
 
@@ -19,6 +20,8 @@ record. From 1.0.0, releases follow the [1.x compatibility policy](docs/compatib
   in ternary expression").
 - A spread into another built-in function (`Dir.mkdir_p(*names)`) says built-in functions take
   no spread, instead of "expected expression" at the `*`.
+- docs/sandbox.md lists every function the sandbox denies; `File.read`, `File.write`, `File.size` and
+  others were missing.
 
 ## 1.3.1 — 2026-11-20
 

@@ -1004,6 +1004,16 @@ uint16_t parse_file_call(Compiler *compiler) {
         compiler->known_types[size]=DIAMOND_TYPE_INT;
         return size;
     }
+    if(name_equals(compiler,"mtime",method,false)) {
+        advance_token(compiler);
+        /* FILE_PATH gives Float epoch seconds; TIME_AT makes the Time. */
+        const uint16_t seconds=parse_file_path_unary_call(compiler,DIAMOND_FILE_PATH_MTIME);
+        compiler->known_types[seconds]=DIAMOND_TYPE_FLOAT;
+        const uint16_t dest=allocate_register(compiler);
+        emit_opcode(compiler,DIAMOND_OP_TIME_AT);
+        emit_register(compiler,dest);emit_register(compiler,seconds);
+        return dest;
+    }
     if(name_equals(compiler,"sha256",method,false)) {
         advance_token(compiler);
         const uint16_t digest=parse_file_path_unary_call(compiler,DIAMOND_FILE_PATH_SHA256);
@@ -1040,7 +1050,7 @@ uint16_t parse_file_call(Compiler *compiler) {
         compiler->known_types[written]=DIAMOND_TYPE_INT;
         return written;
     }
-    fail(compiler,method,"unknown File method (expected open/read/write/copy/size/sha256/mode/exist?/file?/"
+    fail(compiler,method,"unknown File method (expected open/read/write/copy/size/sha256/mtime/mode/exist?/file?/"
         "symlink?/delete/rename/publish/sync/join/dirname/basename/extname/absolute?/directory?/"
         "expand_path)");
     return 0;

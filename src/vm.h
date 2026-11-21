@@ -761,6 +761,9 @@ typedef enum {
      * interpreter, or a program `d6 build` made), or nil when the platform cannot say.
      * Both operands are nil. */
     DIAMOND_FILE_PATH_EXECUTABLE,
+    /* File.mtime(path): when the file was last modified, as Float seconds since the epoch;
+     * the compiler turns that into a Time with TIME_AT. Follows a symlink. */
+    DIAMOND_FILE_PATH_MTIME,
 } DiamondFilePathFunction;
 
 typedef enum DiamondMathFunction : uint8_t {

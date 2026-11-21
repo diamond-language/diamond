@@ -963,6 +963,22 @@ DiamondVmStatus outlined_file_path(DiamondVm *vm,const DiamondChunk *chunk,Diamo
             path_result=DIAMOND_BOOL(removed);
             break;
         }
+        case DIAMOND_FILE_PATH_MTIME: {
+            VM_SANDBOX_GUARD("File.mtime", "filesystem");
+            struct stat path_stat;
+            if(stat(path->chars,&path_stat)!=0) {
+                snprintf(vm->error,sizeof vm->error,"cannot read the modification time of '%.*s': %s",
+                    (int)path->length,path->chars,strerror(errno));
+                VM_RETURN(DIAMOND_VM_IO_ERROR);
+            }
+#if defined(__APPLE__)
+            const struct timespec modified=path_stat.st_mtimespec;
+#else
+            const struct timespec modified=path_stat.st_mtim;
+#endif
+            path_result=DIAMOND_FLOAT((double)modified.tv_sec+(double)modified.tv_nsec/1e9);
+            break;
+        }
         case DIAMOND_FILE_PATH_DIRSYNC: {
             VM_SANDBOX_GUARD("Dir.sync", "filesystem");
             const int directory=open(path->chars,O_RDONLY|O_DIRECTORY|O_CLOEXEC);

@@ -159,6 +159,16 @@ Whether `path` is a regular file, or a symlink to one.
 
 The permission bits, such as `0o644`.
 
+### `File.mtime(path) -> Time`
+
+When the file was last modified, as a Time precise to about a microsecond. It follows a
+symlink. A missing or unreadable path raises `IOError`.
+
+<!-- doc-check: skip -->
+```ruby
+File.mtime("site.toml") > File.mtime("public/index.html")   # => true when the config is newer
+```
+
 ### `File.sha256(path) -> String`
 
 The lowercase hex SHA-256 of the file, read in chunks.
