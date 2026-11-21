@@ -153,6 +153,16 @@ for `diamond-language` scoped to `publish:html` (id 49, revoked afterwards). The
 `docs/registry-launch-inventory.json`, and `tools/verify_registry_launch.d6` passed for all 23 public
 cuts. No redeploy: the registry doesn't use html.
 
+markdown 0.1.0 and mustache 0.1.0, two new cuts (#629, gaps from the folio dogfood app: the
+docs-site Markdown renderer as a cut, and Mustache templates rendered at run time), were published
+on 2026-11-21 UTC from main `bcdb9783`, after a verified laptop snapshot
+(`~/diamond-registry-backups/pre-folio-cuts-20261121T070727Z`), with one 30-minute credential for
+`diamond-language` scoped to `publish:markdown,publish:mustache` (id 50, revoked afterwards). The
+published sha256s (markdown `f8e0532e8c706dc577c1ce3d3057349c1ee916342c9d736de4f01c05d36f62e0`,
+mustache `b7419825a206c439f66126123b0ecde9b9a1fe20563e947676eca0b4732fce05`) match
+`docs/registry-launch-inventory.json`, and `tools/verify_registry_launch.d6` passed for all 25
+public cuts. No redeploy: the registry uses neither.
+
 Previously `0e482f26c56854c4c41c6c82d093ad04f6569a21` (v1.0.0-rc4, deployed 2026-11-12 UTC (2026-11-11 Pacific)
 with `tools/deploy_registry.sh --revision=v1.0.0-rc4 --force` after its dry run).
 The fresh snapshot at
