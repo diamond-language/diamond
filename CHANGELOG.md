@@ -13,6 +13,9 @@ record. From 1.0.0, releases follow the [1.x compatibility policy](docs/compatib
 ### Fixed
 
 - The `cli`, `tcp` and `udp` templates' READMEs line up their command comments again.
+- A Ruby brace block (`list.map() { |x| ... }`) is reported as "blocks are written 'do |x| ... end';
+  braces always make a Hash" instead of whatever the parser expected there (often "expected ':'
+  in ternary expression").
 
 ## 1.3.1 — 2026-11-20
 

@@ -1,0 +1,1 @@
+blocks are written 'do |x| ... end'; braces always make a Hash

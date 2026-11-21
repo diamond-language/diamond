@@ -26,6 +26,12 @@ static bool type_member_satisfies(const Compiler *compiler,
                                   DiamondTypeMember expected);
 
 void fail(Compiler *compiler, DiamondSpan span, const char *message) {
+    /* `list.map() { |x| ... }`: whatever the parser expected there, the writer meant a
+     * Ruby brace block, which d6 does not have. */
+    if (!compiler->failed && compiler->current.kind == DIAMOND_TOKEN_LEFT_BRACE &&
+        compiler->previous.kind == DIAMOND_TOKEN_RIGHT_PAREN &&
+        span.start == compiler->current.span.start)
+        message = "blocks are written 'do |x| ... end'; braces always make a Hash";
     if (!compiler->failed) {
         compiler->diagnostic->span = span;
         snprintf(compiler->diagnostic->message,
