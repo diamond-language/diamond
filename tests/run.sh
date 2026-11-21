@@ -44,7 +44,7 @@ run_cases_abs="$(realpath ./build/run_cases)"
 # saying so; a release build prints the bare version. A build from a git
 # checkout other than the clean release tag adds its revision first
 # (tools/version_suffix.sh).
-expected_version="d6 1.3.0"
+expected_version="d6 1.3.1"
 actual="$($diamond --version)"
 debug_note=" (debug build: unoptimized, much slower than \`make release\`)"
 version_part="${actual%"$debug_note"}"

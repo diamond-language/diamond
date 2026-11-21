@@ -4,6 +4,16 @@ This file records user-visible capability milestones rather than every
 implementation step; the Git history remains the authoritative fine-grained
 record. From 1.0.0, releases follow the [1.x compatibility policy](docs/compatibility.md).
 
+## 1.3.1 — 2026-11-20
+
+1.3.1 fixes a memory-safety bug in 1.3.0's heredocs. The language is the same as in 1.3.0
+([release notes](docs/release-1.3.1.md)).
+
+### Fixed
+
+- A syntax error after a heredoc opener on the same line (`x = <<~A $`) made the compiler
+  write past the end of a table before reporting the error. Found by the compile fuzzer.
+
 ## 1.3.0 — 2026-11-20
 
 What a link checker ran short of: heredocs, `URI.parse` and `URI.join`, the `html` cut with
