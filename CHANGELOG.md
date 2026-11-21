@@ -4,6 +4,16 @@ This file records user-visible capability milestones rather than every
 implementation step; the Git history remains the authoritative fine-grained
 record. From 1.0.0, releases follow the [1.x compatibility policy](docs/compatibility.md).
 
+## Unreleased
+
+### Added
+
+- `facet add` takes several names: `facet add toml csv http`.
+
+### Fixed
+
+- The `cli`, `tcp` and `udp` templates' READMEs line up their command comments again.
+
 ## 1.3.1 — 2026-11-20
 
 1.3.1 fixes a memory-safety bug in 1.3.0's heredocs. The language is the same as in 1.3.0

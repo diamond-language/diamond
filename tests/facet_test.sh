@@ -693,6 +693,19 @@ mkdir project21_latest
 [[ "$(cd project21_latest && DIAMOND_PRINT_RESULT=1 "$diamond" Cutfile)" == \
     "{name: myapp, dependencies: {greeter: {registry: https://cuts.example/api, version: ^1.3.0}, logger: {registry: https://cuts.rolld6.codes, version: ^1.0.0}}}" ]]
 
+# facet add takes several names, each added as by its own command; a version,
+# git source or ref describes one cut, so those refuse several names.
+mkdir project21_several
+(cd project21_several && "$facet" init myapp >/dev/null &&
+    "$facet" add greeter logger --registry https://cuts.example/api --dev >/dev/null)
+grep -q '"greeter": {"registry": "https://cuts.example/api", "version": "^1.3.0"}' project21_several/Cutfile.dev
+grep -q '"logger": {"registry": "https://cuts.example/api"' project21_several/Cutfile.dev
+if several_output="$(cd project21_several && "$facet" add a b --version 1.0.0 2>&1)"; then
+    echo "facet add took several names with --version" >&2
+    exit 1
+fi
+grep -q "describe one cut" <<<"$several_output"
+
 # facet install re-resolves when Cutfile asks for something Cutfile.lock does not
 # hold, keeping locked versions that still fit: logger is added, greeter stays at
 # 1.2.3 though 1.3.0 exists. A constraint the lock no longer meets moves it.
