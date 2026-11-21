@@ -1,0 +1,245 @@
+require "../lib/html"
+require "../../../lib/minitest"
+
+# The markup the parser produces for some input: a quick way to check the tree.
+def tree(text: String) -> String = HTML.parse(text).to_html()
+
+def texts(doc: HTML::Document, selector: String) -> Array
+  doc.select(selector).map() do |element| element.text() end
+end
+
+def names(elements: Array) -> Array
+  elements.map() do |element|
+    element.id() == nil ? element.name() : "#{element.name()}##{element.id()}"
+  end
+end
+
+def run_tests()
+  def test_attributes()
+    doc = HTML.parse("<A HREF=\"/a\" Title='t &amp; u' data-x=bare checked id=one id=two>x</a>")
+    link = doc.at("a")
+    Minitest.assert_equal("a", link.name())
+    Minitest.assert_equal({"href": "/a", "title": "t & u", "data-x": "bare", "checked": "", "id": "one"}, link.attributes())
+    Minitest.assert_equal("/a", link["HREF"])
+    Minitest.assert(link.has_attribute?("checked"))
+    Minitest.assert_nil(link["missing"])
+  end
+
+  def test_attribute_edges()
+    Minitest.assert_equal("<p a=\"1/b=2\">x</p>", tree("<p a=1/b=2>x</p>"))
+    Minitest.assert_equal("<p a=\"x y\" b=\"\">z</p>", tree("<p a = \"x y\" b=>z</p>"))
+    Minitest.assert_equal("<a href=\"?a=1&amp;copy=2\"></a>", tree("<a href=\"?a=1&copy=2\"></a>"))
+  end
+
+  def test_character_references()
+    doc = HTML.parse("<p>caf&eacute; &copy; &#233;&#xE9; &lt;tag&gt; a&b &amp &#150; &bogus; &Omega;&sigmaf;</p>")
+    Minitest.assert_equal("café © éé <tag> a&b & – &bogus; Ως", doc.at("p").text())
+    Minitest.assert_equal("é", HTML.decode("&eacute;"))
+    Minitest.assert_equal("\u{FFFD}", HTML.decode("&#0;"))
+    Minitest.assert_equal("\u{FFFD}", HTML.decode("&#xD800;"))
+  end
+
+  def test_comments_and_doctype()
+    doc = HTML.parse("<!DOCTYPE html><!-- one --><!----><!--><?xml x?><p>a</p><!-- open")
+    Minitest.assert_equal("html", doc.doctype().content())
+    comments = doc.children().select() do |node| node is HTML::Comment end
+    Minitest.assert_equal([" one ", "", "", "?xml x?", " open"], comments.map() do |c| c.content() end)
+    Minitest.assert_equal("p", doc.root().name())
+  end
+
+  def test_stray_markup()
+    Minitest.assert_equal("a &lt; b<p>c</p>", tree("a < b<p>c</p>"))
+    Minitest.assert_equal("<p>x</p>", tree("<p>x</></p>"))
+    Minitest.assert_equal("<p>x<!-- 1 --></p>", tree("<p>x</ 1 ></p>"))
+    Minitest.assert_equal("<div>a</div>", tree("<div>a</span></div>"))
+  end
+
+  def test_raw_text()
+    doc = HTML.parse("<script>if (a < b && c) { x('</div>') }</script><style>p > a { }</style><p>after</p>")
+    Minitest.assert_equal("if (a < b && c) { x('</div>') }", doc.at("script").text())
+    Minitest.assert_equal("p > a { }", doc.at("style").text())
+    Minitest.assert_equal("after", doc.at("p").text())
+    Minitest.assert_equal("<script>a<b</script>", tree("<SCRIPT>a<b</Script >"))
+    Minitest.assert_equal("x < y", HTML.parse("<script>x < y").at("script").text())
+  end
+
+  def test_escapable_raw_text()
+    doc = HTML.parse("<textarea>\n<b>&amp;</b></textarea><title>A &amp; <i>B</i></title>")
+    Minitest.assert_equal("<b>&</b>", doc.at("textarea").text())
+    Minitest.assert_equal("A & <i>B</i>", doc.title())
+    Minitest.assert_equal("<pre>x\n</pre>", tree("<pre>\nx\n</pre>"))
+  end
+
+  def test_void_and_self_closing()
+    Minitest.assert_equal("<p>a<br>b<img src=\"x\">c</p>", tree("<p>a<br/>b<img src=x>c</p>"))
+    Minitest.assert_equal("<div><span>x</span></div>", tree("<div/><span/>x"))
+    Minitest.assert_equal("<svg><path d=\"M0\"></path><circle></circle></svg><p></p>",
+      tree("<svg><path d=M0 /><circle/></svg><p>"))
+    Minitest.assert_equal("<p>a<br>b</p>", tree("<p>a</br>b"))
+  end
+
+  def test_implied_end_tags()
+    Minitest.assert_equal("<p>one</p><p>two</p><div>three</div>", tree("<p>one<p>two<div>three</div>"))
+    Minitest.assert_equal("<ul><li>a</li><li>b<ul><li>c</li></ul></li></ul>", tree("<ul><li>a<li>b<ul><li>c</ul></ul>"))
+    Minitest.assert_equal("<dl><dt>t</dt><dd>d</dd><dt>u</dt></dl>", tree("<dl><dt>t<dd>d<dt>u</dl>"))
+    Minitest.assert_equal("<select><option>a</option><optgroup><option>b</option></optgroup><optgroup></optgroup></select>",
+      tree("<select><option>a<optgroup><option>b<optgroup></select>"))
+    Minitest.assert_equal("<h1>a</h1><h2>b</h2>", tree("<h1>a<h2>b</h2>"))
+    Minitest.assert_equal("<a>1</a><a>2</a>", tree("<a>1<a>2</a>"))
+    Minitest.assert_equal("<button><p>x</p></button>", tree("<button><p>x</button>"))
+  end
+
+  def test_tables()
+    Minitest.assert_equal(
+      "<table><tbody><tr><td>1</td><td>2</td></tr><tr><th>3</th></tr></tbody><tfoot><tr><td>4</td></tr></tfoot></table>",
+      tree("<table><tbody><tr><td>1<td>2<tr><th>3<tfoot><tr><td>4</table>"))
+    Minitest.assert_equal("<div><table><tr><td>x</td></tr></table></div>",
+      tree("<div><table><tr><td>x</div></td></tr></table></div>"))
+    Minitest.assert_equal("<table><tr><td><p>a</p></td></tr></table>", tree("<table><tr><td><p>a</tr></table>"))
+  end
+
+  def test_misnesting_and_eof()
+    Minitest.assert_equal("<b><i>x</i></b>y", tree("<b><i>x</b>y</i>"))
+    Minitest.assert_equal("<div><p>open</p></div>", tree("<div><p>open"))
+    Minitest.assert_equal("<p>a</p>", tree("<p>a</body></html>"))
+    Minitest.assert_equal("<html><head><title>t</title></head><body>b</body></html>",
+      tree("<html><head><title>t</title><body>b"))
+  end
+
+  def test_whitespace_and_encoding()
+    doc = HTML.parse("\u{FEFF}<p>a\r\nb\rc</p><p>日本語 ☃</p>")
+    Minitest.assert_equal("a\nb\nc", doc.at("p").text())
+    Minitest.assert_equal("日本語 ☃", doc.select("p")[1].text())
+    Minitest.assert_equal("<p>x&nbsp;y</p>", tree("<p>x&nbsp;y</p>"))
+  end
+
+  def test_text_and_serialization()
+    doc = HTML.parse("<div id=d>Hello <b>big</b> <!-- no --> world<script>s()</script></div>")
+    div = doc.at("#d")
+    Minitest.assert_equal("Hello big  worlds()", div.text())
+    Minitest.assert_equal("Hello <b>big</b> <!-- no --> world<script>s()</script>", div.inner_html())
+    Minitest.assert_equal("<p title=\"&quot;q&quot; &amp; a\">&lt;x&gt;</p>", tree("<p title='\"q\" &amp; a'>&lt;x&gt;</p>"))
+  end
+
+  def test_navigation()
+    doc = HTML.parse("<ul><li id=a>1</li> <li id=b>2</li><li id=c>3</li></ul>")
+    b = doc.at("#b")
+    Minitest.assert_equal("ul", b.parent().name())
+    Minitest.assert_equal(" ", b.previous_sibling().text())
+    Minitest.assert_equal("c", b.next_sibling().id())
+    Minitest.assert_nil(doc.at("#c").next_sibling())
+    Minitest.assert_equal(["li#a", "li#b", "li#c"], names(doc.at("ul").elements()))
+    Minitest.assert_equal(["ul", "li#a", "li#b", "li#c"], names(doc.descendants()))
+    seen = []
+    doc.each_element() do |element| seen.push(element.name()) end
+    Minitest.assert_equal(["ul", "li", "li", "li"], seen)
+    Minitest.assert_nil(doc.parent())
+  end
+
+  def test_building()
+    doc = HTML.parse("<ul></ul>")
+    list = doc.at("ul")
+    item = list.append(HTML::Element.new("li", {"class": "new"}))
+    item.append(HTML::Text.new("a < b"))
+    item["data-n"] = "1"
+    Minitest.assert_equal("<ul><li class=\"new\" data-n=\"1\">a &lt; b</li></ul>", doc.to_html())
+    Minitest.assert_equal(item, list.remove(item))
+    Minitest.assert_nil(item.parent())
+    Minitest.assert_equal("<ul></ul>", doc.to_html())
+    Minitest.assert_nil(list.remove(item))
+  end
+
+  def test_selectors_basic()
+    doc = HTML.parse("<div id=main class='box wide'><p class=intro>a</p><p>b</p><span lang=en-US>c</span></div><p id=last>d</p>")
+    Minitest.assert_equal(["p", "p", "p#last"], names(doc.select("p")))
+    Minitest.assert_equal(["div#main"], names(doc.select("#main")))
+    Minitest.assert_equal(["div#main"], names(doc.select("div.box.wide")))
+    Minitest.assert_equal([], names(doc.select("div.box.narrow")))
+    Minitest.assert_equal(["div#main", "p", "p", "span", "p#last"], names(doc.select("*")))
+    Minitest.assert_equal(["p", "p"], names(doc.select("#main p")))
+    Minitest.assert_equal(["p", "span", "p#last"], names(doc.select(".intro ~ *, #main + p")))
+    Minitest.assert_equal(["p"], names(doc.select(".intro + p")))
+    Minitest.assert_equal(["p", "p", "span"], names(doc.select("div > *")))
+    Minitest.assert_equal(["p#last"], names(doc.select("body p, :root + p")))
+    Minitest.assert_equal("a", doc.at("P.INTRO".downcase()).text())
+    Minitest.assert(doc.at("span").matches?("div > [lang|=en]"))
+  end
+
+  def test_selectors_attributes()
+    doc = HTML.parse("<a href='https://x.test/a.pdf' rel='nofollow noopener' title=Hi>1</a><a href=/b>2</a><a>3</a>")
+    Minitest.assert_equal(["1", "2"], doc.select("a[href]").map() do |e| e.text() end)
+    Minitest.assert_equal(["2"], doc.select("a[href='/b']").map() do |e| e.text() end)
+    Minitest.assert_equal(["1"], doc.select("a[href^=\"https:\"]").map() do |e| e.text() end)
+    Minitest.assert_equal(["1"], doc.select("a[href$='.pdf']").map() do |e| e.text() end)
+    Minitest.assert_equal(["1"], doc.select("a[href*='x.test']").map() do |e| e.text() end)
+    Minitest.assert_equal(["1"], doc.select("a[rel~=noopener]").map() do |e| e.text() end)
+    Minitest.assert_equal([], doc.select("a[rel~=noop]").map() do |e| e.text() end)
+    Minitest.assert_equal(["1"], doc.select("a[title=hi i]").map() do |e| e.text() end)
+    Minitest.assert_equal([], doc.select("a[title=hi]").map() do |e| e.text() end)
+    Minitest.assert_equal([], doc.select("a[href^='']").map() do |e| e.text() end)
+  end
+
+  def test_selectors_pseudo()
+    doc = HTML.parse("<ol><li>1</li><li>2</li><li>3</li><li>4</li><li>5</li></ol><p></p><p><!-- c --></p><p> </p><div><b>only</b></div>")
+    Minitest.assert_equal(["1"], texts(doc, "li:first-child"))
+    Minitest.assert_equal(["5"], texts(doc, "li:last-child"))
+    Minitest.assert_equal(["1", "3", "5"], texts(doc, "li:nth-child(odd)"))
+    Minitest.assert_equal(["2", "4"], texts(doc, "li:nth-child(even)"))
+    Minitest.assert_equal(["3"], texts(doc, "li:nth-child(3)"))
+    Minitest.assert_equal(["3", "4", "5"], texts(doc, "li:nth-child(n+3)"))
+    Minitest.assert_equal(["1", "2"], texts(doc, "li:nth-child(-n + 2)"))
+    Minitest.assert_equal(["1", "4"], texts(doc, "li:nth-child(3n+1)"))
+    Minitest.assert_equal(["4", "5"], texts(doc, "li:nth-last-child(-n+2)"))
+    Minitest.assert_equal(["2", "3", "4"], texts(doc, "li:not(:first-child, :last-child)"))
+    Minitest.assert_equal(2, doc.select("p:empty").length())
+    Minitest.assert_equal(["only"], texts(doc, "b:only-child"))
+    Minitest.assert_equal(["ol", "p", "p", "p", "div"], names(doc.select(":root")))
+  end
+
+  def test_selector_errors()
+    doc = HTML.parse("<p>x</p>")
+    ["", "p,", "p >", "[href", "a[href=", "p:hover", ":nth-child(x)", "p..a", "p)"].each() do |bad|
+      raised = false
+      begin
+        doc.select(bad)
+      rescue error: HTML::SelectorError
+        raised = true
+      end
+      Minitest.assert(raised, "no SelectorError for #{bad.inspect()}")
+    end
+    Minitest.assert_raises[ArgumentError]() do doc.select("p:hover") end
+  end
+
+  def test_document_helpers()
+    doc = HTML.parse("<title>  Spaced  </title><p>x</p>")
+    Minitest.assert_equal("Spaced", doc.title())
+    Minitest.assert_equal("title", doc.root().name())
+    Minitest.assert_nil(HTML.parse("<p>x</p>").title())
+    Minitest.assert_nil(HTML.parse("").root())
+    Minitest.assert_equal("", HTML.parse("").to_html())
+  end
+
+  suite = Minitest.new()
+  suite.test("attributes", test_attributes)
+  suite.test("attribute edges", test_attribute_edges)
+  suite.test("character references", test_character_references)
+  suite.test("comments and doctype", test_comments_and_doctype)
+  suite.test("stray markup", test_stray_markup)
+  suite.test("raw text", test_raw_text)
+  suite.test("escapable raw text", test_escapable_raw_text)
+  suite.test("void and self-closing", test_void_and_self_closing)
+  suite.test("implied end tags", test_implied_end_tags)
+  suite.test("tables", test_tables)
+  suite.test("misnesting and end of input", test_misnesting_and_eof)
+  suite.test("whitespace and encoding", test_whitespace_and_encoding)
+  suite.test("text and serialization", test_text_and_serialization)
+  suite.test("navigation", test_navigation)
+  suite.test("building", test_building)
+  suite.test("selectors", test_selectors_basic)
+  suite.test("attribute selectors", test_selectors_attributes)
+  suite.test("pseudo-classes", test_selectors_pseudo)
+  suite.test("selector errors", test_selector_errors)
+  suite.test("document helpers", test_document_helpers)
+  exit(suite.run() ? 0 : 1)
+end
+run_tests()

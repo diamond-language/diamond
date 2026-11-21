@@ -1,0 +1,18 @@
+## Parses HTML into a tree of nodes and finds elements in it with CSS selectors.
+require "./html/entities"
+require "./html/nodes"
+require "./html/selector"
+require "./html/parser"
+
+module HTML
+  ## The tree for a page or a fragment of one. Never raises: like a browser,
+  ## it reads any input, closing what the markup left open.
+  def self.parse(text: String) -> HTML::Document
+    HTML::Parser.new(text).parse()
+  end
+
+  ## The text with its character references decoded: every HTML 4 named
+  ## reference (`&eacute;`), HTML5's ASCII punctuation names (`&colon;`),
+  ## and decimal and hex references (`&#233;`, `&#xE9;`).
+  def self.decode(text: String) -> String = HTML::Entities.decode(text)
+end

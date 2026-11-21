@@ -1,0 +1,338 @@
+module HTML
+  ## Raised for a CSS selector `select`, `at` or `matches?` can't read.
+  class SelectorError < ArgumentError
+    attr_reader message: String
+
+    def initialize(message: String)
+      @message = message
+    end
+  end
+
+  # One compound selector: a tag (or nil for any) and the conditions an element
+  # must also meet. `attributes` holds [name, operator, value, ignore_case];
+  # `pseudos` holds [name, argument], where the argument of :not is a Selector
+  # and the argument of :nth-child is [a, b].
+  class Compound
+    attr_reader tag: String | Nil
+    attr_reader ids: Array
+    attr_reader classes: Array
+    attr_reader attributes: Array
+    attr_reader pseudos: Array
+
+    def initialize()
+      @tag = nil
+      @ids = []
+      @classes = []
+      @attributes = []
+      @pseudos = []
+    end
+
+    def set_tag(tag: String)
+      @tag = tag
+    end
+
+    def empty?() -> Bool
+      @tag == nil && @ids.empty?() && @classes.empty?() && @attributes.empty?() && @pseudos.empty?()
+    end
+
+    def match?(element: HTML::Element) -> Bool
+      return false if element is HTML::Document
+      return false if @tag != nil && @tag != "*" && @tag != element.name()
+      return false unless @ids.all?() do |id| element.id() == id end
+      if !@classes.empty?()
+        words = element.classes()
+        return false unless @classes.all?() do |word| words.include?(word) end
+      end
+      return false unless @attributes.all?() do |condition| HTML::Compound.attribute_match?(element, condition) end
+      @pseudos.all?() do |pseudo| HTML::Compound.pseudo_match?(element, pseudo) end
+    end
+
+    def self.attribute_match?(element: HTML::Element, condition: Array) -> Bool
+      [name, operator, expected, ignore_case] = condition
+      actual = element[name]
+      return false if actual == nil
+      return true if operator == nil
+      if ignore_case
+        actual = actual.downcase()
+        expected = expected.downcase()
+      end
+      case operator
+      when "=" then actual == expected
+      when "~=" then actual.split(/[ \t\n\r\f]+/).include?(expected)
+      when "|=" then actual == expected || actual.start_with?(expected + "-")
+      when "^=" then expected != "" && actual.start_with?(expected)
+      when "$=" then expected != "" && actual.end_with?(expected)
+      when "*=" then expected != "" && actual.include?(expected)
+      else false
+      end
+    end
+
+    def self.pseudo_match?(element: HTML::Element, pseudo: Array) -> Bool
+      [name, argument] = pseudo
+      parent = element.parent()
+      siblings = parent == nil ? [element] : parent.elements()
+      position = siblings.index(element) + 1
+      case name
+      when "first-child" then position == 1
+      when "last-child" then position == siblings.length()
+      when "only-child" then siblings.length() == 1
+      when "nth-child" then HTML::Compound.nth?(argument, position)
+      when "nth-last-child" then HTML::Compound.nth?(argument, siblings.length() - position + 1)
+      when "empty" then element.children().all?() do |child| child is HTML::Comment end
+      when "root" then parent is HTML::Document
+      when "not" then !argument.match?(element)
+      else false
+      end
+    end
+
+    # Whether position matches an+b for some n >= 0.
+    def self.nth?(formula: Array, position: Int) -> Bool
+      [a, b] = formula
+      return position == b if a == 0
+      offset = position - b
+      offset % a == 0 && offset / a >= 0
+    end
+  end
+
+  ## A compiled CSS selector list: tags, `*`, `#id`, `.class`, attribute tests
+  ## (`[a]`, `[a=v]`, `~=`, `|=`, `^=`, `$=`, `*=`, with an `i` flag),
+  ## `:first-child`, `:last-child`, `:only-child`, `:nth-child()`,
+  ## `:nth-last-child()`, `:empty`, `:root` and `:not()`, joined by descendant,
+  ## `>`, `+` and `~` combinators, and grouped with commas.
+  class Selector
+    # Each complex selector is an Array of [combinator, Compound], left to
+    # right; the first combinator is nil.
+    attr_reader complexes: Array
+
+    def initialize(complexes: Array)
+      @complexes = complexes
+    end
+
+    def self.parse(text: String) -> HTML::Selector
+      HTML::SelectorParser.new(text).parse_list(false)
+    end
+
+    def match?(element: HTML::Element) -> Bool
+      @complexes.any?() do |parts| HTML::Selector.complex_match?(element, parts, parts.length() - 1) end
+    end
+
+    def self.complex_match?(element: HTML::Element, parts: Array, index: Int) -> Bool
+      [combinator, compound] = parts[index]
+      return false unless compound.match?(element)
+      return true if index == 0
+      case combinator
+      when ">"
+        parent = element.parent()
+        parent != nil && HTML::Selector.complex_match?(parent, parts, index - 1)
+      when "+"
+        sibling = HTML::Selector.previous_element(element)
+        sibling != nil && HTML::Selector.complex_match?(sibling, parts, index - 1)
+      when "~"
+        sibling = HTML::Selector.previous_element(element)
+        while sibling != nil
+          return true if HTML::Selector.complex_match?(sibling, parts, index - 1)
+          sibling = HTML::Selector.previous_element(sibling)
+        end
+        false
+      else
+        ancestor = element.parent()
+        while ancestor != nil
+          return true if HTML::Selector.complex_match?(ancestor, parts, index - 1)
+          ancestor = ancestor.parent()
+        end
+        false
+      end
+    end
+
+    def self.previous_element(element: HTML::Element) -> HTML::Element | Nil
+      parent = element.parent()
+      return nil if parent == nil
+      siblings = parent.elements()
+      index = siblings.index(element)
+      index > 0 ? siblings[index - 1] : nil
+    end
+  end
+
+  class SelectorParser
+    IDENTIFIER = /\G-?[A-Za-z_\x80-\xff][A-Za-z0-9_\-\x80-\xff]*/
+    SPACE = /\G[ \t\n\r\f]*/
+    NTH = /\A([+-]?[0-9]*)n(?:[ \t]*([+-])[ \t]*([0-9]+))?\z/
+
+    def initialize(text: String)
+      @text = text
+      @pos = 0
+    end
+
+    def fail(message: String)
+      raise HTML::SelectorError.new("#{message} at #{@pos + 1} in #{@text.inspect()}")
+    end
+
+    def peek() -> String = @pos < @text.length() ? @text.slice(@pos, 1) : ""
+
+    def skip_space() -> Bool
+      start = @pos
+      match = @text.match_data(SPACE, @pos)
+      @pos = match.offset(0)[1] if match != nil
+      @pos > start
+    end
+
+    def identifier(what: String) -> String
+      match = @text.match_data(IDENTIFIER, @pos)
+      fail("expected #{what}") if match == nil
+      @pos = match.offset(0)[1]
+      match[0]
+    end
+
+    # A selector list. Inside :not( ... ) it stops at the closing parenthesis.
+    def parse_list(nested: Bool) -> HTML::Selector
+      complexes = [self.parse_complex()]
+      loop do
+        self.skip_space()
+        break if self.peek() != ","
+        @pos += 1
+        complexes.push(self.parse_complex())
+      end
+      if nested
+        fail("expected )") if self.peek() != ")"
+      elsif @pos < @text.length()
+        fail("unexpected #{self.peek().inspect()}")
+      end
+      HTML::Selector.new(complexes)
+    end
+
+    def parse_complex() -> Array
+      self.skip_space()
+      parts = [[nil, self.parse_compound()]]
+      loop do
+        spaced = self.skip_space()
+        char = self.peek()
+        if char == ">" || char == "+" || char == "~"
+          @pos += 1
+          self.skip_space()
+          parts.push([char, self.parse_compound()])
+        elsif spaced && char != "" && char != "," && char != ")"
+          parts.push([" ", self.parse_compound()])
+        else
+          break
+        end
+      end
+      parts
+    end
+
+    def parse_compound() -> HTML::Compound
+      compound = HTML::Compound.new()
+      if self.peek() == "*"
+        @pos += 1
+        compound.set_tag("*")
+      elsif @text.match_data(IDENTIFIER, @pos) != nil
+        compound.set_tag(self.identifier("a tag").downcase())
+      end
+      loop do
+        char = self.peek()
+        if char == "#"
+          @pos += 1
+          compound.ids().push(self.identifier("an id"))
+        elsif char == "."
+          @pos += 1
+          compound.classes().push(self.identifier("a class name"))
+        elsif char == "["
+          @pos += 1
+          compound.attributes().push(self.parse_attribute())
+        elsif char == ":"
+          @pos += 1
+          compound.pseudos().push(self.parse_pseudo())
+        else
+          break
+        end
+      end
+      fail("expected a selector") if compound.empty?()
+      compound
+    end
+
+    def parse_attribute() -> Array
+      self.skip_space()
+      name = self.identifier("an attribute name").downcase()
+      self.skip_space()
+      operator = nil
+      value = nil
+      ignore_case = false
+      if self.peek() == "="
+        operator = "="
+        @pos += 1
+      elsif "~|^$*".include?(self.peek()) && self.peek() != "" && @text.slice(@pos + 1, 1) == "="
+        operator = @text.slice(@pos, 2)
+        @pos += 2
+      end
+      if operator != nil
+        self.skip_space()
+        value = self.parse_value()
+        self.skip_space()
+        if self.peek() == "i" || self.peek() == "I"
+          ignore_case = true
+          @pos += 1
+          self.skip_space()
+        elsif self.peek() == "s" || self.peek() == "S"
+          @pos += 1
+          self.skip_space()
+        end
+      end
+      fail("expected ]") if self.peek() != "]"
+      @pos += 1
+      [name, operator, value, ignore_case]
+    end
+
+    def parse_value() -> String
+      quote = self.peek()
+      return self.identifier("a value") unless quote == "\"" || quote == "'"
+      close = @text.index(quote, @pos + 1)
+      fail("unterminated string") if close == nil
+      value = @text.slice(@pos + 1, close - @pos - 1)
+      @pos = close + 1
+      value
+    end
+
+    def parse_pseudo() -> Array
+      name = self.identifier("a pseudo-class").downcase()
+      case name
+      when "first-child", "last-child", "only-child", "empty", "root"
+        [name, nil]
+      when "not"
+        self.open_paren()
+        inner = self.parse_list(true)
+        @pos += 1
+        [name, inner]
+      when "nth-child", "nth-last-child"
+        self.open_paren()
+        close = @text.index(")", @pos)
+        fail("expected )") if close == nil
+        formula = HTML::SelectorParser.nth_formula(@text.slice(@pos, close - @pos).strip().downcase())
+        fail("bad :#{name}() argument") if formula == nil
+        @pos = close + 1
+        [name, formula]
+      else
+        @pos -= name.length()
+        fail("unsupported pseudo-class :#{name}")
+      end
+    end
+
+    def open_paren()
+      fail("expected (") if self.peek() != "("
+      @pos += 1
+      self.skip_space()
+    end
+
+    # "odd", "even", "3", "2n+1", "-n+3" -> [a, b]
+    def self.nth_formula(text: String) -> Array | Nil
+      return [2, 1] if text == "odd"
+      return [2, 0] if text == "even"
+      return [0, text.to_i()] if text.match?(/\A[+-]?[0-9]+\z/)
+      match = text.match_data(NTH)
+      return nil if match == nil
+      coefficient = match[1]
+      a = coefficient == "" || coefficient == "+" ? 1 : (coefficient == "-" ? -1 : coefficient.to_i())
+      b = match[3] == nil ? 0 : match[3].to_i()
+      b = -b if match[2] == "-"
+      [a, b]
+    end
+  end
+end

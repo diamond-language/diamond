@@ -1,0 +1,1 @@
+{"name": "html", "version": "0.1.0", "summary": "Parse HTML into a tree and query it with CSS selectors", "license": "MIT", "maintainers": [{"name": "Chad 'Matrix9180' Ingram", "contact": "https://github.com/diamond-language/d6"}]}

@@ -1,0 +1,266 @@
+module HTML
+  # Reads markup into an HTML::Document. It tokenizes the way browsers do
+  # (comments, doctypes, raw text elements, quoted and unquoted attributes,
+  # character references) and builds the tree with the end-tag rules that
+  # matter for real pages: void elements, a block closing an open <p>, <li>,
+  # <dt>/<dd>, <option> and table parts closing their open siblings, and end
+  # tags that match nothing being ignored. It is not the full HTML5
+  # tree-construction algorithm: it adds no <html>, <head> or <body> the markup
+  # didn't write, and misnested formatting tags (<b><i></b></i>) are closed,
+  # not reopened.
+  class Parser
+    TAG_NAME = /\G[A-Za-z][^ \t\n\r\f\/>]*/
+    SPACE = /\G[ \t\n\r\f]*/
+    ATTRIBUTE_NAME = /\G[^ \t\n\r\f\/>][^ \t\n\r\f\/>=]*/
+    ATTRIBUTE_VALUE = /\G[ \t\n\r\f]*=[ \t\n\r\f]*(?:"([^"]*)"|'([^']*)'|([^ \t\n\r\f>]*))/
+
+    # A start tag of one of these closes an open <p>.
+    CLOSES_P = ["address", "article", "aside", "blockquote", "center", "details", "dialog", "dir", "div",
+      "dl", "fieldset", "figcaption", "figure", "footer", "form", "h1", "h2", "h3", "h4", "h5", "h6",
+      "header", "hgroup", "hr", "listing", "main", "menu", "nav", "ol", "p", "plaintext", "pre", "section",
+      "summary", "table", "ul", "li", "dd", "dt", "xmp"]
+    HEADINGS = ["h1", "h2", "h3", "h4", "h5", "h6"]
+    # Searching the open elements for one to close stops at these.
+    SCOPE = ["applet", "caption", "html", "table", "td", "th", "marquee", "object", "template", "svg", "math"]
+    TABLE_PARTS = ["table", "caption", "colgroup", "thead", "tbody", "tfoot", "tr"]
+    # <pre>, <listing> and <textarea> drop a newline right after their start tag.
+    LEADING_NEWLINE = ["pre", "listing", "textarea"]
+
+    def initialize(text: String)
+      text = text.slice(3, text.length() - 3) if text.start_with?("\u{FEFF}")
+      @text = text.index("\r") == nil ? text : text.gsub("\r\n", "\n").gsub("\r", "\n")
+      @length = @text.length()
+      @pos = 0
+      @document = HTML::Document.new()
+      @stack = [@document]
+    end
+
+    def parse() -> HTML::Document
+      while @pos < @length
+        open = @text.index("<", @pos)
+        if open == nil
+          self.add_text(HTML::Entities.decode(@text.slice(@pos, @length - @pos)))
+          break
+        end
+        self.add_text(HTML::Entities.decode(@text.slice(@pos, open - @pos))) if open > @pos
+        @pos = open
+        self.read_markup()
+      end
+      @document
+    end
+
+    def current() -> HTML::Element = @stack[@stack.length() - 1]
+
+    # Text joins a Text node right before it, so the tree never holds two in a row.
+    def add_text(content: String)
+      return if content == ""
+      parent = self.current()
+      children = parent.children()
+      last = children.length() > 0 ? children[children.length() - 1] : nil
+      if last is HTML::Text
+        parent.remove(last)
+        content = last.content() + content
+      end
+      parent.append(HTML::Text.new(content))
+    end
+
+    # @pos is at a "<".
+    def read_markup()
+      if @text.slice(@pos, 4) == "<!--"
+        self.read_comment()
+        return
+      end
+      second = @text.slice(@pos + 1, 1)
+      if second == "!"
+        close = self.find(">", @pos + 2)
+        body = @text.slice(@pos + 2, close - @pos - 2)
+        if body.length() >= 7 && body.slice(0, 7).downcase() == "doctype"
+          self.current().append(HTML::Doctype.new(body.slice(7, body.length() - 7).strip()))
+        else
+          self.current().append(HTML::Comment.new(body))
+        end
+        @pos = close + 1
+      elsif second == "?"
+        close = self.find(">", @pos + 2)
+        self.current().append(HTML::Comment.new(@text.slice(@pos + 1, close - @pos - 1)))
+        @pos = close + 1
+      elsif second == "/"
+        self.read_end_tag()
+      elsif @text.match_data(TAG_NAME, @pos + 1) != nil
+        self.read_start_tag()
+      else
+        self.add_text("<")
+        @pos += 1
+      end
+    end
+
+    # The index of needle at or after start, or the end of the text.
+    def find(needle: String, start: Int) -> Int
+      found = @text.index(needle, start)
+      found == nil ? @length : found
+    end
+
+    def read_comment()
+      start = @pos + 4
+      if @text.slice(start, 1) == ">"
+        self.current().append(HTML::Comment.new(""))
+        @pos = start + 1
+        return
+      end
+      if @text.slice(start, 2) == "->"
+        self.current().append(HTML::Comment.new(""))
+        @pos = start + 2
+        return
+      end
+      close = self.find("-->", start)
+      self.current().append(HTML::Comment.new(@text.slice(start, close - start)))
+      @pos = [close + 3, @length].min()
+    end
+
+    def read_end_tag()
+      match = @text.match_data(TAG_NAME, @pos + 2)
+      if match == nil
+        close = self.find(">", @pos + 2)
+        # "</>" is dropped; any other "</" that names no tag is a comment.
+        if close > @pos + 2
+          self.current().append(HTML::Comment.new(@text.slice(@pos + 2, close - @pos - 2)))
+        end
+        @pos = close + 1
+        return
+      end
+      name = match[0].downcase()
+      @pos = self.find(">", match.offset(0)[1]) + 1
+      self.end_element(name)
+    end
+
+    def read_start_tag()
+      match = @text.match_data(TAG_NAME, @pos + 1)
+      name = match[0].downcase()
+      @pos = match.offset(0)[1]
+      attributes = {}
+      self_closing = false
+      loop do
+        space = @text.match_data(SPACE, @pos)
+        @pos = space.offset(0)[1] if space != nil
+        break if @pos >= @length
+        char = @text.slice(@pos, 1)
+        if char == ">"
+          @pos += 1
+          break
+        end
+        if char == "/"
+          @pos += 1
+          if @text.slice(@pos, 1) == ">"
+            self_closing = true
+            @pos += 1
+            break
+          end
+          next
+        end
+        attribute = @text.match_data(ATTRIBUTE_NAME, @pos)
+        @pos = attribute.offset(0)[1]
+        key = attribute[0].downcase()
+        value = ""
+        assignment = @text.match_data(ATTRIBUTE_VALUE, @pos)
+        if assignment != nil
+          @pos = assignment.offset(0)[1]
+          value = HTML::Entities.decode(assignment[1] || assignment[2] || assignment[3] || "")
+        end
+        # The first of a repeated attribute wins, as in browsers.
+        attributes[key] = value unless attributes.has_key?(key)
+      end
+      self.start_element(name, attributes, self_closing)
+    end
+
+    def start_element(name: String, attributes: Hash, self_closing: Bool)
+      self.close_implied(name)
+      element = HTML::Element.new(name, attributes)
+      self.current().append(element)
+      return if HTML::VOID.include?(name)
+      # A self-closing tag closes only inside <svg> and <math>, as in browsers.
+      return if self_closing && self.in_foreign_content?()
+      if HTML::RAW_TEXT.include?(name) || HTML::ESCAPABLE_RAW_TEXT.include?(name)
+        self.read_raw_text(element)
+        return
+      end
+      if name == "plaintext"
+        element.append(HTML::Text.new(@text.slice(@pos, @length - @pos)))
+        @pos = @length
+        return
+      end
+      @stack.push(element)
+      @pos += 1 if LEADING_NEWLINE.include?(name) && @text.slice(@pos, 1) == "\n"
+    end
+
+    # The content of a raw text element runs to its end tag, whatever it holds.
+    def read_raw_text(element: HTML::Element)
+      name = element.name()
+      @pos += 1 if LEADING_NEWLINE.include?(name) && @text.slice(@pos, 1) == "\n"
+      closing = @text.match_data(Regexp.new("</" + name + "[ \\t\\n\\r\\f/>]", 1), @pos)
+      close = closing == nil ? @length : closing.offset(0)[0]
+      body = @text.slice(@pos, close - @pos)
+      body = HTML::Entities.decode(body) if HTML::ESCAPABLE_RAW_TEXT.include?(name)
+      element.append(HTML::Text.new(body)) if body != ""
+      @pos = close >= @length ? @length : self.find(">", close) + 1
+    end
+
+    def in_foreign_content?() -> Bool
+      @stack.any?() do |element| element.name() == "svg" || element.name() == "math" end
+    end
+
+    # The open elements a start tag closes before it is added.
+    def close_implied(name: String)
+      self.close_in_scope(["p"], SCOPE + ["button"]) if CLOSES_P.include?(name)
+      case name
+      when "li" then self.close_in_scope(["li"], SCOPE + ["ul", "ol"])
+      when "dd", "dt" then self.close_in_scope(["dd", "dt"], SCOPE + ["dl"])
+      when "h1", "h2", "h3", "h4", "h5", "h6"
+        @stack.pop() if HEADINGS.include?(self.current().name())
+      when "option"
+        @stack.pop() if self.current().name() == "option"
+      when "optgroup"
+        @stack.pop() if self.current().name() == "option"
+        @stack.pop() if self.current().name() == "optgroup"
+      when "tr" then self.close_in_scope(["tr"], ["table", "html", "template"])
+      when "td", "th" then self.close_in_scope(["td", "th"], ["tr", "table", "html", "template"])
+      when "thead", "tbody", "tfoot" then self.close_in_scope(["thead", "tbody", "tfoot"], ["table", "html", "template"])
+      when "a" then self.close_in_scope(["a"], SCOPE)
+      when "rp", "rt" then self.close_in_scope(["rp", "rt"], SCOPE + ["ruby"])
+      when "body" then self.close_in_scope(["head"], [])
+      end
+    end
+
+    # Pops through the nearest open element named in names, unless an element
+    # named in boundaries comes first. Returns whether it closed one.
+    def close_in_scope(names: Array, boundaries: Array) -> Bool
+      index = @stack.length() - 1
+      while index > 0
+        name = @stack[index].name()
+        if names.include?(name)
+          @stack.pop() while @stack.length() > index
+          return true
+        end
+        return false if boundaries.include?(name)
+        index -= 1
+      end
+      false
+    end
+
+    def end_element(name: String)
+      # Browsers keep adding to <body> after </body> and </html>.
+      return if name == "body" || name == "html"
+      if name == "br"
+        self.start_element("br", {}, false)
+        return
+      end
+      boundaries = if name == "table"
+        ["html", "template"]
+      elsif TABLE_PARTS.include?(name) || name == "td" || name == "th"
+        ["table", "html", "template"]
+      else
+        SCOPE
+      end
+      self.close_in_scope([name], boundaries)
+    end
+  end
+end
