@@ -27,11 +27,14 @@ What a link checker ran short of.
   it for `--version`.
 - `facet` writes `Cutfile.lock` as plain JSON: it had a trailing comma, so `JSON.parse` rejected
   it. Older lockfiles still install.
+- `String#index_of(needle, start)` searches from a byte position.
 
 ### Changed
 
 - Ruby's `rescue => e` and `rescue Type => e` fail with an error that names d6's `rescue e` and
   `rescue e: Type`, instead of a confusing one about the `=>`.
+- `String#index(needle, start)` searches in place: it copied the rest of the String on every
+  call, so a scanner stepping through a long page with it took quadratic time.
 
 ## 1.2.0 — 2026-11-20
 

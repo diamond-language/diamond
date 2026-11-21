@@ -1,0 +1,19 @@
+s = "abcabc"
+puts(s.index("b", 2))
+puts(s.index("c", -1))
+puts(s.index("z", 1).inspect())
+puts(s.index("", 6))
+puts(s.index("a", 7).inspect())
+puts(s.index_of("c", 3))
+puts(s.index_of("abc", 1))
+puts(s.index_of("c", -1).inspect())
+# Searching from a position doesn't copy the rest of the String: 20,000
+# searches through 2 MB finish quickly.
+big = "x".repeat(2000000) + "<"
+count = 0
+found = 0
+while count < 20000
+  found = big.index("<", count)
+  count += 1
+end
+puts(found)

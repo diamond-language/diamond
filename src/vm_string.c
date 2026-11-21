@@ -634,26 +634,37 @@ static DiamondVmStatus string_to_f_method(DiamondValue *registers,uint8_t argc,u
 
 __attribute__((noinline))
 static DiamondVmStatus string_index_of_method(DiamondVm *vm,DiamondValue *registers,uint16_t base,uint8_t argc,uint16_t dest,const DiamondString *source) {
-    if(argc!=1)return DIAMOND_VM_ARITY_ERROR;
+    if(argc!=1&&argc!=2)return DIAMOND_VM_ARITY_ERROR;
     if(registers[base].kind!=DIAMOND_VALUE_OBJECT||
        registers[base].as.object->kind!=DIAMOND_OBJECT_STRING) {
         snprintf(vm->error,sizeof vm->error,
             "String#index_of argument must be a String");
         return DIAMOND_VM_TYPE_ERROR;
     }
+    /* index_of(needle, start) searches from byte `start` in place, so a
+     * scanner stepping through a long String doesn't copy the rest of it
+     * for every search. */
+    size_t start=0;
+    if(argc==2) {
+        const DiamondValue from=registers[(size_t)base+1];
+        if(from.kind!=DIAMOND_VALUE_INT) {
+            snprintf(vm->error,sizeof vm->error,
+                "String#index_of start must be an Int");
+            return DIAMOND_VM_TYPE_ERROR;
+        }
+        registers[dest]=DIAMOND_NIL;
+        if(from.as.integer<0||(uint64_t)from.as.integer>source->length)return DIAMOND_VM_OK;
+        start=(size_t)from.as.integer;
+    }
     const DiamondString *needle=
         (const DiamondString *)registers[base].as.object;
     registers[dest]=DIAMOND_NIL;
     if(needle->length==0) {
-        registers[dest]=DIAMOND_INT(0);
-    } else if(needle->length<=source->length) {
-        for(size_t start=0;
-            start+needle->length<=source->length;start++) {
-            if(memcmp(source->chars+start,needle->chars,
-                      needle->length)==0) {
-                registers[dest]=DIAMOND_INT((int64_t)start);return DIAMOND_VM_OK;
-            }
-        }
+        registers[dest]=DIAMOND_INT((int64_t)start);
+    } else {
+        const char *found=find_bytes(source->chars+start,source->length-start,
+            needle->chars,needle->length);
+        if(found!=nullptr)registers[dest]=DIAMOND_INT((int64_t)(found-source->chars));
     }
     return DIAMOND_VM_OK;
 }

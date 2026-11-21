@@ -296,12 +296,15 @@ The position of the first `needle` at or after `start`, or `nil`.
 "hello".index("l", 3)   # => 3
 ```
 
-### `index_of(needle) -> Int | Nil`
+### `index_of(needle, start = 0) -> Int | Nil`
 
-The position of the first `needle`, or `nil`. `index(needle, start)` searches from a position.
+The position of the first `needle` at or after byte `start`, or `nil`. Unlike `index`, a
+negative `start` finds nothing. The search starts in place, so stepping through a long String
+with it costs nothing per call for the text already passed.
 
 ```ruby
-"hello".index_of("z")   # => nil
+"hello".index_of("z")      # => nil
+"hello".index_of("l", 3)   # => 3
 ```
 
 ### `insert(index, other) -> String`
