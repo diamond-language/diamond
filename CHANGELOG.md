@@ -25,6 +25,8 @@ What a link checker ran short of.
   `host`, a `ready` Channel (so port 0 works) and a `stop` Channel.
 - `facet new` app templates start their Cutfile at version 0.1.0, and the cli template prints
   it for `--version`.
+- `facet` writes `Cutfile.lock` as plain JSON: it had a trailing comma, so `JSON.parse` rejected
+  it. Older lockfiles still install.
 
 ### Changed
 

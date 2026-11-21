@@ -730,23 +730,21 @@ bool write_lockfile(const char *path, const FacetResolution *resolution,
                        strerror(errno));
         return false;
     }
-    /* Single-line: Diamond's Hash-literal parser doesn't accept a
-     * newline between "{" and its first entry (a pre-existing parser
-     * limitation, not new to this feature), so a pretty-printed
-     * multi-line lockfile would fail to parse back on the very next
-     * `facet install`. */
+    /* One line of JSON, which is also a d6 Hash literal: entries are separated by
+     * ", " with no trailing comma, so JSON.parse and other tools read it too. */
     fputs("{", file);
     for (size_t index = 0; index < resolution->count; index++) {
         const FacetResolved *resolved = &resolution->packages[index];
+        if (index > 0) fputs(", ", file);
         if (resolved->source == FACET_SOURCE_REGISTRY) {
-            fprintf(file, "\"%s\": {\"source\": \"registry\", \"registry\": \"%s\", \"version\": \"%s\", \"sha256\": \"%s\", \"size\": %llu}, ",
+            fprintf(file, "\"%s\": {\"source\": \"registry\", \"registry\": \"%s\", \"version\": \"%s\", \"sha256\": \"%s\", \"size\": %llu}",
                     resolved->name, resolved->registry, resolved->version,
                     resolved->sha256, (unsigned long long)resolved->size);
         } else if (resolved->version[0] != '\0') {
-            fprintf(file, "\"%s\": {\"source\": \"git\", \"git\": \"%s\", \"commit\": \"%s\", \"version\": \"%s\"}, ",
+            fprintf(file, "\"%s\": {\"source\": \"git\", \"git\": \"%s\", \"commit\": \"%s\", \"version\": \"%s\"}",
                     resolved->name, resolved->git, resolved->commit, resolved->version);
         } else {
-            fprintf(file, "\"%s\": {\"source\": \"git\", \"git\": \"%s\", \"commit\": \"%s\"}, ",
+            fprintf(file, "\"%s\": {\"source\": \"git\", \"git\": \"%s\", \"commit\": \"%s\"}",
                     resolved->name, resolved->git, resolved->commit);
         }
     }
