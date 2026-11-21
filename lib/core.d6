@@ -2071,8 +2071,7 @@ def diamond_string_index(text: String, needle: String, start: Int = 0) -> Int | 
   return text.index_of(needle) if start == 0
   start += text.length() if start < 0
   return nil if start < 0 || start > text.length()
-  found = text.slice(start, text.length() - start).index_of(needle)
-  if found == nil then nil else found + start end
+  text.index_of(needle, start)
 end
 def diamond_string_hex(text: String) -> Int = text.to_i(16)
 def diamond_string_oct(text: String) -> Int = text.to_i(8)

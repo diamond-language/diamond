@@ -97,6 +97,14 @@
       "version": "0.5.7"
     },
     {
+      "archive": "html.tar",
+      "dependencies": {},
+      "name": "html",
+      "sha256": "e6c0ff3111aa8d443300676f310fe48431fd5200e15cdfd8a00891da5ac3ef28",
+      "size": 47104,
+      "version": "0.1.0"
+    },
+    {
       "archive": "jobs.tar",
       "dependencies": {},
       "name": "jobs",

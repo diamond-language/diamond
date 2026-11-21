@@ -1,0 +1,245 @@
+module HTML
+  # Elements that never have content or an end tag.
+  VOID = ["area", "base", "br", "col", "embed", "hr", "img", "input", "keygen", "link", "meta", "param",
+    "source", "track", "wbr"]
+
+  # Elements whose content is text up to their end tag, with no tags and no
+  # character references inside.
+  RAW_TEXT = ["script", "style", "xmp", "iframe", "noembed", "noframes"]
+
+  # Like RAW_TEXT, except that character references are decoded.
+  ESCAPABLE_RAW_TEXT = ["textarea", "title"]
+
+  ## A node in the tree: an `HTML::Element`, `HTML::Text`, `HTML::Comment` or
+  ## `HTML::Doctype`.
+  class Node
+    ## The element holding this node, or `nil` for a `HTML::Document` and for a
+    ## node not yet added to one.
+    attr_reader parent: HTML::Element | Nil
+
+    def initialize()
+      @parent = nil
+    end
+
+    def attach(parent: HTML::Element | Nil)
+      @parent = parent
+    end
+
+    ## Whether this node is an `HTML::Element`.
+    def element?() -> Bool = false
+
+    ## The text in this node and everything inside it.
+    def text() -> String = ""
+
+    ## This node as HTML.
+    def to_html() -> String = ""
+
+    ## The node after this one in its parent, or `nil`.
+    def next_sibling() -> HTML::Node | Nil
+      return nil if @parent == nil
+      siblings = @parent.children()
+      index = siblings.index(self)
+      index != nil && index + 1 < siblings.length() ? siblings[index + 1] : nil
+    end
+
+    ## The node before this one in its parent, or `nil`.
+    def previous_sibling() -> HTML::Node | Nil
+      return nil if @parent == nil
+      siblings = @parent.children()
+      index = siblings.index(self)
+      index != nil && index > 0 ? siblings[index - 1] : nil
+    end
+  end
+
+  ## Text between tags, with its character references decoded.
+  class Text < Node
+    attr_reader content: String
+
+    def initialize(content: String)
+      @parent = nil
+      @content = content
+    end
+
+    def text() -> String = @content
+
+    def to_html() -> String
+      if @parent != nil && (HTML::RAW_TEXT.include?(@parent.name()) || @parent.name() == "plaintext")
+        @content
+      else
+        @content.gsub("&", "&amp;").gsub("<", "&lt;").gsub(">", "&gt;").gsub("\u{A0}", "&nbsp;")
+      end
+    end
+  end
+
+  ## A `<!-- comment -->`; `content` is the text between the markers.
+  class Comment < Node
+    attr_reader content: String
+
+    def initialize(content: String)
+      @parent = nil
+      @content = content
+    end
+
+    def to_html() -> String = "<!--#{@content}-->"
+  end
+
+  ## A `<!DOCTYPE ...>`; `content` is what follows the keyword, such as `"html"`.
+  class Doctype < Node
+    attr_reader content: String
+
+    def initialize(content: String)
+      @parent = nil
+      @content = content
+    end
+
+    def to_html() -> String = "<!DOCTYPE #{@content}>"
+  end
+
+  ## An element. `name` and attribute names are lowercase; attribute values have
+  ## their character references decoded.
+  class Element < Node
+    attr_reader name: String
+    attr_reader attributes: Hash
+    attr_reader children: Array
+
+    def initialize(name: String, attributes: Hash = {})
+      @parent = nil
+      @name = name
+      @attributes = attributes
+      @children = []
+    end
+
+    def element?() -> Bool = true
+
+    ## The value of an attribute, or `nil` when the element doesn't have it.
+    def [](attribute: String) -> String | Nil = @attributes[attribute.downcase()]
+
+    ## Sets an attribute.
+    def []=(attribute: String, value: String)
+      @attributes[attribute.downcase()] = value
+    end
+
+    def has_attribute?(attribute: String) -> Bool = @attributes.has_key?(attribute.downcase())
+
+    ## The `id` attribute, or `nil`.
+    def id() -> String | Nil = @attributes["id"]
+
+    ## The words of the `class` attribute.
+    def classes() -> Array
+      (@attributes["class"] || "").split(/[ \t\n\r\f]+/).select() do |word| word != "" end
+    end
+
+    def has_class?(word: String) -> Bool = self.classes().include?(word)
+
+    ## Adds a node as the last child and returns it.
+    def append(node: HTML::Node) -> HTML::Node
+      node.attach(self)
+      @children.push(node)
+      node
+    end
+
+    ## Removes a child; returns it, or `nil` when it isn't a child of this element.
+    def remove(node: HTML::Node) -> HTML::Node | Nil
+      index = @children.index(node)
+      return nil if index == nil
+      @children.delete_at(index)
+      node.attach(nil)
+      node
+    end
+
+    ## The child nodes that are elements.
+    def elements() -> Array
+      @children.select() do |child| child.element?() end
+    end
+
+    ## Every element inside this one, in document order.
+    def descendants() -> Array
+      found = []
+      self.collect_descendants(found)
+      found
+    end
+
+    def collect_descendants(found: Array)
+      @children.each() do |child|
+        if child.element?()
+          found.push(child)
+          child.collect_descendants(found)
+        end
+      end
+    end
+
+    ## Calls the block with every element inside this one, in document order.
+    def each_element(&block: Callable[1])
+      # An index loop: yield reaches the block only from this method's own body.
+      found = self.descendants()
+      index = 0
+      while index < found.length()
+        yield(found[index])
+        index += 1
+      end
+    end
+
+    def text() -> String
+      @children.map() do |child| child.text() end.join("")
+    end
+
+    ## The HTML of the children.
+    def inner_html() -> String
+      @children.map() do |child| child.to_html() end.join("")
+    end
+
+    def to_html() -> String
+      tag = @name
+      @attributes.each() do |attribute, value|
+        tag = tag + " " + attribute + "=\"" + value.gsub("&", "&amp;").gsub("\"", "&quot;").gsub("\u{A0}", "&nbsp;") + "\""
+      end
+      return "<#{tag}>" if HTML::VOID.include?(@name)
+      "<#{tag}>#{self.inner_html()}</#{@name}>"
+    end
+
+    ## The elements inside this one that match a CSS selector, in document
+    ## order. Raises `HTML::SelectorError` for a selector it can't read.
+    def select(selector: String) -> Array
+      compiled = HTML::Selector.parse(selector)
+      self.descendants().select() do |element| compiled.match?(element) end
+    end
+
+    ## The first element inside this one that matches a CSS selector, or `nil`.
+    def at(selector: String) -> HTML::Element | Nil
+      compiled = HTML::Selector.parse(selector)
+      self.descendants().find() do |element| compiled.match?(element) end
+    end
+
+    ## Whether this element matches a CSS selector.
+    def matches?(selector: String) -> Bool = HTML::Selector.parse(selector).match?(self)
+  end
+
+  ## A parsed page or fragment. Its children are whatever the markup had at the
+  ## top level; no `<html>`, `<head>` or `<body>` is added that the markup didn't write.
+  class Document < Element
+    def initialize()
+      @parent = nil
+      @name = "#document"
+      @attributes = {}
+      @children = []
+    end
+
+    def to_html() -> String = self.inner_html()
+
+    ## The `<!DOCTYPE>` node, or `nil`.
+    def doctype() -> HTML::Doctype | Nil
+      @children.find() do |child| child is HTML::Doctype end
+    end
+
+    ## The first element at the top level, usually `<html>`, or `nil`.
+    def root() -> HTML::Element | Nil
+      @children.find() do |child| child.element?() end
+    end
+
+    ## The text of the first `<title>`, without surrounding whitespace, or `nil`.
+    def title() -> String | Nil
+      title = self.at("title")
+      title == nil ? nil : title.text().strip()
+    end
+  end
+end

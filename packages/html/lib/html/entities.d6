@@ -1,0 +1,93 @@
+module HTML
+  # Character references: every HTML 4 named entity, the ASCII punctuation
+  # names HTML5 added, and numeric references in decimal and hex.
+  module Entities
+    # Latin-1 names in code point order, from U+00A0 (nbsp) to U+00FF (yuml).
+    LATIN1 = ("nbsp iexcl cent pound curren yen brvbar sect uml copy ordf laquo not shy reg macr " +
+      "deg plusmn sup2 sup3 acute micro para middot cedil sup1 ordm raquo frac14 frac12 frac34 iquest " +
+      "Agrave Aacute Acirc Atilde Auml Aring AElig Ccedil Egrave Eacute Ecirc Euml Igrave Iacute Icirc Iuml " +
+      "ETH Ntilde Ograve Oacute Ocirc Otilde Ouml times Oslash Ugrave Uacute Ucirc Uuml Yacute THORN szlig " +
+      "agrave aacute acirc atilde auml aring aelig ccedil egrave eacute ecirc euml igrave iacute icirc iuml " +
+      "eth ntilde ograve oacute ocirc otilde ouml divide oslash ugrave uacute ucirc uuml yacute thorn yuml").split(" ")
+
+    # Greek capitals from U+0391 (Alpha) and small letters from U+03B1 (alpha);
+    # U+03A2 has no letter, so "Sigma" skips it.
+    GREEK = "Alpha Beta Gamma Delta Epsilon Zeta Eta Theta Iota Kappa Lambda Mu Nu Xi Omicron Pi Rho - Sigma Tau Upsilon Phi Chi Psi Omega".split(" ")
+
+    OTHER = {
+      "quot": 34, "amp": 38, "apos": 39, "lt": 60, "gt": 62,
+      "Tab": 9, "NewLine": 10, "excl": 33, "num": 35, "dollar": 36, "percnt": 37, "lpar": 40, "rpar": 41,
+      "ast": 42, "plus": 43, "comma": 44, "period": 46, "sol": 47, "colon": 58, "semi": 59, "equals": 61,
+      "quest": 63, "commat": 64, "lsqb": 91, "bsol": 92, "rsqb": 93, "Hat": 94, "lowbar": 95, "grave": 96,
+      "lcub": 123, "verbar": 124, "vert": 124, "rcub": 125, "half": 189,
+      "OElig": 338, "oelig": 339, "Scaron": 352, "scaron": 353, "Yuml": 376, "fnof": 402, "circ": 710, "tilde": 732,
+      "sigmaf": 962, "thetasym": 977, "upsih": 978, "piv": 982,
+      "ensp": 8194, "emsp": 8195, "thinsp": 8201, "zwnj": 8204, "zwj": 8205, "lrm": 8206, "rlm": 8207,
+      "hyphen": 8208, "dash": 8208, "ndash": 8211, "mdash": 8212, "lsquo": 8216, "rsquo": 8217, "sbquo": 8218,
+      "ldquo": 8220, "rdquo": 8221, "bdquo": 8222, "dagger": 8224, "Dagger": 8225, "bull": 8226, "hellip": 8230,
+      "permil": 8240, "prime": 8242, "Prime": 8243, "lsaquo": 8249, "rsaquo": 8250, "oline": 8254, "frasl": 8260,
+      "euro": 8364, "image": 8465, "weierp": 8472, "real": 8476, "trade": 8482, "alefsym": 8501,
+      "larr": 8592, "uarr": 8593, "rarr": 8594, "darr": 8595, "harr": 8596, "crarr": 8629,
+      "lArr": 8656, "uArr": 8657, "rArr": 8658, "dArr": 8659, "hArr": 8660,
+      "forall": 8704, "part": 8706, "exist": 8707, "empty": 8709, "nabla": 8711, "isin": 8712, "notin": 8713,
+      "ni": 8715, "prod": 8719, "sum": 8721, "minus": 8722, "lowast": 8727, "radic": 8730, "prop": 8733,
+      "infin": 8734, "ang": 8736, "and": 8743, "or": 8744, "cap": 8745, "cup": 8746, "int": 8747,
+      "there4": 8756, "sim": 8764, "cong": 8773, "asymp": 8776, "ne": 8800, "equiv": 8801, "le": 8804,
+      "ge": 8805, "sub": 8834, "sup": 8835, "nsub": 8836, "sube": 8838, "supe": 8839, "oplus": 8853,
+      "otimes": 8855, "perp": 8869, "sdot": 8901, "lceil": 8968, "rceil": 8969, "lfloor": 8970, "rfloor": 8971,
+      "lang": 10216, "rang": 10217, "loz": 9674, "starf": 9733, "star": 9734, "spades": 9824, "clubs": 9827,
+      "hearts": 9829, "diams": 9830, "check": 10003
+    }
+
+    # Numeric references to C1 controls mean the Windows-1252 character, as in browsers.
+    WINDOWS_1252 = {
+      128: 8364, 130: 8218, 131: 402, 132: 8222, 133: 8230, 134: 8224, 135: 8225, 136: 710, 137: 8240,
+      138: 352, 139: 8249, 140: 338, 142: 381, 145: 8216, 146: 8217, 147: 8220, 148: 8221, 149: 8226,
+      150: 8211, 151: 8212, 152: 732, 153: 8482, 154: 353, 155: 8250, 156: 339, 158: 382, 159: 376
+    }
+
+    # Names browsers also accept without the semicolon ("a&b" stays as it is).
+    BARE = ["amp", "lt", "gt", "quot"]
+
+    REFERENCE = /&(#[0-9]+;?|#[xX][0-9A-Fa-f]+;?|[A-Za-z][A-Za-z0-9]*;?)/
+
+    # The code point a name stands for, or nil.
+    def self.code_point(name: String) -> Int | Nil
+      known = OTHER[name]
+      return known if known != nil
+      index = LATIN1.index(name)
+      return 160 + index if index != nil
+      index = GREEK.index(name)
+      return 913 + index if index != nil && name != "-"
+      if name.length() > 1
+        index = GREEK.index(name.slice(0, 1).upcase() + name.slice(1, name.length() - 1))
+        return 945 + index if index != nil && name.slice(0, 1) != name.slice(0, 1).upcase()
+      end
+      nil
+    end
+
+    def self.character(code: Int) -> String
+      code = WINDOWS_1252[code] || code
+      return "\u{FFFD}" if code == 0 || code > 0x10FFFF || (code >= 0xD800 && code <= 0xDFFF)
+      [code].pack("U")
+    end
+
+    def self.decode(text: String) -> String
+      return text if text.index("&") == nil
+      text.gsub(REFERENCE) do |match|
+        semicolon = match.end_with?(";")
+        body = match.slice(1, match.length() - (semicolon ? 2 : 1))
+        if body.start_with?("#x") || body.start_with?("#X")
+          digits = body.slice(2, body.length() - 2)
+          digits.length() > 6 ? "\u{FFFD}" : HTML::Entities.character(digits.to_i(16))
+        elsif body.start_with?("#")
+          digits = body.slice(1, body.length() - 1)
+          digits.length() > 7 ? "\u{FFFD}" : HTML::Entities.character(digits.to_i())
+        else
+          code = (semicolon || BARE.include?(body)) ? HTML::Entities.code_point(body) : nil
+          code == nil ? match : HTML::Entities.character(code)
+        end
+      end
+    end
+  end
+end
