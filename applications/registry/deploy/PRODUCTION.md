@@ -136,6 +136,14 @@ on close-delimited bodies and `max_body_bytes`, `http_serve` host/ready/stop) wa
 `docs/registry-launch-inventory.json`, and `tools/verify_registry_launch.d6` passed for all 22 public
 cuts. No redeploy: the registry's own locked dependencies did not change.
 
+html 0.1.0, a new cut (#625: HTML parsing and CSS selectors, the last gap from the linkcheck
+dogfood app), was published on 2026-11-21 UTC from main `040b8661`, after a verified laptop
+snapshot (`~/diamond-registry-backups/pre-html-cut-20261121T021426Z`), with a 30-minute credential
+for `diamond-language` scoped to `publish:html` (id 49, revoked afterwards). The published sha256
+`e6c0ff3111aa8d443300676f310fe48431fd5200e15cdfd8a00891da5ac3ef28` matches
+`docs/registry-launch-inventory.json`, and `tools/verify_registry_launch.d6` passed for all 23 public
+cuts. No redeploy: the registry doesn't use html.
+
 Previously `0e482f26c56854c4c41c6c82d093ad04f6569a21` (v1.0.0-rc4, deployed 2026-11-12 UTC (2026-11-11 Pacific)
 with `tools/deploy_registry.sh --revision=v1.0.0-rc4 --force` after its dry run).
 The fresh snapshot at
