@@ -1,0 +1,170 @@
+## Mustache templates, read and rendered while the program runs.
+##
+## Supports variables (`{{name}}` escaped, `{{{name}}}` and `{{&name}}` as written),
+## sections (`{{#name}}...{{/name}}`), inverted sections (`{{^name}}`), partials
+## (`{{>name}}`), comments (`{{!...}}`), dotted names and `{{.}}`. A section, comment
+## or partial tag alone on its line takes the whole line with it, as the Mustache spec
+## says. Not supported: changing delimiters (`{{=<% %>=}}`) and lambdas.
+module Mustache
+  ## A template that does not parse, or a partial that is missing when it renders.
+  ## The message starts with the template's name and line.
+  class Error < StandardError
+  end
+
+  ## Renders `source` with `data`. `partials` maps a name to its template source.
+  def self.render(source: String, data: Hash, partials: Hash = {}) -> String
+    Mustache::Template.new(source, "template", partials).render(data)
+  end
+
+  ## A parsed template. Parse it once and render it as often as you like.
+  class Template
+    TAG = Regexp.new("\\{\\{(\\{?)\\s*([#^/>!&]?)\\s*(.*?)\\s*\\}?\\}\\}")
+    STANDALONE_SIGILS = ["#", "^", "/", ">", "!"]
+
+    ## `name` is used in error messages. `partials` maps a partial's name to its source
+    ## String or to a Mustache::Template; sources are parsed the first time they are used.
+    def initialize(source: String, name: String = "template", partials: Hash = {})
+      @name = name
+      @partials = partials
+      @nodes = parse(source)
+    end
+
+    ## The template filled in from `data`. Names are looked up in the innermost section's
+    ## value first, then outwards, then in `data`.
+    def render(data: Hash) -> String
+      out = []
+      render_nodes(@nodes, [data], out, 0)
+      out.join("")
+    end
+
+    def nodes() -> Array = @nodes
+
+    # Turns the source into a tree. A node is a Hash whose "kind" is text, var,
+    # section or partial.
+    def parse(source: String) -> Array
+      root = []
+      stack = [root]
+      open = []
+      position = 0
+      line = 1
+      while true
+        found = TAG.match_data(source, position)
+        if found == nil
+          stack.last().push({"kind": "text", "text": source.slice(position, source.length() - position)})
+          break
+        end
+        [start, finish] = found.offset(0)
+        sigil = found[2]
+        name = found[3]
+        line += source.slice(position, start - position).count("\n")
+        text_end = start
+        resume = finish
+        if STANDALONE_SIGILS.include?(sigil) && found[1] != "{"
+          line_start = start
+          line_start -= 1 while line_start > 0 && source.slice(line_start - 1, 1) != "\n"
+          line_end = source.index("\n", finish)
+          line_end = source.length() if line_end == nil
+          before = source.slice(line_start, start - line_start)
+          after = source.slice(finish, line_end - finish)
+          if before.strip() == "" && after.strip() == "" && line_start >= position
+            text_end = line_start
+            resume = line_end < source.length() ? line_end + 1 : line_end
+          end
+        end
+        text = source.slice(position, text_end - position)
+        stack.last().push({"kind": "text", "text": text}) unless text.empty?()
+        if sigil == "#" || sigil == "^"
+          section = {"kind": "section", "name": name, "inverted": sigil == "^", "children": []}
+          stack.last().push(section)
+          stack.push(section["children"])
+          open.push([name, line])
+        elsif sigil == "/"
+          raise Mustache::Error.new("#{@name}:#{line}: {{/#{name}}} closes nothing") if open.empty?()
+          [expected, opened] = open.pop()
+          if expected != name
+            raise Mustache::Error.new("#{@name}:#{line}: {{/#{name}}} closes {{##{expected}}} from line #{opened}")
+          end
+          stack.pop()
+        elsif sigil == ">"
+          stack.last().push({"kind": "partial", "name": name})
+        elsif sigil != "!"
+          stack.last().push({"kind": "var", "name": name, "raw": found[1] == "{" || sigil == "&"})
+        end
+        line += source.slice(start, resume - start).count("\n")
+        position = resume
+      end
+      unless open.empty?()
+        [name, opened] = open.last()
+        raise Mustache::Error.new("#{@name}:#{opened}: {{##{name}}} is never closed")
+      end
+      root
+    end
+
+    def render_nodes(nodes: Array, stack: Array, out: Array, depth: Int)
+      nodes.each() do |node|
+        kind = node["kind"]
+        if kind == "text"
+          out.push(node["text"])
+        elsif kind == "var"
+          value = lookup(node["name"], stack)
+          text = value == nil ? "" : value.to_s()
+          out.push(node["raw"] ? text : escape(text))
+        elsif kind == "partial"
+          raise Mustache::Error.new("#{@name}: partials nest more than 50 deep at #{node["name"]}") if depth > 50
+          partial = partial_named(node["name"])
+          partial.render_nodes(partial.nodes(), stack, out, depth + 1)
+        else
+          value = lookup(node["name"], stack)
+          if node["inverted"]
+            render_nodes(node["children"], stack, out, depth) unless truthy?(value)
+          elsif value.is_a?(Array)
+            value.each() do |item|
+              render_nodes(node["children"], stack + [item], out, depth)
+            end
+          elsif truthy?(value)
+            render_nodes(node["children"], stack + [value], out, depth)
+          end
+        end
+      end
+    end
+
+    def partial_named(name: String) -> Mustache::Template
+      partial = @partials[name]
+      raise Mustache::Error.new("#{@name}: no partial named #{name}") if partial == nil
+      return partial if partial.is_a?(Mustache::Template)
+      parsed = Mustache::Template.new(partial.to_s(), name, @partials)
+      @partials[name] = parsed
+      parsed
+    end
+
+    # nil, false and empty Arrays, Strings and Hashes are false; everything else is true.
+    def truthy?(value) -> Bool
+      return false if value == nil || value == false
+      return !value.empty?() if value.is_a?(Array) || value.is_a?(String) || value.is_a?(Hash)
+      true
+    end
+
+    def lookup(name: String, stack: Array)
+      return stack.last() if name == "."
+      parts = name.split(".")
+      index = stack.length() - 1
+      while index >= 0
+        frame = stack[index]
+        if frame.is_a?(Hash) && frame.has_key?(parts[0])
+          value = frame[parts[0]]
+          parts.drop(1).each() do |part|
+            value = value.is_a?(Hash) ? value[part] : nil
+          end
+          return value
+        end
+        index -= 1
+      end
+      nil
+    end
+
+    # The Mustache spec's escaping: & < > and ".
+    def escape(text: String) -> String
+      text.gsub("&", "&amp;").gsub("<", "&lt;").gsub(">", "&gt;").gsub("\"", "&quot;")
+    end
+  end
+end

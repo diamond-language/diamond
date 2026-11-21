@@ -155,6 +155,14 @@
       "version": "0.3.3"
     },
     {
+      "archive": "mustache.tar",
+      "dependencies": {},
+      "name": "mustache",
+      "sha256": "b7419825a206c439f66126123b0ecde9b9a1fe20563e947676eca0b4732fce05",
+      "size": 15360,
+      "version": "0.1.0"
+    },
+    {
       "archive": "network_safety.tar",
       "dependencies": {
         "http": "^0.2.0"

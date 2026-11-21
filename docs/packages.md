@@ -479,6 +479,7 @@ with `facet` like any other cut. The public ones each have a page under
 | `minitest` | Assertions, skips, setup/teardown hooks and a test runner (a copy of `lib/minitest.d6`); `facet new` projects list it in `Cutfile.dev` |
 | `mjolnir` | Stateless data mapper on Arel: schemas, immutable queries, changesets, and a Repo |
 | `multipart` | Parse multipart form data and file uploads |
+| `mustache` | Mustache templates rendered at run time |
 | `network_safety` | Guard outbound HTTP URLs against local names and private IPv4 literals |
 | `rack` | Compose HTTP request middleware |
 | `redis` | Redis client using RESP2 and RESP3 |

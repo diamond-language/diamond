@@ -16,6 +16,7 @@
   "markdown": "0.1.0",
   "minitest": "0.1.4",
   "mjolnir": "0.4.4",
+  "mustache": "0.1.0",
   "multipart": "0.3.3",
   "network_safety": "0.2.4",
   "rack": "0.2.5",

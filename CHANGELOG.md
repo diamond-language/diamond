@@ -14,6 +14,8 @@ record. From 1.0.0, releases follow the [1.x compatibility policy](docs/compatib
 - `Dir.glob(pattern, base: nil)`: the sorted paths matching `*`, `?`, `[..]`, `{a,b}` and `**/`.
 - The `markdown` cut renders Markdown to HTML, with heading ids and a table of contents. It is the
   renderer the documentation site uses, which now loads it from `packages/markdown`.
+- The `mustache` cut renders Mustache templates at run time, for templates that are data (a site
+  generator's layouts, editable emails) rather than code compiled ahead of time with `div`.
 
 ### Fixed
 
