@@ -475,6 +475,7 @@ with `facet` like any other cut. The public ones each have a page under
 | `jobs` | Durable database-backed background jobs |
 | `log_viewer` | Format structured JSON log streams |
 | `logger` | Leveled text and structured JSON logging |
+| `markdown` | Render Markdown to HTML, with heading ids and a table of contents |
 | `minitest` | Assertions, skips, setup/teardown hooks and a test runner (a copy of `lib/minitest.d6`); `facet new` projects list it in `Cutfile.dev` |
 | `mjolnir` | Stateless data mapper on Arel: schemas, immutable queries, changesets, and a Repo |
 | `multipart` | Parse multipart form data and file uploads |

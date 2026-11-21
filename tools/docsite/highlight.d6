@@ -205,3 +205,7 @@ def highlight(code: String) -> String
   end
   out.join("")
 end
+
+def escape(text: String) -> String
+  text.gsub("&", "&amp;").gsub("<", "&lt;").gsub(">", "&gt;").gsub("\"", "&quot;")
+end

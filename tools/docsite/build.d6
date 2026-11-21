@@ -13,11 +13,22 @@
 # root two levels up (/js/diamond-wasm.js and /wasm/diamond.wasm), so Run only
 # works when the docs are served beside the homepage.
 
-require "markdown"
+require "../../packages/markdown/lib/markdown"
 require "highlight"
 require "cutdoc"
 
 REPOSITORY = "https://github.com/diamond-language/d6"
+
+# The site renders d6 examples (```ruby, ```d6 ...) as language-d6, which
+# highlight.d6 colours and docs.js gives Run buttons, except a block right after
+# a `<!-- docsite: no-run -->` or `<!-- doc-check: skip -->` comment.
+D6_LANGUAGES = {"ruby" => "d6", "rb" => "d6", "diamond" => "d6"}
+NO_RUN = {"docsite: no-run" => "data-run=\"no\"", "doc-check: skip" => "data-run=\"no\""}
+
+def docs_renderer(links: Hash, fallback: String) -> Markdown::Renderer
+  Markdown::Renderer.new(links: links, fallback: fallback, language_aliases: D6_LANGUAGES,
+    code_markers: NO_RUN, table_class: "table-wrap")
+end
 
 struct Page(source: String, url: String, section: String, title: String, html: String, headings: Array)
 end
@@ -204,14 +215,14 @@ order.each() do |pair|
   source = pair[0]
   if source.start_with?("cut:")
     name = source.slice(4, source.length() - 4)
-    markdown = Markdown.new({}, "#{REPOSITORY}/blob/main/packages/#{name}/")
+    markdown = docs_renderer({}, "#{REPOSITORY}/blob/main/packages/#{name}/")
     rendered = markdown.render(cut_page_markdown(root, name, REPOSITORY))
   elsif source == "cuts:index"
-    rendered = Markdown.new({}, "").render(cut_index_markdown(root, cut_names))
+    rendered = docs_renderer({}, "").render(cut_index_markdown(root, cut_names))
   else
     folder = File.dirname(source) == "." ? "docs/" : "docs/#{File.dirname(source)}/"
     fallback = "#{REPOSITORY}/blob/main/#{folder}"
-    rendered = Markdown.new(links_for(source, files, published), fallback).render(File.read("#{docs}/#{source}"))
+    rendered = docs_renderer(links_for(source, files, published), fallback).render(File.read("#{docs}/#{source}"))
   end
   title = rendered.title() == "" ? File.basename(source, ".md") : rendered.title()
   pages[source] = Page.new(source, published[source], pair[1], title, highlight_code_blocks(rendered.html()), rendered.headings())

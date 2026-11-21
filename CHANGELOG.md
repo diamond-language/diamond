@@ -12,6 +12,8 @@ record. From 1.0.0, releases follow the [1.x compatibility policy](docs/compatib
 - `File.join` takes Arrays of parts, so `File.join(*parts)` and `File.join(root, parts)` work.
 - `File.mtime(path)`: when a file was last modified, as a `Time`.
 - `Dir.glob(pattern, base: nil)`: the sorted paths matching `*`, `?`, `[..]`, `{a,b}` and `**/`.
+- The `markdown` cut renders Markdown to HTML, with heading ids and a table of contents. It is the
+  renderer the documentation site uses, which now loads it from `packages/markdown`.
 
 ### Fixed
 

@@ -1,14 +1,30 @@
-# Tests for tools/docsite/markdown.d6.
+# Tests for the markdown cut. `bash test.sh`, or `d6 test/markdown_test.d6`.
 #
-#   build/diamond tests/docsite/markdown_test.d6
+# Most checks use the options the d6 documentation site renders with, so they
+# cover links, language aliases, code markers and the table wrapper too.
 
-require "../../tools/docsite/markdown"
+require "../lib/markdown"
 
 STATS = {"checks" => 0, "failures" => 0}
 
+def docs_renderer() -> Markdown::Renderer
+  Markdown::Renderer.new(links: {"other.md" => "/docs/other.html"}, language_aliases: {"ruby" => "d6"},
+    code_markers: {"docsite: no-run" => "data-run=\"no\"", "doc-check: skip" => "data-run=\"no\""},
+    table_class: "table-wrap")
+end
+
+def compare(name: String, actual: String, expected: String)
+  STATS["checks"] += 1
+  return if actual == expected
+  STATS["failures"] += 1
+  puts("FAIL #{name}")
+  puts("  expected: #{expected.inspect()}")
+  puts("  actual:   #{actual.inspect()}")
+end
+
 def check(name: String, source: String, expected: String)
   STATS["checks"] += 1
-  actual = Markdown.new({"other.md" => "/docs/other.html"}).render(source).html()
+  actual = docs_renderer().render(source).html()
   return if actual == expected
   STATS["failures"] += 1
   puts("FAIL #{name}")
@@ -60,7 +76,7 @@ check("comment right above a fence", "<!-- doc-check: skip -->\n```ruby\nx\n```\
 check("no-run marker", "<!-- docsite: no-run -->\n```ruby\nx\n```\n\n```ruby\ny\n```", "<pre><code class=\"language-d6\" data-run=\"no\">x</code></pre>\n<pre><code class=\"language-d6\">y</code></pre>")
 check("marker only reaches the next block", "<!-- docsite: no-run -->\n\ntext\n\n```ruby\nx\n```", "<p>text</p>\n<pre><code class=\"language-d6\">x</code></pre>")
 STATS["checks"] += 1
-fallback = Markdown.new({"a.md" => "/a.html"}, "https://gh/blob/main/docs/").render("[x](../README.md#top) [y](a.md) [z](#here) [w](https://x.org/) [v](/root)").html()
+fallback = Markdown::Renderer.new(links: {"a.md" => "/a.html"}, fallback: "https://gh/blob/main/docs/").render("[x](../README.md#top) [y](a.md) [z](#here) [w](https://x.org/) [v](/root)").html()
 unless fallback == "<p><a href=\"https://gh/blob/main/docs/../README.md#top\">x</a> <a href=\"/a.html\">y</a> <a href=\"#here\">z</a> <a href=\"https://x.org/\">w</a> <a href=\"/root\">v</a></p>"
   STATS["failures"] += 1
   puts("FAIL fallback links: #{fallback.inspect()}")
@@ -76,7 +92,23 @@ check("block html still raw", "<div class=\"x\">\n*hi*\n</div>", "<div class=\"x
 check("quote", "> quoted *text*", "<blockquote>\n<p>quoted <em>text</em></p>\n</blockquote>")
 check("em dash", "a — b", "<p>a — b</p>")
 
-page = Markdown.new({}).render("# Guide\n\n## First\n\n### Sub\n\n## Second")
+# The defaults: no aliases, markers or table wrapper.
+compare("render defaults", Markdown.render("```ruby\nx\n```\n\n| a |\n|---|\n| 1 |"),
+  "<pre><code class=\"language-ruby\">x</code></pre>\n" +
+  "<table>\n<thead><tr><th>a</th></tr></thead>\n<tbody>\n<tr><td>1</td></tr>\n</tbody>\n</table>")
+compare("comments are dropped without markers", Markdown.render("<!-- no-run -->\n```sh\nx\n```"),
+  "<pre><code class=\"language-sh\">x</code></pre>")
+compare("fallback prefixes other relative links",
+  Markdown::Renderer.new(fallback: "https://example.com/repo/").render("[a](a.txt) [b](/b) [c](https://c.test/)").html(),
+  "<p><a href=\"https://example.com/repo/a.txt\">a</a> <a href=\"/b\">b</a> <a href=\"https://c.test/\">c</a></p>")
+compare("a mapped link keeps its fragment", docs_renderer().render("[o](other.md#part)").html(),
+  "<p><a href=\"/docs/other.html#part\">o</a></p>")
+renderer = Markdown::Renderer.new()
+renderer.render("# One\n\n## A")
+compare("a renderer starts each document afresh", renderer.render("## A").html(),
+  "<h2 id=\"a\"><a class=\"anchor\" href=\"#a\">A</a></h2>")
+
+page = Markdown::Renderer.new().render("# Guide\n\n## First\n\n### Sub\n\n## Second")
 STATS["checks"] += 1
 headings = page.headings().map() do |h| h.id() end
 unless page.title() == "Guide" && headings == ["first", "sub", "second"]

@@ -1,0 +1,1 @@
+{"name": "markdown", "version": "0.1.0", "summary": "Render Markdown to HTML, with heading ids and a table of contents", "license": "MIT", "maintainers": [{"name": "Chad 'Matrix9180' Ingram", "contact": "https://github.com/diamond-language/d6"}]}

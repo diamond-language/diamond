@@ -121,6 +121,14 @@
       "version": "0.2.3"
     },
     {
+      "archive": "markdown.tar",
+      "dependencies": {},
+      "name": "markdown",
+      "sha256": "f8e0532e8c706dc577c1ce3d3057349c1ee916342c9d736de4f01c05d36f62e0",
+      "size": 28160,
+      "version": "0.1.0"
+    },
+    {
       "archive": "minitest.tar",
       "dependencies": {},
       "name": "minitest",
