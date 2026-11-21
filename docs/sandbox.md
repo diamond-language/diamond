@@ -22,8 +22,10 @@ a `d6 build`-produced [standalone binary](deployment.md), behave identically.
 Every one of these raises `SandboxError` (a rescuable `StandardError`) instead of doing
 anything:
 
-- `File.open`, `File.publish`, `File.rename`, `File.sync`, `File.chmod`, `File.delete`, `File.exist?`, `File.directory?`, `File.expand_path`
-- `Dir.entries`, `Dir.mkdir`, `Dir.mkdir_p`, `Dir.mktmpdir`, `Dir.delete`, `Dir.delete_tree`, `Dir.sync`
+- `File.open`, `File.read`, `File.write`, `File.publish`, `File.copy`, `File.rename`, `File.sync`, `File.chmod`, `File.delete`
+- `File.exist?`, `File.file?`, `File.directory?`, `File.symlink?`, `File.size`, `File.mode`, `File.mtime`, `File.sha256`, `File.expand_path`
+- `Dir.entries`, `Dir.glob`, `Dir.mkdir`, `Dir.mkdir_p`, `Dir.mktmpdir`, `Dir.delete`, `Dir.delete_tree`, `Dir.sync`
+- `Process.executable`
 - `ProgramBuilder#expand_source` (it resolves `require` by reading files and returns the text)
 - `TCPSocket.connect`, `TCPServer.listen`/`listen_nonblocking`
 - `UDPSocket.bind`/`.open`

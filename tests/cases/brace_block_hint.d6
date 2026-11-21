@@ -1,0 +1,2 @@
+# Ruby brace blocks get a hint instead of whatever the parser expected next.
+doubled = [1, 2].map() { |x| x * 2 }

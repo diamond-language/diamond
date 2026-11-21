@@ -248,7 +248,7 @@ REPL_COMPLETION_SOURCES := lsp/completion.c lsp/compile_buffer.c lsp/analysis_ca
 REPL_COMPLETION_OBJECTS := $(REPL_COMPLETION_SOURCES:lsp/%.c=$(BUILD_DIR)/lsp-%.o)
 DEPS := $(OBJECTS:.o=.d) $(REPL_COMPLETION_OBJECTS:.o=.d)
 
-.PHONY: all debug sanitize tsan release test test-examples test-release test-sanitize test-tsan test-api test-semver test-inline-cache-slots test-incremental-compile test-compiled-prelude test-aot-cache test-fibers test-fiber-run test-fiber-context test-vm-context test-yield test-continuation test-multi-yield test-scheduler test-scheduler-run-all test-fiber-gc-roots test-fiber-guards test-nested-yield-guard test-stack-overflow test-all test-builds test-integration test-facet test-facet-new facet test-database-config-package test-http-package test-gremlin-package test-websocket-package test-redis-package test-rack-package test-cookies-package test-multipart-package test-network-safety-package test-div-package test-dials-package test-graphql-package test-graphsql-package test-mjolnir-package test-logger-package test-minitest-package test-csv-package test-toml-package test-html-package test-log-viewer-package test-active-karma-package test-active-auth-package test-active-social-package test-active-tagging-package test-active-discussion-package test-jobs-package test-registry-package test-registry-http test-deploy-registry test-monitor test-example-apps test-docs test-docsite test-sanitize-script test-registry-inventory test-registry-nginx test-registry-seed test-database-dialects test-pheint-application test-lexer-diff test-parser-diff test-self-host test-self-host-smoke lsp test-lsp test-receiver dap test-dap aot-build aot-kit aot-kit-cross install test-aot-kit test-cross-build test-minimal test-wasm test-repl test-repl-completion test-repl-line-view fuzz test-fuzz test-stress-threads test-stress-threads-tsan test-cache clean
+.PHONY: all debug sanitize tsan release test test-examples test-release test-sanitize test-tsan test-api test-semver test-inline-cache-slots test-incremental-compile test-compiled-prelude test-aot-cache test-fibers test-fiber-run test-fiber-context test-vm-context test-yield test-continuation test-multi-yield test-scheduler test-scheduler-run-all test-fiber-gc-roots test-fiber-guards test-nested-yield-guard test-stack-overflow test-all test-builds test-integration test-facet test-facet-new facet test-database-config-package test-http-package test-gremlin-package test-websocket-package test-redis-package test-rack-package test-cookies-package test-multipart-package test-network-safety-package test-div-package test-dials-package test-graphql-package test-graphsql-package test-mjolnir-package test-logger-package test-minitest-package test-csv-package test-toml-package test-html-package test-markdown-package test-mustache-package test-log-viewer-package test-active-karma-package test-active-auth-package test-active-social-package test-active-tagging-package test-active-discussion-package test-jobs-package test-registry-package test-registry-http test-deploy-registry test-monitor test-example-apps test-docs test-docsite test-sanitize-script test-registry-inventory test-registry-nginx test-registry-seed test-database-dialects test-pheint-application test-lexer-diff test-parser-diff test-self-host test-self-host-smoke lsp test-lsp test-receiver dap test-dap aot-build aot-kit aot-kit-cross install test-aot-kit test-cross-build test-minimal test-wasm test-repl test-repl-completion test-repl-line-view fuzz test-fuzz test-stress-threads test-stress-threads-tsan test-cache clean
 
 all: debug
 
@@ -717,6 +717,12 @@ test-toml-package: $(TARGET)
 test-html-package: $(TARGET)
 	DIAMOND_BIN=$(CURDIR)/$(BUILD_DIR)/diamond bash packages/html/test.sh
 
+test-markdown-package: $(TARGET)
+	DIAMOND_BIN=$(CURDIR)/$(BUILD_DIR)/diamond bash packages/markdown/test.sh
+
+test-mustache-package: $(TARGET)
+	DIAMOND_BIN=$(CURDIR)/$(BUILD_DIR)/diamond bash packages/mustache/test.sh
+
 test-log-viewer-package: $(TARGET)
 	DIAMOND_BIN=$(CURDIR)/$(BUILD_DIR)/diamond bash packages/log_viewer/test.sh
 
@@ -1090,10 +1096,10 @@ test-docs: $(TARGET)
 	COOKIE_SECRET=doc-check-secret-0123456789abcdef $(BUILD_DIR)/diamond tools/check_doc_examples.d6 $(DOC_CHECK_FILES)
 	$(BUILD_DIR)/diamond tools/check_builtin_api_docs.d6
 
-# The documentation site generator (tools/docsite): its Markdown renderer and
+# The documentation site generator (tools/docsite): its Markdown renderer (the markdown cut) and
 # highlighter tests, then a full build of docs/docsite.txt into build/docsite.
 test-docsite: $(TARGET)
-	$(BUILD_DIR)/diamond tests/docsite/markdown_test.d6
+	DIAMOND_BIN=$(CURDIR)/$(BUILD_DIR)/diamond bash packages/markdown/test.sh
 	$(BUILD_DIR)/diamond tests/docsite/highlight_test.d6
 	$(BUILD_DIR)/diamond tools/docsite/build.d6 $(BUILD_DIR)/docsite
 	$(BUILD_DIR)/diamond tests/docsite/links_test.d6 $(BUILD_DIR)/docsite
@@ -1256,6 +1262,8 @@ test-integration:
 	$(MAKE) test-csv-package
 	$(MAKE) test-toml-package
 	$(MAKE) test-html-package
+	$(MAKE) test-markdown-package
+	$(MAKE) test-mustache-package
 	$(MAKE) test-log-viewer-package
 	$(MAKE) test-active-karma-package
 	$(MAKE) test-active-auth-package

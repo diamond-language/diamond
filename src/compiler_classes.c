@@ -2443,10 +2443,12 @@ static void prescan_callable_signatures(Compiler *compiler,DiamondMethod **metho
         } else if(token.kind==DIAMOND_TOKEN_IF||token.kind==DIAMOND_TOKEN_UNLESS||
                    token.kind==DIAMOND_TOKEN_CASE||token.kind==DIAMOND_TOKEN_BEGIN||
                    token.kind==DIAMOND_TOKEN_CLASS||token.kind==DIAMOND_TOKEN_INTERFACE||
-                   token.kind==DIAMOND_TOKEN_CLOSURE||token.kind==DIAMOND_TOKEN_MODULE) {
+                   token.kind==DIAMOND_TOKEN_CLOSURE||token.kind==DIAMOND_TOKEN_MODULE||
+                   token.kind==DIAMOND_TOKEN_STRUCT) {
             if(top_level&&blocked_depth==0&&
                (token.kind==DIAMOND_TOKEN_CLASS||token.kind==DIAMOND_TOKEN_INTERFACE||
-                token.kind==DIAMOND_TOKEN_CLOSURE||token.kind==DIAMOND_TOKEN_MODULE))
+                token.kind==DIAMOND_TOKEN_CLOSURE||token.kind==DIAMOND_TOKEN_MODULE||
+                token.kind==DIAMOND_TOKEN_STRUCT))
                 blocked_depth=depth+1;
             depth++;
         } else if(token.kind==DIAMOND_TOKEN_MODULE_FUNCTION) {

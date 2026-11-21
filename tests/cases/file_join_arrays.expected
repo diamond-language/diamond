@@ -1,0 +1,6 @@
+posts/2026/hello
+/srv/posts/2026/hello/index.html
+a/b/c/d
+
+File.join arguments must be Strings or Arrays of Strings
+nil

@@ -1,0 +1,14 @@
+# File.join takes Arrays of parts (flattened, as Ruby does) and `*parts`.
+def join_error() -> String
+  File.join("a", 1)
+  "no error"
+rescue error
+  error.message()
+end
+
+parts = ["posts", "2026", "hello"]
+puts(File.join(*parts))
+puts(File.join("/srv", *parts, "index.html"))
+puts(File.join(["a", ["b", "c"]], "d"))
+puts(File.join([]))
+puts(join_error())

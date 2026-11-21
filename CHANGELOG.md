@@ -4,6 +4,32 @@ This file records user-visible capability milestones rather than every
 implementation step; the Git history remains the authoritative fine-grained
 record. From 1.0.0, releases follow the [1.x compatibility policy](docs/compatibility.md).
 
+## Unreleased
+
+### Added
+
+- `facet add` takes several names: `facet add toml csv http`.
+- `File.join` takes Arrays of parts, so `File.join(*parts)` and `File.join(root, parts)` work.
+- `File.mtime(path)`: when a file was last modified, as a `Time`.
+- `Dir.glob(pattern, base: nil)`: the sorted paths matching `*`, `?`, `[..]`, `{a,b}` and `**/`.
+- The `markdown` cut renders Markdown to HTML, with heading ids and a table of contents. It is the
+  renderer the documentation site uses, which now loads it from `packages/markdown`.
+- The `mustache` cut renders Mustache templates at run time, for templates that are data (a site
+  generator's layouts, editable emails) rather than code compiled ahead of time with `div`.
+
+### Fixed
+
+- The `cli`, `tcp` and `udp` templates' READMEs line up their command comments again.
+- A Ruby brace block (`list.map() { |x| ... }`) is reported as "blocks are written 'do |x| ... end';
+  braces always make a Hash" instead of whatever the parser expected there (often "expected ':'
+  in ternary expression").
+- A spread into another built-in function (`Dir.mkdir_p(*names)`) says built-in functions take
+  no spread, instead of "expected expression" at the `*`.
+- A `struct` inside a module no longer stops classes above the module's later `def self.` functions
+  from calling them ("undefined module singleton function").
+- docs/sandbox.md lists every function the sandbox denies; `File.read`, `File.write`, `File.size` and
+  others were missing.
+
 ## 1.3.1 — 2026-11-20
 
 1.3.1 fixes a memory-safety bug in 1.3.0's heredocs. The language is the same as in 1.3.0

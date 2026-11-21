@@ -1,0 +1,17 @@
+# File.mtime is a Time, follows the file's changes, and raises IOError for a missing path.
+def missing() -> String
+  File.mtime("no/such/file")
+  "no error"
+rescue error: IOError
+  error.message()
+end
+
+directory = Dir.mktmpdir("mtime-")
+path = File.join(directory, "page.md")
+File.write(path, "one")
+first = File.mtime(path)
+puts(first.class())
+puts((Time.now().to_f() - first.to_f()).abs() < 60)
+puts(File.mtime(directory).class())
+puts(missing())
+Dir.delete_tree(directory)

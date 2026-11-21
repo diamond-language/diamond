@@ -121,6 +121,14 @@
       "version": "0.2.3"
     },
     {
+      "archive": "markdown.tar",
+      "dependencies": {},
+      "name": "markdown",
+      "sha256": "f8e0532e8c706dc577c1ce3d3057349c1ee916342c9d736de4f01c05d36f62e0",
+      "size": 28160,
+      "version": "0.1.0"
+    },
+    {
       "archive": "minitest.tar",
       "dependencies": {},
       "name": "minitest",
@@ -145,6 +153,14 @@
       "sha256": "47eb60c576436fa05833e001a58cecb0e864682ee3c5cd1d64e617259fee7b3b",
       "size": 17920,
       "version": "0.3.3"
+    },
+    {
+      "archive": "mustache.tar",
+      "dependencies": {},
+      "name": "mustache",
+      "sha256": "b7419825a206c439f66126123b0ecde9b9a1fe20563e947676eca0b4732fce05",
+      "size": 15360,
+      "version": "0.1.0"
     },
     {
       "archive": "network_safety.tar",

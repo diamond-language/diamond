@@ -1,0 +1,6 @@
+begin
+  Dir.glob("*")
+  "escaped"
+rescue error: SandboxError
+  error.message()
+end

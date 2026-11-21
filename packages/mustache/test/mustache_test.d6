@@ -1,0 +1,100 @@
+# Tests for the mustache cut. `bash test.sh`, or `d6 test/mustache_test.d6`.
+# Several cases follow the Mustache spec's interpolation, sections, inverted,
+# partials and comments suites.
+
+require "../lib/mustache"
+
+STATS = {"checks" => 0, "failures" => 0}
+
+def check(name: String, template: String, data: Hash, expected: String, partials: Hash = {})
+  STATS["checks"] += 1
+  actual = Mustache.render(template, data, partials)
+  return if actual == expected
+  STATS["failures"] += 1
+  puts("FAIL #{name}")
+  puts("  expected: #{expected.inspect()}")
+  puts("  actual:   #{actual.inspect()}")
+end
+
+def check_error(name: String, template: String, expected: String, partials: Hash = {})
+  STATS["checks"] += 1
+  message = "no error"
+  begin
+    Mustache.render(template, {}, partials)
+  rescue error: Mustache::Error
+    message = error.message()
+  end
+  return if message == expected
+  STATS["failures"] += 1
+  puts("FAIL #{name}")
+  puts("  expected: #{expected.inspect()}")
+  puts("  actual:   #{message.inspect()}")
+end
+
+# Interpolation.
+check("plain text", "Hello from {Mustache}!", {}, "Hello from {Mustache}!")
+check("variable", "Hello, {{subject}}!", {"subject" => "world"}, "Hello, world!")
+check("escaped", "{{x}}", {"x" => "& \" < >"}, "&amp; &quot; &lt; &gt;")
+check("triple mustache", "{{{x}}}", {"x" => "& \" < >"}, "& \" < >")
+check("ampersand", "{{&x}}", {"x" => "<b>"}, "<b>")
+check("numbers and bools", "{{i}} {{f}} {{t}}", {"i" => 85, "f" => 1.5, "t" => true}, "85 1.5 true")
+check("missing is empty", "[{{nope}}]", {}, "[]")
+check("nil is empty", "[{{x}}]", {"x" => nil}, "[]")
+check("padding inside tags", "|{{ x }}|{{{ x }}}|{{& x }}|", {"x" => "y"}, "|y|y|y|")
+check("dotted", "{{a.b.c}}", {"a" => {"b" => {"c" => "deep"}}}, "deep")
+check("dotted broken chain", "[{{a.b.c}}]", {"a" => {"x" => 1}}, "[]")
+check("dotted starts in the innermost frame", "{{#a}}{{b.c}}{{/a}}", {"a" => {"b" => {}}, "b" => {"c" => "outer"}}, "")
+check("interpolation does not strip lines", "  {{x}}\n", {"x" => "y"}, "  y\n")
+
+# Sections.
+check("truthy", "[{{#t}}yes{{/t}}]", {"t" => true}, "[yes]")
+check("falsey", "[{{#f}}yes{{/f}}]", {"f" => false}, "[]")
+check("hash pushes context", "{{#p}}{{name}} is {{age}}{{/p}}", {"p" => {"name" => "Ada", "age" => 36}}, "Ada is 36")
+check("list", "{{#l}}<{{n}}>{{/l}}", {"l" => [{"n" => 1}, {"n" => 2}, {"n" => 3}]}, "<1><2><3>")
+check("empty list", "[{{#l}}x{{/l}}]", {"l" => []}, "[]")
+check("implicit iterator", "{{#l}}({{.}}){{/l}}", {"l" => ["a", "b"]}, "(a)(b)")
+check("outer names are visible", "{{#l}}{{n}}{{sep}}{{/l}}", {"sep" => ",", "l" => [{"n" => 1}, {"n" => 2}]}, "1,2,")
+check("nested", "{{#a}}{{#b}}{{c}}{{/b}}{{/a}}", {"a" => {"b" => {"c" => "!"}}}, "!")
+check("string section", "{{#s}}[{{.}}]{{/s}}", {"s" => "x"}, "[x]")
+check("empty string is false", "[{{#s}}x{{/s}}]", {"s" => ""}, "[]")
+
+# Inverted.
+check("inverted false", "[{{^f}}no{{/f}}]", {"f" => false}, "[no]")
+check("inverted missing", "[{{^m}}no{{/m}}]", {}, "[no]")
+check("inverted list", "[{{^l}}none{{/l}}]", {"l" => [1]}, "[]")
+
+# Standalone lines.
+check("standalone section lines", "| A\n{{#t}}\n| B\n{{/t}}\n| C\n", {"t" => true}, "| A\n| B\n| C\n")
+check("indented standalone", "  {{#t}}\nx\n  {{/t}}\n", {"t" => true}, "x\n")
+check("standalone comment", "a\n  {{! note }}\nb\n", {}, "a\nb\n")
+check("standalone at end without newline", "a\n{{#t}}x{{/t}}", {"t" => true}, "a\nx")
+check("not standalone with text", "a {{#t}}\nb{{/t}}", {"t" => true}, "a \nb")
+check("standalone loop", "<ul>\n{{#l}}\n  <li>{{.}}</li>\n{{/l}}\n</ul>\n", {"l" => ["x", "y"]}, "<ul>\n  <li>x</li>\n  <li>y</li>\n</ul>\n")
+
+# Comments and partials.
+check("comment", "1{{! gone }}2", {}, "12")
+check("multiline comment", "1{{!\n gone\n}}2", {}, "12")
+check("partial", "[{{>p}}]", {"x" => "y"}, "[y]", {"p" => "{{x}}"})
+check("partial sees the section", "{{#l}}{{>item}}{{/l}}", {"l" => [{"n" => 1}, {"n" => 2}]}, "<1><2>", {"item" => "<{{n}}>"})
+check("partial template object", "{{>p}}", {"x" => 1}, "1", {"p" => Mustache::Template.new("{{x}}", "p")})
+check("recursive partial", "{{>node}}", {"n" => 1, "kids" => [{"n" => 2, "kids" => [{"n" => 3, "kids" => []}]}]},
+  "1(2(3))", {"node" => "{{n}}{{#kids}}({{>node}}){{/kids}}"})
+
+# Errors.
+check_error("unclosed", "a\n{{#x}}\nb", "template:2: {{#x}} is never closed")
+check_error("mismatched", "{{#a}}\n{{/b}}", "template:2: {{/b}} closes {{#a}} from line 1")
+check_error("stray close", "{{/a}}", "template:1: {{/a}} closes nothing")
+check_error("missing partial", "{{>nope}}", "template: no partial named nope")
+check_error("endless partial", "{{>loop}}", "loop: partials nest more than 50 deep at loop", {"loop" => "{{>loop}}"})
+
+# A template renders many times.
+template = Mustache::Template.new("{{greeting}}, {{name}}!", "hello")
+STATS["checks"] += 1
+outputs = [template.render({"greeting" => "Hi", "name" => "Ada"}), template.render({"greeting" => "Bye", "name" => "Bo"})]
+unless outputs == ["Hi, Ada!", "Bye, Bo!"]
+  STATS["failures"] += 1
+  puts("FAIL reuse: #{outputs.inspect()}")
+end
+
+puts("mustache: #{STATS["checks"]} checks, #{STATS["failures"]} failures")
+exit(STATS["failures"] == 0 ? 0 : 1)

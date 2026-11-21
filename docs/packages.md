@@ -375,6 +375,7 @@ reserved list still matches the compiler and library sources.
 ```sh
 facet init [name]     # writes a fresh Cutfile; defaults name to the
                        # current directory's own basename if omitted
+facet add <name>... [--dev] [--registry <https-url>]
 facet add <name> [--dev] [--registry <https-url>] [--version <constraint>]
 facet add <name> [--dev] --git <url> (--tag <ref> | --branch <ref> | --commit <ref> | --version <constraint>)
 ```
@@ -383,6 +384,10 @@ Without `--git`, the dependency comes from a registry: `--registry`, or the
 public registry at `https://cuts.rolld6.codes`. Without `--version`, `facet add`
 asks the registry for the newest release that is not yanked and writes `^` plus
 that version, so `facet update` takes compatible releases only.
+
+Several names (`facet add toml csv http`) add each one as separate commands would,
+with the same `--dev` and `--registry`. `--version`, `--git` and the refs describe a
+single cut, so they take one name. If a name fails, the ones before it stay added.
 
 `--dev` adds the dependency to `Cutfile.dev` instead, creating it if needed
 (see "Development dependencies" above); the name must not already be in either
@@ -470,9 +475,11 @@ with `facet` like any other cut. The public ones each have a page under
 | `jobs` | Durable database-backed background jobs |
 | `log_viewer` | Format structured JSON log streams |
 | `logger` | Leveled text and structured JSON logging |
+| `markdown` | Render Markdown to HTML, with heading ids and a table of contents |
 | `minitest` | Assertions, skips, setup/teardown hooks and a test runner (a copy of `lib/minitest.d6`); `facet new` projects list it in `Cutfile.dev` |
 | `mjolnir` | Stateless data mapper on Arel: schemas, immutable queries, changesets, and a Repo |
 | `multipart` | Parse multipart form data and file uploads |
+| `mustache` | Mustache templates rendered at run time |
 | `network_safety` | Guard outbound HTTP URLs against local names and private IPv4 literals |
 | `rack` | Compose HTTP request middleware |
 | `redis` | Redis client using RESP2 and RESP3 |

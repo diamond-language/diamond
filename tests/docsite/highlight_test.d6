@@ -2,7 +2,6 @@
 #
 #   build/diamond tests/docsite/highlight_test.d6
 
-require "../../tools/docsite/markdown"
 require "../../tools/docsite/highlight"
 
 STATS = {"checks" => 0, "failures" => 0}

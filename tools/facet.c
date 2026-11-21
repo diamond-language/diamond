@@ -890,9 +890,10 @@ static int cmd_init(int argc, char **argv) {
     return 0;
 }
 
-static int cmd_add(int argc, char **argv) {
+static int add_one(int argc, char **argv) {
     if (argc < 3) {
-        fputs("usage: facet add <name> [--dev] [--registry <url>] [--version <constraint>]\n"
+        fputs("usage: facet add <name>... [--dev] [--registry <url>]\n"
+              "       facet add <name> [--dev] [--registry <url>] [--version <constraint>]\n"
               "       facet add <name> [--dev] --git <url> "
               "(--tag <ref> | --branch <ref> | --commit <ref> | --version <constraint>)\n",
               stderr);
@@ -1051,6 +1052,57 @@ static int cmd_add(int argc, char **argv) {
 }
 
 
+/* `facet add a b c`: each name is added on its own, with the same --dev and
+ * --registry, as if by separate commands. A git source, a version or a ref
+ * describes one cut, so those take a single name. Stops at the first failure;
+ * the names before it stay added. */
+static int cmd_add(int argc, char **argv) {
+    char *names[FACET_MAX_DEPENDENCIES];
+    char *flags[64];
+    int name_count = 0, flag_count = 0;
+    bool single_only = false;
+    for (int index = 2; index < argc; index++) {
+        const char *arg = argv[index];
+        if (strncmp(arg, "--", 2) != 0) {
+            if (name_count == FACET_MAX_DEPENDENCIES) {
+                fprintf(stderr, "facet: too many dependencies (max %d)\n", FACET_MAX_DEPENDENCIES);
+                return 65;
+            }
+            names[name_count++] = argv[index];
+            continue;
+        }
+        if (flag_count + 2 > (int)(sizeof flags / sizeof flags[0])) {
+            fputs("facet: too many options\n", stderr);
+            return 64;
+        }
+        flags[flag_count++] = argv[index];
+        if (strcmp(arg, "--dev") == 0) continue;
+        if (strcmp(arg, "--registry") != 0) single_only = true;
+        /* Every other option takes a value; add_one reports a missing one. */
+        if (index + 1 < argc) flags[flag_count++] = argv[++index];
+    }
+    if (name_count <= 1) return add_one(argc, argv);
+    if (single_only) {
+        fputs("facet: --git, --version, --tag, --branch and --commit describe one cut; "
+              "add it on its own\n", stderr);
+        return 64;
+    }
+    for (int index = 0; index < name_count; index++) {
+        char *one[3 + 64];
+        one[0] = argv[0];
+        one[1] = argv[1];
+        one[2] = names[index];
+        for (int flag = 0; flag < flag_count; flag++) one[3 + flag] = flags[flag];
+        const int status = add_one(3 + flag_count, one);
+        if (status != 0) {
+            if (index > 0)
+                fprintf(stderr, "facet: stopped at '%s'; %d name%s before it %s added\n",
+                        names[index], index, index == 1 ? "" : "s", index == 1 ? "was" : "were");
+            return status;
+        }
+    }
+    return 0;
+}
 static void print_usage(void) {
     fputs("usage: facet install\n"
           "       facet update [<name>...]\n"
@@ -1060,6 +1112,7 @@ static void print_usage(void) {
           "       facet pack <cut-directory> <output.tar>\n"
           "       facet verify <archive.tar> [--sha256 <digest>] [--json | --readme]\n"
           "       facet publish <cut-directory> --registry <https-url> --token <token>\n"
+          "       facet add <name>... [--dev] [--registry <url>]\n"
           "       facet add <name> [--dev] [--registry <url>] [--version <constraint>]\n"
           "       facet add <name> [--dev] --git <url> "
           "(--tag <ref> | --branch <ref> | --commit <ref> | --version <constraint>)\n",

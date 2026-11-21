@@ -491,6 +491,8 @@ DIAMOND_INTERNAL DiamondVmStatus file_path_dirname_helper(DiamondVm *vm,const Di
 DIAMOND_INTERNAL DiamondVmStatus file_path_expand_helper(DiamondVm *vm,const DiamondString *path, const DiamondString *base,DiamondValue *out);
 DIAMOND_INTERNAL DiamondVmStatus file_path_extname_helper(DiamondVm *vm,const DiamondString *path, DiamondValue *out);
 DIAMOND_INTERNAL DiamondVmStatus file_path_join_helper(DiamondVm *vm,const DiamondValue *parts, size_t count,DiamondValue *out);
+DIAMOND_INTERNAL DiamondVmStatus dir_glob_helper(DiamondVm *vm,const DiamondString *pattern,
+    const DiamondString *base,DiamondValue *result);
 DIAMOND_INTERNAL DiamondVmStatus file_publish_helper(DiamondVm *vm,const DiamondString *path, const DiamondString *bytes);
 DIAMOND_INTERNAL DiamondVmStatus file_read_helper(DiamondVm *vm,const DiamondString *path, DiamondValue *result);
 DIAMOND_INTERNAL DiamondVmStatus file_rename_helper(DiamondVm *vm,const DiamondString *from, const DiamondString *to);

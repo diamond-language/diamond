@@ -133,10 +133,12 @@ File.extname(".bashrc")          # => ""
 ### `File.join(part, ...) -> String`
 
 The parts joined with `/`, skipping empty parts and collapsing doubled
-separators.
+separators. A part may be an Array of parts, nested or not, so `File.join(*parts)`
+and `File.join(root, parts)` both work.
 
 ```ruby
-File.join("a/", "/b/", "c")   # => "a/b/c"
+File.join("a/", "/b/", "c")              # => "a/b/c"
+File.join("site", *["posts", "hello"])   # => "site/posts/hello"
 ```
 
 ## Inspecting the filesystem
@@ -156,6 +158,16 @@ Whether `path` is a regular file, or a symlink to one.
 ### `File.mode(path) -> Int`
 
 The permission bits, such as `0o644`.
+
+### `File.mtime(path) -> Time`
+
+When the file was last modified, as a Time precise to about a microsecond. It follows a
+symlink. A missing or unreadable path raises `IOError`.
+
+<!-- doc-check: skip -->
+```ruby
+File.mtime("site.toml") > File.mtime("public/index.html")   # => true when the config is newer
+```
 
 ### `File.sha256(path) -> String`
 

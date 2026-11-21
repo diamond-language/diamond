@@ -33,28 +33,46 @@ extern char **environ;
  * for path-building code that assembles parts conditionally. `parts`
  * are `count` contiguous registers starting at `base`, the same shape
  * DIAMOND_OP_THREAD_NEW's own variadic argument list already uses. */
+/* Appends one File.join part: a String, or an Array of parts (nested Arrays
+ * too, as Ruby flattens them), which is also what `File.join(*parts)` passes. */
+static DiamondVmStatus file_path_join_append(DiamondVm *vm,StringBuilder *builder,
+        DiamondValue value,size_t depth) {
+    if(value.kind==DIAMOND_VALUE_OBJECT&&value.as.object->kind==DIAMOND_OBJECT_ARRAY) {
+        if(depth>=64) {
+            snprintf(vm->error,sizeof vm->error,"File.join Arrays nest too deeply");
+            return DIAMOND_VM_TYPE_ERROR;
+        }
+        const DiamondArray *array=(const DiamondArray *)value.as.object;
+        for(size_t index=0;index<array->count;index++) {
+            const DiamondVmStatus status=file_path_join_append(vm,builder,array->values[index],depth+1);
+            if(status!=DIAMOND_VM_OK)return status;
+        }
+        return DIAMOND_VM_OK;
+    }
+    if(value.kind!=DIAMOND_VALUE_OBJECT||value.as.object->kind!=DIAMOND_OBJECT_STRING) {
+        snprintf(vm->error,sizeof vm->error,"File.join arguments must be Strings or Arrays of Strings");
+        return DIAMOND_VM_TYPE_ERROR;
+    }
+    const DiamondString *part=(const DiamondString *)value.as.object;
+    if(part->length==0)return DIAMOND_VM_OK;
+    size_t start=0;
+    bool ok=true;
+    if(builder->length>0) {
+        while(start<part->length&&part->chars[start]=='/')start++;
+        while(builder->length>0&&builder->chars[builder->length-1]=='/')builder->length--;
+        ok=builder_append(builder,"/",1);
+    }
+    if(ok&&start<part->length)
+        ok=builder_append(builder,part->chars+start,part->length-start);
+    return ok?DIAMOND_VM_OK:DIAMOND_VM_OUT_OF_MEMORY;
+}
+
 DiamondVmStatus file_path_join_helper(DiamondVm *vm,const DiamondValue *parts,
         size_t count,DiamondValue *out) {
     StringBuilder builder={};
     for(size_t index=0;index<count;index++) {
-        const DiamondValue value=parts[index];
-        if(value.kind!=DIAMOND_VALUE_OBJECT||value.as.object->kind!=DIAMOND_OBJECT_STRING) {
-            free(builder.chars);
-            snprintf(vm->error,sizeof vm->error,"File.join arguments must be Strings");
-            return DIAMOND_VM_TYPE_ERROR;
-        }
-        const DiamondString *part=(const DiamondString *)value.as.object;
-        if(part->length==0)continue;
-        size_t start=0;
-        bool ok=true;
-        if(builder.length>0) {
-            while(start<part->length&&part->chars[start]=='/')start++;
-            while(builder.length>0&&builder.chars[builder.length-1]=='/')builder.length--;
-            ok=builder_append(&builder,"/",1);
-        }
-        if(ok&&start<part->length)
-            ok=builder_append(&builder,part->chars+start,part->length-start);
-        if(!ok) {free(builder.chars);return DIAMOND_VM_OUT_OF_MEMORY;}
+        const DiamondVmStatus status=file_path_join_append(vm,&builder,parts[index],0);
+        if(status!=DIAMOND_VM_OK) {free(builder.chars);return status;}
     }
     DiamondString *joined=allocate_string(vm,builder.chars?builder.chars:"",builder.length);
     free(builder.chars);
