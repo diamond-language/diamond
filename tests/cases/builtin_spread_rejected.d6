@@ -1,0 +1,3 @@
+# Built-in functions compile to fixed instructions, so a spread cannot reach them.
+names = ["tmp"]
+Dir.mkdir_p(*names)

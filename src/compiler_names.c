@@ -846,7 +846,29 @@ uint16_t parse_name(Compiler *compiler) {
     if(class_index<0&&find_local(compiler,name)<0&&find_function(compiler,name)<0&&
        compiler->current.kind==DIAMOND_TOKEN_DOT) {
         const BuiltinCallParser parse=builtin_namespace_parser(compiler,name);
-        if(parse!=nullptr)return parse(compiler);
+        if(parse!=nullptr) {
+            /* Built-in functions compile to fixed instructions, so `*args` cannot reach
+             * them (File.join takes it: its instruction flattens Arrays). Say so
+             * instead of failing at the '*' with "expected expression". */
+            Compiler probe=*compiler;
+            advance_token(&probe);
+            const DiamondSpan method=probe.current.span;
+            advance_token(&probe);
+            if(!probe.failed&&probe.current.kind==DIAMOND_TOKEN_LEFT_PAREN&&
+               !(name_equals(compiler,"File",name,false)&&name_equals(compiler,"join",method,false))) {
+                advance_token(&probe);
+                if(call_arguments_have_spread(&probe)) {
+                    char message[160];
+                    snprintf(message,sizeof message,
+                        "%.*s.%.*s takes no *spread argument: built-in functions need their arguments written out",
+                        (int)name.length,compiler->source+name.start,
+                        (int)method.length,compiler->source+method.start);
+                    fail(compiler,method,message);
+                    return 0;
+                }
+            }
+            return parse(compiler);
+        }
     }
     if(find_local(compiler,name)<0&&find_function(compiler,name)<0&&
        compiler->current.kind==DIAMOND_TOKEN_LEFT_PAREN) {

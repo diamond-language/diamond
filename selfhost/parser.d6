@@ -12234,6 +12234,8 @@ class Parser
           self.fail("too many File.join arguments")
           return 0
         end
+        # `*parts` passes the Array itself; FILE_JOIN flattens Array arguments.
+        self.advance_token() if @current.kind() == :star
         arguments.push(self.parse_expression())
         self.skip_newlines()
         break if @current.kind() != :comma

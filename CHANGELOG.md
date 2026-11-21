@@ -9,6 +9,7 @@ record. From 1.0.0, releases follow the [1.x compatibility policy](docs/compatib
 ### Added
 
 - `facet add` takes several names: `facet add toml csv http`.
+- `File.join` takes Arrays of parts, so `File.join(*parts)` and `File.join(root, parts)` work.
 
 ### Fixed
 
@@ -16,6 +17,8 @@ record. From 1.0.0, releases follow the [1.x compatibility policy](docs/compatib
 - A Ruby brace block (`list.map() { |x| ... }`) is reported as "blocks are written 'do |x| ... end';
   braces always make a Hash" instead of whatever the parser expected there (often "expected ':'
   in ternary expression").
+- A spread into another built-in function (`Dir.mkdir_p(*names)`) says built-in functions take
+  no spread, instead of "expected expression" at the `*`.
 
 ## 1.3.1 — 2026-11-20
 

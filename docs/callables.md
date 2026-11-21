@@ -504,5 +504,8 @@ to a variadic *parameter* above. The supported slice is deliberately narrow:
   message as any other arity mismatch; a non-`Array` argument raises
   `TypeError`.
 - native receiver spreads share ordinary native invocation's 255-argument bound;
+- built-in functions such as `Dir.mkdir_p` or `Time.utc` compile to fixed instructions and
+  take no spread (a compile error says so); `File.join` is the exception, because it
+  flattens Array arguments.
 
 See docs/internal/design.md's "Call-site spread" section for the full mechanism.

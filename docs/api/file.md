@@ -133,10 +133,12 @@ File.extname(".bashrc")          # => ""
 ### `File.join(part, ...) -> String`
 
 The parts joined with `/`, skipping empty parts and collapsing doubled
-separators.
+separators. A part may be an Array of parts, nested or not, so `File.join(*parts)`
+and `File.join(root, parts)` both work.
 
 ```ruby
-File.join("a/", "/b/", "c")   # => "a/b/c"
+File.join("a/", "/b/", "c")              # => "a/b/c"
+File.join("site", *["posts", "hello"])   # => "site/posts/hello"
 ```
 
 ## Inspecting the filesystem

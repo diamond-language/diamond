@@ -748,6 +748,8 @@ static uint16_t parse_file_join_arguments(Compiler *compiler) {
                 fail(compiler,compiler->current.span,"too many File.join arguments");
                 return 0;
             }
+            /* `*parts` passes the Array itself; FILE_JOIN flattens Array arguments. */
+            if(compiler->current.kind==DIAMOND_TOKEN_STAR)advance_token(compiler);
             arguments[argument_count++]=parse_expression(compiler);
             skip_newlines(compiler);
             if(compiler->current.kind!=DIAMOND_TOKEN_COMMA)break;
