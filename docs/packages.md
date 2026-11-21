@@ -466,6 +466,7 @@ with `facet` like any other cut. The public ones each have a page under
 | `graphsql` | GraphQL-aware SQL selection and association preloading |
 | `gremlin` | Concurrent fiber-based HTTP server |
 | `http` | HTTP server and client for d6 |
+| `html` | Parse HTML into a tree and query it with CSS selectors |
 | `jobs` | Durable database-backed background jobs |
 | `log_viewer` | Format structured JSON log streams |
 | `logger` | Leveled text and structured JSON logging |

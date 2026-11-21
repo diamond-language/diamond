@@ -27,6 +27,8 @@ What a link checker ran short of.
   it for `--version`.
 - `facet` writes `Cutfile.lock` as plain JSON: it had a trailing comma, so `JSON.parse` rejected
   it. Older lockfiles still install.
+- The `html` cut: `HTML.parse` reads any page into a tree of elements, text and comments, and
+  `select`, `at` and `matches?` find elements with CSS selectors ([README](packages/html/README.md)).
 - `String#index_of(needle, start)` searches from a byte position.
 
 ### Changed
