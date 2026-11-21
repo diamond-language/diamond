@@ -674,6 +674,13 @@ export FACET_TEST_GREETER13_ARCHIVE="$work/registry_greeter13.tar"
 (cd project21_registry && "$facet" update >/dev/null)
 grep -q '"greeter": {"source": "registry"' project21_registry/Cutfile.lock
 grep -q '"logger": {"source": "registry"' project21_registry/Cutfile.lock
+# The lockfile is JSON (and a d6 Hash literal): no trailing comma, so JSON.parse reads it.
+[[ "$("$diamond" -e 'puts(JSON.parse(File.read(ARGV[0])).keys().sort().join(","))' project21_registry/Cutfile.lock)" == $'greeter,logger\nnil' ]]
+# Locks facet wrote before, with a trailing comma, still install.
+sed 's/}}$/}, }/' project21_registry/Cutfile.lock > project21_registry/Cutfile.lock.old
+mv project21_registry/Cutfile.lock.old project21_registry/Cutfile.lock
+grep -q '}, }$' project21_registry/Cutfile.lock
+(cd project21_registry && "$facet" install >/dev/null)
 [[ -f project21_registry/cuts/greeter/lib/greeter.d6 ]]
 [[ -f project21_registry/cuts/logger/lib/logger.d6 ]]
 

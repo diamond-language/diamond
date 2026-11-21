@@ -36,7 +36,7 @@ def verify(root, registry, inventory_path)
     File.write(work + "/Cutfile", JSON.stringify(manifest))
     run([facet, "update"], work)
     lock_bytes = File.read(work + "/Cutfile.lock")
-    lock = JSON.parse(lock_bytes.sub(Regexp.new(",\\s*}\\s*$"), "}"))
+    lock = JSON.parse(lock_bytes)
     unless lock.keys().sort() == cuts.map() do |cut| cut["name"] end.sort()
       raise ArgumentError.new("resolved cut set differs from inventory")
     end

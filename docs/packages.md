@@ -236,8 +236,8 @@ moved into place as-is (`rename`, not a re-copy that could rewrite
 anything), its manifest keeps the same fixed `Cutfile` filename it had at
 its own repository root — this is exactly why that filename isn't
 parameterized by the cut's own name. It writes `Cutfile.lock` alongside
-`Cutfile` — a d6 `Hash` literal, same as a manifest. `facet` itself
-always writes it compact/single-line (it's machine-generated, not
+`Cutfile` as one line of JSON, which is also a d6 `Hash` literal, so `JSON.parse` and other
+tools can read it. `facet` itself always writes it compact/single-line (it's machine-generated, not
 something you're meant to hand-edit), but reads one back the same way it
 reads any manifest, so a hand-edited lockfile can be pretty-printed too
 if you ever want to:
