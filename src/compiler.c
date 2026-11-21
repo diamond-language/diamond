@@ -2350,6 +2350,9 @@ uint16_t parse_heredoc(Compiler *compiler) {
         result=joined;piece=close+1;
         if(piece>=end)break;
     }
+    /* A compile that has already failed (an error later on the opener's line) emits no
+     * piece; the caller still needs a real register. */
+    if(result==UINT16_MAX)result=allocate_register(compiler);
     compiler->known_types[result]=DIAMOND_TYPE_STRING;
     return result;
 }
