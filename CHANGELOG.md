@@ -21,6 +21,8 @@ record. From 1.0.0, releases follow the [1.x compatibility policy](docs/compatib
   in ternary expression").
 - A spread into another built-in function (`Dir.mkdir_p(*names)`) says built-in functions take
   no spread, instead of "expected expression" at the `*`.
+- A `struct` inside a module no longer stops classes above the module's later `def self.` functions
+  from calling them ("undefined module singleton function").
 - docs/sandbox.md lists every function the sandbox denies; `File.read`, `File.write`, `File.size` and
   others were missing.
 

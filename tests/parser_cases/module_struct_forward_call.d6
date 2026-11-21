@@ -1,0 +1,14 @@
+# A struct inside a module used to end the module's forward-reference scan at the
+# struct's `end`, so a class above `def self.helper` could not call it.
+module Notes
+  struct Note(title: String)
+  end
+
+  class Shelf
+    def label(note: Notes::Note) -> String = Notes.shout(note.title())
+  end
+
+  def self.shout(text: String) -> String = text.upcase()
+end
+
+puts(Notes::Shelf.new().label(Notes::Note.new("draft")))
