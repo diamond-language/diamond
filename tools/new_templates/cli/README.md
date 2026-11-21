@@ -4,11 +4,11 @@ A command-line program written in [d6](https://rolld6.codes).
 
 ```sh
 facet install              # fetch minitest, the test library, into cuts/
-d6 main.d6 Ada        # Hello, Ada!
+d6 main.d6 Ada             # Hello, Ada!
 d6 main.d6 --help
 d6 main.d6 --version       # the version in Cutfile
 bash test.sh               # run the tests
-d6 build main.d6 -o {{name}}   # a standalone executable
+d6 build                   # a standalone executable, named after this directory
 ```
 
 - `main.d6` is the entry point. It passes `ARGV` to `{{Name}}.main` and exits with the
