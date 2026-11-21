@@ -31,6 +31,33 @@ experimental.
   a step debugger, and the
   [VS Code extension](https://marketplace.visualstudio.com/items?itemName=rolld6.d6).
 
+## The release candidates
+
+Seven release candidates, 2026-11-09 to 2026-11-16, led to 1.0. What they changed:
+
+- **Smaller programs and lower memory use.** Type sets and string constants store only
+  what they use. Pheint's bytecode cache shrank from 71 MB to 7.3 MB and its executable
+  from 76 MB to 11 MB. Under load with four workers, Pheint dropped from 651 MiB to 245 MiB
+  and Skindicate from 357 MiB to 152 MiB ([soak report](internal/rc4-application-soak.md)).
+- **A faster JIT.** Values are stored as whole 8-byte words, and `select`,
+  `each_with_index`, `reduce` and `times` run their blocks as native loops. fib takes
+  half the cycles it did before, and with the JIT d6 is at least even with Ruby's YJIT on
+  all 21 local benchmark pairs.
+- **Everyday conveniences and Ruby's answers.** More argument shapes on Array, Hash, String
+  and numbers (`each_slice`, `sum(0.0)`, `min(2)`, `merge` with a block, `chomp(".csv")`,
+  `floor(2)` and others: see [collections](collections.md#prelude-methods)), `Hash.new(0)`,
+  `Array.new(3) do |i| ... end`, and `-2.5.floor()` giving -3 as in Ruby.
+- **Correctness.** Trapped signals now run while a server is blocked in `IO.poll`, `accept`
+  or a socket read. A thread that fails without being joined prints its exception. JIT
+  blocks dispatch methods correctly on captured instance variables. Cross-feature workflow
+  tests run across the interpreter and JIT, GC stress, bytecode caches and standalone
+  executables.
+- **Distribution.** Tarballs for mise or unpacking anywhere, the VS Code extension in the
+  Marketplace, a docs page for every published cut, and the move to
+  [rolld6.codes](https://rolld6.codes/) and [cuts.rolld6.codes](https://cuts.rolld6.codes).
+
+The [changelog](../CHANGELOG.md) lists every change in each candidate.
+
 ## Installing
 
 [Getting started](getting-started.md) covers the `.deb` and `.rpm` packages, the tarballs
