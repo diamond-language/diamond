@@ -1,0 +1,12 @@
+["a/b/c/three.md", "a/b/two.md", "a/one.md", "top.md", "x/[odd].md", "x/sp ace.md"]
+["a/b/c/note.txt", "a/b/c/three.md", "a/b/two.md", "a/one.md"]
+["a/b/"]
+["x/[odd].md", "x/loop", "x/sp ace.md"]
+["x/.dot.md"]
+["x/[odd].md"]
+["a/b/c/note.txt"]
+["a/b/two.md", "a/one.md"]
+["b/c/three.md", "b/two.md", "one.md"]
+[]
+1
+true

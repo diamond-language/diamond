@@ -637,6 +637,52 @@ static uint16_t parse_file_delete_arguments(Compiler *compiler) {
     return dest;
 }
 
+/* `Dir.glob(pattern)` or `Dir.glob(pattern, base: dir)`: FILE_PATH with the base
+ * (or a NIL) as the second operand. */
+static uint16_t parse_dir_glob_call(Compiler *compiler) {
+    if(compiler->current.kind!=DIAMOND_TOKEN_LEFT_PAREN) {
+        fail(compiler,compiler->current.span,"expected '(' after 'Dir.glob'");
+        return 0;
+    }
+    advance_token(compiler);
+    skip_newlines(compiler);
+    const uint16_t pattern_register=parse_expression(compiler);
+    skip_newlines(compiler);
+    uint16_t base_register;
+    if(compiler->current.kind==DIAMOND_TOKEN_COMMA) {
+        advance_token(compiler);
+        skip_newlines(compiler);
+        if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER||
+           !name_equals(compiler,"base",compiler->current.span,false)) {
+            fail(compiler,compiler->current.span,"expected 'base:' after the Dir.glob pattern");
+            return 0;
+        }
+        advance_token(compiler);
+        if(compiler->current.kind!=DIAMOND_TOKEN_COLON) {
+            fail(compiler,compiler->current.span,"expected ':' after 'base' in Dir.glob");
+            return 0;
+        }
+        advance_token(compiler);
+        skip_newlines(compiler);
+        base_register=parse_expression(compiler);
+        skip_newlines(compiler);
+    } else {
+        base_register=allocate_register(compiler);
+        emit_instruction(compiler,DIAMOND_OP_NIL,base_register,0,0,1);
+    }
+    if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN) {
+        fail(compiler,compiler->current.span,"expected ')' after Dir.glob arguments");
+        return 0;
+    }
+    advance_token(compiler);
+    const uint16_t dest=allocate_register(compiler);
+    emit_opcode(compiler,DIAMOND_OP_FILE_PATH);
+    emit_register(compiler,dest);emit_register(compiler,pattern_register);
+    emit_register(compiler,base_register);emit_byte(compiler,(uint8_t)DIAMOND_FILE_PATH_GLOB);
+    compiler->known_types[dest]=DIAMOND_TYPE_ARRAY;
+    return dest;
+}
+
 /* `Dir.mktmpdir(prefix = nil)`: FILE_PATH with the prefix (or a NIL) as the first
  * operand, since the call may have no argument at all. */
 static uint16_t parse_dir_mktmpdir_call(Compiler *compiler) {
@@ -701,10 +747,14 @@ uint16_t parse_dir_entries_call(Compiler *compiler) {
             advance_token(compiler);
             return parse_dir_mktmpdir_call(compiler);
         }
+        if(name_equals(compiler,"glob",method,false)) {
+            advance_token(compiler);
+            return parse_dir_glob_call(compiler);
+        }
     }
     if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER||
        !name_equals(compiler,"entries",compiler->current.span,false)) {
-        fail(compiler,compiler->current.span,"expected 'entries', 'mkdir', 'mkdir_p', 'mktmpdir', 'delete', 'delete_tree' or 'sync' after 'Dir'");
+        fail(compiler,compiler->current.span,"expected 'entries', 'glob', 'mkdir', 'mkdir_p', 'mktmpdir', 'delete', 'delete_tree' or 'sync' after 'Dir'");
         return 0;
     }
     advance_token(compiler); /* consume 'entries' */

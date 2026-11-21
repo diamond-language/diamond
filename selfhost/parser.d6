@@ -12064,6 +12064,10 @@ class Parser
       self.advance_token()
       return self.parse_dir_mktmpdir_call()
     end
+    if namespace == "Dir" && method == "glob"
+      self.advance_token()
+      return self.parse_dir_glob_call()
+    end
     table = if namespace == "File" then self.file_path_methods() else self.dir_path_methods() end
     index = 0
     while index < table.length()
@@ -12076,7 +12080,7 @@ class Parser
     end
     if namespace == "Dir"
       if method != "entries"
-        self.fail("expected 'entries', 'mkdir', 'mkdir_p', 'mktmpdir', 'delete', 'delete_tree' or 'sync' after 'Dir'")
+        self.fail("expected 'entries', 'glob', 'mkdir', 'mkdir_p', 'mktmpdir', 'delete', 'delete_tree' or 'sync' after 'Dir'")
         return 0
       end
       self.advance_token()
@@ -12193,6 +12197,50 @@ class Parser
     self.emit_instruction3(Opcode::FILE_PATH, destination, path_register, second_register)
     self.emit_byte(id)
     self.set_type_fact(destination, result_type) if result_type != nil
+    destination
+  end
+
+  # `Dir.glob(pattern)` or `Dir.glob(pattern, base: dir)`: FILE_PATH selector 28 with the
+  # base (or a NIL) as the second operand, like compiler_builtins.c's parse_dir_glob_call.
+  def parse_dir_glob_call()
+    if @current.kind() != :left_paren
+      self.fail("expected '(' after 'Dir.glob'")
+      return 0
+    end
+    self.advance_token()
+    self.skip_newlines()
+    pattern_register = self.parse_expression()
+    self.skip_newlines()
+    base_register = 0
+    if @current.kind() == :comma
+      self.advance_token()
+      self.skip_newlines()
+      if @current.kind() != :identifier || self.token_text(@current) != "base"
+        self.fail("expected 'base:' after the Dir.glob pattern")
+        return 0
+      end
+      self.advance_token()
+      if @current.kind() != :colon
+        self.fail("expected ':' after 'base' in Dir.glob")
+        return 0
+      end
+      self.advance_token()
+      self.skip_newlines()
+      base_register = self.parse_expression()
+      self.skip_newlines()
+    else
+      base_register = self.allocate_register()
+      self.emit_instruction1(Opcode::NIL, base_register)
+    end
+    if @current.kind() != :right_paren
+      self.fail("expected ')' after Dir.glob arguments")
+      return 0
+    end
+    self.advance_token()
+    destination = self.allocate_register()
+    self.emit_instruction3(Opcode::FILE_PATH, destination, pattern_register, base_register)
+    self.emit_byte(28)
+    self.set_type_fact(destination, Type::ARRAY)
     destination
   end
 

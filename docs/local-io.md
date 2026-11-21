@@ -309,9 +309,11 @@ not something to rescue around), but a genuine failure (permission
 denied, path is a non-empty directory, ...) raises a rescuable
 `IOError`, the same convention `File.open` uses. `Dir.entries(path)`
 lists one directory's immediate entries as an `Array[String]`
-(`opendir`/`readdir`/`closedir`, excluding `"."`/`".."`) — no
-recursion, no globbing; a directory that doesn't exist (or otherwise
-fails to open) raises a rescuable `IOError`.
+(`opendir`/`readdir`/`closedir`, excluding `"."`/`".."`) without
+recursing; a directory that doesn't exist (or otherwise fails to open)
+raises a rescuable `IOError`. `Dir.glob("content/**/*.md")` searches a
+tree with a shell-style pattern and returns the sorted matches (see the
+[Dir reference](api/dir.md)).
 
 All three are recognized in the compiler the same way `File.open`/
 `Fiber.new` are (shadowable by a local or a top-level function of the

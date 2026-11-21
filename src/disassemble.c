@@ -68,6 +68,7 @@ static const char *file_path_function_name(uint8_t id) {
         case DIAMOND_FILE_PATH_DELETE_TREE: return "delete_tree";
         case DIAMOND_FILE_PATH_EXECUTABLE: return "executable";
         case DIAMOND_FILE_PATH_MTIME: return "mtime";
+        case DIAMOND_FILE_PATH_GLOB: return "glob";
         default: return "<invalid file path function>";
     }
 }

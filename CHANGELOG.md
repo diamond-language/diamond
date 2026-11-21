@@ -11,6 +11,7 @@ record. From 1.0.0, releases follow the [1.x compatibility policy](docs/compatib
 - `facet add` takes several names: `facet add toml csv http`.
 - `File.join` takes Arrays of parts, so `File.join(*parts)` and `File.join(root, parts)` work.
 - `File.mtime(path)`: when a file was last modified, as a `Time`.
+- `Dir.glob(pattern, base: nil)`: the sorted paths matching `*`, `?`, `[..]`, `{a,b}` and `**/`.
 
 ### Fixed
 

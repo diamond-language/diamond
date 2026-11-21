@@ -764,6 +764,9 @@ typedef enum {
     /* File.mtime(path): when the file was last modified, as Float seconds since the epoch;
      * the compiler turns that into a Time with TIME_AT. Follows a symlink. */
     DIAMOND_FILE_PATH_MTIME,
+    /* Dir.glob(pattern, base: nil): the sorted paths matching a shell-style pattern (see
+     * src/vm_glob.c). The second operand is the base directory String or nil. */
+    DIAMOND_FILE_PATH_GLOB,
 } DiamondFilePathFunction;
 
 typedef enum DiamondMathFunction : uint8_t {

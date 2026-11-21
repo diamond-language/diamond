@@ -1,0 +1,28 @@
+# Dir.glob: *, ?, [..], {a,b}, **/, trailing-slash directories, hidden names, base:,
+# and no descent through a symlinked directory.
+def touch(path)
+  Dir.mkdir_p(File.dirname(path))
+  File.write(path, "")
+end
+
+root = Dir.mktmpdir("glob-")
+["a/one.md", "a/b/two.md", "a/b/c/three.md", "a/b/c/note.txt", ".hidden/h.md", "top.md",
+ "x/.dot.md", "x/sp ace.md", "x/[odd].md"].each() do |name|
+  touch(File.join(root, name))
+end
+Process.run(["ln", "-s", "../a", File.join(root, "x/loop")])
+start = root.length() + 1
+def relative(paths, start) = paths.map() do |path| path.slice(start, path.length() - start) end
+
+p(relative(Dir.glob(File.join(root, "**/*.md")), start))
+p(relative(Dir.glob(File.join(root, "a/**/*.{md,txt}")), start))
+p(relative(Dir.glob(File.join(root, "a/*/")), start))
+p(relative(Dir.glob(File.join(root, "x/*")), start))
+p(relative(Dir.glob(File.join(root, "x/.*")), start))
+p(relative(Dir.glob(File.join(root, "x/\\[odd].md")), start))
+p(relative(Dir.glob(File.join(root, "a/b/c/*.???")), start))
+p(relative(Dir.glob(File.join(root, "{a,a/b}/*.md")), start))
+p(Dir.glob("**/*.md", base: File.join(root, "a")))
+p(Dir.glob("*", base: File.join(root, "missing")))
+p(Dir.glob(File.join(root, "a/one.md")).length())
+Dir.delete_tree(root)

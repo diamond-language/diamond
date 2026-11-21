@@ -963,6 +963,12 @@ DiamondVmStatus outlined_file_path(DiamondVm *vm,const DiamondChunk *chunk,Diamo
             path_result=DIAMOND_BOOL(removed);
             break;
         }
+        case DIAMOND_FILE_PATH_GLOB:
+            VM_SANDBOX_GUARD("Dir.glob", "filesystem");
+            /* The Array is rooted in the destination register while it fills. */
+            path_status=dir_glob_helper(vm,path,second,&registers[dest]);
+            if(path_status==DIAMOND_VM_OK)path_result=registers[dest];
+            break;
         case DIAMOND_FILE_PATH_MTIME: {
             VM_SANDBOX_GUARD("File.mtime", "filesystem");
             struct stat path_stat;

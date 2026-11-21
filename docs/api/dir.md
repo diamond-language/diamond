@@ -2,7 +2,7 @@
 
 [API reference](index.md) · Previous: [File](file.md) · Next: [Time](time.md)
 
-`Dir` lists, creates and removes directories. Failures raise `IOError`, and
+`Dir` lists and searches directories, and creates and removes them. Failures raise `IOError`, and
 every function needs the `filesystem` sandbox capability.
 
 <!-- doc-check: skip -->
@@ -31,6 +31,26 @@ even to a directory) raises `IOError`.
 
 The names in a directory, without `.` and `..`, in no particular order. It does
 not recurse.
+
+### `Dir.glob(pattern, base: nil) -> Array[String]`
+
+The paths that match a shell-style pattern, sorted. `*` and `?` match within one name,
+`[abc]`, `[a-z]` and `[!a]` match one character, `{md,txt}` matches either word, and a
+whole `**` segment matches any number of directories (`**/*.md` is every `.md` file
+below the current directory). A pattern ending in `/` matches directories only, and `\`
+escapes the next character.
+
+A name that starts with `.` matches only a segment that starts with a `.`. `**` does not
+enter hidden directories or follow a symlink to a directory. Results are written the way
+the pattern wrote them; with `base:`, the pattern is relative to that directory and so are
+the results. A missing or unreadable directory just contributes no matches.
+
+<!-- doc-check: skip -->
+```ruby
+Dir.glob("content/**/*.md")            # => ["content/about.md", "content/posts/hello.md"]
+Dir.glob("**/*.md", base: "content")   # => ["about.md", "posts/hello.md"]
+Dir.glob("static/*.{css,js}")          # => ["static/app.js", "static/style.css"]
+```
 
 ### `Dir.mkdir(path, mode = 0o777) -> String`
 
